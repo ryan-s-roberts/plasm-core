@@ -632,22 +632,22 @@ impl CgsDiscovery for InMemoryCgsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::load_schema;
+    use crate::loader::load_schema_dir;
     use crate::Prefix;
     use std::path::Path;
 
     #[test]
-    fn discover_petstore_by_token() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/petstore");
-        let cgs = Arc::new(load_schema(&dir).expect("petstore"));
+    fn discover_fixture_by_token() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
-            "petstore".into(),
-            "Petstore".into(),
+            "overshow".into(),
+            "Overshow".into(),
             vec!["demo".into()],
             cgs,
         )]);
         let q = CapabilityQuery {
-            tokens: vec!["pet".into()],
+            tokens: vec!["profile".into()],
             ..Default::default()
         };
         let r = reg.discover(&q).expect("discover");
@@ -655,33 +655,33 @@ mod tests {
         assert!(r
             .candidates
             .iter()
-            .any(|c| c.capability_name.contains("pet")));
-        assert!(r.candidates.iter().any(|c| c.entity == "Pet"));
+            .any(|c| c.capability_name.contains("profile")));
+        assert!(r.candidates.iter().any(|c| c.entity == "Profile"));
 
         let n = r
             .schema_neighborhoods
             .iter()
-            .find(|n| n.entry_id == "petstore")
-            .expect("schema_neighborhoods includes petstore");
-        assert!(n.seed_entities.contains(&"Pet".to_string()));
+            .find(|n| n.entry_id == "overshow")
+            .expect("schema_neighborhoods includes overshow");
+        assert!(n.seed_entities.contains(&"Profile".to_string()));
         assert!(
-            n.focused_entities.contains(&"Category".to_string())
-                && n.focused_entities.contains(&"Tag".to_string()),
-            "REPL-style :schema Pet neighbourhood includes Category and Tag refs; got {:?}",
+            n.focused_entities
+                .contains(&"RecordedContent".to_string()),
+            "REPL-style :schema Profile neighbourhood includes RecordedContent relation/ref; got {:?}",
             n.focused_entities
         );
         let cap = r
             .candidates
             .iter()
-            .find(|c| c.capability_name.contains("pet"))
-            .expect("a pet capability");
+            .find(|c| c.capability_name == "recorded_content_query_by_profile")
+            .expect("described profile-scoped capability");
         assert!(
             !cap.capability_description.is_empty(),
             "candidate should carry truncated capability_description"
         );
         assert!(
-            r.entity_summaries.iter().any(|s| s.name == "Pet"),
-            "entity_summaries should include Pet; got {:?}",
+            r.entity_summaries.iter().any(|s| s.name == "Profile"),
+            "entity_summaries should include Profile; got {:?}",
             r.entity_summaries
         );
     }
@@ -689,18 +689,18 @@ mod tests {
     /// No capability rows match, but `pick_entry` + `expand_entities` still yields neighbourhoods + summaries.
     #[test]
     fn discover_fallback_schema_neighborhood_when_candidates_empty() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/petstore");
-        let cgs = Arc::new(load_schema(&dir).expect("petstore"));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
-            "petstore".into(),
-            "Petstore".into(),
+            "overshow".into(),
+            "Overshow".into(),
             vec!["demo".into()],
             cgs,
         )]);
         let q = CapabilityQuery {
-            pick_entry: Some("petstore".into()),
+            pick_entry: Some("overshow".into()),
             capability_names: Some(vec!["__no_such_capability__".into()]),
-            expand_entities: Some(vec!["pet".into()]),
+            expand_entities: Some(vec!["profile".into()]),
             ..Default::default()
         };
         let r = reg.discover(&q).expect("discover");
@@ -709,21 +709,21 @@ mod tests {
         assert_eq!(
             r.contexts[0].prefix,
             Prefix::Entry {
-                id: "petstore".into()
+                id: "overshow".into()
             }
         );
         let n = r
             .schema_neighborhoods
             .iter()
-            .find(|n| n.entry_id == "petstore")
+            .find(|n| n.entry_id == "overshow")
             .expect("fallback neighbourhood");
-        assert!(n.seed_entities.contains(&"Pet".to_string()));
-        assert!(n.focused_entities.contains(&"Pet".to_string()));
-        let pet_sum = r
+        assert!(n.seed_entities.contains(&"Profile".to_string()));
+        assert!(n.focused_entities.contains(&"Profile".to_string()));
+        let profile_sum = r
             .entity_summaries
             .iter()
-            .find(|s| s.name == "Pet")
-            .expect("Pet summary");
-        assert!(!pet_sum.description.is_empty());
+            .find(|s| s.name == "Profile")
+            .expect("Profile summary");
+        assert!(!profile_sum.description.is_empty());
     }
 }
