@@ -1,5 +1,7 @@
 # plasm-trace-sink
 
+**Product / operated boundary:** this binary is **optional** for the open-source executor (`plasm-mcp` works without `PLASM_TRACE_SINK_URL`). It **requires PostgreSQL** (Iceberg SqlCatalog) and a warehouse; that makes it **SaaS- or ops-tier infrastructure** in the architecture sense — same family as production Helm and durable observability — even though the crate may ship from the [plasm-core](https://github.com/ryan-s-roberts/plasm-core) workspace for build convenience. It is **not** a route inside `plasm-saas` (a separate long-running process). See [oss-saas-boundary in the product monorepo](https://github.com/ryan-s-roberts/plasm/blob/main/docs/oss-saas-boundary.md) (path may move as the repo split matures).
+
 HTTP service that ingests **Plasm audit events** and persists **all** read/write state in **Apache Iceberg** tables (Parquet data files + JDBC SqlCatalog metadata). There is **no in-process** deduplication buffer, trace index, or billing cache: **`GET /v1/traces/{id}`** and **`GET /v1/billing/usage`** query Iceberg via **DataFusion** after each startup.
 
 It is the sink behind `PLASM_TRACE_SINK_URL` when `plasm-mcp` (or other clients) POST audit batches after MCP / HTTP execute work (canonical trace rows use `event_kind` = `mcp_trace_segment`).
