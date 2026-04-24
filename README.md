@@ -23,6 +23,36 @@ So the model does not need to manufacture a REST payload for “list open bug is
 e5{p39=e17(p304="plasm", p319="plasm"), p42="open", p37="bug", p40="updated"}
 ```
 
+The parser is deliberately lenient here. The compact `e#` / `p#` symbols are session-local shadows over the canonical CGS names, so a model can also emit the readable form, or mix the two, and Plasm expands the symbols before parsing. For short scalar and select values, quotes can be elided too:
+
+```plasm
+Issue{repository=Repository(owner=plasm, repo=plasm), state=open, labels=bug, sort=updated}
+e5{repository=e17(owner=plasm, repo=plasm), state=open, labels=bug, sort=updated}
+```
+
+### Auto-correction feedback
+
+When a form still misses, Plasm gives the agent correction feedback in the same expression language instead of dumping a raw parser trace. Deterministic recovery can record a resolved form, but the feedback channel itself is imperative: it tells the model which expression shape to emit next, or asks it to choose when the runtime cannot safely guess.
+
+Examples covered by the correction tests:
+
+```text
+Input:
+Member{space_id=Space(555555555)}
+
+Correction feedback:
+`space_id` is not a valid filter name inside `Member{...}`.
+Allowed parameter symbols include `team_id`, `list_id`, and `task_id`.
+For example: `Member{team_id=...}` using a name from the allowed list.
+
+Input:
+Member{space_id=Space(555555555)}
+
+Ambiguous recovery feedback:
+`Member` must include exactly one scope in `{...}`: `team_id` -> `Team`, `list_id` -> `List`, `task_id` -> `Task`.
+Pick one: Member{team_id=Team(id)} | Member{list_id=List(id)} | Member{task_id=Task(id)}
+```
+
 On the current GitHub catalog, that full Plasm instruction surface is **20,282 characters** (about **5,070 tokens** by the renderer’s chars/4 heuristic) for 91 capabilities plus navigation forms. By comparison, the official `github-mcp-server` **v0.15.0** exposes 93 tools and its compact serialized `tools/list` schema surface is **64,129 characters** (about **16,032 tokens** by the same heuristic).
 
 That difference gets larger once an agent needs more than one API. Plasm supports **intent-based catalog queries** (`discover_capabilities`) and **federated sessions**: the agent can ask for capabilities by goal, add only the relevant entities from GitHub, Linear, Slack, or another catalog, and keep one typed symbol space across them. In practice this is closer to a small query planner over API domains than a conventional MCP server that exposes a fixed list of independent tools.
