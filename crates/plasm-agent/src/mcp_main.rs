@@ -5,12 +5,12 @@
 use clap::{Arg, ArgAction, Command};
 use plasm_agent_core::bootstrap_secrets::McpBootstrapMaterializer;
 use plasm_agent_core::error::AgentError;
+use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::server_state::PlasmSaaSHostExtension;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_plugin_host::PluginManager;
 use plasm_runtime::{AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode};
-use plasm_agent_core::server_state::CatalogBootstrap;
 
 async fn shutdown_signal() {
     #[cfg(unix)]
@@ -93,7 +93,8 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
     let pre_matches = pre_cmd.get_matches_from(&argv);
 
     if pre_matches.get_flag("migrate_mcp_config_db") {
-        let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url() else {
+        let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url()
+        else {
             eprintln!(
                 "plasm-mcp: --migrate-mcp-config-db requires PLASM_MCP_CONFIG_DATABASE_URL, PLASM_AUTH_STORAGE_URL, or DATABASE_URL (mounted under PLASM_SECRETS_DIR in Kubernetes)"
             );
@@ -148,13 +149,17 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
     };
 
     if let Some(reg) = &preloaded_opt {
-        plasm_agent_core::plugin_catalog::validate_registry_templates(reg).map_err(AgentError::Schema)?;
+        plasm_agent_core::plugin_catalog::validate_registry_templates(reg)
+            .map_err(AgentError::Schema)?;
     } else {
         plasm_compile::validate_cgs_capability_templates(&cgs)
             .map_err(|e| AgentError::Schema(e.to_string()))?;
     }
 
-    let app = plasm_agent_core::cli_builder::build_app(&cgs, plasm_agent_core::AgentCliSurface::McpServer);
+    let app = plasm_agent_core::cli_builder::build_app(
+        &cgs,
+        plasm_agent_core::AgentCliSurface::McpServer,
+    );
     let matches = app.get_matches_from(&argv);
 
     if matches.get_one::<String>("schema").is_some()
@@ -168,8 +173,10 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
         .get_one::<String>("backend")
         .map(|s| s.as_str())
         .unwrap_or("http://localhost:1080");
-    let backend =
-        plasm_agent_core::backend_normalize::normalize_live_backend_url(schema_path.as_str(), backend_raw);
+    let backend = plasm_agent_core::backend_normalize::normalize_live_backend_url(
+        schema_path.as_str(),
+        backend_raw,
+    );
 
     let mode = match matches
         .get_one::<String>("mode")
@@ -239,7 +246,9 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
             .map_err(|e| std::io::Error::other(format!("auth-framework init: {e}")))?;
     let oauth_link_catalog =
         std::sync::Arc::new(plasm_agent_core::oauth_link_catalog::OauthLinkCatalog::from_env());
-    if let Some(settings) = plasm_agent_core::oauth_provider_pull::OauthProviderPullSettings::from_env() {
+    if let Some(settings) =
+        plasm_agent_core::oauth_provider_pull::OauthProviderPullSettings::from_env()
+    {
         match plasm_agent_core::oauth_provider_pull::init_oauth_provider_pull_from_postgres(
             oauth_link_catalog.clone(),
             settings,

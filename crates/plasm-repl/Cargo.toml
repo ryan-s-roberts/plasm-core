@@ -8,6 +8,7 @@ readme = "README.md"
 [features]
 default = []
 evm = ["plasm-agent/evm"]
+llm = ["plasm-eval/llm"]
 
 [lib]
 name = "plasm_repl"

@@ -6,9 +6,20 @@ The private product monorepo composes this tree as a **git submodule** and adds 
 
 ## Build
 
+Prerequisites:
+
+- Rust stable with Cargo.
+- `protoc` only when building LLM/BAML tooling with `--features llm`.
+
 ```bash
-cargo build --workspace
+cargo build --workspace --locked
+cargo test --workspace --locked
+cargo fmt --all -- --check
 ```
+
+The default workspace build does not require generated BAML sources. To use LLM eval or REPL mode,
+install `protoc`, run `baml-cli generate` from the repository root, then build the relevant crate with
+the `llm` feature.
 
 ## `plasm-mcp` (OSS)
 

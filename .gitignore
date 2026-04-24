@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 # Local build artifacts (optional)
 .build/

@@ -616,24 +616,35 @@ fn handle_llm_command(line: &str, llm: &mut LlmState) {
         return;
     }
 
-    match std::env::var("OPENROUTER_API_KEY") {
-        Ok(_) => {}
-        Err(_) => {
-            eprintln!(
-                "LLM mode requires OPENROUTER_API_KEY (set in the environment or `.env` in cwd)."
-            );
-            return;
-        }
+    #[cfg(not(feature = "llm"))]
+    {
+        eprintln!(
+            "LLM mode requires the generated BAML client. Run `baml-cli generate` from the repository root and rebuild with `--features llm`."
+        );
+        return;
     }
 
-    llm.model = rest.to_string();
-    llm.enabled = true;
-    llm.nl_chat.clear();
-    println!(
+    #[cfg(feature = "llm")]
+    {
+        match std::env::var("OPENROUTER_API_KEY") {
+            Ok(_) => {}
+            Err(_) => {
+                eprintln!(
+                "LLM mode requires OPENROUTER_API_KEY (set in the environment or `.env` in cwd)."
+            );
+                return;
+            }
+        }
+
+        llm.model = rest.to_string();
+        llm.enabled = true;
+        llm.nl_chat.clear();
+        println!(
         "LLM mode: on (model `{}`, {} correction attempt(s) per goal). Lines are natural-language goals; later lines keep a transcript (schema sent once per session).",
         llm.model,
         llm.attempts.max(1)
     );
+    }
 }
 
 fn print_llm_help() {
@@ -645,6 +656,10 @@ LLM mode (OpenRouter via BAML `TranslatePlan`, same pipeline as plasm-eval):
   :llm attempts <n>            correction rounds per goal (default 2, min 1)
 Requires OPENROUTER_API_KEY. First NL line sends the full schema (eval bundle); follow-ups reuse chat history. Changing :schema focus or re-:llm clears the session.
 "#
+    );
+    #[cfg(not(feature = "llm"))]
+    eprintln!(
+        "This build does not include the generated BAML client. Run `baml-cli generate` and rebuild with `--features llm` to enable :llm."
     );
 }
 

@@ -8,4 +8,17 @@ Plasm is a **general-purpose language and runtime for API mapping** (schema, exp
 
 Catalog behavior belongs in **`apis/<name>/`**, fixtures, and optional **plugins**—expressed as data and schema-driven rules. Code here stays **agnostic**, driven only by loaded CGS and generic IR/types.
 
-See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.
+## LLM mode
+
+The default workspace build does not include the generated BAML client. Using `:llm` at runtime
+prints setup guidance until the REPL is rebuilt with LLM support:
+
+```bash
+baml-cli generate
+cargo run -p plasm-repl --features llm -- --schema apis/<name>
+```
+
+Install `protoc` before building with `--features llm`; the BAML dependency compiles protobuf
+definitions during its build.
+
+See the repository README for workspace build commands.
