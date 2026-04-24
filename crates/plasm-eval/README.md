@@ -10,4 +10,19 @@ Catalog behavior belongs in **`apis/<name>/`**, fixtures, and optional **plugins
 
 **LLM eval (`plasm-eval` default run):** all cases execute **in YAML order** on **one BAML `TranslatePlan` transcript** (DOMAIN/schema only in the first user turn; each case appends a `--- GOAL ---` turn, mirroring `plasm-repl` `:llm`). There is no parallel “job” mode.
 
-See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.
+## Build notes
+
+Default workspace builds do not require generated BAML sources or `protoc`. Coverage, scaffolding,
+and dry-run code paths compile against the default `plasm-eval` crate.
+
+LLM-backed eval requires the generated BAML client:
+
+```bash
+baml-cli generate
+cargo run -p plasm-eval --features llm -- --schema apis/<name> --cases apis/<name>/eval/cases.yaml
+```
+
+Install `protoc` before building with `--features llm`; the BAML dependency compiles protobuf
+definitions during its build.
+
+See the repository README for workspace build commands.

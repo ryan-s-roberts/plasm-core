@@ -5,6 +5,10 @@ edition = "2021"
 description = "LLM eval harness for Plasm path expressions (schema prompt + soft scoring)"
 readme = "README.md"
 
+[features]
+default = []
+llm = ["dep:baml"]
+
 [[bin]]
 name = "plasm-eval"
 path = "src/main.rs"
@@ -17,7 +21,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
-baml = { workspace = true }
+baml = { workspace = true, optional = true }
 dotenvy = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
