@@ -200,6 +200,58 @@ Large or lossy-presented results get the same treatment. Instead of stuffing eve
 
 The same normalization applies across catalogs in a federated session: refs remain typed, page handles remain runtime-owned, archive refs point to complete run snapshots, and projections stay attached to the entity that knows how to hydrate them.
 
+### Batching
+
+Plasm can run several expressions in one call. HTTP execute accepts either newline-separated `text/plain` expressions or JSON bodies shaped as an array of strings / `{ "expressions": [...] }`. MCP uses the same execution path through the `plasm` tool's required `expressions` array.
+
+```json
+{
+  "expressions": [
+    "e5{p39=e17(p304=\"plasm\", p319=\"plasm\"), p42=\"open\"}",
+    "e12{p137=e17(p304=\"plasm\", p319=\"plasm\"), p139=\"open\"}",
+    "e18{p163=e17(p304=\"plasm\", p319=\"plasm\")}"
+  ]
+}
+```
+
+The result is still one normalized response, but it is organized by step:
+
+```text
+# Batch run
+
+## Step 1 of 3
+`e5{...}`
+→ Query(Issue ...)
+...
+
+## Step 2 of 3
+`e12{...}`
+→ Query(PullRequest ...)
+...
+
+## Step 3 of 3
+`e18{...}`
+→ Query(RepositoryTag ...)
+...
+```
+
+Batching is not just a loop hidden behind the API. The runtime stages the batch:
+
+- Consecutive root `Query` expressions without top-level projection enrichment can run in parallel.
+- The parallel stage forks the session graph, executes branches concurrently, then merges results back in expression order.
+- Gets, writes, page continuations, projections, relation traversals that need cache state, and side effects run sequentially as barriers.
+- Each step still records its own run artifact, request fingerprints, paging hints, omitted fields, and trace metadata.
+
+That means an agent can ask for several independent slices of a repo in one `plasm` call, but dependency-sensitive workflows remain ordered:
+
+```plasm
+e5{p39=e17(p304="plasm", p319="plasm"), p42="open"}
+e5(p304="plasm", p319="plasm", p297=42)[p350,p237]
+e5(p304="plasm", p319="plasm", p297=42).m16(p47=123456)
+```
+
+The first line can be scheduled with adjacent pure queries. The projection line may hydrate fields from the graph, and the mutation line is a side effect, so those are executed after prior cache-visible work. Current batch size is capped at 64 expressions per request.
+
 ## Dynamic CLI
 
 The same CGS/CML catalog also compiles into a normal command-line interface. There is no handwritten GitHub CLI shim hiding underneath: entity names, path parameters, query filters, relation subcommands, write operations, enum validation, and pagination flags are generated from the schema.
