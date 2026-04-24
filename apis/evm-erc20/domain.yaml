@@ -1,0 +1,69 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: http://127.0.0.1:8545
+
+entities:
+  Balance:
+    id_field: account
+    description: ERC-20 balance for an account address
+    fields:
+      account:
+        description: Account address queried via balanceOf
+        field_type: string
+        required: true
+        string_semantics: short
+      balance:
+        description: Token balance as a decimal string
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+  Transfer:
+    id_field: event_id
+    description: ERC-20 Transfer event
+    fields:
+      event_id:
+        description: Stable per-log identity (<tx_hash>:<log_index>)
+        field_type: string
+        required: true
+        string_semantics: short
+      tx_hash:
+        description: Transaction hash that emitted the log
+        field_type: string
+        required: true
+        string_semantics: short
+      log_index:
+        description: Log index within the block
+        field_type: integer
+        required: true
+      from:
+        description: Sender address
+        field_type: string
+        required: true
+        string_semantics: short
+      to:
+        description: Recipient address
+        field_type: string
+        required: true
+        string_semantics: short
+      value:
+        description: Transferred amount as a decimal string
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+capabilities:
+  balance_get:
+    description: Read ERC-20 balanceOf for a single account
+    kind: get
+    entity: Balance
+    provides:
+    - account
+    - balance
+  transfer_query:
+    description: Query ERC-20 Transfer logs over a block range
+    kind: query
+    entity: Transfer

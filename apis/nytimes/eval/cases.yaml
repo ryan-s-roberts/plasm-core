@@ -1,0 +1,18 @@
+# NY Times Article Search — NL→Plasm eval (`Article` via full-text search only in CGS).
+# Goals reflect research / monitoring tasks, not raw query-string trivia.
+- id: nyt-01
+  schema: nytimes
+  goal: "Find recent NYT coverage on renewable energy policy for a briefing"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Article]
+    pred_fields_any: [q]
+
+- id: nyt-02
+  schema: nytimes
+  goal: "Search the archive for articles mentioning 'space exploration' sorted newest first"
+  tags: [search, sort]
+  covers: [search_text]
+  expect:
+    entities_any: [Article]

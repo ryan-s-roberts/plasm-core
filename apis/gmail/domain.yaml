@@ -1,0 +1,1033 @@
+version: 10
+
+http_backend: https://gmail.googleapis.com
+
+entities:
+  Message:
+    id_field: id
+    description: A Gmail message (email). messages.list returns only id+threadId; messages.get returns full content including RFC 5322 headers flattened from payload.headers (headerFrom, headerSubject, …). Mailbox-wide text search uses the q parameter or Message~"…" (not the snippet field — snippet is a preview string returned on each row).
+    fields:
+      id:
+        description: Immutable message ID
+        field_type: string
+        required: true
+        string_semantics: short
+      threadId:
+        description: ID of the thread this message belongs to
+        field_type: entity_ref
+        target: Thread
+        required: false
+      labelIds:
+        description: Labels applied to this message (INBOX, UNREAD, SENT, SPAM, TRASH, or user label IDs)
+        field_type: array
+        required: false
+        items:
+          type: string
+      snippet:
+        description: Short plain text preview of the message body
+        field_type: string
+        required: false
+        string_semantics: short
+      historyId:
+        description: ID of the last history record that modified this message
+        field_type: string
+        required: false
+        string_semantics: short
+      internalDate:
+        description: Message creation timestamp (epoch milliseconds as string)
+        field_type: string
+        required: false
+        string_semantics: short
+      sizeEstimate:
+        description: Estimated size in bytes
+        field_type: integer
+        required: false
+      headerFrom:
+        description: From header (from payload.headers when present)
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: From
+          case_insensitive: true
+      headerTo:
+        description: To header
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: To
+          case_insensitive: true
+      headerSubject:
+        description: Subject header
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: Subject
+          case_insensitive: true
+      headerDate:
+        description: Date header
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: Date
+          case_insensitive: true
+      headerReplyTo:
+        description: Reply-To header
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: Reply-To
+          case_insensitive: true
+      headerCc:
+        description: Cc header
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: Cc
+          case_insensitive: true
+      headerBcc:
+        description: Bcc header
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: Bcc
+          case_insensitive: true
+      headerMessageId:
+        description: Message-Id header (RFC 5322)
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: Message-Id
+          case_insensitive: true
+      headerReferences:
+        description: References header (space-separated Message-Ids)
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: References
+          case_insensitive: true
+      headerInReplyTo:
+        description: In-Reply-To header (parent Message-Id)
+        field_type: string
+        required: false
+        string_semantics: short
+        path:
+        - payload
+        - headers
+        derive:
+          type: name_value_array_lookup
+          equals: In-Reply-To
+          case_insensitive: true
+    relations:
+      attachments:
+        description: Attachments on this message
+        target: Attachment
+        cardinality: many
+  Thread:
+    id_field: id
+    primary_read: thread_get
+    description: A conversation thread — a collection of related messages. Full-text search uses q or Thread~"…"; snippet is a preview of the thread (filled by threads.get), not the Gmail search box parameter.
+    fields:
+      id:
+        description: Immutable thread ID (matches the first message's ID)
+        field_type: string
+        required: true
+        string_semantics: short
+      snippet:
+        description: Short plain text preview of the most recent message
+        field_type: string
+        required: false
+        string_semantics: short
+      historyId:
+        description: ID of the last history record that modified this thread
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      messages:
+        description: Messages in this thread
+        target: Message
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: messages
+          - wildcard: true
+  Label:
+    id_field: id
+    description: A mailbox label. Includes system labels (INBOX, SENT, SPAM, etc.) and user-created labels.
+    fields:
+      id:
+        description: Immutable label ID (e.g. INBOX, Label_123456)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name of the label
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        description: 'Label owner: system (built-in) or user (created)'
+        field_type: select
+        required: false
+        allowed_values:
+        - system
+        - user
+      messageListVisibility:
+        description: Whether messages with this label appear in the message list
+        field_type: select
+        required: false
+        allowed_values:
+        - show
+        - hide
+      labelListVisibility:
+        description: Whether this label appears in the label list
+        field_type: select
+        required: false
+        allowed_values:
+        - labelShow
+        - labelShowIfUnread
+        - labelHide
+      messagesTotal:
+        description: Total messages with this label
+        field_type: integer
+        required: false
+      messagesUnread:
+        description: Unread messages with this label
+        field_type: integer
+        required: false
+      threadsTotal:
+        description: Total threads with this label
+        field_type: integer
+        required: false
+      threadsUnread:
+        description: Unread threads with this label
+        field_type: integer
+        required: false
+    relations: {}
+  Draft:
+    id_field: id
+    description: A draft email. The message content lives in the embedded 'message' field.
+    fields:
+      id:
+        description: Immutable draft ID
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+    domain_projection_examples: false
+  Attachment:
+    abstract: true
+    id_field: id
+    key_vars:
+    - messageId
+    - id
+    description: A file attached to a message. Only fetchable with both messageId and attachmentId.
+    fields:
+      id:
+        description: Immutable attachment ID (valid only within the context of its message)
+        field_type: string
+        required: true
+        string_semantics: short
+      messageId:
+        description: ID of the parent message
+        field_type: entity_ref
+        target: Message
+        required: false
+      size:
+        description: Number of bytes in the attachment data
+        field_type: integer
+        required: false
+      data:
+        description: Attachment payload as base64url (wire); treat as opaque bytes, not short text
+        field_type: blob
+        required: false
+        mime_type_hint: application/octet-stream
+        attachment_media: generic
+    relations: {}
+  Profile:
+    id_field: emailAddress
+    description: The authenticated user's Gmail profile
+    fields:
+      emailAddress:
+        description: User's email address
+        field_type: string
+        required: true
+        string_semantics: short
+      messagesTotal:
+        description: Total number of messages in the mailbox
+        field_type: integer
+        required: false
+      threadsTotal:
+        description: Total number of threads in the mailbox
+        field_type: integer
+        required: false
+      historyId:
+        description: Current history record ID (used for incremental sync)
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+capabilities:
+  message_list:
+    description: 'List messages in the mailbox. 
+
+      '
+    kind: query
+    entity: Message
+    provides:
+    - id
+    - threadId
+    parameters:
+    - name: q
+      type: string
+      required: false
+      role: search
+      description: Gmail search query. Supports from:, to:, subject:, is:unread, has:attachment, label:, etc.
+      string_semantics: short
+    - name: labelIds
+      type: array
+      required: false
+      role: filter
+      description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such as INBOX, SENT, or user labels — this is mailbox/label filtering
+      items:
+        type: string
+    - name: includeSpamTrash
+      type: boolean
+      required: false
+      role: filter
+      description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash.
+  message_search:
+    description: Gmail full-text search (same endpoint as message list). Use Message~"text" or message search --q; combine with labelIds/includeSpamTrash as needed.
+    kind: search
+    entity: Message
+    provides:
+    - id
+    - threadId
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      description: Gmail search query (from:, to:, subject:, is:unread, has:attachment, plain keywords, etc.)
+      string_semantics: short
+    - name: labelIds
+      type: array
+      required: false
+      role: filter
+      description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+      items:
+        type: string
+    - name: includeSpamTrash
+      type: boolean
+      required: false
+      role: filter
+      description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash. Never pass a label name here (e.g. INBOX); use labelIds for that.
+  message_get:
+    description: Fetch a complete message including headers and body
+    kind: get
+    entity: Message
+    provides:
+    - id
+    - threadId
+    - labelIds
+    - snippet
+    - historyId
+    - internalDate
+    - sizeEstimate
+    - headerFrom
+    - headerTo
+    - headerSubject
+    - headerDate
+    - headerReplyTo
+    - headerCc
+    - headerBcc
+    - headerMessageId
+    - headerReferences
+    - headerInReplyTo
+    parameters:
+    - name: format
+      type: select
+      required: false
+      allowed_values:
+      - full
+      - metadata
+      - minimal
+      - raw
+      role: response_control
+      description: full (default) returns body; metadata returns headers only; minimal returns id+labels; raw is the full RFC 2822. Narrow OAuth grants may only allow format metadata or minimal — use list queries with --summary if you must avoid default hydration that calls get with full.
+  message_send:
+    description: Send an email message immediately
+    kind: create
+    entity: Message
+    parameters:
+    - name: raw
+      type: blob
+      required: true
+      description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (Gmail `users.messages.send`).
+    - name: threadId
+      type: entity_ref
+      target: Thread
+      required: false
+      description: Thread to reply into
+  message_send_simple:
+    description: Send a plain-text email without hand-built MIME; runtime builds RFC 5322 and base64url `raw` for users.messages.send.
+    kind: create
+    entity: Message
+    parameters:
+    - name: from
+      type: string
+      required: true
+      description: RFC 5322 From (must match mailbox or send-as; use profile_get emailAddress when unsure)
+      string_semantics: short
+    - name: to
+      type: string
+      required: true
+      description: Primary To address(es); comma-separated if multiple
+      string_semantics: short
+    - name: subject
+      type: string
+      required: true
+      string_semantics: short
+    - name: plainBody
+      type: string
+      required: true
+      description: Plain text body (newlines allowed - use HEREDOC)
+      string_semantics: document
+    - name: threadId
+      type: entity_ref
+      target: Thread
+      required: false
+      description: Gmail thread to attach the message to (replies)
+    - name: inReplyTo
+      type: string
+      required: false
+      description: Optional In-Reply-To header (parent Message-Id)
+      string_semantics: short
+    - name: references
+      type: string
+      required: false
+      description: Optional References header (space-separated Message-Ids)
+      string_semantics: short
+  message_reply:
+    description: Reply to the invoke target message (plain text). Runtime preflight runs message_get on the target id to fill threading; same POST users.messages.send as message_send_simple.
+    kind: action
+    entity: Message
+    invoke_preflight:
+      hydrate_capability: message_get
+      env_prefix: parent
+    provides:
+    - id
+    - threadId
+    - labelIds
+    parameters:
+    - name: from
+      type: string
+      required: true
+      description: RFC 5322 From (must match mailbox or send-as; use profile_get emailAddress when unsure)
+      string_semantics: short
+    - name: plainBody
+      type: string
+      required: true
+      description: Plain text reply body
+      string_semantics: document
+    - name: to
+      type: string
+      required: false
+      description: Override To (default is Reply-To or From of the message being replied to)
+      string_semantics: short
+    - name: subject
+      type: string
+      required: false
+      description: 'Override Subject (default is Re: parent subject)'
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Sends the reply and returns the new Message row from Gmail (same response shape as message send).
+  message_trash:
+    description: Move a message to TRASH
+    kind: action
+    entity: Message
+    output:
+      type: side_effect
+      description: Move a message to TRASH
+  message_untrash:
+    description: Remove a message from TRASH
+    kind: action
+    entity: Message
+    output:
+      type: side_effect
+      description: Remove a message from TRASH
+  message_delete:
+    description: Permanently delete a message (irreversible — prefer message_trash)
+    kind: delete
+    entity: Message
+  message_modify:
+    description: Add or remove labels on a message
+    kind: update
+    entity: Message
+    parameters:
+    - name: addLabelIds
+      type: array
+      required: false
+      description: Label IDs to add
+      items:
+        type: string
+    - name: removeLabelIds
+      type: array
+      required: false
+      description: Label IDs to remove
+      items:
+        type: string
+  thread_list:
+    description: 'List threads in the mailbox. Returns only {id, historyId} per thread in this CGS; default auto-hydration issues threads.get for each row in the page (one threads.list per page plus N threads.get for N rows) to fill snippet and nested messages. Use query --summary to skip get and keep id+historyId only. To restrict to a mailbox or label (e.g. INBOX), use labelIds — not includeSpamTrash (that flag is only true/false for whether Spam and Trash folders are included).
+
+      '
+    kind: query
+    entity: Thread
+    provides:
+    - id
+    - historyId
+    parameters:
+    - name: q
+      type: string
+      required: false
+      role: search
+      description: Gmail search query (same syntax as message_list)
+      string_semantics: short
+    - name: labelIds
+      type: array
+      required: false
+      role: filter
+      description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+      items:
+        type: string
+    - name: includeSpamTrash
+      type: boolean
+      required: false
+      role: filter
+      description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a label name here (e.g. INBOX); use labelIds for that.
+  thread_search:
+    description: Gmail full-text search over threads (same endpoint as thread list). Same minimal row shape and default thread_get hydration as thread_list. Use Thread~"text" or thread search --q; combine with labelIds/includeSpamTrash as needed.
+    kind: search
+    entity: Thread
+    provides:
+    - id
+    - historyId
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      description: Gmail search query (same syntax as message_search)
+      string_semantics: short
+    - name: labelIds
+      type: array
+      required: false
+      role: filter
+      description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+      items:
+        type: string
+    - name: includeSpamTrash
+      type: boolean
+      required: false
+      role: filter
+      description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a label name here (e.g. INBOX); use labelIds for that.
+  thread_get:
+    description: Fetch a thread with nested messages (threads.get). Used by default after thread_list/thread_search to upgrade summary rows; each row costs one HTTP GET.
+    kind: get
+    entity: Thread
+    provides:
+    - id
+    - snippet
+    - historyId
+    parameters:
+    - name: format
+      type: select
+      required: false
+      allowed_values:
+      - full
+      - metadata
+      - minimal
+      role: response_control
+      description: full returns all messages with bodies; metadata omits bodies; minimal is ids and labels only. Narrow OAuth grants may only allow format metadata or minimal — use thread list with --summary if you must avoid default hydration that calls get with full.
+  thread_trash:
+    description: Move a thread and all its messages to TRASH
+    kind: action
+    entity: Thread
+    output:
+      type: side_effect
+      description: Move a thread and all its messages to TRASH
+  thread_untrash:
+    description: Remove a thread and all its messages from TRASH
+    kind: action
+    entity: Thread
+    output:
+      type: side_effect
+      description: Remove a thread and all its messages from TRASH
+  thread_delete:
+    description: Permanently delete a thread and all its messages (irreversible)
+    kind: delete
+    entity: Thread
+  thread_modify:
+    description: Add or remove labels on a thread
+    kind: update
+    entity: Thread
+    parameters:
+    - name: addLabelIds
+      type: array
+      required: false
+      description: Label IDs to add
+      items:
+        type: string
+    - name: removeLabelIds
+      type: array
+      required: false
+      description: Label IDs to remove
+      items:
+        type: string
+  label_list:
+    description: List all labels in the mailbox (system + user-created)
+    kind: query
+    entity: Label
+  label_get:
+    description: Get a specific label by ID
+    kind: get
+    entity: Label
+    provides:
+    - id
+    - name
+    - type
+    - messageListVisibility
+    - labelListVisibility
+    - messagesTotal
+    - messagesUnread
+    - threadsTotal
+    - threadsUnread
+  label_create:
+    description: Create a new user label
+    kind: create
+    entity: Label
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: messageListVisibility
+      type: select
+      required: false
+      allowed_values:
+      - show
+      - hide
+    - name: labelListVisibility
+      type: select
+      required: false
+      allowed_values:
+      - labelShow
+      - labelShowIfUnread
+      - labelHide
+  label_update:
+    description: Update an existing label
+    kind: update
+    entity: Label
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: messageListVisibility
+      type: select
+      required: false
+      allowed_values:
+      - show
+      - hide
+    - name: labelListVisibility
+      type: select
+      required: false
+      allowed_values:
+      - labelShow
+      - labelShowIfUnread
+      - labelHide
+  label_delete:
+    description: Permanently delete a label (removes it from all messages)
+    kind: delete
+    entity: Label
+  draft_list:
+    description: List drafts in the mailbox
+    kind: query
+    entity: Draft
+    provides:
+    - id
+  draft_get:
+    description: Get a specific draft by ID
+    kind: get
+    entity: Draft
+    parameters:
+    - name: format
+      type: select
+      required: false
+      allowed_values:
+      - full
+      - metadata
+      - minimal
+      - raw
+      role: response_control
+    provides:
+    - id
+  draft_create:
+    description: Create a new draft
+    kind: create
+    entity: Draft
+    parameters:
+    - name: raw
+      type: blob
+      required: false
+      description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (draft body).
+    - name: threadId
+      type: entity_ref
+      target: Thread
+      required: false
+      description: Thread to reply into
+  draft_update:
+    description: Replace the content of an existing draft
+    kind: update
+    entity: Draft
+    parameters:
+    - name: raw
+      type: blob
+      required: false
+      description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (replaces draft body).
+  draft_delete:
+    description: Permanently delete a draft
+    kind: delete
+    entity: Draft
+  draft_send:
+    description: Send an existing draft immediately
+    kind: action
+    entity: Draft
+    output:
+      type: side_effect
+      description: Send an existing draft immediately
+  attachment_get:
+    description: Fetch an attachment's data. Requires both messageId (scope) and attachment id.
+    kind: action
+    entity: Attachment
+    parameters:
+    - name: messageId
+      type: entity_ref
+      target: Message
+      required: true
+      role: scope
+    output:
+      type: side_effect
+      description: Fetch an attachment's data. Requires both messageId (scope) and attachment id.
+  profile_get:
+    description: Get the authenticated user's Gmail profile (email address, message/thread counts)
+    kind: singleton
+    entity: Profile
+oauth:
+  provider: google
+  scopes:
+    https://mail.google.com/:
+      label: Full Gmail (including permanent delete)
+      notes: Broadest scope; subsumes narrower Gmail scopes. Use when this CGS must satisfy message_delete/thread_delete and other full-mailbox operations.
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/gmail.readonly:
+      label: Read mail and settings
+      notes: List/search messages and threads, read bodies and attachments, labels, drafts, profile — the default functional read-only grant for this schema (including default query hydration).
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/gmail.modify:
+      label: Read, compose, send (not permanent delete bypassing trash)
+      notes: Everything in readonly plus trash/modify labels and non-permanent deletes; typical triage agents.
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/gmail.compose:
+      label: Manage drafts and send
+      notes: Drafts and send; pair with readonly-class scopes for read if needed.
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/gmail.send:
+      label: Send only
+      notes: Minimal send automation; insufficient alone for inbox read/search in this CGS.
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/gmail.labels:
+      label: See and edit labels (narrower than message label mutation)
+      notes: Label CRUD; can combine with readonly for read-heavy label workflows.
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/gmail.insert:
+      label: Insert messages into mailbox
+      docs_url: https://developers.google.com/gmail/api/auth/scopes
+    https://www.googleapis.com/auth/userinfo.profile:
+      label: OpenID Connect basic profile
+      notes: Identity bundle scopes (People/Contacts) are optional for Gmail mailbox operations; listed for toolkit parity.
+    https://www.googleapis.com/auth/userinfo.email:
+      label: OpenID Connect email
+      notes: Often paired with userinfo.profile for sign-in flows.
+    https://www.googleapis.com/auth/contacts.readonly:
+      label: Google Contacts read
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/contacts.other.readonly:
+      label: Other contacts read
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/profile.language.read:
+      label: People API language preferences
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/user.addresses.read:
+      label: People API addresses read
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/user.birthday.read:
+      label: People API birthday read
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/user.emails.read:
+      label: People API emails read
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/user.phonenumbers.read:
+      label: People API phone numbers read
+      notes: Not required for Gmail REST capabilities in this CGS.
+    https://www.googleapis.com/auth/profile.emails.read:
+      label: People API profile emails read
+      notes: Not required for Gmail REST capabilities in this CGS.
+  default_scope_sets:
+    plasm_gmail_readonly_mailbox:
+      description: Functional read-only mailbox — list, search (q / Message~ / Thread~), get bodies, attachments, drafts read, labels read, profile; matches default Plasm hydration.
+      scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+    plasm_gmail_modify_mailbox:
+      description: Triage and mailbox edits — readonly-class reads plus trash, label changes on messages/threads, and related modify operations in this CGS.
+      scopes:
+      - https://www.googleapis.com/auth/gmail.modify
+    plasm_gmail_compose_and_drafts:
+      description: Drafts and composition — create/update/send drafts and message_send; combine with gmail.readonly or gmail.modify for read paths as needed.
+      scopes:
+      - https://www.googleapis.com/auth/gmail.compose
+    plasm_gmail_send_only:
+      description: Narrow automation — send mail only; insufficient alone for search/list/get in this CGS.
+      scopes:
+      - https://www.googleapis.com/auth/gmail.send
+    plasm_gmail_full_mailbox:
+      description: Full mailbox including permanent message/thread delete (mail.google.com scope).
+      scopes:
+      - https://mail.google.com/
+    plasm_gmail_integrator_bundle:
+      description: Broad integration bundle (OpenID userinfo + Google Contacts/People read scopes + full mail.google.com). Includes mail.google.com but omits explicit gmail.readonly; prefer plasm_gmail_readonly_mailbox for read automation unless an integrator requires this wide grant.
+      scopes:
+      - https://www.googleapis.com/auth/userinfo.profile
+      - https://www.googleapis.com/auth/userinfo.email
+      - https://www.googleapis.com/auth/contacts.readonly
+      - https://www.googleapis.com/auth/contacts.other.readonly
+      - https://www.googleapis.com/auth/profile.language.read
+      - https://www.googleapis.com/auth/user.addresses.read
+      - https://www.googleapis.com/auth/user.birthday.read
+      - https://www.googleapis.com/auth/user.emails.read
+      - https://www.googleapis.com/auth/user.phonenumbers.read
+      - https://www.googleapis.com/auth/profile.emails.read
+      - https://mail.google.com/
+  requirements:
+    capabilities:
+      message_list:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      message_search:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      message_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      message_send:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.send
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      message_send_simple:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.send
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      message_reply:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.send
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      message_trash:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      message_untrash:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      message_delete:
+        any_of:
+        - https://mail.google.com/
+      message_modify:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      thread_list:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      thread_search:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      thread_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      thread_trash:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      thread_untrash:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      thread_delete:
+        any_of:
+        - https://mail.google.com/
+      thread_modify:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      label_list:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.labels
+        - https://mail.google.com/
+      label_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.labels
+        - https://mail.google.com/
+      label_create:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.labels
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      label_update:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.labels
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      label_delete:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.labels
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      draft_list:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      draft_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      draft_create:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      draft_update:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      draft_delete:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      draft_send:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      attachment_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      profile_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+    relations:
+      Message.attachments:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+auth:
+  scheme: bearer_token
+  env: GMAIL_ACCESS_TOKEN

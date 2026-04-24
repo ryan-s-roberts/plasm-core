@@ -1,0 +1,308 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://graphqlzero.almansi.network
+
+entities:
+  User:
+    id_field: id
+    description: A user account (GraphQLZero / JSONPlaceholder).
+    fields:
+      id:
+        field_type: string
+        required: true
+        description: User identifier.
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      username:
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+      phone:
+        field_type: string
+        required: false
+        string_semantics: short
+      website:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      posts:
+        target: Post
+        cardinality: many
+        description: Posts authored by this user.
+      albums:
+        target: Album
+        cardinality: many
+        description: Albums owned by this user.
+      todos:
+        target: Todo
+        cardinality: many
+        description: Todos for this user.
+  Post:
+    id_field: id
+    description: A blog post.
+    fields:
+      id:
+        field_type: string
+        required: true
+        description: Post identifier.
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      user:
+        target: User
+        cardinality: one
+        description: Author of the post.
+      comments:
+        target: Comment
+        cardinality: many
+        description: Comments on this post.
+  Comment:
+    id_field: id
+    description: A comment on a post.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      post:
+        target: Post
+        cardinality: one
+        description: Post this comment belongs to.
+  Todo:
+    id_field: id
+    description: A todo item for a user.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      completed:
+        field_type: boolean
+        required: false
+    relations:
+      user:
+        target: User
+        cardinality: one
+        description: User this todo belongs to.
+  Album:
+    id_field: id
+    description: A photo album owned by a user.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      user:
+        target: User
+        cardinality: one
+        description: Owner of the album.
+      photos:
+        target: Photo
+        cardinality: many
+        description: Photos in this album.
+  Photo:
+    id_field: id
+    description: A photo in an album.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+      thumbnailUrl:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      album:
+        target: Album
+        cardinality: one
+        description: Album containing this photo.
+capabilities:
+  user_query:
+    kind: query
+    entity: User
+    description: List users (paginated list; use --summary to skip per-row user_get hydration).
+    provides:
+    - id
+    - name
+    - username
+    - email
+  user_get:
+    kind: get
+    entity: User
+    description: Fetch one user by id.
+    provides:
+    - id
+    - name
+    - username
+    - email
+    - phone
+    - website
+  post_query:
+    kind: query
+    entity: Post
+    description: List posts (paginated; use --summary when you only need list fields).
+    provides:
+    - id
+    - title
+    - body
+  post_get:
+    kind: get
+    entity: Post
+    description: Fetch one post by id (includes author summary for relation navigation).
+    provides:
+    - id
+    - title
+    - body
+  comment_query:
+    kind: query
+    entity: Comment
+    description: List comments (paginated).
+    provides:
+    - id
+    - name
+    - email
+    - body
+  comment_get:
+    kind: get
+    entity: Comment
+    description: Fetch one comment by id.
+    provides:
+    - id
+    - name
+    - email
+    - body
+  todo_query:
+    kind: query
+    entity: Todo
+    description: List todos (paginated).
+    provides:
+    - id
+    - title
+    - completed
+  todo_get:
+    kind: get
+    entity: Todo
+    description: Fetch one todo by id.
+    provides:
+    - id
+    - title
+    - completed
+  album_query:
+    kind: query
+    entity: Album
+    description: List albums (paginated).
+    provides:
+    - id
+    - title
+  album_get:
+    kind: get
+    entity: Album
+    description: Fetch one album by id.
+    provides:
+    - id
+    - title
+  photo_query:
+    kind: query
+    entity: Photo
+    description: List photos (paginated).
+    provides:
+    - id
+    - title
+    - url
+    - thumbnailUrl
+  photo_get:
+    kind: get
+    entity: Photo
+    description: Fetch one photo by id.
+    provides:
+    - id
+    - title
+    - url
+    - thumbnailUrl
+  post_create:
+    kind: create
+    entity: Post
+    description: Create a new post (shared demo dataset — visible to all clients).
+    provides:
+    - id
+    - title
+    - body
+    parameters:
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  post_update:
+    kind: update
+    entity: Post
+    description: Update an existing post (shared demo dataset).
+    provides:
+    - id
+    - title
+    - body
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+  post_delete:
+    kind: delete
+    entity: Post
+    description: Delete a post by id (shared demo dataset).

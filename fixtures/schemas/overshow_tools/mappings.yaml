@@ -1,0 +1,236 @@
+# Stub CML for fixtures — paths are illustrative (local Overshow-style MCP bridge).
+
+recorded_content_search:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: recorded-content }
+    - { type: literal, value: search }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [q, { type: var, name: q }]
+      - [content_type, { type: if, condition: { type: exists, var: content_type },
+          then_expr: { type: var, name: content_type },
+          else_expr: { type: const, value: null } }]
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]
+      - [offset, { type: if, condition: { type: exists, var: offset },
+          then_expr: { type: var, name: offset },
+          else_expr: { type: const, value: null } }]
+      - [start_time, { type: if, condition: { type: exists, var: start_time },
+          then_expr: { type: var, name: start_time },
+          else_expr: { type: const, value: null } }]
+      - [end_time, { type: if, condition: { type: exists, var: end_time },
+          then_expr: { type: var, name: end_time },
+          else_expr: { type: const, value: null } }]
+      - [app_name, { type: if, condition: { type: exists, var: app_name },
+          then_expr: { type: var, name: app_name },
+          else_expr: { type: const, value: null } }]
+      - [window_name, { type: if, condition: { type: exists, var: window_name },
+          then_expr: { type: var, name: window_name },
+          else_expr: { type: const, value: null } }]
+      - [min_length, { type: if, condition: { type: exists, var: min_length },
+          then_expr: { type: var, name: min_length },
+          else_expr: { type: const, value: null } }]
+      - [max_length, { type: if, condition: { type: exists, var: max_length },
+          then_expr: { type: var, name: max_length },
+          else_expr: { type: const, value: null } }]
+
+recorded_content_query_by_profile:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: profiles }
+    - { type: var, name: profile_id }
+    - { type: literal, value: recorded-content }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [query, { type: if, condition: { type: exists, var: query },
+          then_expr: { type: var, name: query },
+          else_expr: { type: const, value: null } }]
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]
+      - [mode, { type: if, condition: { type: exists, var: mode },
+          then_expr: { type: var, name: mode },
+          else_expr: { type: const, value: null } }]
+
+detected_question_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: questions }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [unresolved_only, { type: if, condition: { type: exists, var: unresolved_only },
+          then_expr: { type: var, name: unresolved_only },
+          else_expr: { type: const, value: null } }]
+      - [app_name, { type: if, condition: { type: exists, var: app_name },
+          then_expr: { type: var, name: app_name },
+          else_expr: { type: const, value: null } }]
+      - [speaker_id, { type: if, condition: { type: exists, var: speaker_id },
+          then_expr: { type: var, name: speaker_id },
+          else_expr: { type: const, value: null } }]
+      - [include_answers, { type: if, condition: { type: exists, var: include_answers },
+          then_expr: { type: var, name: include_answers },
+          else_expr: { type: const, value: null } }]
+      - [min_answer_similarity, { type: if, condition: { type: exists, var: min_answer_similarity },
+          then_expr: { type: var, name: min_answer_similarity },
+          else_expr: { type: const, value: null } }]
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]
+      - [offset, { type: if, condition: { type: exists, var: offset },
+          then_expr: { type: var, name: offset },
+          else_expr: { type: const, value: null } }]
+
+meeting_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: meetings }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [status, { type: if, condition: { type: exists, var: status },
+          then_expr: { type: var, name: status },
+          else_expr: { type: const, value: null } }]
+      - [start_date, { type: if, condition: { type: exists, var: start_date },
+          then_expr: { type: var, name: start_date },
+          else_expr: { type: const, value: null } }]
+      - [end_date, { type: if, condition: { type: exists, var: end_date },
+          then_expr: { type: var, name: end_date },
+          else_expr: { type: const, value: null } }]
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]
+
+meeting_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: meetings }
+    - { type: var, name: id }
+  response: single
+
+prompt_run_create:
+  method: POST
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: prompt-runs }
+  body:
+    type: var
+    name: input
+  response: single
+
+profile_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: profiles }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [profile_type, { type: if, condition: { type: exists, var: profile_type },
+          then_expr: { type: var, name: profile_type },
+          else_expr: { type: const, value: null } }]
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]
+
+profile_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: profiles }
+    - { type: var, name: id }
+  response: single
+
+pipeline_snapshot_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: pipeline }
+    - { type: literal, value: status }
+  response: single
+
+capture_item_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: capture-items }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]
+      - [app_name, { type: if, condition: { type: exists, var: app_name },
+          then_expr: { type: var, name: app_name },
+          else_expr: { type: const, value: null } }]
+      - [start_time, { type: if, condition: { type: exists, var: start_time },
+          then_expr: { type: var, name: start_time },
+          else_expr: { type: const, value: null } }]
+      - [end_time, { type: if, condition: { type: exists, var: end_time },
+          then_expr: { type: var, name: end_time },
+          else_expr: { type: const, value: null } }]
+
+capture_item_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: capture-items }
+    - { type: var, name: id }
+  response: single
+  query:
+    type: object
+    fields:
+      - [content_type, { type: var, name: content_type }]
+
+capture_session_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: capture }
+    - { type: literal, value: status }
+  response: single
+
+pipeline_event_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: pipeline }
+    - { type: literal, value: events }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [names, { type: if, condition: { type: exists, var: names },
+          then_expr: { type: var, name: names },
+          else_expr: { type: const, value: null } }]
+      - [sources, { type: if, condition: { type: exists, var: sources },
+          then_expr: { type: var, name: sources },
+          else_expr: { type: const, value: null } }]
+      - [min_severity, { type: if, condition: { type: exists, var: min_severity },
+          then_expr: { type: var, name: min_severity },
+          else_expr: { type: const, value: null } }]
+      - [limit, { type: if, condition: { type: exists, var: limit },
+          then_expr: { type: var, name: limit },
+          else_expr: { type: const, value: null } }]

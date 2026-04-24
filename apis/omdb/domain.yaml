@@ -1,0 +1,127 @@
+version: 1
+
+http_backend: http://www.omdbapi.com
+
+entities:
+  Movie:
+    id_field: imdbID
+    description: A movie, series, or episode from the OMDb database
+    fields:
+      imdbID:
+        description: IMDb identifier (e.g. tt1285016)
+        field_type: string
+        required: true
+        string_semantics: short
+      Title:
+        description: Official title of the movie or series
+        field_type: string
+        required: true
+        string_semantics: short
+      Year:
+        description: Release year or year range for series
+        field_type: string
+        required: false
+        string_semantics: short
+      Type:
+        description: 'Media type: movie, series, or episode'
+        field_type: select
+        required: false
+        allowed_values:
+        - movie
+        - series
+        - episode
+      Rated:
+        description: Content rating (e.g. PG-13, R)
+        field_type: string
+        required: false
+        string_semantics: short
+      Genre:
+        description: Comma-separated list of genres
+        field_type: string
+        required: false
+        string_semantics: short
+      Director:
+        description: Name of the director(s)
+        field_type: string
+        required: false
+        string_semantics: short
+      Plot:
+        description: Short or full plot summary
+        field_type: string
+        required: false
+        string_semantics: markdown
+      imdbRating:
+        description: Average user rating on IMDb (0-10)
+        field_type: string
+        required: false
+        string_semantics: short
+      Poster:
+        description: URL of the movie poster image
+        field_type: string
+        required: false
+        string_semantics: short
+capabilities:
+  movie_get:
+    description: Fetch full movie details by IMDb ID
+    kind: get
+    entity: Movie
+    provides:
+    - imdbID
+    - Title
+    - Year
+    - Type
+    - Rated
+    - Genre
+    - Director
+    - Plot
+    - imdbRating
+    - Poster
+  movie_search:
+    description: Search movies by title keywords
+    kind: search
+    entity: Movie
+    parameters:
+    - name: s
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: y
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: type
+      type: select
+      required: false
+      allowed_values:
+      - movie
+      - series
+      - episode
+      role: filter
+  movie_get_by_title:
+    description: Look up a single movie by exact title match
+    kind: query
+    entity: Movie
+    parameters:
+    - name: t
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: y
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: plot
+      type: select
+      required: false
+      allowed_values:
+      - short
+      - full
+      role: response_control
+auth:
+  scheme: api_key_query
+  param: apikey
+  env: OMDB_API_KEY

@@ -1,0 +1,56 @@
+# Spotify Web API — albums, artists, tracks, playlists, users (query, get, action, update).
+- id: sp-01
+  schema: spotify
+  goal: "Find tracks matching 'lofi study' for a focus playlist"
+  tags: [query, search]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Track]
+
+- id: sp-02
+  schema: spotify
+  goal: "Load album 1A2GTWGtFfWp5KSQTwWOyo for the release-year display"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Album]
+
+- id: sp-03
+  schema: spotify
+  goal: "List every track on that album in order for the tracklist view"
+  tags: [invoke, action]
+  covers: [invoke]
+  expect:
+    entities_any: [Album, Track]
+
+- id: sp-04
+  schema: spotify
+  goal: "Rename my workout playlist and update its public flag"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Playlist]
+
+- id: sp-05
+  schema: spotify
+  goal: "From artist Radiohead, enumerate their albums for a discography page"
+  tags: [invoke, action]
+  covers: [invoke]
+  expect:
+    entities_any: [Artist, Album]
+
+- id: sp-06
+  schema: spotify
+  goal: "Show my profile's playlists, then load tracks for the first playlist"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [User, Playlist, Track]
+
+- id: sp-07
+  schema: spotify
+  goal: "Get track 11dFzVX7ANZGn6Lxv9TIVy but only id, name, and duration for the queue"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Track]

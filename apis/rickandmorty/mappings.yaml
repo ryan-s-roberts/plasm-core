@@ -1,0 +1,98 @@
+# Rick and Morty public HTTP API (set site origin and /api base with --backend).
+# All list endpoints return: { info: { count, pages, next, prev }, results: [...] }
+# Pagination is 1-indexed page number.
+
+character_query:
+  method: GET
+  path: [{ type: literal, value: character }]
+  pagination:
+    params:
+      page: {counter: 1}
+      page_size: {fixed: 20}
+  query:
+    type: object
+    fields:
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - status
+        - type: if
+          condition: { type: exists, var: status }
+          then_expr: { type: var, name: status }
+          else_expr: { type: const, value: null }
+      - - species
+        - type: if
+          condition: { type: exists, var: species }
+          then_expr: { type: var, name: species }
+          else_expr: { type: const, value: null }
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+      - - gender
+        - type: if
+          condition: { type: exists, var: gender }
+          then_expr: { type: var, name: gender }
+          else_expr: { type: const, value: null }
+
+character_get:
+  method: GET
+  path: [{ type: literal, value: character }, { type: var, name: id }]
+
+location_query:
+  method: GET
+  path: [{ type: literal, value: location }]
+  pagination:
+    params:
+      page: {counter: 1}
+      page_size: {fixed: 20}
+  query:
+    type: object
+    fields:
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+      - - dimension
+        - type: if
+          condition: { type: exists, var: dimension }
+          then_expr: { type: var, name: dimension }
+          else_expr: { type: const, value: null }
+
+location_get:
+  method: GET
+  path: [{ type: literal, value: location }, { type: var, name: id }]
+
+episode_query:
+  method: GET
+  path: [{ type: literal, value: episode }]
+  pagination:
+    params:
+      page: {counter: 1}
+      page_size: {fixed: 20}
+  query:
+    type: object
+    fields:
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - episode
+        - type: if
+          condition: { type: exists, var: episode }
+          then_expr: { type: var, name: episode }
+          else_expr: { type: const, value: null }
+
+episode_get:
+  method: GET
+  path: [{ type: literal, value: episode }, { type: var, name: id }]

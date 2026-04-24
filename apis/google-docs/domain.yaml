@@ -1,0 +1,161 @@
+version: 1
+
+http_backend: https://docs.googleapis.com
+
+# Google Docs API v1 — semantic CGS. A native Google Doc’s document id matches the Drive file id
+# for the same document; federate with google-drive when agents need both file metadata and
+# structured document edits.
+
+entities:
+  Document:
+    id_field: documentId
+    description: A Google Docs document (structure, tabs, and body content as returned by the API).
+    primary_read: documents_get
+    fields:
+      documentId:
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      revisionId:
+        field_type: string
+        required: false
+        string_semantics: short
+      body:
+        field_type: json
+        required: false
+        description: Structured body content (StructuralElement list under body.content when present).
+      headers:
+        field_type: json
+        required: false
+      footers:
+        field_type: json
+        required: false
+      footnotes:
+        field_type: json
+        required: false
+      inlineObjects:
+        field_type: json
+        required: false
+      positionedObjects:
+        field_type: json
+        required: false
+      lists:
+        field_type: json
+        required: false
+      namedRanges:
+        field_type: json
+        required: false
+      documentStyle:
+        field_type: json
+        required: false
+      namedStyles:
+        field_type: json
+        required: false
+      suggestionsViewMode:
+        field_type: string
+        required: false
+        string_semantics: short
+      tabs:
+        field_type: json
+        required: false
+      replies:
+        field_type: json
+        required: false
+        description: Response replies from batchUpdate (write results and id mappings).
+      writeControl:
+        field_type: json
+        required: false
+    relations: {}
+
+capabilities:
+  documents_get:
+    kind: get
+    entity: Document
+    description: Fetch the full document resource (optionally controlling tab content and suggestions view).
+    parameters:
+      - name: includeTabsContent
+        type: boolean
+        required: false
+      - name: suggestionsViewMode
+        type: string
+        required: false
+        string_semantics: short
+
+  documents_create:
+    kind: create
+    entity: Document
+    description: Create a blank document or supply an initial title and body via the JSON input.
+    parameters:
+      - name: input
+        type: json
+        required: false
+        description: Document resource body for POST /documents.
+
+  documents_batchUpdate:
+    kind: action
+    entity: Document
+    description: Apply one or more structured updates (BatchUpdateDocumentRequest) to a document.
+    parameters:
+      - name: input
+        type: json
+        required: false
+        description: BatchUpdateDocumentRequest JSON (requests array and write control fields).
+    provides:
+      - documentId
+      - replies
+      - writeControl
+
+oauth:
+  provider: google
+  scopes:
+    https://www.googleapis.com/auth/documents:
+      label: See edit create and delete all your Google Docs documents
+      docs_url: https://developers.google.com/workspace/guides/configure-oauth-consent
+    https://www.googleapis.com/auth/documents.readonly:
+      label: See all your Google Docs documents
+      docs_url: https://developers.google.com/workspace/guides/configure-oauth-consent
+    https://www.googleapis.com/auth/drive.file:
+      label: Per-file access to files opened or created by the app
+      docs_url: https://developers.google.com/identity/protocols/oauth2/scopes
+    https://www.googleapis.com/auth/drive:
+      label: Full access to Google Drive files
+      docs_url: https://developers.google.com/identity/protocols/oauth2/scopes
+    https://www.googleapis.com/auth/drive.readonly:
+      label: See and download all Google Drive files
+      docs_url: https://developers.google.com/identity/protocols/oauth2/scopes
+  default_scope_sets:
+    docs_readonly:
+      description: Read documents only.
+      scopes:
+        - https://www.googleapis.com/auth/documents.readonly
+    docs_edit:
+      description: Create and edit Docs (typical editor grant).
+      scopes:
+        - https://www.googleapis.com/auth/documents
+  requirements:
+    capabilities:
+      documents_get:
+        any_of:
+          - https://www.googleapis.com/auth/documents
+          - https://www.googleapis.com/auth/documents.readonly
+          - https://www.googleapis.com/auth/drive
+          - https://www.googleapis.com/auth/drive.readonly
+          - https://www.googleapis.com/auth/drive.file
+      documents_create:
+        any_of:
+          - https://www.googleapis.com/auth/documents
+          - https://www.googleapis.com/auth/drive.file
+          - https://www.googleapis.com/auth/drive
+      documents_batchUpdate:
+        any_of:
+          - https://www.googleapis.com/auth/documents
+          - https://www.googleapis.com/auth/drive.file
+          - https://www.googleapis.com/auth/drive
+
+auth:
+  scheme: bearer_token
+  env: GOOGLE_DOCS_ACCESS_TOKEN

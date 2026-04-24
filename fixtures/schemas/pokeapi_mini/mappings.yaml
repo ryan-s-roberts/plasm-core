@@ -1,0 +1,17 @@
+berry_query:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: v2
+    - type: literal
+      value: berry
+    # OpenAPI path is `/api/v2/berry/` — trailing slash must match hermit's axum route.
+    - type: literal
+      value: ""
+  pagination:
+    params:
+      offset: {counter: 0}
+      limit: {fixed: 20}
+    stop_when: {field: next, absent: true}

@@ -1,0 +1,1163 @@
+version: 1
+
+http_backend: https://gitlab.com
+
+entities:
+  Project:
+    id_field: id
+    description: GitLab project (repository namespace)
+    fields:
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      path:
+        field_type: string
+        required: true
+        string_semantics: short
+      name_with_namespace:
+        field_type: string
+        required: false
+        string_semantics: short
+      path_with_namespace:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      visibility:
+        field_type: string
+        required: false
+        string_semantics: short
+      web_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      last_activity_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      default_branch:
+        field_type: string
+        required: false
+        string_semantics: short
+      star_count:
+        field_type: integer
+        required: false
+      forks_count:
+        field_type: integer
+        required: false
+      ssh_url_to_repo:
+        field_type: string
+        required: false
+        string_semantics: short
+      http_url_to_repo:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      issues:
+        target: Issue
+        cardinality: many
+        via_param: project_id
+      merge_requests:
+        target: MergeRequest
+        cardinality: many
+        via_param: project_id
+  Issue:
+    id_field: id
+    key_vars:
+    - project_id
+    - iid
+    description: GitLab issue (project-scoped IID plus global id)
+    fields:
+      id:
+        field_type: integer
+        required: true
+      iid:
+        field_type: integer
+        required: true
+      project_id:
+        field_type: entity_ref
+        target: Project
+        required: true
+      title:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      state:
+        field_type: select
+        allowed_values:
+        - opened
+        - closed
+        required: false
+      issue_type:
+        field_type: string
+        required: false
+        string_semantics: short
+      confidential:
+        field_type: boolean
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      closed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      web_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      labels:
+        field_type: array
+        required: false
+        items:
+          type: string
+      time_estimate:
+        field_type: integer
+        required: false
+      total_time_spent:
+        field_type: integer
+        required: false
+      human_time_estimate:
+        field_type: string
+        required: false
+        string_semantics: short
+      human_total_time_spent:
+        field_type: string
+        required: false
+        string_semantics: short
+  MergeRequest:
+    id_field: id
+    key_vars:
+    - project_id
+    - iid
+    description: GitLab merge request
+    fields:
+      id:
+        field_type: integer
+        required: true
+      iid:
+        field_type: integer
+        required: true
+      project_id:
+        field_type: entity_ref
+        target: Project
+        required: true
+      title:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      state:
+        field_type: string
+        required: false
+        string_semantics: short
+      draft:
+        field_type: boolean
+        required: false
+      source_branch:
+        field_type: string
+        required: false
+        string_semantics: short
+      target_branch:
+        field_type: string
+        required: false
+        string_semantics: short
+      labels:
+        field_type: string
+        required: false
+        string_semantics: short
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      merged_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      closed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      web_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      time_estimate:
+        field_type: integer
+        required: false
+      total_time_spent:
+        field_type: integer
+        required: false
+      human_time_estimate:
+        field_type: string
+        required: false
+        string_semantics: short
+      human_total_time_spent:
+        field_type: string
+        required: false
+        string_semantics: short
+  IssueNote:
+    id_field: id
+    key_vars:
+    - project_id
+    - iid
+    - id
+    description: Comment on a project issue
+    fields:
+      project_id:
+        field_type: entity_ref
+        target: Project
+        required: true
+      iid:
+        field_type: integer
+        required: true
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      confidential:
+        field_type: boolean
+        required: false
+  MergeRequestNote:
+    id_field: id
+    key_vars:
+    - project_id
+    - iid
+    - id
+    description: Comment on a merge request
+    fields:
+      project_id:
+        field_type: entity_ref
+        target: Project
+        required: true
+      iid:
+        field_type: integer
+        required: true
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  IssueAwardEmoji:
+    id_field: id
+    key_vars:
+    - project_id
+    - iid
+    - id
+    description: Emoji reaction on an issue
+    fields:
+      project_id:
+        field_type: entity_ref
+        target: Project
+        required: true
+      iid:
+        field_type: integer
+        required: true
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  MergeRequestAwardEmoji:
+    id_field: id
+    key_vars:
+    - project_id
+    - iid
+    - id
+    description: Emoji reaction on a merge request
+    fields:
+      project_id:
+        field_type: entity_ref
+        target: Project
+        required: true
+      iid:
+        field_type: integer
+        required: true
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+capabilities:
+  project_query:
+    kind: query
+    entity: Project
+    description: List projects visible to the authenticated account
+    parameters:
+    - name: search
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: visibility
+      type: select
+      required: false
+      allowed_values:
+      - private
+      - internal
+      - public
+    - name: archived
+      type: boolean
+      required: false
+    - name: owned
+      type: boolean
+      required: false
+    - name: membership
+      type: boolean
+      required: false
+    - name: starred
+      type: boolean
+      required: false
+    - name: order_by
+      type: select
+      required: false
+      role: sort
+      allowed_values:
+      - id
+      - name
+      - path
+      - created_at
+      - updated_at
+      - last_activity_at
+      - similarity
+      - star_count
+    - name: sort
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - asc
+      - desc
+    - name: simple
+      type: boolean
+      required: false
+      role: response_control
+    - name: statistics
+      type: boolean
+      required: false
+      role: response_control
+  project_get:
+    kind: get
+    entity: Project
+    description: Fetch one project by numeric id or URL-encoded path
+    parameters:
+    - name: statistics
+      type: boolean
+      required: false
+      role: response_control
+    provides:
+    - id
+    - name
+    - path
+    - name_with_namespace
+    - path_with_namespace
+    - description
+    - visibility
+    - web_url
+    - created_at
+    - last_activity_at
+    - default_branch
+    - star_count
+    - forks_count
+    - ssh_url_to_repo
+    - http_url_to_repo
+  issue_query:
+    kind: query
+    entity: Issue
+    description: List issues for the current user across projects
+    parameters:
+    - name: state
+      type: select
+      required: false
+      allowed_values:
+      - opened
+      - closed
+      - all
+    - name: search
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: scope
+      type: select
+      required: false
+      allowed_values:
+      - created_by_me
+      - assigned_to_me
+      - all
+    - name: order_by
+      type: select
+      required: false
+      role: sort
+      allowed_values:
+      - created_at
+      - due_date
+      - label_priority
+      - milestone_due
+      - popularity
+      - priority
+      - relative_position
+      - title
+      - updated_at
+      - weight
+    - name: sort
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - asc
+      - desc
+  issue_for_project_query:
+    kind: query
+    entity: Issue
+    description: List issues within a single project
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: state
+      type: select
+      required: false
+      allowed_values:
+      - opened
+      - closed
+      - all
+    - name: search
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: order_by
+      type: select
+      required: false
+      role: sort
+      allowed_values:
+      - created_at
+      - due_date
+      - label_priority
+      - milestone_due
+      - popularity
+      - priority
+      - relative_position
+      - title
+      - updated_at
+      - weight
+    - name: sort
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - asc
+      - desc
+  issue_get:
+    kind: get
+    entity: Issue
+    description: Fetch a project issue by project and IID
+    provides:
+    - id
+    - iid
+    - project_id
+    - title
+    - description
+    - state
+    - issue_type
+    - confidential
+    - created_at
+    - updated_at
+    - closed_at
+    - web_url
+    - labels
+  merge_request_query:
+    kind: query
+    entity: MergeRequest
+    description: List merge requests visible to the authenticated user
+    parameters:
+    - name: state
+      type: select
+      required: false
+      allowed_values:
+      - opened
+      - closed
+      - locked
+      - merged
+      - all
+    - name: scope
+      type: select
+      required: false
+      allowed_values:
+      - created_by_me
+      - assigned_to_me
+      - reviews_for_me
+      - all
+    - name: order_by
+      type: select
+      required: false
+      role: sort
+      allowed_values:
+      - created_at
+      - label_priority
+      - milestone_due
+      - popularity
+      - priority
+      - title
+      - updated_at
+      - merged_at
+    - name: sort
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - asc
+      - desc
+  merge_request_for_project_query:
+    kind: query
+    entity: MergeRequest
+    description: List merge requests for a project
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: state
+      type: select
+      required: false
+      allowed_values:
+      - opened
+      - closed
+      - locked
+      - merged
+      - all
+    - name: order_by
+      type: select
+      required: false
+      role: sort
+      allowed_values:
+      - created_at
+      - label_priority
+      - milestone_due
+      - popularity
+      - priority
+      - title
+      - updated_at
+      - merged_at
+    - name: sort
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - asc
+      - desc
+  merge_request_get:
+    kind: get
+    entity: MergeRequest
+    description: Fetch a merge request by project and IID
+    provides:
+    - id
+    - iid
+    - project_id
+    - title
+    - description
+    - state
+    - draft
+    - source_branch
+    - target_branch
+    - labels
+    - created_at
+    - updated_at
+    - merged_at
+    - closed_at
+    - web_url
+  project_create:
+    kind: create
+    entity: Project
+    description: Create a new project under the authenticated user or namespace
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: path
+      type: string
+      required: false
+      string_semantics: short
+    - name: namespace_id
+      type: integer
+      required: false
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: visibility
+      type: select
+      required: false
+      allowed_values:
+      - private
+      - internal
+      - public
+    - name: default_branch
+      type: string
+      required: false
+      string_semantics: short
+    - name: issues_enabled
+      type: boolean
+      required: false
+    - name: merge_requests_enabled
+      type: boolean
+      required: false
+    - name: wiki_enabled
+      type: boolean
+      required: false
+  project_update:
+    kind: update
+    entity: Project
+    description: Update project attributes
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: path
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: default_branch
+      type: string
+      required: false
+      string_semantics: short
+    - name: visibility
+      type: select
+      required: false
+      allowed_values:
+      - private
+      - internal
+      - public
+    - name: issues_enabled
+      type: boolean
+      required: false
+    - name: merge_requests_enabled
+      type: boolean
+      required: false
+    - name: wiki_enabled
+      type: boolean
+      required: false
+  project_delete:
+    kind: delete
+    entity: Project
+    description: Delete a project asynchronously
+  issue_create:
+    kind: create
+    entity: Issue
+    description: Create an issue in a project
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: confidential
+      type: boolean
+      required: false
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+    - name: issue_type
+      type: select
+      required: false
+      allowed_values:
+      - issue
+      - incident
+      - test_case
+      - requirement
+      - task
+      - ticket
+    - name: milestone_id
+      type: integer
+      required: false
+    - name: assignee_ids
+      type: array
+      required: false
+      items:
+        type: integer
+  issue_update:
+    kind: update
+    entity: Issue
+    description: Update an existing issue
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: state_event
+      type: select
+      required: false
+      allowed_values:
+      - reopen
+      - close
+    - name: confidential
+      type: boolean
+      required: false
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+    - name: add_labels
+      type: array
+      required: false
+      items:
+        type: string
+    - name: remove_labels
+      type: array
+      required: false
+      items:
+        type: string
+    - name: milestone_id
+      type: integer
+      required: false
+    - name: assignee_ids
+      type: array
+      required: false
+      items:
+        type: integer
+  issue_delete:
+    kind: delete
+    entity: Issue
+    description: Delete a project issue
+  merge_request_create:
+    kind: create
+    entity: MergeRequest
+    description: Open a new merge request
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: source_branch
+      type: string
+      required: true
+      string_semantics: short
+    - name: target_branch
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: draft
+      type: boolean
+      required: false
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+    - name: milestone_id
+      type: integer
+      required: false
+    - name: remove_source_branch
+      type: boolean
+      required: false
+  merge_request_update:
+    kind: update
+    entity: MergeRequest
+    description: Update merge request fields
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: target_branch
+      type: string
+      required: false
+      string_semantics: short
+    - name: state_event
+      type: select
+      required: false
+      allowed_values:
+      - close
+      - reopen
+    - name: draft
+      type: boolean
+      required: false
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+  merge_request_delete:
+    kind: delete
+    entity: MergeRequest
+    description: Delete a merge request
+  merge_request_merge:
+    kind: action
+    entity: MergeRequest
+    description: Merge the merge request when allowed
+    parameters:
+    - name: merge_commit_message
+      type: string
+      required: false
+      string_semantics: short
+    - name: squash_commit_message
+      type: string
+      required: false
+      string_semantics: short
+    - name: should_remove_source_branch
+      type: boolean
+      required: false
+    - name: squash
+      type: boolean
+      required: false
+    - name: sha
+      type: string
+      required: false
+      string_semantics: short
+    - name: auto_merge
+      type: boolean
+      required: false
+    provides:
+    - id
+    - iid
+    - project_id
+    - title
+    - state
+    - merged_at
+  issue_subscribe:
+    kind: action
+    entity: Issue
+    description: Subscribe the authenticated user to the issue
+    output:
+      type: side_effect
+      description: Subscribes the current user to issue notifications; response is not mapped onto Issue fields.
+  issue_unsubscribe:
+    kind: action
+    entity: Issue
+    description: Unsubscribe the authenticated user from the issue
+    output:
+      type: side_effect
+      description: Unsubscribes the current user from issue notifications.
+  merge_request_subscribe:
+    kind: action
+    entity: MergeRequest
+    description: Subscribe the authenticated user to the merge request
+    output:
+      type: side_effect
+      description: Subscribes the current user to merge request notifications.
+  merge_request_unsubscribe:
+    kind: action
+    entity: MergeRequest
+    description: Unsubscribe from the merge request
+    output:
+      type: side_effect
+      description: Unsubscribes the current user from merge request notifications.
+  issue_time_stats:
+    kind: action
+    entity: Issue
+    description: Refresh time tracking estimates and spent time for the issue
+    provides:
+    - time_estimate
+    - total_time_spent
+    - human_time_estimate
+    - human_total_time_spent
+  merge_request_time_stats:
+    kind: action
+    entity: MergeRequest
+    description: Refresh time tracking estimates for the merge request
+    provides:
+    - time_estimate
+    - total_time_spent
+    - human_time_estimate
+    - human_total_time_spent
+  issue_note_for_issue_query:
+    kind: query
+    entity: IssueNote
+    description: List notes on a project issue
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: iid
+      type: integer
+      required: true
+  issue_note_get:
+    kind: get
+    entity: IssueNote
+    description: Fetch one issue note
+    provides:
+    - id
+    - body
+    - created_at
+    - updated_at
+    - confidential
+  issue_note_create:
+    kind: create
+    entity: IssueNote
+    description: Add a note to an issue
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+    - name: iid
+      type: integer
+      required: true
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+    - name: confidential
+      type: boolean
+      required: false
+  issue_note_update:
+    kind: update
+    entity: IssueNote
+    description: Edit an issue note
+    parameters:
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  issue_note_delete:
+    kind: delete
+    entity: IssueNote
+    description: Delete an issue note
+  merge_request_note_for_mr_query:
+    kind: query
+    entity: MergeRequestNote
+    description: List notes on a merge request
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: iid
+      type: integer
+      required: true
+  merge_request_note_get:
+    kind: get
+    entity: MergeRequestNote
+    description: Fetch one merge request note
+    provides:
+    - id
+    - body
+    - created_at
+    - updated_at
+  merge_request_note_create:
+    kind: create
+    entity: MergeRequestNote
+    description: Add a note to a merge request
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+    - name: iid
+      type: integer
+      required: true
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  merge_request_note_update:
+    kind: update
+    entity: MergeRequestNote
+    description: Edit a merge request note
+    parameters:
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  merge_request_note_delete:
+    kind: delete
+    entity: MergeRequestNote
+    description: Delete a merge request note
+  issue_award_emoji_for_issue_query:
+    kind: query
+    entity: IssueAwardEmoji
+    description: List award emoji on an issue
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: iid
+      type: integer
+      required: true
+  issue_award_emoji_get:
+    kind: get
+    entity: IssueAwardEmoji
+    description: Fetch one award emoji on an issue
+    provides:
+    - id
+    - name
+    - created_at
+    - updated_at
+  issue_award_emoji_create:
+    kind: create
+    entity: IssueAwardEmoji
+    description: Add an emoji reaction to an issue
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+    - name: iid
+      type: integer
+      required: true
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  issue_award_emoji_delete:
+    kind: delete
+    entity: IssueAwardEmoji
+    description: Remove an award emoji from an issue
+  merge_request_award_emoji_for_mr_query:
+    kind: query
+    entity: MergeRequestAwardEmoji
+    description: List award emoji on a merge request
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: iid
+      type: integer
+      required: true
+  merge_request_award_emoji_get:
+    kind: get
+    entity: MergeRequestAwardEmoji
+    description: Fetch one award emoji on a merge request
+    provides:
+    - id
+    - name
+    - created_at
+    - updated_at
+  merge_request_award_emoji_create:
+    kind: create
+    entity: MergeRequestAwardEmoji
+    description: Add an emoji reaction to a merge request
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+    - name: iid
+      type: integer
+      required: true
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  merge_request_award_emoji_delete:
+    kind: delete
+    entity: MergeRequestAwardEmoji
+    description: Remove an award emoji from a merge request
+auth:
+  scheme: api_key_header
+  header: PRIVATE-TOKEN
+  env: GITLAB_TOKEN

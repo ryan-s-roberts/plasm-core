@@ -1,0 +1,120 @@
+# Gmail API — messages, threads, labels, drafts (inbox triage and composition).
+- id: gm-01
+  schema: gmail
+  goal: "Show unread messages in INBOX from the last 24 hours for morning triage"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Message]
+
+- id: gm-02
+  schema: gmail
+  goal: "Open message id abc123full for the reader pane"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Message]
+
+- id: gm-03
+  schema: gmail
+  goal: "Send the drafted recap email to the team list"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Message]
+
+- id: gm-04
+  schema: gmail
+  goal: "Permanently delete the leaked attachment message"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Message]
+
+- id: gm-05
+  schema: gmail
+  goal: "Mark thread as read and star it for follow-up"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Thread]
+
+- id: gm-06
+  schema: gmail
+  goal: "Move this message to trash without deleting the whole thread yet"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Message]
+
+- id: gm-07
+  schema: gmail
+  goal: "From message id X, open its parent thread summary for the conversation view"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Message, Thread]
+
+- id: gm-08
+  schema: gmail
+  goal: "List labels, then fetch full label metadata for 'Finance/Receipts'"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Label]
+
+- id: gm-09
+  schema: gmail
+  goal: "List messages in a thread but only return id and internalDate for sorting"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Message]
+
+- id: gm-10
+  schema: gmail
+  goal: "Initial inbox sync: first page of messages in INBOX for the crawler"
+  tags: [query, sync]
+  covers: [query_all]
+  expect:
+    entities_any: [Message]
+
+- id: gm-11
+  schema: gmail
+  goal: "Download the PDF attachment on message id xyz789 for virus scanning"
+  tags: [get, attachment]
+  covers: [get]
+  expect:
+    entities_any: [Message, Attachment]
+
+- id: gm-12
+  schema: gmail
+  goal: "Open my autosaved draft about the release notes before sending"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Draft]
+
+- id: gm-13
+  schema: gmail
+  goal: "What is the account display name and quota for this Gmail connection"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Profile]
+
+- id: gm-14
+  schema: gmail
+  goal: "Search the mailbox for unread threads mentioning the budget spreadsheet"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Thread]
+
+- id: gm-15
+  schema: gmail
+  goal: "Fetch the next page of INBOX messages when the first page is full"
+  tags: [query, pagination]
+  covers: [page_next]
+  expect:
+    entities_any: [Message]

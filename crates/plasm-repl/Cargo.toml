@@ -1,0 +1,31 @@
+[package]
+name = "plasm-repl"
+version = "0.1.0"
+edition = "2021"
+description = "Interactive Plasm REPL (path expressions + optional BAML/LLM). Depends on plasm-eval; not required for MCP."
+readme = "README.md"
+
+[features]
+default = []
+evm = ["plasm-agent/evm"]
+
+[lib]
+name = "plasm_repl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plasm-repl"
+path = "src/main.rs"
+
+[dependencies]
+plasm-agent = { path = "../plasm-agent" }
+plasm-eval = { path = "../plasm-eval" }
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile" }
+plasm-runtime = { path = "../plasm-runtime" }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+rustyline = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

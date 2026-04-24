@@ -1,0 +1,1217 @@
+ability_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: ability
+  - type: literal
+    value: ''
+  pagination: &pag_default
+    params:
+      offset: {counter: 0}
+      limit: {fixed: 20}
+    stop_when: {field: next, absent: true}
+ability_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: ability
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+berry_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: berry
+  - type: literal
+    value: ''
+  pagination: *pag_default
+berry_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: berry
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+berryfirmness_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: berry-firmness
+  - type: literal
+    value: ''
+  pagination: *pag_default
+berryfirmness_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: berry-firmness
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+berryflavor_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: berry-flavor
+  - type: literal
+    value: ''
+  pagination: *pag_default
+berryflavor_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: berry-flavor
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+characteristic_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: characteristic
+  - type: literal
+    value: ''
+  pagination: *pag_default
+characteristic_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: characteristic
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+contesttype_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: contest-type
+  - type: literal
+    value: ''
+  pagination: *pag_default
+contesttype_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: contest-type
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+contesteffect_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: contest-effect
+  - type: literal
+    value: ''
+  pagination: *pag_default
+contesteffect_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: contest-effect
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+egggroup_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: egg-group
+  - type: literal
+    value: ''
+  pagination: *pag_default
+egggroup_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: egg-group
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+encountermethod_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: encounter-method
+  - type: literal
+    value: ''
+  pagination: *pag_default
+encountermethod_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: encounter-method
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+encountercondition_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: encounter-condition
+  - type: literal
+    value: ''
+  pagination: *pag_default
+encountercondition_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: encounter-condition
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+encounterconditionvalue_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: encounter-condition-value
+  - type: literal
+    value: ''
+  pagination: *pag_default
+encounterconditionvalue_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: encounter-condition-value
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+evolutionchain_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: evolution-chain
+  - type: literal
+    value: ''
+  pagination: *pag_default
+evolutionchain_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: evolution-chain
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+evolutiontrigger_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: evolution-trigger
+  - type: literal
+    value: ''
+  pagination: *pag_default
+evolutiontrigger_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: evolution-trigger
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+generation_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: generation
+  - type: literal
+    value: ''
+  pagination: *pag_default
+generation_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: generation
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+gender_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: gender
+  - type: literal
+    value: ''
+  pagination: *pag_default
+gender_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: gender
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+growthrate_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: growth-rate
+  - type: literal
+    value: ''
+  pagination: *pag_default
+growthrate_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: growth-rate
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+item_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item
+  - type: literal
+    value: ''
+  pagination: *pag_default
+item_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+itemcategory_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-category
+  - type: literal
+    value: ''
+  pagination: *pag_default
+itemcategory_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-category
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+itemattribute_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-attribute
+  - type: literal
+    value: ''
+  pagination: *pag_default
+itemattribute_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-attribute
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+itemflingeffect_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-fling-effect
+  - type: literal
+    value: ''
+  pagination: *pag_default
+itemflingeffect_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-fling-effect
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+itempocket_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-pocket
+  - type: literal
+    value: ''
+  pagination: *pag_default
+itempocket_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: item-pocket
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+language_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: language
+  - type: literal
+    value: ''
+  pagination: *pag_default
+language_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: language
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+location_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: location
+  - type: literal
+    value: ''
+  pagination: *pag_default
+location_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: location
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+locationarea_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: location-area
+  - type: literal
+    value: ''
+  pagination: *pag_default
+locationarea_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: location-area
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+machine_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: machine
+  - type: literal
+    value: ''
+  pagination: *pag_default
+machine_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: machine
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+move_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move
+  - type: literal
+    value: ''
+  pagination: *pag_default
+move_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+moveailment_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-ailment
+  - type: literal
+    value: ''
+  pagination: *pag_default
+moveailment_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-ailment
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+movebattlestyle_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-battle-style
+  - type: literal
+    value: ''
+  pagination: *pag_default
+movebattlestyle_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-battle-style
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+movecategory_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-category
+  - type: literal
+    value: ''
+  pagination: *pag_default
+movecategory_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-category
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+movedamageclass_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-damage-class
+  - type: literal
+    value: ''
+  pagination: *pag_default
+movedamageclass_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-damage-class
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+movelearnmethod_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-learn-method
+  - type: literal
+    value: ''
+  pagination: *pag_default
+movelearnmethod_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-learn-method
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+movetarget_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-target
+  - type: literal
+    value: ''
+  pagination: *pag_default
+movetarget_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: move-target
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+nature_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: nature
+  - type: literal
+    value: ''
+  pagination: *pag_default
+nature_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: nature
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+palparkarea_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pal-park-area
+  - type: literal
+    value: ''
+  pagination: *pag_default
+palparkarea_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pal-park-area
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokedex_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokedex
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokedex_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokedex
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokemonencounter_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon
+  - type: var
+    name: pokemon_id
+  - type: literal
+    value: encounters
+pokemon_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokemon_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokemoncolor_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-color
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokemoncolor_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-color
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokemonform_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-form
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokemonform_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-form
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokemonhabitat_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-habitat
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokemonhabitat_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-habitat
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokemonshape_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-shape
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokemonshape_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-shape
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokemonspecies_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-species
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokemonspecies_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokemon-species
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+pokeathlonstat_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokeathlon-stat
+  - type: literal
+    value: ''
+  pagination: *pag_default
+pokeathlonstat_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: pokeathlon-stat
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+region_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: region
+  - type: literal
+    value: ''
+  pagination: *pag_default
+region_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: region
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+stat_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: stat
+  - type: literal
+    value: ''
+  pagination: *pag_default
+stat_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: stat
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+supercontesteffect_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: super-contest-effect
+  - type: literal
+    value: ''
+  pagination: *pag_default
+supercontesteffect_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: super-contest-effect
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+type_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: type
+  - type: literal
+    value: ''
+  pagination: *pag_default
+type_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: type
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+version_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: version
+  - type: literal
+    value: ''
+  pagination: *pag_default
+version_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: version
+  - type: var
+    name: id
+  - type: literal
+    value: ''
+versiongroup_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: version-group
+  - type: literal
+    value: ''
+  pagination: *pag_default
+versiongroup_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: version-group
+  - type: var
+    name: id
+  - type: literal
+    value: ''

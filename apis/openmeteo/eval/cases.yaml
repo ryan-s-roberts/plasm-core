@@ -1,0 +1,19 @@
+# Open-Meteo — weather `Forecast` by coordinates (query with location filters).
+# Goals mirror travel / outdoor planning, not parameter names.
+- id: om-01
+  schema: openmeteo
+  goal: "Will I need a jacket in central London right now? Check current conditions."
+  tags: [weather, location]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Forecast]
+    pred_fields_any: [latitude, longitude]
+
+- id: om-02
+  schema: openmeteo
+  goal: "Get a multi-day forecast for San Francisco in Fahrenheit with wind in mph"
+  tags: [weather, units]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Forecast]
+    pred_fields_any: [latitude, longitude]

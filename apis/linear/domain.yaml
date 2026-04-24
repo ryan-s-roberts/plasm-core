@@ -1,0 +1,770 @@
+version: 3
+
+http_backend: https://api.linear.app
+
+entities:
+  Team:
+    id_field: id
+    description: A Linear team (workspace grouping).
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      key:
+        field_type: string
+        required: false
+        description: Short key (e.g. ENG).
+        string_semantics: short
+    relations: {}
+  Project:
+    id_field: id
+    description: A Linear project within a team.
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      slugId:
+        field_type: string
+        required: false
+        description: Stable slug for the project within its team.
+        string_semantics: short
+    relations: {}
+  Cycle:
+    id_field: id
+    description: A time-boxed iteration on a team (sprint / cycle window).
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      number:
+        field_type: number
+        required: false
+        description: Cycle index within the team (Linear exposes as a number).
+      startsAt:
+        field_type: string
+        required: false
+        description: Cycle start (ISO-8601 timestamp from the API).
+        string_semantics: short
+      endsAt:
+        field_type: string
+        required: false
+        description: Cycle end (ISO-8601 timestamp from the API).
+        string_semantics: short
+    relations:
+      team:
+        target: Team
+        cardinality: one
+        description: Team this cycle belongs to.
+  User:
+    id_field: id
+    description: A Linear user.
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      displayName:
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  WorkflowState:
+    id_field: id
+    description: A workflow column/state for a team (backlog, in progress, done, …).
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: string
+        required: false
+        description: State category (e.g. started, completed).
+        string_semantics: short
+      position:
+        field_type: number
+        required: false
+    relations: {}
+  Label:
+    id_field: id
+    description: An issue label.
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      color:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Comment:
+    id_field: id
+    description: A comment on an issue.
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      issue:
+        target: Issue
+        cardinality: one
+        description: Issue this comment belongs to.
+  Issue:
+    id_field: id
+    description: A Linear issue (task, bug, or feature).
+    fields:
+      id:
+        field_type: uuid
+        required: true
+      identifier:
+        field_type: string
+        required: false
+        description: Human-visible key (e.g. ENG-42).
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      team:
+        target: Team
+        cardinality: one
+        description: Owning team.
+      project:
+        target: Project
+        cardinality: one
+        description: Project this issue belongs to.
+      assignee:
+        target: User
+        cardinality: one
+        description: User assigned to the issue.
+      state:
+        target: WorkflowState
+        cardinality: one
+        description: Current workflow state.
+      cycle:
+        target: Cycle
+        cardinality: one
+        description: Iteration cycle when the issue is scheduled into one.
+      labels:
+        target: Label
+        cardinality: many
+        description: Labels on this issue.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: labels
+          - key: nodes
+          - wildcard: true
+      parent:
+        target: Issue
+        cardinality: one
+        description: Parent issue when this issue is a sub-issue (otherwise absent).
+      children:
+        target: Issue
+        cardinality: many
+        description: Sub-issues nested directly under this issue in the work hierarchy.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: children
+          - key: nodes
+          - wildcard: true
+capabilities:
+  issue_query:
+    kind: query
+    entity: Issue
+    description: List issues in the workspace.
+    provides:
+    - id
+    - identifier
+    - title
+  issue_by_team_query:
+    kind: query
+    entity: Issue
+    description: List issues for a specific team.
+    parameters:
+    - name: team
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+      description: Team whose issues to list.
+    provides:
+    - id
+    - identifier
+    - title
+  issue_get:
+    kind: get
+    entity: Issue
+    description: Load one issue with its team, project, assignee, labels, workflow column, cycle, parent, and child issues.
+    provides:
+    - id
+    - identifier
+    - title
+    - description
+    - parent
+    - team
+    - project
+    - assignee
+    - state
+    - cycle
+  team_query:
+    kind: query
+    entity: Team
+    description: List teams.
+    provides:
+    - id
+    - name
+    - key
+  team_get:
+    kind: get
+    entity: Team
+    description: Fetch one team by id.
+    provides:
+    - id
+    - name
+    - key
+  project_query:
+    kind: query
+    entity: Project
+    description: List projects.
+    provides:
+    - id
+    - name
+    - slugId
+  project_get:
+    kind: get
+    entity: Project
+    description: Fetch one project by id.
+    provides:
+    - id
+    - name
+    - slugId
+  user_query:
+    kind: query
+    entity: User
+    description: List users.
+    provides:
+    - id
+    - name
+    - displayName
+    - email
+  user_get:
+    kind: get
+    entity: User
+    description: Fetch one user by id.
+    provides:
+    - id
+    - name
+    - displayName
+    - email
+  workflow_state_query:
+    kind: query
+    entity: WorkflowState
+    description: List workflow columns for a team—column title, category (e.g. backlog, in progress, done), and sort order.
+    parameters:
+    - name: team
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+      description: Team whose columns to list.
+    provides:
+    - id
+    - name
+    - type
+    - position
+  workflow_state_get:
+    kind: get
+    entity: WorkflowState
+    description: Fetch one workflow state (column) by id.
+    provides:
+    - id
+    - name
+    - type
+    - position
+  cycle_query:
+    kind: query
+    entity: Cycle
+    description: List iteration cycles for a team (ordered by the API).
+    parameters:
+    - name: team
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+      description: Team whose cycles to list.
+    provides:
+    - id
+    - number
+    - startsAt
+    - endsAt
+    - team
+  cycle_get:
+    kind: get
+    entity: Cycle
+    description: Fetch one cycle by id, including its team.
+    provides:
+    - id
+    - number
+    - startsAt
+    - endsAt
+    - team
+  label_query:
+    kind: query
+    entity: Label
+    description: List issue labels.
+    provides:
+    - id
+    - name
+    - color
+  label_get:
+    kind: get
+    entity: Label
+    description: Fetch one label by id.
+    provides:
+    - id
+    - name
+    - color
+  comment_query:
+    kind: query
+    entity: Comment
+    description: List comments.
+    provides:
+    - id
+    - body
+  comment_get:
+    kind: get
+    entity: Comment
+    description: Fetch one comment by id.
+    provides:
+    - id
+    - body
+  issue_create:
+    kind: create
+    entity: Issue
+    description: Create a new issue on a team, optionally in a project, column, cycle, or under a parent issue.
+    provides:
+    - id
+    - identifier
+    - title
+    - description
+    - state
+    - cycle
+    parameters:
+    - name: team
+      type: entity_ref
+      target: Team
+      required: true
+      description: Team that owns the new issue.
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: project
+      type: entity_ref
+      target: Project
+      required: false
+    - name: assignee
+      type: entity_ref
+      target: User
+      required: false
+    - name: state
+      type: entity_ref
+      target: WorkflowState
+      required: false
+    - name: parent
+      type: entity_ref
+      target: Issue
+      required: false
+      description: Parent issue when creating a sub-issue.
+    - name: cycle
+      type: entity_ref
+      target: Cycle
+      required: false
+      description: Iteration cycle to place the new issue in.
+  issue_update:
+    kind: update
+    entity: Issue
+    description: Update an issue
+    provides:
+    - id
+    - identifier
+    - title
+    - description
+    - state
+    - cycle
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: project
+      type: entity_ref
+      target: Project
+      required: false
+    - name: assignee
+      type: entity_ref
+      target: User
+      required: false
+    - name: state
+      type: entity_ref
+      target: WorkflowState
+      required: false
+    - name: parent
+      type: entity_ref
+      target: Issue
+      required: false
+      description: Issue to nest this under; omit to leave the parent link unchanged.
+    - name: cycle
+      type: entity_ref
+      target: Cycle
+      required: false
+      description: Iteration cycle to assign; omit to leave the cycle unchanged.
+  issue_delete:
+    kind: delete
+    entity: Issue
+    description: Move an issue to trash (recoverable; not a permanent delete).
+  comment_create:
+    kind: create
+    entity: Comment
+    description: Add a markdown comment on an issue.
+    provides:
+    - id
+    - body
+    parameters:
+    - name: issue
+      type: entity_ref
+      target: Issue
+      required: true
+      description: Issue to attach the comment to.
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  label_create:
+    kind: create
+    entity: Label
+    description: Create an issue label (optionally scoped to a team; omit team for workspace-wide).
+    provides:
+    - id
+    - name
+    - color
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: team
+      type: entity_ref
+      target: Team
+      required: false
+      description: Team to scope the label to; omit for workspace label.
+    - name: color
+      type: string
+      required: false
+      description: Hex swatch color for the label.
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  label_update:
+    kind: update
+    entity: Label
+    description: Update label name, color, or description.
+    provides:
+    - id
+    - name
+    - color
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: color
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  project_create:
+    kind: create
+    entity: Project
+    description: Create a project owned by one or more teams.
+    provides:
+    - id
+    - name
+    - slugId
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: team
+      type: entity_ref
+      target: Team
+      required: true
+      description: Primary team that owns the new project.
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  workflow_state_create:
+    kind: create
+    entity: WorkflowState
+    description: Create a workflow column on a team.
+    provides:
+    - id
+    - name
+    - type
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: team
+      type: entity_ref
+      target: Team
+      required: true
+    - name: state_type
+      type: string
+      required: true
+      description: One of triage, backlog, unstarted, started, completed, canceled, duplicate.
+      string_semantics: short
+    - name: color
+      type: string
+      required: true
+      description: Column header hex color on the board.
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: position
+      type: number
+      required: false
+      description: Column order within the workflow.
+  issue_add_label:
+    kind: update
+    entity: Issue
+    description: Attach one label to this issue (existing labels kept).
+    provides:
+    - id
+    - identifier
+    parameters:
+    - name: label
+      type: entity_ref
+      target: Label
+      required: true
+  issue_remove_label:
+    kind: update
+    entity: Issue
+    description: Remove one label from this issue.
+    provides:
+    - id
+    - identifier
+    parameters:
+    - name: label
+      type: entity_ref
+      target: Label
+      required: true
+oauth:
+  provider: linear
+  scopes:
+    read:
+      label: Read access (default on OAuth tokens)
+      notes: Linear documents read as always present on user OAuth tokens.
+      docs_url: https://linear.app/developers/oauth-2-0-authentication
+    write:
+      label: Broad write access
+      docs_url: https://linear.app/developers/oauth-2-0-authentication
+    issues:create:
+      label: Create issues and attachments
+      docs_url: https://linear.app/developers/oauth-2-0-authentication
+    comments:create:
+      label: Create issue comments
+      docs_url: https://linear.app/developers/oauth-2-0-authentication
+    timeSchedule:write:
+      label: Time schedules write
+      docs_url: https://linear.app/developers/oauth-2-0-authentication
+    admin:
+      label: Admin endpoints
+      docs_url: https://linear.app/developers/oauth-2-0-authentication
+  default_scope_sets:
+    plasm_linear_readonly_core:
+      description: Read-heavy automation — query and load issues, teams, projects, users, labels, comments, workflow states, and cycles.
+      scopes:
+      - read
+    plasm_linear_contributor_core:
+      description: Issue and workspace edits — create and update issues and comments, manage labels, projects, and workflow columns (full write surface in this CGS).
+      scopes:
+      - read
+      - write
+    plasm_linear_create_focus:
+      description: Narrow grant — create issues and comments without broader write access (no issue updates, labels, projects, or workflow structure changes).
+      scopes:
+      - read
+      - issues:create
+      - comments:create
+  requirements:
+    capabilities:
+      issue_query:
+        any_of:
+        - read
+      issue_by_team_query:
+        any_of:
+        - read
+      issue_get:
+        any_of:
+        - read
+      team_query:
+        any_of:
+        - read
+      team_get:
+        any_of:
+        - read
+      project_query:
+        any_of:
+        - read
+      project_get:
+        any_of:
+        - read
+      user_query:
+        any_of:
+        - read
+      user_get:
+        any_of:
+        - read
+      workflow_state_query:
+        any_of:
+        - read
+      workflow_state_get:
+        any_of:
+        - read
+      cycle_query:
+        any_of:
+        - read
+      cycle_get:
+        any_of:
+        - read
+      label_query:
+        any_of:
+        - read
+      label_get:
+        any_of:
+        - read
+      comment_query:
+        any_of:
+        - read
+      comment_get:
+        any_of:
+        - read
+      issue_create:
+        any_of:
+        - issues:create
+        - write
+      issue_update:
+        any_of:
+        - write
+      issue_delete:
+        any_of:
+        - write
+      comment_create:
+        any_of:
+        - comments:create
+        - write
+      label_create:
+        any_of:
+        - write
+      label_update:
+        any_of:
+        - write
+      project_create:
+        any_of:
+        - write
+      workflow_state_create:
+        any_of:
+        - write
+      issue_add_label:
+        any_of:
+        - write
+      issue_remove_label:
+        any_of:
+        - write
+    relations:
+      Issue.team:
+        any_of:
+        - read
+      Issue.project:
+        any_of:
+        - read
+      Issue.assignee:
+        any_of:
+        - read
+      Issue.state:
+        any_of:
+        - read
+      Issue.cycle:
+        any_of:
+        - read
+      Cycle.team:
+        any_of:
+        - read
+      Issue.labels:
+        any_of:
+        - read
+      Issue.parent:
+        any_of:
+        - read
+      Issue.children:
+        any_of:
+        - read
+      Comment.issue:
+        any_of:
+        - read
+auth:
+  scheme: api_key_header
+  header: Authorization
+  env: LINEAR_API_TOKEN

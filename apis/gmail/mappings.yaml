@@ -1,0 +1,715 @@
+# Gmail API v1 — CML (Capability Mapping Language). Semantic model is in domain.yaml.
+#
+# Base URL: Gmail API (gmail.googleapis.com — set Google API HTTPS origin with --backend).
+# All paths start with: gmail/v1/users/me/
+#
+# Auth: Bearer token injected as Authorization header by the runtime.
+#
+# Pagination: nextPageToken / pageToken cursor style.
+# - Request: pageToken=<token>, maxResults=<n>
+# - Response: {"messages": [...], "nextPageToken": "abc", "resultSizeEstimate": N}
+# - Stop: implicit when nextPageToken absent (from_response extraction returns None).
+#
+# The `userId` path variable is hardcoded to `me` in all paths — the Gmail API
+# uses this as shorthand for the authenticated user's mailbox.
+#
+# Note on message body: messages.list returns minimal rows {id, threadId}.
+# Full message content (headers, body) comes from messages.get with format=full.
+# Plasm's auto-hydration (query + get) handles this automatically: running
+# `message query` automatically calls `message_get` per row unless --summary is passed.
+#
+# Threads: threads.list returns richer JSON, but the CGS models thread_list/thread_search
+# as {id, historyId} only so rows hydrate via threads.get (N GETs for N threads unless --summary).
+
+# ── Message ───────────────────────────────────────────────────────────────
+
+message_list:
+  response:
+    items: messages
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+  query:
+    type: object
+    fields:
+      - - q
+        - type: if
+          condition: { type: exists, var: q }
+          then_expr: { type: var, name: q }
+          else_expr: { type: const, value: null }
+      - - labelIds
+        - type: if
+          condition: { type: exists, var: labelIds }
+          then_expr: { type: var, name: labelIds }
+          else_expr: { type: const, value: null }
+      - - includeSpamTrash
+        - type: if
+          condition: { type: exists, var: includeSpamTrash }
+          then_expr: { type: var, name: includeSpamTrash }
+          else_expr: { type: const, value: null }
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      maxResults: { fixed: 100 }
+    location: query
+
+# Same HTTP as message_list — enables Message~"…" / `message search` (kind: search).
+message_search:
+  response:
+    items: messages
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+  query:
+    type: object
+    fields:
+      - - q
+        - type: if
+          condition: { type: exists, var: q }
+          then_expr: { type: var, name: q }
+          else_expr: { type: const, value: null }
+      - - labelIds
+        - type: if
+          condition: { type: exists, var: labelIds }
+          then_expr: { type: var, name: labelIds }
+          else_expr: { type: const, value: null }
+      - - includeSpamTrash
+        - type: if
+          condition: { type: exists, var: includeSpamTrash }
+          then_expr: { type: var, name: includeSpamTrash }
+          else_expr: { type: const, value: null }
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      maxResults: { fixed: 100 }
+    location: query
+
+message_get:
+  response: single
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: var
+      name: id
+  query:
+    type: object
+    fields:
+      - - format
+        - type: if
+          condition: { type: exists, var: format }
+          then_expr: { type: var, name: format }
+          else_expr: { type: const, value: null }
+
+message_send:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: literal
+      value: send
+  body:
+    type: var
+    name: input
+
+# Same POST as message_send — body built from from/to/subject/plainBody (+ optional threadId, inReplyTo, references) via CML.
+message_send_simple:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: literal
+      value: send
+  body:
+    type: gmail_rfc5322_send_body
+
+# Same POST — reply defaults from preflight `parent_*` (invoke_preflight + message_get).
+message_reply:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: literal
+      value: send
+  body:
+    type: gmail_rfc5322_reply_send_body
+
+message_trash:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: var
+      name: id
+    - type: literal
+      value: trash
+
+message_untrash:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: var
+      name: id
+    - type: literal
+      value: untrash
+
+message_delete:
+  response: single
+  method: DELETE
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: var
+      name: id
+
+message_modify:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: var
+      name: id
+    - type: literal
+      value: modify
+  body:
+    type: var
+    name: input
+
+# ── Thread ─────────────────────────────────────────────────────────────────
+
+thread_list:
+  response:
+    items: threads
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+  query:
+    type: object
+    fields:
+      - - q
+        - type: if
+          condition: { type: exists, var: q }
+          then_expr: { type: var, name: q }
+          else_expr: { type: const, value: null }
+      - - labelIds
+        - type: if
+          condition: { type: exists, var: labelIds }
+          then_expr: { type: var, name: labelIds }
+          else_expr: { type: const, value: null }
+      - - includeSpamTrash
+        - type: if
+          condition: { type: exists, var: includeSpamTrash }
+          then_expr: { type: var, name: includeSpamTrash }
+          else_expr: { type: const, value: null }
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      maxResults: { fixed: 100 }
+    location: query
+
+# Same HTTP as thread_list — enables Thread~"…" / `thread search` (kind: search).
+thread_search:
+  response:
+    items: threads
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+  query:
+    type: object
+    fields:
+      - - q
+        - type: if
+          condition: { type: exists, var: q }
+          then_expr: { type: var, name: q }
+          else_expr: { type: const, value: null }
+      - - labelIds
+        - type: if
+          condition: { type: exists, var: labelIds }
+          then_expr: { type: var, name: labelIds }
+          else_expr: { type: const, value: null }
+      - - includeSpamTrash
+        - type: if
+          condition: { type: exists, var: includeSpamTrash }
+          then_expr: { type: var, name: includeSpamTrash }
+          else_expr: { type: const, value: null }
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      maxResults: { fixed: 100 }
+    location: query
+
+thread_get:
+  response: single
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+    - type: var
+      name: id
+  query:
+    type: object
+    fields:
+      - - format
+        - type: if
+          condition: { type: exists, var: format }
+          then_expr: { type: var, name: format }
+          else_expr: { type: const, value: null }
+
+thread_trash:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+    - type: var
+      name: id
+    - type: literal
+      value: trash
+
+thread_untrash:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+    - type: var
+      name: id
+    - type: literal
+      value: untrash
+
+thread_delete:
+  response: single
+  method: DELETE
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+    - type: var
+      name: id
+
+thread_modify:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: threads
+    - type: var
+      name: id
+    - type: literal
+      value: modify
+  body:
+    type: var
+    name: input
+
+# ── Label ─────────────────────────────────────────────────────────────────
+
+label_list:
+  # Returns all labels in one response — no pagination
+  response:
+    items: labels
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: labels
+
+label_get:
+  response: single
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: labels
+    - type: var
+      name: id
+
+label_create:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: labels
+  body:
+    type: var
+    name: input
+
+label_update:
+  response: single
+  method: PUT
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: labels
+    - type: var
+      name: id
+  body:
+    type: var
+    name: input
+
+label_delete:
+  response: single
+  method: DELETE
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: labels
+    - type: var
+      name: id
+
+# ── Draft ─────────────────────────────────────────────────────────────────
+
+draft_list:
+  response:
+    items: drafts
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: drafts
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      maxResults: { fixed: 100 }
+    location: query
+
+draft_get:
+  response: single
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: drafts
+    - type: var
+      name: id
+  query:
+    type: object
+    fields:
+      - - format
+        - type: if
+          condition: { type: exists, var: format }
+          then_expr: { type: var, name: format }
+          else_expr: { type: const, value: null }
+
+draft_create:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: drafts
+  body:
+    type: object
+    fields:
+      - - message
+        - type: var
+          name: input
+
+draft_update:
+  response: single
+  method: PUT
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: drafts
+    - type: var
+      name: id
+  body:
+    type: object
+    fields:
+      - - message
+        - type: var
+          name: input
+
+draft_delete:
+  response: single
+  method: DELETE
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: drafts
+    - type: var
+      name: id
+
+draft_send:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: drafts
+    - type: literal
+      value: send
+  body:
+    type: object
+    fields:
+      - - id
+        - type: var
+          name: id
+
+# ── Attachment ────────────────────────────────────────────────────────────
+
+attachment_get:
+  # GET /gmail/v1/users/me/messages/{messageId}/attachments/{id}
+  # key_vars: [messageId, id] — both injected from compound Ref
+  response: single
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: messages
+    - type: var
+      name: messageId
+    - type: literal
+      value: attachments
+    - type: var
+      name: id
+
+# ── Profile ───────────────────────────────────────────────────────────────
+
+profile_get:
+  # GET /gmail/v1/users/me/profile — returns {emailAddress, messagesTotal, threadsTotal, historyId}
+  # Direct object at root (no wrapper key), decode as single entity.
+  response: single
+  method: GET
+  path:
+    - type: literal
+      value: gmail
+    - type: literal
+      value: v1
+    - type: literal
+      value: users
+    - type: literal
+      value: me
+    - type: literal
+      value: profile

@@ -1,0 +1,19 @@
+# plasm-core (open source)
+
+Rust workspace for the Plasm language: schema / CGS (`plasm-core`), compile + CML (`plasm-compile`, `plasm-cml`), runtime, plugin host, and the **OSS** `plasm-mcp` / `plasm-agent` data plane (HTTP discovery + execute + Streamable HTTP MCP, without the hosted `/internal/*` control-plane stack).
+
+The private product monorepo composes this tree as a **git submodule** and adds `plasm-saas` for Phoenix-facing control-plane routes.
+
+## Build
+
+```bash
+cargo build --workspace
+```
+
+## `plasm-mcp` (OSS)
+
+`plasm-mcp` in this repository uses the OSS HTTP stack from `plasm-agent-core` (no `plasm-saas`). For the full hosted router, build from the private super-repo.
+
+## License
+
+See [LICENSE](LICENSE).

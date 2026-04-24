@@ -1,0 +1,44 @@
+# GraphQLZero — excerpt for authoring (documentation only; not loaded by Plasm).
+# Full schema: introspect https://graphqlzero.almansi.me/api or use the playground.
+
+scalar ID
+
+type Query {
+  users(options: PageQueryOptions): UserConnection!
+  user(id: ID!): User
+  posts(options: PageQueryOptions): PostConnection!
+  post(id: ID!): Post
+  comments(options: PageQueryOptions): CommentConnection!
+  comment(id: ID!): Comment
+  todos(options: PageQueryOptions): TodoConnection!
+  todo(id: ID!): Todo
+  albums(options: PageQueryOptions): AlbumConnection!
+  album(id: ID!): Album
+  photos(options: PageQueryOptions): PhotoConnection!
+  photo(id: ID!): Photo
+}
+
+input PageQueryOptions {
+  paginate: PaginateOptions
+}
+
+input PaginateOptions {
+  page: Int
+  limit: Int
+}
+
+type PageMeta {
+  totalCount: Int
+}
+
+type UserConnection {
+  data: [User!]!
+  meta: PageMeta
+}
+
+type PostConnection {
+  data: [Post!]!
+  meta: PageMeta
+}
+
+# …remaining types mirror the live schema (User, Post, Comment, Todo, Album, Photo, Mutation).

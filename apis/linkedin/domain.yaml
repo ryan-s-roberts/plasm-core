@@ -1,0 +1,412 @@
+version: 1
+
+http_backend: https://api.linkedin.com
+
+entities:
+  OpenIdProfile:
+    id_field: sub
+    description: OpenID Connect userinfo claims for the authorized LinkedIn member.
+    fields:
+      sub:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      given_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      family_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      picture:
+        field_type: string
+        required: false
+        string_semantics: short
+      locale:
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+      email_verified:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  Member:
+    id_field: id
+    description: Authenticated member profile from the v2 Profile API.
+    fields:
+      id:
+        field_type: string
+        required: true
+        description: LinkedIn person ID for this app.
+        string_semantics: short
+      localizedFirstName:
+        field_type: string
+        required: false
+        string_semantics: short
+      localizedLastName:
+        field_type: string
+        required: false
+        string_semantics: short
+      localizedHeadline:
+        field_type: string
+        required: false
+        string_semantics: short
+      vanityName:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      feed_posts:
+        target: UgcPost
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: ugc_post_query_for_member
+          param: member
+
+  Organization:
+    id_field: id
+    description: Organization page identity used as a UGC post author.
+    abstract: true
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      feed_posts:
+        target: UgcPost
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: ugc_post_query_for_organization
+          param: organization
+
+  UgcPost:
+    id_field: id
+    description: User-generated content post in the LinkedIn feed graph.
+    fields:
+      id:
+        field_type: string
+        required: true
+        description: ugcPost or share URN identifier.
+        string_semantics: short
+      authorUrn:
+        field_type: string
+        required: false
+        description: Author URN (person or organization).
+        string_semantics: short
+      lifecycleState:
+        field_type: string
+        required: false
+        string_semantics: short
+      shareCommentaryText:
+        field_type: string
+        required: false
+        string_semantics: short
+      shareMediaCategory:
+        field_type: string
+        required: false
+        string_semantics: short
+      visibility:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  MediaUploadRegistration:
+    id_field: asset
+    description: Registration envelope for a media upload used in UGC creation.
+    fields:
+      asset:
+        field_type: string
+        required: true
+        string_semantics: short
+      uploadUrl:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+capabilities:
+  openid_userinfo_get:
+    kind: singleton
+    entity: OpenIdProfile
+    description: Load OIDC userinfo claims for the authenticated member.
+    provides:
+    - sub
+    - name
+    - given_name
+    - family_name
+    - picture
+    - locale
+    - email
+    - email_verified
+
+  member_me_get:
+    kind: singleton
+    entity: Member
+    description: Load the authenticated member profile.
+    provides:
+    - id
+    - localizedFirstName
+    - localizedLastName
+    - localizedHeadline
+    - vanityName
+
+  ugc_post_query:
+    kind: query
+    entity: UgcPost
+    description: Finder query for posts using an explicit Rest.li authors token.
+    provides:
+    - id
+    - authorUrn
+    - lifecycleState
+    parameters:
+    - name: authors
+      type: string
+      required: true
+      role: scope
+      description: Rest.li token such as List(urn%3Ali%3Aperson%3A8675309).
+      string_semantics: short
+    - name: sortBy
+      type: select
+      required: false
+      allowed_values:
+      - LAST_MODIFIED
+      - CREATED
+      role: sort
+
+  ugc_post_query_for_member:
+    kind: query
+    entity: UgcPost
+    description: Query posts authored by a specific member.
+    provides:
+    - id
+    - authorUrn
+    - lifecycleState
+    parameters:
+    - name: member
+      type: entity_ref
+      target: Member
+      required: true
+      role: scope
+      description: Member id; mapping composes the Rest.li authors finder token.
+    - name: sortBy
+      type: select
+      required: false
+      allowed_values:
+      - LAST_MODIFIED
+      - CREATED
+      role: sort
+
+  ugc_post_query_for_organization:
+    kind: query
+    entity: UgcPost
+    description: Query posts authored by a specific organization.
+    provides:
+    - id
+    - authorUrn
+    - lifecycleState
+    parameters:
+    - name: organization
+      type: entity_ref
+      target: Organization
+      required: true
+      role: scope
+      description: Organization id; mapping composes the Rest.li authors finder token.
+    - name: sortBy
+      type: select
+      required: false
+      allowed_values:
+      - LAST_MODIFIED
+      - CREATED
+      role: sort
+
+  ugc_post_get:
+    kind: get
+    entity: UgcPost
+    description: Retrieve one post by encoded URN.
+    provides:
+    - id
+    - authorUrn
+    - lifecycleState
+    - shareCommentaryText
+    - shareMediaCategory
+    - visibility
+    parameters:
+    - name: viewContext
+      type: select
+      required: false
+      allowed_values:
+      - AUTHOR
+      - READER
+      role: response_control
+
+  ugc_post_create:
+    kind: create
+    entity: UgcPost
+    description: Create a feed post as a member or organization author URN.
+    provides:
+    - id
+    - authorUrn
+    - lifecycleState
+    parameters:
+    - name: authorUrn
+      type: string
+      required: true
+      string_semantics: short
+    - name: shareCommentary
+      type: string
+      required: true
+      string_semantics: short
+    - name: visibility
+      type: select
+      required: true
+      allowed_values:
+      - PUBLIC
+      - CONNECTIONS
+    - name: shareMediaCategory
+      type: select
+      required: true
+      allowed_values:
+      - NONE
+      - ARTICLE
+      - IMAGE
+      - VIDEO
+    - name: articleOriginalUrl
+      type: string
+      required: false
+      string_semantics: short
+    - name: articleTitle
+      type: string
+      required: false
+      string_semantics: short
+    - name: articleDescription
+      type: string
+      required: false
+      string_semantics: short
+    - name: imageMediaUrn
+      type: string
+      required: false
+      string_semantics: short
+
+  media_upload_register:
+    kind: action
+    entity: MediaUploadRegistration
+    description: Register an image or video upload and return asset/upload URL.
+    parameters:
+    - name: ownerUrn
+      type: string
+      required: true
+      string_semantics: short
+    - name: recipe
+      type: select
+      required: true
+      allowed_values:
+      - feedshare-image
+      - feedshare-video
+    provides:
+    - asset
+    - uploadUrl
+
+oauth:
+  provider: linkedin
+  scopes:
+    openid:
+      label: OpenID Connect sign-in
+      docs_url: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2
+    profile:
+      label: OIDC profile claims
+      docs_url: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2
+    email:
+      label: OIDC email claims
+      docs_url: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2
+    r_liteprofile:
+      label: Profile API read access
+      docs_url: https://learn.microsoft.com/en-us/linkedin/shared/integrations/people/profile-api
+    r_basicprofile:
+      label: Extended profile read access
+      docs_url: https://learn.microsoft.com/en-us/linkedin/shared/integrations/people/profile-api
+    w_member_social:
+      label: Post as member
+      docs_url: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin
+    r_member_social:
+      label: Read member social content (restricted)
+      docs_url: https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/shares/ugc-post-api
+    r_organization_social:
+      label: Read organization social content
+      docs_url: https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/shares/ugc-post-api
+    w_organization_social:
+      label: Post as organization
+      docs_url: https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/shares/ugc-post-api
+  default_scope_sets:
+    consumer_self_serve:
+      description: Sign in with LinkedIn plus member posting.
+      scopes:
+      - openid
+      - profile
+      - email
+      - w_member_social
+  requirements:
+    capabilities:
+      openid_userinfo_get:
+        any_of:
+        - openid
+      member_me_get:
+        any_of:
+        - r_liteprofile
+        - r_basicprofile
+      ugc_post_query:
+        any_of:
+        - r_member_social
+        - r_organization_social
+        - w_member_social
+      ugc_post_query_for_member:
+        any_of:
+        - r_member_social
+        - w_member_social
+      ugc_post_query_for_organization:
+        any_of:
+        - r_organization_social
+        - w_organization_social
+      ugc_post_get:
+        any_of:
+        - r_member_social
+        - r_organization_social
+        - w_member_social
+      ugc_post_create:
+        any_of:
+        - w_member_social
+        - w_organization_social
+      media_upload_register:
+        any_of:
+        - w_member_social
+        - w_organization_social
+    relations:
+      Member.feed_posts:
+        any_of:
+        - r_member_social
+        - w_member_social
+      Organization.feed_posts:
+        any_of:
+        - r_organization_social
+        - w_organization_social
+
+auth:
+  scheme: bearer_token
+  env: LINKEDIN_ACCESS_TOKEN

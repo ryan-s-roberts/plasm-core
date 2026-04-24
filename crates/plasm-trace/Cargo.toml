@@ -1,0 +1,11 @@
+[package]
+name = "plasm-trace"
+version = "0.1.0"
+edition = "2021"
+description = "Canonical MCP / execute session trace segments, events, and totals"
+
+[dependencies]
+plasm-runtime = { path = "../plasm-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }

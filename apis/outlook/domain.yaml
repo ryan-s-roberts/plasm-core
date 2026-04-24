@@ -1,0 +1,395 @@
+version: 3
+
+http_backend: https://graph.microsoft.com
+
+entities:
+  MailFolder:
+    id_field: id
+    description: A mail folder in the signed-in mailbox.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      displayName:
+        field_type: string
+        required: false
+        string_semantics: short
+      parentFolderId:
+        field_type: entity_ref
+        target: MailFolder
+        required: false
+      childFolderCount:
+        field_type: integer
+        required: false
+      unreadItemCount:
+        field_type: integer
+        required: false
+      totalItemCount:
+        field_type: integer
+        required: false
+      wellKnownName:
+        field_type: string
+        required: false
+        string_semantics: short
+      isHidden:
+        field_type: boolean
+        required: false
+    relations:
+      childFolders:
+        target: MailFolder
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: mail_folder_child_query
+          param: mailFolderId
+      messages:
+        target: Message
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: message_folder_query
+          param: mailFolderId
+
+  Message:
+    id_field: id
+    description: A message in the signed-in mailbox.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      subject:
+        field_type: string
+        required: false
+        string_semantics: short
+      bodyPreview:
+        field_type: string
+        required: false
+        string_semantics: short
+      bodyContentType:
+        field_type: select
+        required: false
+        path: body.contentType
+        allowed_values:
+          - text
+          - html
+      bodyContent:
+        field_type: string
+        required: false
+        path: body.content
+        string_semantics: markdown
+      internetMessageId:
+        field_type: string
+        required: false
+        string_semantics: short
+      conversationId:
+        field_type: string
+        required: false
+        string_semantics: short
+      parentFolderId:
+        field_type: entity_ref
+        target: MailFolder
+        required: false
+      fromAddress:
+        field_type: string
+        required: false
+        path: from.emailAddress.address
+        string_semantics: short
+      fromName:
+        field_type: string
+        required: false
+        path: from.emailAddress.name
+        string_semantics: short
+      receivedDateTime:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      sentDateTime:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      hasAttachments:
+        field_type: boolean
+        required: false
+      isDraft:
+        field_type: boolean
+        required: false
+      isRead:
+        field_type: boolean
+        required: false
+      importance:
+        field_type: select
+        required: false
+        allowed_values:
+          - low
+          - normal
+          - high
+      categories:
+        field_type: array
+        required: false
+        items:
+          type: string
+      webLink:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      attachments:
+        target: Attachment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: attachment_query
+          param: messageId
+
+  Attachment:
+    id_field: id
+    description: A file or embedded item attached to a message.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      contentType:
+        field_type: string
+        required: false
+        string_semantics: short
+      size:
+        field_type: integer
+        required: false
+      isInline:
+        field_type: boolean
+        required: false
+      lastModifiedDateTime:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      contentId:
+        field_type: string
+        required: false
+        string_semantics: short
+      contentBytes:
+        field_type: blob
+        required: false
+        mime_type_hint: application/octet-stream
+        attachment_media: generic
+    relations: {}
+
+capabilities:
+  mail_folder_query:
+    kind: query
+    entity: MailFolder
+    description: List the root-level folders in the mailbox.
+    parameters:
+      - name: includeHiddenFolders
+        type: boolean
+        required: false
+        description: Include hidden folders in the root folder listing.
+
+  mail_folder_child_query:
+    kind: query
+    entity: MailFolder
+    description: List child folders underneath a folder.
+    parameters:
+      - name: mailFolderId
+        type: entity_ref
+        target: MailFolder
+        required: true
+        role: scope
+        description: Folder whose child folders should be listed.
+      - name: includeHiddenFolders
+        type: boolean
+        required: false
+        description: Include hidden folders in the child folder listing.
+
+  mail_folder_get:
+    kind: get
+    entity: MailFolder
+    description: Get details for a known folder.
+    provides:
+      - id
+      - displayName
+      - parentFolderId
+      - childFolderCount
+      - unreadItemCount
+      - totalItemCount
+      - wellKnownName
+      - isHidden
+
+  message_query:
+    kind: query
+    entity: Message
+    description: List messages across the mailbox.
+    provides:
+      - id
+      - subject
+      - bodyPreview
+      - parentFolderId
+      - fromAddress
+      - fromName
+      - receivedDateTime
+      - sentDateTime
+      - hasAttachments
+      - isDraft
+      - isRead
+      - importance
+      - categories
+      - webLink
+
+  message_folder_query:
+    kind: query
+    entity: Message
+    description: List messages in a specific folder.
+    provides:
+      - id
+      - subject
+      - bodyPreview
+      - parentFolderId
+      - fromAddress
+      - fromName
+      - receivedDateTime
+      - sentDateTime
+      - hasAttachments
+      - isDraft
+      - isRead
+      - importance
+      - categories
+      - webLink
+    parameters:
+      - name: mailFolderId
+        type: entity_ref
+        target: MailFolder
+        required: true
+        role: scope
+        description: Folder whose messages should be listed.
+
+  message_get:
+    kind: get
+    entity: Message
+    description: Get the full message body and metadata for a known message.
+    provides:
+      - id
+      - subject
+      - bodyPreview
+      - bodyContentType
+      - bodyContent
+      - internetMessageId
+      - conversationId
+      - parentFolderId
+      - fromAddress
+      - fromName
+      - receivedDateTime
+      - sentDateTime
+      - hasAttachments
+      - isDraft
+      - isRead
+      - importance
+      - categories
+      - webLink
+
+  message_update:
+    kind: update
+    entity: Message
+    description: Update mailbox state fields on a message.
+    parameters:
+      - name: isRead
+        type: boolean
+        required: false
+        description: Whether the message should be marked read.
+      - name: importance
+        type: select
+        required: false
+        allowed_values:
+          - low
+          - normal
+          - high
+        description: Importance marker to store on the message.
+      - name: categories
+        type: array
+        required: false
+        items:
+          type: string
+        description: Categories to store on the message.
+    provides:
+      - id
+      - parentFolderId
+      - isRead
+      - importance
+      - categories
+
+  message_move:
+    kind: action
+    entity: Message
+    description: Move a message into another folder.
+    parameters:
+      - name: destinationFolderId
+        type: entity_ref
+        target: MailFolder
+        required: true
+        description: Folder that should receive the moved message.
+    output:
+      type: side_effect
+      description: Moves the message into another folder in the mailbox.
+
+  message_send:
+    kind: action
+    entity: Message
+    description: Send a draft message.
+    output:
+      type: side_effect
+      description: Sends the draft message from the mailbox.
+
+  message_delete:
+    kind: delete
+    entity: Message
+    description: Permanently remove a message from the mailbox.
+
+  attachment_query:
+    kind: query
+    entity: Attachment
+    description: List attachments on a message.
+    provides:
+      - id
+      - name
+      - contentType
+      - size
+      - isInline
+      - lastModifiedDateTime
+      - contentId
+    parameters:
+      - name: messageId
+        type: entity_ref
+        target: Message
+        required: true
+        role: scope
+        description: Message whose attachments should be listed.
+
+  attachment_get:
+    kind: action
+    entity: Attachment
+    description: Fetch attachment content for a known attachment on a message.
+    provides:
+      - id
+      - name
+      - contentType
+      - size
+      - isInline
+      - lastModifiedDateTime
+      - contentId
+      - contentBytes
+    parameters:
+      - name: messageId
+        type: entity_ref
+        target: Message
+        required: true
+        role: scope
+        description: Message that owns the attachment.
+
+auth:
+  scheme: bearer_token
+  env: MICROSOFT_GRAPH_ACCESS_TOKEN

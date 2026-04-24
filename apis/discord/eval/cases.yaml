@@ -1,0 +1,56 @@
+# Discord — soft expectations for NL→Plasm eval (schema: discord)
+- id: discord-coverage-smoke
+  schema: discord
+  goal: >-
+    Explore a Discord server: list channels and voice regions, fetch a user and a message,
+    search messages in a guild, open gateway metadata, and touch application resources—
+    mixing reads, filters, and follow-up navigation across entity types.
+  tags: [smoke, coverage]
+  covers:
+    - chain
+    - create
+    - delete
+    - get
+    - invoke
+    - multi_step
+    - projection
+    - query_all
+    - query_filtered
+    - reverse
+    - search_text
+    - update
+  expect:
+    entities_any:
+      - Application
+      - ApplicationCommand
+      - AuditLog
+      - AutoModerationRule
+      - Ban
+      - Channel
+      - ChannelPermissionOverwrite
+      - CustomEmoji
+      - Entitlement
+      - Gateway
+      - GatewayBot
+      - Guild
+      - GuildApplicationCommand
+      - GuildIntegration
+      - GuildMember
+      - GuildTemplate
+      - GuildWidget
+      - Interaction
+      - Invite
+      - Message
+      - PublicGuildTemplate
+      - Role
+      - ScheduledEvent
+      - SoundboardDefaultSound
+      - SoundboardSound
+      - StageInstance
+      - Sticker
+      - StickerPack
+      - Thread
+      - User
+      - VoiceRegion
+      - Webhook
+      - WelcomeScreen

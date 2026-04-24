@@ -1,0 +1,118 @@
+version: 1
+
+http_backend: https://api.rawg.io
+
+entities:
+  Game:
+    id_field: id
+    description: A video game entry in the RAWG database
+    fields:
+      id:
+        description: Unique RAWG game identifier
+        field_type: integer
+        required: true
+      name:
+        description: Game title
+        field_type: string
+        required: true
+        string_semantics: short
+      slug:
+        description: URL-friendly game identifier
+        field_type: string
+        required: false
+        string_semantics: short
+      released:
+        description: Game release date (RAWG returns YYYY-MM-DD or null)
+        field_type: date
+        value_format: iso8601_date
+        required: false
+      rating:
+        description: Average user rating
+        field_type: number
+        required: false
+      metacritic:
+        description: Metacritic aggregated score
+        field_type: integer
+        required: false
+      playtime:
+        description: Average playtime in hours
+        field_type: integer
+        required: false
+      tba:
+        description: Whether the release date is to be announced
+        field_type: boolean
+        required: false
+      background_image:
+        description: URL of the game's background image
+        field_type: string
+        required: false
+        string_semantics: short
+capabilities:
+  game_query:
+    description: Search and filter the RAWG games catalog
+    kind: query
+    entity: Game
+    parameters:
+    - name: search
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: genres
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: platforms
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: developers
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: publishers
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: tags
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: dates
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: metacritic
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: ordering
+      type: string
+      required: false
+      role: sort
+      string_semantics: short
+  game_get:
+    description: Retrieve full details for a single game
+    kind: get
+    entity: Game
+    provides:
+    - id
+    - name
+    - slug
+    - released
+    - rating
+    - metacritic
+    - playtime
+    - tba
+    - background_image
+auth:
+  scheme: api_key_query
+  param: key
+  env: RAWG_API_KEY

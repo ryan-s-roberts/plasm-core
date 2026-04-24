@@ -1,0 +1,35 @@
+# Google Docs API v1 — CML. Paths are relative to https://docs.googleapis.com
+
+documents_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: documents }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [includeTabsContent, { type: if, condition: { type: exists, var: includeTabsContent }, then_expr: { type: var, name: includeTabsContent }, else_expr: { type: const, value: null } }]
+      - [suggestionsViewMode, { type: if, condition: { type: exists, var: suggestionsViewMode }, then_expr: { type: var, name: suggestionsViewMode }, else_expr: { type: const, value: null } }]
+  response: single
+
+documents_create:
+  method: POST
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: documents }
+  body:
+    type: var
+    name: input
+  response: single
+
+documents_batchUpdate:
+  method: POST
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: documents }
+    - { type: var, name: id, suffix: ":batchUpdate" }
+  body:
+    type: var
+    name: input
+  response: single

@@ -1,0 +1,52 @@
+# TheMealDB uses /search.php?s=, /filter.php?c=, /lookup.php?i=
+# All return {"meals": [...]}
+
+meal_search:
+  method: GET
+  path:
+    - type: literal
+      value: search.php
+  query:
+    type: object
+    fields:
+      - [s, { type: var, name: s }]
+  response:
+    items: meals
+
+meal_filter:
+  method: GET
+  path:
+    - type: literal
+      value: filter.php
+  query:
+    type: object
+    fields:
+      - - c
+        - type: if
+          condition: { type: exists, var: c }
+          then_expr: { type: var, name: c }
+          else_expr: { type: const, value: null }
+      - - a
+        - type: if
+          condition: { type: exists, var: a }
+          then_expr: { type: var, name: a }
+          else_expr: { type: const, value: null }
+      - - i
+        - type: if
+          condition: { type: exists, var: i }
+          then_expr: { type: var, name: i }
+          else_expr: { type: const, value: null }
+  response:
+    items: meals
+
+meal_get:
+  method: GET
+  path:
+    - type: literal
+      value: lookup.php
+  query:
+    type: object
+    fields:
+      - [i, { type: var, name: id }]
+  response:
+    items: meals

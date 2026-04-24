@@ -1,0 +1,25 @@
+# ERC-20 slice — balance read + Transfer log query (evm_call / evm_logs).
+- id: erc-01
+  schema: evm-erc20
+  goal: "USDC balance for wallet 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+  tags: [get, balance]
+  covers: [get]
+  expect:
+    entities_any: [Balance]
+
+- id: erc-02
+  schema: evm-erc20
+  goal: "Show only the numeric balance field for that USDC wallet check"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Balance]
+    projection_contains: [balance]
+
+- id: erc-03
+  schema: evm-erc20
+  goal: "Cross-check wallet balance against recent on-chain Transfer events for the same address"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Balance, Transfer]

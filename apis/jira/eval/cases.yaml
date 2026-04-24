@@ -1,0 +1,172 @@
+# Jira Cloud — issues, projects, boards (triage, search, planning).
+- id: ji-01
+  schema: jira
+  goal: "Run JQL 'project = PLASM AND status = Open' for the daily standup board"
+  tags: [search, jql]
+  covers: [search_text]
+  expect:
+    entities_any: [Issue]
+
+- id: ji-02
+  schema: jira
+  goal: "List issues in project PLASM with assignee = currentUser()"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Issue]
+
+- id: ji-03
+  schema: jira
+  goal: "Fetch issue PLASM-42 for the detail drawer"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Issue]
+
+- id: ji-04
+  schema: jira
+  goal: "Search projects whose key starts with 'PLAS' for org onboarding"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Project]
+
+- id: ji-05
+  schema: jira
+  goal: "From issue PLASM-1, load the assignee's profile for the avatar tooltip"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Issue, User]
+
+- id: ji-06
+  schema: jira
+  goal: "Get sprint PLASM-1 issues, then list comments on the top blocker"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Issue]
+
+- id: ji-07
+  schema: jira
+  goal: "List components in project PLASM for the release checklist"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Component]
+
+- id: ji-08
+  schema: jira
+  goal: "Get issue PLASM-99 summary and status only for the Slack one-liner"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Issue]
+
+- id: ji-09
+  schema: jira
+  goal: "Portfolio inventory: list every Jira project I can see before we archive stale ones"
+  tags: [query, portfolio]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Project]
+
+- id: ji-10
+  schema: jira
+  goal: "From project PLASM, list versions slated for the next release (scoped to that project)"
+  tags: [query, reverse]
+  covers: [reverse]
+  expect:
+    entities_any: [Project, Version]
+
+- id: ji-11
+  schema: jira
+  goal: "Enumerate global workflow statuses before we customize board columns"
+  tags: [query, browse]
+  covers: [query_all]
+  expect:
+    entities_any: [Status]
+
+# Remaining capability domains (entity coverage).
+- id: ji-12
+  schema: jira
+  goal: "Changelog for issue PLASM-7 for compliance export"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Changelog]
+
+- id: ji-13
+  schema: jira
+  goal: "Comments on PLASM-12 for the moderation queue"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Comment]
+
+- id: ji-14
+  schema: jira
+  goal: "Issue types available in project PLASM for the create-issue modal"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [IssueType]
+
+- id: ji-15
+  schema: jira
+  goal: "Priority levels catalog before we remap severities"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Priority]
+
+- id: ji-16
+  schema: jira
+  goal: "Remote links on PLASM-99 for the incident bridge"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [RemoteLink]
+
+- id: ji-17
+  schema: jira
+  goal: "Valid transitions for PLASM-3 in the workflow editor"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Transition]
+
+- id: ji-18
+  schema: jira
+  goal: "Worklogs on PLASM-55 for the sprint report"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Worklog]
+
+- id: ji-19
+  schema: jira
+  goal: "Create or update issues, run transitions, add comments, or delete test issues using the write-capable CLI (not a single NL template)"
+  tags: [write, coverage]
+  covers: [create, update, delete, invoke]
+  expect:
+    entities_any: [Issue, Comment]
+
+- id: ji-20
+  schema: jira
+  goal: "Integration hardening: boards, sprints, webhooks, saved filters, vote/edit metadata, permissions, attachments, and groups for automation tooling"
+  tags: [coverage, surface]
+  covers: [query_filtered]
+  expect:
+    entities_any:
+      - Attachment
+      - Board
+      - Dashboard
+      - Group
+      - IssueCreateMetaBundle
+      - IssueEditMeta
+      - IssueVoteState
+      - MyPermissionSet
+      - SavedFilter
+      - Sprint
+      - Webhook

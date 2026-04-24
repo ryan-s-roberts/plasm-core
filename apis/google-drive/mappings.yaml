@@ -1,0 +1,601 @@
+# Google Drive API v3 — CML. Base URL from domain http_backend (…/drive/v3).
+# Bearer token via GOOGLE_DRIVE_ACCESS_TOKEN.
+
+about_get:
+  method: GET
+  path:
+    - { type: literal, value: about }
+  response: single
+
+files_list:
+  method: GET
+  path:
+    - { type: literal, value: files }
+  query:
+    type: object
+    fields:
+      - [q, { type: if, condition: { type: exists, var: q }, then_expr: { type: var, name: q }, else_expr: { type: const, value: null } }]
+      - [corpora, { type: if, condition: { type: exists, var: corpora }, then_expr: { type: var, name: corpora }, else_expr: { type: const, value: null } }]
+      - [driveId, { type: if, condition: { type: exists, var: driveId }, then_expr: { type: var, name: driveId }, else_expr: { type: const, value: null } }]
+      - [spaces, { type: if, condition: { type: exists, var: spaces }, then_expr: { type: var, name: spaces }, else_expr: { type: const, value: null } }]
+      - [orderBy, { type: if, condition: { type: exists, var: orderBy }, then_expr: { type: var, name: orderBy }, else_expr: { type: const, value: null } }]
+      - [includeItemsFromAllDrives, { type: if, condition: { type: exists, var: includeItemsFromAllDrives }, then_expr: { type: var, name: includeItemsFromAllDrives }, else_expr: { type: const, value: null } }]
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [includeLabels, { type: if, condition: { type: exists, var: includeLabels }, then_expr: { type: var, name: includeLabels }, else_expr: { type: const, value: null } }]
+      - [includePermissionsForView, { type: if, condition: { type: exists, var: includePermissionsForView }, then_expr: { type: var, name: includePermissionsForView }, else_expr: { type: const, value: null } }]
+  response:
+    items: files
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+files_get:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+  response: single
+
+files_create:
+  method: POST
+  path:
+    - { type: literal, value: files }
+  body:
+    type: var
+    name: input
+  response: single
+
+files_update:
+  method: PATCH
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [addParents, { type: if, condition: { type: exists, var: addParents }, then_expr: { type: var, name: addParents }, else_expr: { type: const, value: null } }]
+      - [removeParents, { type: if, condition: { type: exists, var: removeParents }, then_expr: { type: var, name: removeParents }, else_expr: { type: const, value: null } }]
+      - [enforceSingleParent, { type: if, condition: { type: exists, var: enforceSingleParent }, then_expr: { type: var, name: enforceSingleParent }, else_expr: { type: const, value: null } }]
+      - [keepRevisionForever, { type: if, condition: { type: exists, var: keepRevisionForever }, then_expr: { type: var, name: keepRevisionForever }, else_expr: { type: const, value: null } }]
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+  response: single
+
+files_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+  response: single
+
+files_copy:
+  method: POST
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: id }
+    - { type: literal, value: copy }
+  body:
+    type: var
+    name: input
+  response: single
+
+files_export:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: id }
+    - { type: literal, value: export }
+  query:
+    type: object
+    fields:
+      - [mimeType, { type: var, name: mimeType }]
+
+files_emptyTrash:
+  method: DELETE
+  path:
+    - { type: literal, value: files }
+    - { type: literal, value: trash }
+
+files_download:
+  method: POST
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: download }
+  query:
+    type: object
+    fields:
+      - [mimeType, { type: if, condition: { type: exists, var: mimeType }, then_expr: { type: var, name: mimeType }, else_expr: { type: const, value: null } }]
+      - [revisionId, { type: if, condition: { type: exists, var: revisionId }, then_expr: { type: var, name: revisionId }, else_expr: { type: const, value: null } }]
+  response: single
+
+permissions_list:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: permissions }
+  query:
+    type: object
+    fields:
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response:
+    items: permissions
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+permissions_get:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: permissions }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response: single
+
+permissions_create:
+  method: POST
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: permissions }
+  query:
+    type: object
+    fields:
+      - [emailMessage, { type: if, condition: { type: exists, var: emailMessage }, then_expr: { type: var, name: emailMessage }, else_expr: { type: const, value: null } }]
+      - [sendNotificationEmail, { type: if, condition: { type: exists, var: sendNotificationEmail }, then_expr: { type: var, name: sendNotificationEmail }, else_expr: { type: const, value: null } }]
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [transferOwnership, { type: if, condition: { type: exists, var: transferOwnership }, then_expr: { type: var, name: transferOwnership }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+  response: single
+
+permissions_update:
+  method: PATCH
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: permissions }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [removeExpiration, { type: if, condition: { type: exists, var: removeExpiration }, then_expr: { type: var, name: removeExpiration }, else_expr: { type: const, value: null } }]
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [transferOwnership, { type: if, condition: { type: exists, var: transferOwnership }, then_expr: { type: var, name: transferOwnership }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+  response: single
+
+permissions_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: permissions }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response: single
+
+comments_list:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+  query:
+    type: object
+    fields:
+      - [includeDeleted, { type: if, condition: { type: exists, var: includeDeleted }, then_expr: { type: var, name: includeDeleted }, else_expr: { type: const, value: null } }]
+      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
+      - [startModifiedTime, { type: if, condition: { type: exists, var: startModifiedTime }, then_expr: { type: var, name: startModifiedTime }, else_expr: { type: const, value: null } }]
+  response:
+    items: comments
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+comments_get:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [includeDeleted, { type: if, condition: { type: exists, var: includeDeleted }, then_expr: { type: var, name: includeDeleted }, else_expr: { type: const, value: null } }]
+  response: single
+
+comments_create:
+  method: POST
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+  body:
+    type: var
+    name: input
+  response: single
+
+comments_update:
+  method: PATCH
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: id }
+  # Preflight merges comments_get row as parent_*; optional params override.
+  body:
+    type: object
+    fields:
+      - [content, { type: if, condition: { type: exists, var: content }, then_expr: { type: var, name: content }, else_expr: { type: var, name: parent_content } }]
+      - [anchor, { type: if, condition: { type: exists, var: anchor }, then_expr: { type: var, name: anchor }, else_expr: { type: if, condition: { type: exists, var: parent_anchor }, then_expr: { type: var, name: parent_anchor }, else_expr: { type: const, value: null } } }]
+      - [quotedFileContent, { type: if, condition: { type: exists, var: quotedFileContent }, then_expr: { type: var, name: quotedFileContent }, else_expr: { type: if, condition: { type: exists, var: parent_quotedFileContent }, then_expr: { type: var, name: parent_quotedFileContent }, else_expr: { type: const, value: null } } }]
+  response: single
+
+comments_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: id }
+  response: single
+
+replies_list:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: commentId }
+    - { type: literal, value: replies }
+  query:
+    type: object
+    fields:
+      - [includeDeleted, { type: if, condition: { type: exists, var: includeDeleted }, then_expr: { type: var, name: includeDeleted }, else_expr: { type: const, value: null } }]
+      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
+  response:
+    items: replies
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+replies_get:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: commentId }
+    - { type: literal, value: replies }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [includeDeleted, { type: if, condition: { type: exists, var: includeDeleted }, then_expr: { type: var, name: includeDeleted }, else_expr: { type: const, value: null } }]
+  response: single
+
+replies_create:
+  method: POST
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: commentId }
+    - { type: literal, value: replies }
+  body:
+    type: var
+    name: input
+  response: single
+
+replies_update:
+  method: PATCH
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: commentId }
+    - { type: literal, value: replies }
+    - { type: var, name: id }
+  # Preflight merges replies_get row as parent_*; optional params override.
+  body:
+    type: object
+    fields:
+      - [content, { type: if, condition: { type: exists, var: content }, then_expr: { type: var, name: content }, else_expr: { type: var, name: parent_content } }]
+      - [action, { type: if, condition: { type: exists, var: action }, then_expr: { type: var, name: action }, else_expr: { type: if, condition: { type: exists, var: parent_action }, then_expr: { type: var, name: parent_action }, else_expr: { type: const, value: null } } }]
+  response: single
+
+replies_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: comments }
+    - { type: var, name: commentId }
+    - { type: literal, value: replies }
+    - { type: var, name: id }
+  response: single
+
+revisions_list:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: revisions }
+  query:
+    type: object
+    fields:
+      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
+  response:
+    items: revisions
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+revisions_get:
+  method: GET
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: revisions }
+    - { type: var, name: id }
+  response: single
+
+revisions_update:
+  method: PATCH
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: revisions }
+    - { type: var, name: id }
+  body:
+    type: var
+    name: input
+  response: single
+
+revisions_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: files }
+    - { type: var, name: fileId }
+    - { type: literal, value: revisions }
+    - { type: var, name: id }
+  response: single
+
+drives_list:
+  method: GET
+  path:
+    - { type: literal, value: drives }
+  query:
+    type: object
+    fields:
+      - [q, { type: if, condition: { type: exists, var: q }, then_expr: { type: var, name: q }, else_expr: { type: const, value: null } }]
+      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response:
+    items: drives
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+drives_get:
+  method: GET
+  path:
+    - { type: literal, value: drives }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response: single
+
+drives_create:
+  method: POST
+  path:
+    - { type: literal, value: drives }
+  query:
+    type: object
+    fields:
+      - [requestId, { type: var, name: requestId }]
+  body:
+    type: var
+    name: input
+  response: single
+
+drives_update:
+  method: PATCH
+  path:
+    - { type: literal, value: drives }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+  response: single
+
+drives_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: drives }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [allowItemDeletion, { type: if, condition: { type: exists, var: allowItemDeletion }, then_expr: { type: var, name: allowItemDeletion }, else_expr: { type: const, value: null } }]
+  response: single
+
+drives_hide:
+  method: POST
+  path:
+    - { type: literal, value: drives }
+    - { type: var, name: id }
+    - { type: literal, value: hide }
+
+drives_unhide:
+  method: POST
+  path:
+    - { type: literal, value: drives }
+    - { type: var, name: id }
+    - { type: literal, value: unhide }
+
+changes_getStartPageToken:
+  method: GET
+  path:
+    - { type: literal, value: changes }
+    - { type: literal, value: startPageToken }
+  query:
+    type: object
+    fields:
+      - [driveId, { type: if, condition: { type: exists, var: driveId }, then_expr: { type: var, name: driveId }, else_expr: { type: const, value: null } }]
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [teamDriveId, { type: if, condition: { type: exists, var: teamDriveId }, then_expr: { type: var, name: teamDriveId }, else_expr: { type: const, value: null } }]
+  response: single
+
+changes_list:
+  method: GET
+  path:
+    - { type: literal, value: changes }
+  query:
+    type: object
+    fields:
+      - [startPageToken, { type: var, name: startPageToken }]
+      - [driveId, { type: if, condition: { type: exists, var: driveId }, then_expr: { type: var, name: driveId }, else_expr: { type: const, value: null } }]
+      - [includeCorpusRemovals, { type: if, condition: { type: exists, var: includeCorpusRemovals }, then_expr: { type: var, name: includeCorpusRemovals }, else_expr: { type: const, value: null } }]
+      - [includeItemsFromAllDrives, { type: if, condition: { type: exists, var: includeItemsFromAllDrives }, then_expr: { type: var, name: includeItemsFromAllDrives }, else_expr: { type: const, value: null } }]
+      - [includePermissionsForView, { type: if, condition: { type: exists, var: includePermissionsForView }, then_expr: { type: var, name: includePermissionsForView }, else_expr: { type: const, value: null } }]
+      - [includeRemoved, { type: if, condition: { type: exists, var: includeRemoved }, then_expr: { type: var, name: includeRemoved }, else_expr: { type: const, value: null } }]
+      - [restrictToMyDrive, { type: if, condition: { type: exists, var: restrictToMyDrive }, then_expr: { type: var, name: restrictToMyDrive }, else_expr: { type: const, value: null } }]
+      - [spaces, { type: if, condition: { type: exists, var: spaces }, then_expr: { type: var, name: spaces }, else_expr: { type: const, value: null } }]
+      - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
+      - [teamDriveId, { type: if, condition: { type: exists, var: teamDriveId }, then_expr: { type: var, name: teamDriveId }, else_expr: { type: const, value: null } }]
+      - [pageToken, { type: if, condition: { type: exists, var: pageToken }, then_expr: { type: var, name: pageToken }, else_expr: { type: const, value: null } }]
+  response:
+    items: changes
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+channels_stop:
+  method: POST
+  path:
+    - { type: literal, value: channels }
+    - { type: literal, value: stop }
+  body:
+    type: var
+    name: input
+
+operations_get:
+  method: GET
+  path:
+    - { type: literal, value: operations }
+    - { type: var, name: name }
+  response: single
+
+teamdrives_list:
+  method: GET
+  path:
+    - { type: literal, value: teamdrives }
+  query:
+    type: object
+    fields:
+      - [q, { type: if, condition: { type: exists, var: q }, then_expr: { type: var, name: q }, else_expr: { type: const, value: null } }]
+      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response:
+    items: teamDrives
+  pagination:
+    params:
+      pageToken: { from_response: nextPageToken }
+      pageSize: { fixed: 100 }
+    location: query
+
+teamdrives_get:
+  method: GET
+  path:
+    - { type: literal, value: teamdrives }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  response: single
+
+teamdrives_create:
+  method: POST
+  path:
+    - { type: literal, value: teamdrives }
+  query:
+    type: object
+    fields:
+      - [requestId, { type: var, name: requestId }]
+  body:
+    type: var
+    name: input
+  response: single
+
+teamdrives_update:
+  method: PATCH
+  path:
+    - { type: literal, value: teamdrives }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+  response: single
+
+teamdrives_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: teamdrives }
+    - { type: var, name: id }
+  response: single

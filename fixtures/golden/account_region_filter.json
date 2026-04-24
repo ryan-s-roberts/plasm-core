@@ -1,0 +1,6 @@
+{
+  "type": "comparison",
+  "field": "region", 
+  "op": "=",
+  "value": "EMEA"
+}

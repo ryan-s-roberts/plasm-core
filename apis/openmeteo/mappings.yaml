@@ -1,0 +1,39 @@
+weather_forecast:
+  method: GET
+  path:
+    - type: literal
+      value: v1
+    - type: literal
+      value: forecast
+  response:
+    single: true
+  query:
+    type: object
+    fields:
+      - [latitude,  { type: var, name: latitude }]
+      - [longitude, { type: var, name: longitude }]
+      - - current_weather
+        - type: if
+          condition: { type: exists, var: current_weather }
+          then_expr: { type: var, name: current_weather }
+          else_expr: { type: const, value: null }
+      - - temperature_unit
+        - type: if
+          condition: { type: exists, var: temperature_unit }
+          then_expr: { type: var, name: temperature_unit }
+          else_expr: { type: const, value: null }
+      - - wind_speed_unit
+        - type: if
+          condition: { type: exists, var: wind_speed_unit }
+          then_expr: { type: var, name: wind_speed_unit }
+          else_expr: { type: const, value: null }
+      - - timezone
+        - type: if
+          condition: { type: exists, var: timezone }
+          then_expr: { type: var, name: timezone }
+          else_expr: { type: const, value: null }
+      - - past_days
+        - type: if
+          condition: { type: exists, var: past_days }
+          then_expr: { type: var, name: past_days }
+          else_expr: { type: const, value: null }

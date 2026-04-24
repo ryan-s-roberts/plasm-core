@@ -1,0 +1,2298 @@
+//! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
+//! Tool results use Markdown [`TextContent`]; `plasm` sets `CallToolResult._meta.plasm` (request
+//! fingerprints, artifact URIs, optional `lossy_summary_fields` per truncated step).
+//! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
+//! (`s0`, `s1`, … per MCP transport; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
+//! canonical `plasm://execute/.../run/{uuid}` remains accepted on read.
+//! Tool results may include run snapshot URIs and inline hints when full data requires MCP `resources/read`;
+//! the server repeats that obligation in the reply when it applies.
+//!
+//! Execute bindings (`add_capabilities` → `plasm`) are stored **per agent logical session**
+//! ([`PlasmExecBinding`]), keyed by canonical logical session UUID from `plasm_session_init` (client uses per-transport **`logical_session_ref`** slots: `s0`, `s1`, …).
+//! One MCP transport may host **many** logical sessions; `MCP-Session-Id` is transport correlation only.
+//! If the server-side execute session expires while the MCP transport stays open, the next
+//! `add_capabilities` opens a **new** `(prompt_hash, session_id)` and refreshes the binding.
+//! `add_capabilities` replaces that binding when opening a new catalog entry or session. Tenant MCP policy
+//! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
+//! Tool text includes
+//! the full Plasm instructions body only when the session is newly created server-side (`reused: false`); repeated
+//! opens with the same entry + seeds omit the instruction body to avoid token churn.
+//! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` are append-only across
+//! incremental `add_capabilities` waves; they do not reshuffle. A new primary catalog open or logical session
+//! starts a new symbol space—always read tokens from the current session `prompt` / Plasm language text.
+//! A soft cap evicts one arbitrary older binding when the map grows past [`MAX_MCP_EXEC_BINDINGS`].
+//!
+//! Plasm language / instructions body (first wave on `add_capabilities` open plus append-only delta waves from
+//! `add_capabilities` `seeds`) is counted in Unicode scalar values per MCP transport session.
+//! Each `plasm` call also accumulates invocation text (`expressions` plus optional `reasoning` and
+//! optional TSV `tsv_static_frontmatter`) and,
+//! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
+//! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
+//! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Instant;
+
+use crate::trace_hub::{AddCapabilitiesTrace, McpPlasmTraceSink};
+use std::time::Duration;
+use tracing::Instrument;
+
+use async_trait::async_trait;
+use base64::Engine as _;
+use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
+use plasm_core::CgsDiscovery;
+use rust_mcp_sdk::error::SdkResult;
+use rust_mcp_sdk::event_store::InMemoryEventStore;
+use rust_mcp_sdk::mcp_server::hyper_server;
+use rust_mcp_sdk::mcp_server::{
+    HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
+};
+use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
+use rust_mcp_sdk::schema::{
+    BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
+    InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+    PaginatedRequestParams, ProtocolVersion, ReadResourceContent, ReadResourceRequestParams,
+    ReadResourceResult, ResourceTemplate, RpcError, ServerCapabilities,
+    ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
+    ToolAnnotations, ToolInputSchema,
+};
+use rust_mcp_sdk::McpServer;
+use tokio::sync::{Mutex, RwLock};
+
+use crate::http_execute::{
+    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+};
+use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::mcp_plasm_meta::PlasmMetaIndex;
+use crate::mcp_policy;
+use crate::mcp_runtime_config::McpRuntimeConfig;
+use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
+use crate::run_artifacts::{
+    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri, ArtifactPayload,
+    LogicalSessionUriSegment,
+};
+use crate::server_state::PlasmHostState;
+use crate::session_identity::{ClientSessionKey, LogicalSessionId};
+use crate::trace_sink_emit::PlasmTraceContext;
+use plasm_trace::RunArtifactArchiveRef;
+use serde_json::json;
+use uuid::Uuid;
+
+/// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
+const MAX_MCP_EXEC_BINDINGS: usize = 512;
+
+/// Max Unicode scalars allowed for `plasm` `tsv_static_frontmatter` (the Plasm language contract block).
+const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
+
+/// Model-facing `plasm` tool description: run expressions (session setup is in [`MCP_SERVER_INITIALIZE_INSTRUCTIONS`]).
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str =
+    "**Run** Plasm lines (`expressions` required; **`logical_session_ref`** from **`plasm_session_init`**). Full setup, paging, and output shape: MCP **`initialize` `instructions`**. \
+     Optional **`tsv_static_frontmatter`**: the `#`-comment Plasm language contract (cache from **`add_capabilities`** `_meta.plasm.tsv_static_frontmatter` on first TSV open); not executed, counts toward session invocation tokens. \
+     **Steady state:** same **`logical_session_ref`**, **`plasm` only** for follow-ups -- do **not** re-run **`plasm_session_init`** or **`add_capabilities`** every turn once capabilities are loaded.";
+
+/// MCP `initialize` `instructions` field: tool flow (LLM-facing; transport auth is host-owned).
+pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str =
+    "**Call `plasm_session_init` first** on each MCP connection (before `discover_capabilities`, `add_capabilities`, or `plasm`): pass **`client_session_key`** -- **the host’s stable agent-context id** (same value for the same window, subagent, or other isolation boundary the host defines); use **one key per context you want to share one Plasm logical session**, not a new random id every message. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). **Idempotent:** same transport + same `client_session_key` + tenant => **reuse** the same logical session and ref. \
+     **Session reuse (required default):** After the first successful **`add_capabilities`** open for that ref, **most subsequent user requests should be `plasm` only** with the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`** or repeat **`add_capabilities`** with the same catalog just to \"re-initialize\" -- that wastes tokens and breaks continuity. Call **`add_capabilities`** again **only** when you must **append** new **`api` / `entity`** seeds (another API, more entities) you have **not** already added. \
+     Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
+     **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
+     **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session.";
+
+fn parse_tool_seeds(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<Vec<CapabilitySeed>, CallToolError> {
+    if v.get("seeds").is_none() && (v.get("entry_id").is_some() || v.get("entities").is_some()) {
+        return Err(CallToolError::invalid_arguments(
+            tool,
+            Some(
+                "missing seeds: add_capabilities requires a `seeds` array of `{api, entity}` objects (legacy `entry_id` key per object still accepted); legacy top-level `{entry_id, entities}` is not supported"
+                    .into(),
+            ),
+        ));
+    }
+    let seeds: Vec<CapabilitySeed> = serde_json::from_value(
+        v.get("seeds")
+            .cloned()
+            .ok_or_else(|| {
+                CallToolError::invalid_arguments(
+                    tool,
+                    Some(
+                        "missing seeds: expected `seeds` as non-empty array of `{api, entity}` objects (legacy `entry_id` key accepted)".into(),
+                    ),
+                )
+            })?,
+    )
+    .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))?;
+    let seeds = normalize_capability_seeds(seeds);
+    if seeds.is_empty() {
+        return Err(CallToolError::invalid_arguments(
+            tool,
+            Some("`seeds` must be a non-empty array of {api, entity} objects (legacy `entry_id` key accepted)".into()),
+        ));
+    }
+    Ok(seeds)
+}
+
+fn parse_optional_principal(v: &serde_json::Value) -> Option<String> {
+    v.get("principal")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+}
+
+fn parse_logical_session_ref_arg(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<String, CallToolError> {
+    let s = v
+        .get("logical_session_ref")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| {
+            CallToolError::invalid_arguments(
+                tool,
+                Some("missing `logical_session_ref`: call `plasm_session_init` first".into()),
+            )
+        })?;
+    let t = s.trim();
+    if t.len() >= 2 && t.starts_with('s') && t[1..].chars().all(|c| c.is_ascii_digit()) {
+        Ok(t.to_string())
+    } else {
+        Err(CallToolError::invalid_arguments(
+            tool,
+            Some(
+                "invalid `logical_session_ref`: expected a slot id like `s0` or `s1` from `plasm_session_init`"
+                    .into(),
+            ),
+        ))
+    }
+}
+
+/// Per MCP transport session: Plasm execute `prompt_hash` + `session` ids (same as HTTP paths).
+#[derive(Clone, Default)]
+struct PlasmExecBinding {
+    prompt_hash: String,
+    session_id: String,
+}
+
+/// Cumulative MCP-side text volume for token-ish telemetry (Unicode scalar counts).
+#[derive(Clone, Default, Debug)]
+pub(crate) struct McpSessionPlasmStats {
+    /// Plasm instructions body from `add_capabilities` tool results.
+    domain_prompt_chars: u64,
+    /// `plasm` tool payloads: expression lines plus optional `reasoning`.
+    plasm_invocation_chars: u64,
+    /// Successful `plasm` tool Markdown bodies.
+    plasm_response_chars: u64,
+    plasm_call_count: u64,
+}
+
+#[derive(Default)]
+struct McpLogicalSessionState {
+    binding: Option<PlasmExecBinding>,
+    stats: McpSessionPlasmStats,
+    meta_index: PlasmMetaIndex,
+}
+
+#[derive(Default)]
+struct McpTransportState {
+    /// Logical session UUID string → per-agent state (execute binding, stats, `_meta.plasm` index).
+    logical_by_id: HashMap<String, Arc<Mutex<McpLogicalSessionState>>>,
+    /// Client-facing slot ids on this MCP transport (`s0`, …) → canonical logical session UUID.
+    ref_to_uuid: HashMap<String, Uuid>,
+    uuid_to_ref: HashMap<Uuid, String>,
+    next_session_slot: u64,
+}
+
+impl McpTransportState {
+    /// Assign a stable per-transport slot (`s{n}`) for this canonical logical id (idempotent).
+    fn ensure_session_ref(&mut self, uuid: Uuid) -> String {
+        if let Some(r) = self.uuid_to_ref.get(&uuid) {
+            return r.clone();
+        }
+        let r = format!("s{}", self.next_session_slot);
+        self.next_session_slot = self.next_session_slot.saturating_add(1);
+        self.ref_to_uuid.insert(r.clone(), uuid);
+        self.uuid_to_ref.insert(uuid, r.clone());
+        r
+    }
+}
+
+/// Rough token estimate for logging (Latin-heavy text; not a billing tokenizer).
+#[inline]
+fn mcp_chars_to_token_est(chars: u64) -> u64 {
+    chars.saturating_add(3) / 4
+}
+
+/// Per `plasm` call: count expression + reasoning + optional TSV static frontmatter for invocation telemetry.
+fn plasm_invocation_char_count(
+    expressions: &[String],
+    reasoning: Option<&str>,
+    tsv_static_frontmatter: Option<&str>,
+) -> u64 {
+    let mut n: u64 = 0;
+    for (i, line) in expressions.iter().enumerate() {
+        if i > 0 {
+            n = n.saturating_add(1);
+        }
+        n = n.saturating_add(line.chars().count() as u64);
+    }
+    if let Some(r) = reasoning {
+        n = n.saturating_add(r.chars().count() as u64);
+    }
+    if let Some(f) = tsv_static_frontmatter {
+        n = n.saturating_add(f.chars().count() as u64);
+    }
+    n
+}
+
+pub(crate) struct PlasmMcpHandler {
+    plasm: Arc<PlasmHostState>,
+    /// MCP transport session key -> per-session mutable state.
+    session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
+}
+
+impl PlasmMcpHandler {
+    pub(crate) fn new(plasm: Arc<PlasmHostState>) -> Self {
+        Self {
+            plasm,
+            session_states: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    async fn session_state(&self, key: &str) -> Arc<Mutex<McpTransportState>> {
+        {
+            let g = self.session_states.read().await;
+            if let Some(state) = g.get(key) {
+                return Arc::clone(state);
+            }
+        }
+        let mut g = self.session_states.write().await;
+        Arc::clone(
+            g.entry(key.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(McpTransportState::default()))),
+        )
+    }
+
+    async fn logical_mutex(
+        &self,
+        transport_key: &str,
+        logical_id: &str,
+    ) -> Arc<Mutex<McpLogicalSessionState>> {
+        let transport = self.session_state(transport_key).await;
+        {
+            let g = transport.lock().await;
+            if let Some(entry) = g.logical_by_id.get(logical_id) {
+                return Arc::clone(entry);
+            }
+        }
+        let mut g = transport.lock().await;
+        Arc::clone(
+            g.logical_by_id
+                .entry(logical_id.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(McpLogicalSessionState::default()))),
+        )
+    }
+
+    async fn resolve_logical_session_ref_to_uuid(
+        &self,
+        tool: &str,
+        transport_key: &str,
+        ref_str: &str,
+    ) -> Result<Uuid, CallToolError> {
+        let transport = self.session_state(transport_key).await;
+        let g = transport.lock().await;
+        g.ref_to_uuid.get(ref_str).copied().ok_or_else(|| {
+            CallToolError::invalid_arguments(
+                tool,
+                Some(
+                    "unknown `logical_session_ref`: call `plasm_session_init` on this MCP connection first"
+                        .into(),
+                ),
+            )
+        })
+    }
+
+    /// Resolve execute binding: in-memory per-logical row first, then shared `logical_execute_bindings`.
+    ///
+    /// **Locking:** drop the per-logical mutex before reading `logical_execute_bindings` so we never
+    /// nest that mutex with the host `RwLock` (consistent lock order vs writers elsewhere).
+    async fn resolve_binding_for_logical(
+        &self,
+        transport_key: &str,
+        logical_uuid: Uuid,
+    ) -> Option<PlasmExecBinding> {
+        let lid = logical_uuid.to_string();
+        let ls = self.logical_mutex(transport_key, &lid).await;
+        let g = ls.lock().await;
+        if let Some(b) = &g.binding {
+            return Some(b.clone());
+        }
+        drop(g);
+        let map = self.plasm.logical_execute_bindings.read().await;
+        map.get(&logical_uuid).map(|(ph, sid)| PlasmExecBinding {
+            prompt_hash: ph.clone(),
+            session_id: sid.clone(),
+        })
+    }
+
+    async fn mcp_plasm_token_snapshot_logical(
+        &self,
+        transport_key: &str,
+        logical_id: &str,
+    ) -> (u64, u64, u64, u64) {
+        let ls = self.logical_mutex(transport_key, logical_id).await;
+        let g = ls.lock().await;
+        let tp = mcp_chars_to_token_est(g.stats.domain_prompt_chars);
+        let ti = mcp_chars_to_token_est(g.stats.plasm_invocation_chars);
+        let tr = mcp_chars_to_token_est(g.stats.plasm_response_chars);
+        (tp, ti, tr, tp.saturating_add(ti).saturating_add(tr))
+    }
+
+    /// Latest tenant MCP policy for this transport session (from HTTP `Authorization` + control-plane store).
+    async fn tenant_mcp_cfg(
+        &self,
+        runtime: &Arc<dyn McpServer>,
+    ) -> Result<Option<Arc<McpRuntimeConfig>>, CallToolError> {
+        let has_tenant_configs = match self.plasm.mcp_config_repository() {
+            Some(r) => r.has_tenant_configs().await.unwrap_or(false),
+            None => false,
+        };
+        let auth = runtime.auth_info_cloned().await;
+        let Some(info) = auth else {
+            if has_tenant_configs {
+                return Err(CallToolError::from_message(
+                    "MCP Authorization required: send `Authorization: Bearer <api_key>` (tenant MCP API key from control plane).",
+                ));
+            }
+            return Ok(None);
+        };
+
+        if is_anonymous_mcp_auth(&info) {
+            return Ok(None);
+        }
+
+        let Some(id) = config_id_from_auth_info(&info) else {
+            if has_tenant_configs {
+                return Err(CallToolError::from_message(
+                    "MCP Authorization missing tenant binding (expected Bearer API key).",
+                ));
+            }
+            return Ok(None);
+        };
+
+        let Some(repo) = self.plasm.mcp_config_repository() else {
+            return Ok(None);
+        };
+
+        let Some(cfg) = repo.get_runtime_config(&id).await.map_err(|_| {
+            CallToolError::from_message(
+                "Tenant MCP configuration store failed while loading policy.",
+            )
+        })?
+        else {
+            return Err(CallToolError::from_message(
+                "Tenant MCP configuration is no longer available (disabled or revoked on the agent).",
+            ));
+        };
+        if cfg.space_type == "personal" && cfg.owner_subject.is_none() {
+            return Err(CallToolError::from_message(
+                "Personal MCP configuration is missing owner binding metadata. Re-provision from control plane.",
+            ));
+        }
+
+        Ok(Some(Arc::new(cfg)))
+    }
+
+    async fn mcp_principal_from_transport_auth(
+        &self,
+        runtime: &Arc<dyn McpServer>,
+    ) -> Option<TenantPrincipal> {
+        let info = runtime.auth_info_cloned().await?;
+        let tenant_id = info.client_id?;
+        let subject = info.user_id?;
+        if tenant_id.trim().is_empty() || subject.trim().is_empty() {
+            return None;
+        }
+        let method = if info
+            .extra
+            .as_ref()
+            .and_then(|m| m.get("plasm_mcp_oauth"))
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
+            IncomingAuthMethod::Jwt
+        } else {
+            IncomingAuthMethod::ApiKey
+        };
+        Some(TenantPrincipal {
+            tenant_id,
+            subject,
+            method,
+        })
+    }
+
+    fn incoming_mode(&self) -> IncomingAuthMode {
+        self.plasm
+            .incoming_auth
+            .as_ref()
+            .map(|v| v.mode())
+            .unwrap_or(IncomingAuthMode::Off)
+    }
+
+    /// Ensures MCP tool calls satisfy `PLASM_INCOMING_AUTH_MODE` (principal from MCP transport auth: API key / OAuth).
+    async fn ensure_mcp_principal(
+        &self,
+        _mcp_key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> Result<Option<TenantPrincipal>, CallToolError> {
+        let mode = self.incoming_mode();
+        let p = self.mcp_principal_from_transport_auth(runtime).await;
+        if mode == IncomingAuthMode::Required && p.is_none() {
+            return Err(CallToolError::from_message(
+                "incoming auth required: authenticate the MCP transport with a valid bearer credential",
+            ));
+        }
+        Ok(p)
+    }
+
+    async fn trace_session_meta(
+        &self,
+        _mcp_key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> crate::trace_hub::TraceSessionMeta {
+        use crate::trace_hub::{McpConfigRef, TraceSessionMeta};
+        let tenant_incoming = self
+            .mcp_principal_from_transport_auth(runtime)
+            .await
+            .map(|p| p.tenant_id);
+        let (tenant_mcp, mcp_config) = match self.tenant_mcp_cfg(runtime).await {
+            Ok(Some(cfg)) => (
+                Some(cfg.tenant_id.clone()),
+                Some(McpConfigRef {
+                    config_id: cfg.id.to_string(),
+                    tenant_id: cfg.tenant_id.clone(),
+                }),
+            ),
+            _ => (None, None),
+        };
+        let tenant_id = tenant_incoming
+            .or(tenant_mcp)
+            .unwrap_or_else(|| "anonymous".to_string());
+        TraceSessionMeta {
+            tenant_id,
+            project_slug: "main".into(),
+            mcp_config,
+        }
+    }
+
+    fn plasm_tools() -> Vec<Tool> {
+        let mut init_props = BTreeMap::new();
+        init_props.insert(
+            "client_session_key".into(),
+            json_schema_string_type(
+                "Stable handle for one ongoing workspace/task (e.g. one id for the whole chat). Same key + tenant reuses the same logical session—do not rotate a new key every user message.",
+            ),
+        );
+        let mut discover_props = BTreeMap::new();
+        discover_props.insert(
+            "query".into(),
+            json_schema_string_array(
+                "Search strings (tokenized); scored against capabilities and entity domains. TSV lists matching entities with descriptions.",
+            ),
+        );
+        let mut add_props = BTreeMap::new();
+        add_props.insert(
+            "logical_session_ref".into(),
+            json_schema_string_type(
+                "Session slot from `plasm_session_init` (e.g. `s0`). Reuse for every `add_capabilities` / `plasm` in this workspace—do not request a new slot unless you intentionally start a new logical session.",
+            ),
+        );
+        add_props.insert(
+            "seeds".into(),
+            json_schema_non_empty_object_array(
+                "Non-empty JSON array of seed objects: each must include `api` (registry catalog id) and `entity` (CGS entity name). Example: [{\"api\":\"pokeapi\",\"entity\":\"Pokemon\"}]. Legacy per-object key `entry_id` is accepted as an alias for `api`.",
+                vec!["api", "entity"],
+            ),
+        );
+        let mut run_props = BTreeMap::new();
+        run_props.insert(
+            "logical_session_ref".into(),
+            json_schema_string_type(
+                "Same `logical_session_ref` you already use for this task—call `plasm` repeatedly with it; do not pair every `plasm` with a fresh `add_capabilities` unless appending new seeds.",
+            ),
+        );
+        run_props.insert(
+            "expressions".into(),
+            json_schema_non_empty_string_array(
+                "Non-empty array of executable lines—one string per line, using shapes from the TSV teaching table in `add_capabilities` (and optional `tsv_static_frontmatter` for the `#` contract, same as `_meta.plasm.tsv_static_frontmatter` on first open).",
+            ),
+        );
+        run_props.insert(
+            "reasoning".into(),
+            json_schema_string_type("Optional note for the caller only; not executed."),
+        );
+        run_props.insert(
+            "tsv_static_frontmatter".into(),
+            json_schema_string_type(
+                "Optional. The `#`-comment Plasm language contract (TSV symbolic mode) — use the value from the first `add_capabilities` result `_meta.plasm.tsv_static_frontmatter`; not executed; not duplicated in the teaching table body. Repeat on `plasm` when the model needs the contract in tool context.",
+            ),
+        );
+
+        vec![
+            Tool {
+                name: "plasm_session_init".into(),
+                title: Some("Open Plasm logical session".into()),
+                description: Some(
+                    "**Call once per stable workspace** before other Plasm tools (same MCP connection). Pass **one** ongoing **`client_session_key`** for the whole task—not a new id each message. Server **reuses** the logical session for that key + tenant; response **`logical_session_ref`** (`s0`, …) should stay your default for **`add_capabilities`** / **`plasm`** until you deliberately start a new workspace.".into(),
+                ),
+                input_schema: ToolInputSchema::new(
+                    vec!["client_session_key".into()],
+                    Some(init_props),
+                    None,
+                ),
+                annotations: Some(ToolAnnotations {
+                    read_only_hint: Some(false),
+                    open_world_hint: Some(true),
+                    ..Default::default()
+                }),
+                execution: Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
+                }),
+                icons: vec![],
+                meta: None,
+                output_schema: None,
+            },
+            Tool {
+                name: "discover_capabilities".into(),
+                title: None,
+                description: Some(
+                    "**Requires `plasm_session_init` first** (same connection). **Keyword-search the catalog** with `query` (matches capability text and entity domains; **rows are entities**). **Skip** if you already know catalog **`api`** ids and entity names. \
+                     Reply: **TSV in a fenced block** — `api`, `entity`, `description` (entity blurb). Use **`api`** + **`entity`** for each `add_capabilities` seed (`entry_id` is accepted as a legacy alias in JSON).".into(),
+                ),
+                input_schema: ToolInputSchema::new(vec![], Some(discover_props), None),
+                annotations: Some(ToolAnnotations {
+                    read_only_hint: Some(true),
+                    open_world_hint: Some(true),
+                    ..Default::default()
+                }),
+                execution: Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
+                }),
+                icons: vec![],
+                meta: None,
+                output_schema: None,
+            },
+            Tool {
+                name: "add_capabilities".into(),
+                title: None,
+                description: Some(
+                    "**Append** catalog surface to an **existing** session: reuse **`logical_session_ref`** from **`plasm_session_init`**. Call when you need **new** **`api`/`entity`** pairs; **do not** repeat this with identical seeds before every **`plasm`** call. \
+                     Set `seeds` as JSON objects (`{\"api\":\"...\",\"entity\":\"...\"}`), one object per entity (`entry_id` accepted instead of `api`). \
+                     Example: `[{\"api\":\"pokeapi\",\"entity\":\"Pokemon\"},{\"api\":\"pokeapi\",\"entity\":\"Move\"}]`. \
+                     First distinct **`api`** is the primary open; additional **`api`** values federate into the **same** Plasm language session. \
+                     Legacy top-level `{entry_id, entities}` input is invalid; always send one seed object per entity. \
+                     Unknown or disallowed catalog ids fail the whole call. \
+                     On a **new** TSV open, the fenced result is the **teaching table only**; the Plasm language **contract** (leading `#` comments) is in **`_meta.plasm.tsv_static_frontmatter`**. **Cache** it and pass with each **`plasm`** as **`tsv_static_frontmatter`**; execute expressions with **`plasm`**. Symbol `eN` exists only up to **N** exposed entities. One execute binding per **logical** session.".into(),
+                ),
+                input_schema: ToolInputSchema::new(
+                    vec!["logical_session_ref".into(), "seeds".into()],
+                    Some(add_props),
+                    None,
+                ),
+                annotations: Some(ToolAnnotations {
+                    read_only_hint: Some(false),
+                    open_world_hint: Some(true),
+                    ..Default::default()
+                }),
+                execution: Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
+                }),
+                icons: vec![],
+                meta: None,
+                output_schema: None,
+            },
+            Tool {
+                name: "plasm".into(),
+                title: None,
+                description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
+                input_schema: ToolInputSchema::new(
+                    vec!["logical_session_ref".into(), "expressions".into()],
+                    Some(run_props),
+                    None,
+                ),
+                annotations: Some(ToolAnnotations {
+                    read_only_hint: Some(false),
+                    open_world_hint: Some(true),
+                    ..Default::default()
+                }),
+                execution: Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
+                }),
+                icons: vec![],
+                meta: None,
+                output_schema: None,
+            },
+        ]
+    }
+}
+
+fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("string"));
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
+fn json_schema_string_array(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut items = serde_json::Map::new();
+    items.insert("type".into(), serde_json::json!("string"));
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("array"));
+    m.insert("items".into(), serde_json::Value::Object(items));
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
+fn json_schema_non_empty_string_array(
+    description: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = json_schema_string_array(description);
+    m.insert("minItems".into(), serde_json::json!(1));
+    m
+}
+
+fn json_schema_non_empty_object_array(
+    description: &str,
+    required_fields: Vec<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut item_props = serde_json::Map::new();
+    item_props.insert(
+        "api".into(),
+        serde_json::Value::Object(json_schema_string_type(
+            "Registry catalog id for one API (discover TSV column `api`; legacy JSON key `entry_id` accepted)",
+        )),
+    );
+    item_props.insert(
+        "entity".into(),
+        serde_json::Value::Object(json_schema_string_type("Entity id/name in that catalog")),
+    );
+    let mut item_obj = serde_json::Map::new();
+    item_obj.insert("type".into(), serde_json::json!("object"));
+    item_obj.insert("properties".into(), serde_json::Value::Object(item_props));
+    item_obj.insert(
+        "required".into(),
+        serde_json::Value::Array(
+            required_fields
+                .into_iter()
+                .map(|f| serde_json::Value::String(f.to_string()))
+                .collect(),
+        ),
+    );
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("array"));
+    m.insert("items".into(), serde_json::Value::Object(item_obj));
+    m.insert("minItems".into(), serde_json::json!(1));
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
+fn args_value(params: &CallToolRequestParams) -> serde_json::Value {
+    serde_json::Value::Object(params.arguments.clone().unwrap_or_default())
+}
+
+/// MCP `discover_capabilities` accepts `query` only: strings are fed into [`CapabilityQuery::tokens`]
+/// (same indexing as the former separate `tokens` / `phrases` fields).
+fn mcp_discover_query_from_arguments(v: &serde_json::Value) -> Result<CapabilityQuery, String> {
+    #[derive(serde::Deserialize)]
+    struct McpDiscoverArgs {
+        #[serde(default)]
+        query: Vec<String>,
+    }
+    let a: McpDiscoverArgs = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+    Ok(CapabilityQuery {
+        tokens: a.query,
+        phrases: vec![],
+        ..CapabilityQuery::default()
+    })
+}
+
+fn discovery_mcp_error(e: DiscoveryError) -> CallToolError {
+    match e {
+        DiscoveryError::EmptyQuery => {
+            CallToolError::invalid_arguments("discover_capabilities", Some(e.to_string()))
+        }
+        DiscoveryError::UnknownEntry(_) => CallToolError::from_message(format!("catalog: {e}")),
+    }
+}
+
+/// MCP entity `description` column: max chars (Unicode scalars).
+const MCP_DISCOVERY_ENTITY_SUMMARY_MAX: usize = 200;
+
+/// Single-line TSV field: collapse whitespace, strip tabs, truncate (Unicode scalars).
+fn mcp_discovery_tsv_field(s: &str, max_chars: usize) -> String {
+    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let no_tabs = collapsed.replace('\t', " ");
+    let n = no_tabs.chars().count();
+    if n <= max_chars {
+        no_tabs
+    } else {
+        let head: String = no_tabs.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{head}…")
+    }
+}
+
+fn entity_summary_description<'a>(
+    entity_summaries: &'a [plasm_core::discovery::EntitySummary],
+    entity: &str,
+) -> Option<&'a str> {
+    entity_summaries
+        .iter()
+        .find(|e| e.name == entity)
+        .map(|e| e.description.as_str())
+}
+
+fn format_discovery_tsv_body(
+    candidates: &[plasm_core::discovery::RankedCandidate],
+    entity_summaries: &[plasm_core::discovery::EntitySummary],
+) -> String {
+    let mut by_entry: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for c in candidates {
+        by_entry
+            .entry(c.entry_id.clone())
+            .or_default()
+            .insert(c.entity.clone());
+    }
+
+    let mut lines = vec!["api\tentity\tdescription".to_string()];
+    for (eid, entities) in &by_entry {
+        for entity in entities {
+            let description = entity_summary_description(entity_summaries, entity)
+                .map(|raw| mcp_discovery_tsv_field(raw, MCP_DISCOVERY_ENTITY_SUMMARY_MAX))
+                .unwrap_or_default();
+            lines.push(format!(
+                "{}\t{}\t{}",
+                mcp_discovery_tsv_field(eid, 200),
+                mcp_discovery_tsv_field(entity, 200),
+                description,
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_discovery_markdown(r: &plasm_core::discovery::DiscoveryResult) -> String {
+    use plasm_core::discovery::Ambiguity;
+
+    let mut s = String::new();
+    if r.candidates.is_empty() {
+        s.push_str("_No matching entities._\n\n");
+    } else {
+        let body = format_discovery_tsv_body(&r.candidates, &r.entity_summaries);
+        s.push_str("```tsv\n");
+        s.push_str(&body);
+        s.push_str("\n```\n\n");
+    }
+
+    if !r.ambiguities.is_empty() {
+        s.push_str("**Ambiguities**\n\n");
+        for Ambiguity {
+            dimension,
+            entry_ids,
+            capability_name,
+            score,
+        } in &r.ambiguities
+        {
+            s.push_str(&format!(
+                "- **{dimension}** `{capability_name}` score={score} entries: {}\n",
+                entry_ids.join(", ")
+            ));
+        }
+        s.push('\n');
+    }
+
+    s
+}
+
+fn mcp_key(runtime: &Arc<dyn McpServer>) -> Result<String, CallToolError> {
+    runtime.session_id().ok_or_else(|| {
+        CallToolError::from_message(
+            "MCP session not ready: complete the MCP initialize handshake before calling tools.",
+        )
+    })
+}
+
+fn mcp_call_tool_error_class(err: &CallToolError) -> &'static str {
+    let msg = err.to_string();
+    if msg.contains("entry_id not allowed by tenant MCP configuration") {
+        return "entry_not_allowed";
+    }
+    if msg.contains("incoming auth required") {
+        return "incoming_auth_required";
+    }
+    if msg.contains("MCP Authorization missing tenant binding") {
+        return "missing_tenant_binding";
+    }
+    if msg.contains("Tenant MCP configuration is no longer available") {
+        return "tenant_mcp_unavailable";
+    }
+    if msg.contains("Personal MCP configuration is missing owner binding") {
+        return "owner_binding_missing";
+    }
+    if msg.contains("MCP Authorization required") {
+        return "mcp_authorization_required";
+    }
+    "call_tool_error"
+}
+
+fn mcp_truncate_resource_uri_display(uri: &str) -> String {
+    const MAX: usize = 160;
+    if uri.chars().count() <= MAX {
+        uri.to_string()
+    } else {
+        format!(
+            "{}…",
+            uri.chars().take(MAX.saturating_sub(1)).collect::<String>()
+        )
+    }
+}
+
+fn mcp_artifact_payload_chars(payload: &ArtifactPayload) -> (u64, bool) {
+    match std::str::from_utf8(&payload.bytes) {
+        Ok(s) => (s.chars().count() as u64, false),
+        Err(_) => (payload.bytes.len() as u64, true),
+    }
+}
+
+fn read_resource_result_for_payload(
+    uri: &str,
+    payload: ArtifactPayload,
+) -> Result<ReadResourceResult, RpcError> {
+    let maybe_utf8 = std::str::from_utf8(&payload.bytes)
+        .ok()
+        .map(|s| s.to_string());
+    Ok(ReadResourceResult {
+        contents: vec![if let Some(text) = maybe_utf8 {
+            ReadResourceContent::TextResourceContents(TextResourceContents {
+                meta: None,
+                mime_type: Some(payload.metadata.content_type),
+                text,
+                uri: uri.to_string(),
+            })
+        } else {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&payload.bytes);
+            ReadResourceContent::BlobResourceContents(
+                BlobResourceContents::new(b64, uri.to_string())
+                    .with_mime_type(payload.metadata.content_type),
+            )
+        }],
+        meta: None,
+    })
+}
+
+impl PlasmMcpHandler {
+    async fn emit_mcp_resource_read_trace(
+        &self,
+        logical_session_trace_key: Option<&str>,
+        archive: Option<RunArtifactArchiveRef>,
+        uri: &str,
+        maybe_payload: Option<&ArtifactPayload>,
+        started: Instant,
+        result: &str,
+        error_class: Option<&str>,
+    ) {
+        let Some(mcp_key) = logical_session_trace_key.filter(|s| !s.is_empty()) else {
+            return;
+        };
+        let (chars_added, is_binary) = maybe_payload
+            .map(mcp_artifact_payload_chars)
+            .unwrap_or((0, false));
+        let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        self.plasm
+            .trace_hub
+            .trace_record_mcp_resource_read(
+                mcp_key,
+                archive,
+                mcp_truncate_resource_uri_display(uri),
+                chars_added,
+                is_binary,
+                duration_ms,
+                result,
+                error_class,
+            )
+            .await;
+    }
+}
+
+#[async_trait]
+impl ServerHandler for PlasmMcpHandler {
+    async fn handle_list_tools_request(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<ListToolsResult, RpcError> {
+        Ok(ListToolsResult {
+            tools: Self::plasm_tools(),
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    async fn handle_list_resources_request(
+        &self,
+        _params: Option<PaginatedRequestParams>,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<ListResourcesResult, RpcError> {
+        Ok(ListResourcesResult {
+            resources: vec![],
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    async fn handle_list_resource_templates_request(
+        &self,
+        _params: Option<PaginatedRequestParams>,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<ListResourceTemplatesResult, RpcError> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: vec![
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Typed bytes for one execute run artifact. `prompt_hash` and `session_id` match `add_capabilities`; `run_id` is in `plasm` result metadata."
+                            .into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some("application/octet-stream".into()),
+                    name: "plasm_execute_run".into(),
+                    title: Some("Plasm execute run artifact (canonical)".into()),
+                    uri_template: "plasm://execute/{prompt_hash}/{session_id}/run/{run_id}".into(),
+                },
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Short alias for the same snapshot JSON as the canonical URI. `logical_session_ref` is the slot from `plasm_session_init` (`s0`, …); `n` is monotonic within that logical session’s execute binding."
+                            .into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some("application/octet-stream".into()),
+                    name: "plasm_execute_run_short".into(),
+                    title: Some("Plasm execute run artifact (short index)".into()),
+                    uri_template: "plasm://session/{logical_session_ref}/r/{n}".into(),
+                },
+            ],
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    #[tracing::instrument(
+        skip(self, runtime),
+        name = "plasm_agent.mcp.resources.read_request",
+        level = "trace"
+    )]
+    async fn handle_read_resource_request(
+        &self,
+        params: ReadResourceRequestParams,
+        runtime: Arc<dyn McpServer>,
+    ) -> Result<ReadResourceResult, RpcError> {
+        let started = Instant::now();
+        let uri = params.uri.trim();
+        if let Some((segment, resource_index)) = parse_plasm_session_short_resource_uri(uri) {
+            let Some(transport_key) = runtime.session_id() else {
+                crate::metrics::record_mcp_resource_read(
+                    "logical_short",
+                    "error",
+                    "session_not_ready",
+                    started.elapsed(),
+                );
+                return Err(RpcError::invalid_params().with_message(
+                    "MCP session not ready: complete the initialize handshake before resources/read.",
+                ));
+            };
+            let logical_uuid = match segment {
+                LogicalSessionUriSegment::Uuid(u) => u,
+                LogicalSessionUriSegment::Slot(s) => {
+                    let transport = self.session_state(&transport_key).await;
+                    let g = transport.lock().await;
+                    let Some(u) = g.ref_to_uuid.get(&s).copied() else {
+                        crate::metrics::record_mcp_resource_read(
+                            "logical_short",
+                            "error",
+                            "unknown_session_ref",
+                            started.elapsed(),
+                        );
+                        return Err(RpcError::invalid_params().with_message(
+                            "unknown logical session slot in URI: use a `plasm://session/s{n}/r/...` URI from this connection after `plasm_session_init`, or the canonical `plasm://execute/.../run/...` URI.",
+                        ));
+                    };
+                    u
+                }
+            };
+            let ls_key = logical_uuid.to_string();
+            let binding = {
+                let map = self.plasm.logical_execute_bindings.read().await;
+                map.get(&logical_uuid).map(|(ph, sid)| PlasmExecBinding {
+                    prompt_hash: ph.clone(),
+                    session_id: sid.clone(),
+                })
+            };
+            let Some(b) = binding else {
+                crate::metrics::record_mcp_resource_read(
+                    "logical_short",
+                    "error",
+                    "no_binding",
+                    started.elapsed(),
+                );
+                self.emit_mcp_resource_read_trace(
+                    Some(&ls_key),
+                    None,
+                    uri,
+                    None,
+                    started,
+                    "error",
+                    Some("no_binding"),
+                )
+                .await;
+                return Err(RpcError::invalid_params().with_message(
+                    "no execute session for this logical session: call add_capabilities with seeds first",
+                ));
+            };
+            let live_sess = self
+                .plasm
+                .sessions
+                .get_by_strs(b.prompt_hash.as_str(), b.session_id.as_str())
+                .await;
+            let live_art = if let Some(ref sess) = live_sess {
+                sess.core
+                    .get_run_artifact_by_resource_index(resource_index)
+                    .await
+            } else {
+                None
+            };
+            let live_payload = live_art.as_ref().map(|a| a.payload.clone());
+            if live_payload.is_some() {
+                crate::metrics::record_execute_artifact_resolve_layer("hot");
+            }
+            let persisted_payload = if live_payload.is_none() {
+                match self
+                    .plasm
+                    .run_artifacts
+                    .get_payload_result_by_resource_index(
+                        b.prompt_hash.as_str(),
+                        b.session_id.as_str(),
+                        resource_index,
+                    )
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        crate::metrics::record_mcp_resource_read(
+                            "logical_short",
+                            "error",
+                            "decode_failed",
+                            started.elapsed(),
+                        );
+                        let rid = self
+                            .plasm
+                            .run_artifacts
+                            .resolve_run_id_for_resource_index(
+                                b.prompt_hash.as_str(),
+                                b.session_id.as_str(),
+                                resource_index,
+                            )
+                            .await;
+                        let arch = rid.map(|run_id| RunArtifactArchiveRef {
+                            prompt_hash: b.prompt_hash.clone(),
+                            session_id: b.session_id.clone(),
+                            run_id,
+                            resource_index: Some(resource_index),
+                        });
+                        self.emit_mcp_resource_read_trace(
+                            Some(&ls_key),
+                            arch,
+                            uri,
+                            None,
+                            started,
+                            "error",
+                            Some("decode_failed"),
+                        )
+                        .await;
+                        return Err(RpcError::internal_error()
+                            .with_message(format!("run artifact decode failed: {e}")));
+                    }
+                }
+            } else {
+                None
+            };
+            if live_payload.is_none() && persisted_payload.is_some() {
+                crate::metrics::record_execute_artifact_resolve_layer("archive");
+            }
+            let Some(payload) = live_payload.or(persisted_payload) else {
+                crate::metrics::record_mcp_resource_read(
+                    "logical_short",
+                    "error",
+                    "unknown_artifact",
+                    started.elapsed(),
+                );
+                self.emit_mcp_resource_read_trace(
+                    Some(&ls_key),
+                    None,
+                    uri,
+                    None,
+                    started,
+                    "error",
+                    Some("unknown_artifact"),
+                )
+                .await;
+                return Err(RpcError::invalid_params().with_message(format!(
+                    "unknown run artifact index {resource_index} for this session"
+                )));
+            };
+            let run_id = live_art.as_ref().map(|a| a.run_id).or(self
+                .plasm
+                .run_artifacts
+                .resolve_run_id_for_resource_index(
+                    b.prompt_hash.as_str(),
+                    b.session_id.as_str(),
+                    resource_index,
+                )
+                .await);
+            let archive = run_id.map(|run_id| RunArtifactArchiveRef {
+                prompt_hash: b.prompt_hash.clone(),
+                session_id: b.session_id.clone(),
+                run_id,
+                resource_index: Some(resource_index),
+            });
+            crate::spans::mcp_resource_read().in_scope(|| {
+                tracing::info!(
+                    target: "plasm_agent::mcp",
+                    uri = %uri,
+                    logical_session_id = %logical_uuid,
+                    prompt_hash = %b.prompt_hash,
+                    session_id = %b.session_id,
+                    resource_index,
+                    bytes = payload.bytes.len(),
+                    "MCP resources/read"
+                );
+            });
+            crate::metrics::record_mcp_resource_read(
+                "logical_short",
+                "success",
+                "none",
+                started.elapsed(),
+            );
+            self.emit_mcp_resource_read_trace(
+                Some(&ls_key),
+                archive,
+                uri,
+                Some(&payload),
+                started,
+                "success",
+                None,
+            )
+            .await;
+            return read_resource_result_for_payload(uri, payload);
+        }
+
+        let Some((prompt_hash, session_id, run_id)) = parse_plasm_execute_run_uri(uri) else {
+            crate::metrics::record_mcp_resource_read(
+                "unsupported",
+                "error",
+                "unsupported_uri",
+                started.elapsed(),
+            );
+            return Err(
+                RpcError::invalid_params().with_message(format!("unsupported resource URI: {uri}"))
+            );
+        };
+        let ls_key_opt = self
+            .plasm
+            .logical_session_id_for_execute_binding(prompt_hash.as_str(), session_id.as_str())
+            .await
+            .map(|u| u.to_string());
+        let canonical_archive = RunArtifactArchiveRef {
+            prompt_hash: prompt_hash.clone(),
+            session_id: session_id.clone(),
+            run_id,
+            resource_index: None,
+        };
+        let live_sess = self
+            .plasm
+            .sessions
+            .get_by_strs(prompt_hash.as_str(), session_id.as_str())
+            .await;
+        let live_payload = if let Some(sess) = &live_sess {
+            sess.core
+                .get_run_artifact(run_id)
+                .await
+                .map(|a| a.payload.clone())
+        } else {
+            None
+        };
+        if live_payload.is_some() {
+            crate::metrics::record_execute_artifact_resolve_layer("hot");
+        }
+        let persisted_payload = if live_payload.is_none() {
+            match self
+                .plasm
+                .run_artifacts
+                .get_payload_result(&prompt_hash, &session_id, run_id)
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    crate::metrics::record_mcp_resource_read(
+                        "canonical",
+                        "error",
+                        "decode_failed",
+                        started.elapsed(),
+                    );
+                    self.emit_mcp_resource_read_trace(
+                        ls_key_opt.as_deref(),
+                        Some(canonical_archive.clone()),
+                        uri,
+                        None,
+                        started,
+                        "error",
+                        Some("decode_failed"),
+                    )
+                    .await;
+                    return Err(RpcError::internal_error()
+                        .with_message(format!("run artifact decode failed: {e}")));
+                }
+            }
+        } else {
+            None
+        };
+        if live_payload.is_none() && persisted_payload.is_some() {
+            crate::metrics::record_execute_artifact_resolve_layer("archive");
+        }
+        let Some(payload) = live_payload.or(persisted_payload) else {
+            crate::metrics::record_mcp_resource_read(
+                "canonical",
+                "error",
+                "unknown_artifact",
+                started.elapsed(),
+            );
+            self.emit_mcp_resource_read_trace(
+                ls_key_opt.as_deref(),
+                Some(canonical_archive.clone()),
+                uri,
+                None,
+                started,
+                "error",
+                Some("unknown_artifact"),
+            )
+            .await;
+            return Err(RpcError::invalid_params().with_message(
+                "unknown run artifact (wrong run_id or not yet stored for this session)",
+            ));
+        };
+        crate::spans::mcp_resource_read().in_scope(|| {
+            tracing::info!(
+                target: "plasm_agent::mcp",
+                uri = %uri,
+                prompt_hash = %prompt_hash,
+                session_id = %session_id,
+                run_id = %run_id,
+                bytes = payload.bytes.len(),
+                "MCP resources/read"
+            );
+        });
+        crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
+        self.emit_mcp_resource_read_trace(
+            ls_key_opt.as_deref(),
+            Some(canonical_archive),
+            uri,
+            Some(&payload),
+            started,
+            "success",
+            None,
+        )
+        .await;
+        read_resource_result_for_payload(uri, payload)
+    }
+
+    #[tracing::instrument(
+        skip(self, runtime),
+        name = "plasm_agent.mcp.call_tool",
+        fields(mcp.tool = %params.name),
+        level = "trace"
+    )]
+    async fn handle_call_tool_request(
+        &self,
+        params: CallToolRequestParams,
+        runtime: Arc<dyn McpServer>,
+    ) -> Result<CallToolResult, CallToolError> {
+        let key = mcp_key(&runtime)?;
+        let v = args_value(&params);
+
+        match params.name.as_str() {
+            "plasm_session_init" => {
+                let started = Instant::now();
+                let res: Result<CallToolResult, CallToolError> = async {
+                    let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
+                    let client_session_key = v
+                        .get("client_session_key")
+                        .and_then(|x| x.as_str())
+                        .ok_or_else(|| {
+                        CallToolError::invalid_arguments(
+                            "plasm_session_init",
+                            Some("missing `client_session_key`".into()),
+                        )
+                    })?;
+                    let scope = tenant_scope(principal_incoming.as_ref());
+                    let rec = self
+                        .plasm
+                        .logical_sessions
+                        .init_session(&scope, &ClientSessionKey::new(client_session_key))
+                        .await;
+                    let logical_session_ref = {
+                        let transport = self.session_state(&key).await;
+                        let mut g = transport.lock().await;
+                        g.ensure_session_ref(rec.logical_session_id.as_uuid())
+                    };
+                    let execute_binding = {
+                        let map = self.plasm.logical_execute_bindings.read().await;
+                        map.get(&rec.logical_session_id.as_uuid())
+                            .map(|(ph, sid)| json!({ "prompt_hash": ph, "session_id": sid }))
+                    };
+                    let body = serde_json::json!({
+                        "logical_session_ref": logical_session_ref,
+                        "client_session_key": rec.client_session_key.as_str(),
+                        "tenant_scope": rec.tenant_scope,
+                        "logical_session_id": rec.logical_session_id.to_string(),
+                    })
+                    .to_string();
+                    let mut plasm_meta = serde_json::Map::new();
+                    plasm_meta.insert(
+                        "logical_session_id".to_string(),
+                        json!(rec.logical_session_id.to_string()),
+                    );
+                    plasm_meta.insert(
+                        "execute_binding".to_string(),
+                        execute_binding.unwrap_or(serde_json::Value::Null),
+                    );
+                    let mut meta = serde_json::Map::new();
+                    meta.insert("plasm".to_string(), serde_json::Value::Object(plasm_meta));
+                    Ok(
+                        CallToolResult::text_content(vec![TextContent::new(body, None, None)])
+                            .with_meta(Some(meta)),
+                    )
+                }
+                .instrument(crate::spans::mcp_tool_plasm_session_init())
+                .await;
+                let elapsed = started.elapsed();
+                match &res {
+                    Ok(_) => crate::metrics::record_mcp_tool(
+                        "plasm_session_init",
+                        None,
+                        "success",
+                        "none",
+                        elapsed,
+                    ),
+                    Err(e) => crate::metrics::record_mcp_tool(
+                        "plasm_session_init",
+                        None,
+                        "error",
+                        mcp_call_tool_error_class(e),
+                        elapsed,
+                    ),
+                }
+                res
+            }
+            "discover_capabilities" => {
+                let started = Instant::now();
+                let res: Result<CallToolResult, CallToolError> = async {
+                    self.ensure_mcp_principal(&key, &runtime).await?;
+                    let q = mcp_discover_query_from_arguments(&v).map_err(|msg| {
+                        CallToolError::invalid_arguments("discover_capabilities", Some(msg))
+                    })?;
+                    let discover_span = crate::spans::mcp_tool_discover_capabilities();
+                    let _discover_guard = discover_span.enter();
+                    tracing::info!(
+                        target: "plasm_agent::mcp",
+                        tool = "discover_capabilities",
+                        query = ?q.tokens,
+                        "MCP tool: discover_capabilities (search)"
+                    );
+                    let reg = self.plasm.catalog.snapshot();
+                    let mut r = reg.discover(&q).map_err(discovery_mcp_error)?;
+                    drop(_discover_guard);
+                    let tcfg = self.tenant_mcp_cfg(&runtime).await?;
+                    if let Some(cfg) = tcfg {
+                        r = mcp_policy::filter_discovery_result(r, cfg.as_ref());
+                    }
+                    let text = format_discovery_markdown(&r);
+                    Ok(CallToolResult::text_content(vec![TextContent::new(
+                        text, None, None,
+                    )]))
+                }
+                .await;
+                let elapsed = started.elapsed();
+                match &res {
+                    Ok(_) => crate::metrics::record_mcp_tool(
+                        "discover_capabilities",
+                        None,
+                        "success",
+                        "none",
+                        elapsed,
+                    ),
+                    Err(e) => crate::metrics::record_mcp_tool(
+                        "discover_capabilities",
+                        None,
+                        "error",
+                        mcp_call_tool_error_class(e),
+                        elapsed,
+                    ),
+                }
+                res
+            }
+            "add_capabilities" => {
+                let started = Instant::now();
+                let res: Result<CallToolResult, CallToolError> = async {
+                    let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
+                    let session_ref = parse_logical_session_ref_arg("add_capabilities", &v)?;
+                    let logical_uuid = self
+                        .resolve_logical_session_ref_to_uuid("add_capabilities", &key, &session_ref)
+                        .await?;
+                    let scope = tenant_scope(principal_incoming.as_ref());
+                    if !self
+                        .plasm
+                        .logical_sessions
+                        .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+                        .await
+                    {
+                        return Err(CallToolError::from_message(
+                            "logical_session_ref is unknown or does not belong to this tenant scope",
+                        ));
+                    }
+                    let ls_key = logical_uuid.to_string();
+                    let seeds = parse_tool_seeds("add_capabilities", &v)?;
+                    let principal = parse_optional_principal(&v);
+                    let distinct_entries: Vec<String> = {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut out = Vec::new();
+                        for s in &seeds {
+                            if seen.insert(s.entry_id.clone()) {
+                                out.push(s.entry_id.clone());
+                            }
+                        }
+                        out
+                    };
+                    let tcfg = self.tenant_mcp_cfg(&runtime).await?;
+                    if let Some(ref cfg) = tcfg {
+                        for eid in &distinct_entries {
+                            if !cfg.entry_allowed(eid) {
+                                return Err(CallToolError::from_message(format!(
+                                    "entry_id not allowed by tenant MCP configuration: {eid}"
+                                )));
+                            }
+                        }
+                    }
+                    let binding = self
+                        .resolve_binding_for_logical(&key, logical_uuid)
+                        .await;
+                    tracing::debug!(
+                        target: "plasm_agent::mcp",
+                        tool = "add_capabilities",
+                        logical_session_ref = %session_ref,
+                        logical_session_id = %ls_key,
+                        mcp_execute_binding_present = binding.is_some(),
+                        "MCP add_capabilities: Plasm execute binding before apply_capability_seeds (false means open path; true means expand/federate against existing prompt_hash/session)"
+                    );
+                    let add_cap_span =
+                        crate::spans::mcp_tool_add_capabilities(session_ref.as_str());
+                    let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds(
+                        self.plasm.as_ref(),
+                        principal_incoming.as_ref(),
+                        binding
+                            .as_ref()
+                            .map(|b| (b.prompt_hash.as_str(), b.session_id.as_str())),
+                        seeds,
+                        principal,
+                        tcfg.clone(),
+                        Some(logical_uuid),
+                    )
+                    .instrument(add_cap_span)
+                    .await
+                    .map_err(|msg| CallToolError::new(std::io::Error::other(msg)))?;
+
+                    if out.stale_execute_binding_recovered {
+                        self.plasm.trace_hub.finalize_mcp_session(&ls_key).await;
+                    }
+
+                    if out.binding_updated {
+                        {
+                            let mut g = self.session_states.write().await;
+                            if g.len() >= MAX_MCP_EXEC_BINDINGS && !g.contains_key(&key) {
+                                if let Some(victim) = g.keys().next().cloned() {
+                                    tracing::warn!(
+                                        victim = %victim,
+                                        limit = MAX_MCP_EXEC_BINDINGS,
+                                        "evicting MCP transport slot to respect soft cap"
+                                    );
+                                    g.remove(&victim);
+                                }
+                            }
+                        }
+                        let ls = self.logical_mutex(&key, &ls_key).await;
+                        let mut g = ls.lock().await;
+                        g.binding = Some(PlasmExecBinding {
+                            prompt_hash: out.prompt_hash.clone(),
+                            session_id: out.session_id.clone(),
+                        });
+                        drop(g);
+                        let mut map = self.plasm.logical_execute_bindings.write().await;
+                        map.insert(
+                            logical_uuid,
+                            (out.prompt_hash.clone(), out.session_id.clone()),
+                        );
+                    }
+                    let trace_meta = self.trace_session_meta(&key, &runtime).await;
+                    self.plasm
+                        .trace_hub
+                        .ensure_logical_session(&ls_key, Some(&key), trace_meta)
+                        .await;
+
+                    let mut text = String::new();
+                    let mut tsv_from_waves: Option<String> = None;
+                    for wave in &out.waves {
+                        if tsv_from_waves.is_none() {
+                            if let Some(t) = wave.tsv_static_frontmatter.as_ref() {
+                                tsv_from_waves = Some(t.clone());
+                            }
+                        }
+                        if !wave.markdown_delta.is_empty() {
+                            text.push_str(&wave.markdown_delta);
+                            if !text.ends_with('\n') {
+                                text.push('\n');
+                            }
+                        }
+                        if wave.domain_prompt_chars_added > 0 {
+                            let ls = self.logical_mutex(&key, &ls_key).await;
+                            let mut g = ls.lock().await;
+                            g.stats.domain_prompt_chars = g
+                                .stats
+                                .domain_prompt_chars
+                                .saturating_add(wave.domain_prompt_chars_added);
+                        }
+                        self.plasm
+                            .trace_hub
+                            .trace_record_add_capabilities(
+                                &ls_key,
+                                AddCapabilitiesTrace {
+                                    domain_prompt_chars_added: wave.domain_prompt_chars_added,
+                                    reused_session: wave.reused_session,
+                                    mode: wave.mode.clone(),
+                                    entry_id: Some(wave.entry_id.clone()),
+                                    entities: wave.entities.clone(),
+                                    seeds: wave
+                                        .entities
+                                        .iter()
+                                        .map(|e| format!("{}:{e}", wave.entry_id))
+                                        .collect(),
+                                },
+                            )
+                            .await;
+                    }
+                    let mut res = CallToolResult::text_content(vec![TextContent::new(
+                        text, None, None,
+                    )]);
+                    let mut plasm = serde_json::Map::new();
+                    if let Some(front) = tsv_from_waves {
+                        plasm.insert("tsv_static_frontmatter".to_string(), json!(front));
+                    }
+                    let continuity = if out.stale_execute_binding_recovered {
+                        let mut c = serde_json::Map::new();
+                        c.insert("stale_binding_recovered".to_string(), json!(true));
+                        if let Some((ref ph, ref sid)) = out.stale_binding_previous {
+                            c.insert(
+                                "previous_execute".to_string(),
+                                json!({ "prompt_hash": ph, "session_id": sid }),
+                            );
+                        }
+                        let open = out.waves.iter().find(|w| w.mode == "open");
+                        let new_symbol_space = !open.is_some_and(|w| w.reused_session);
+                        c.insert("new_symbol_space".to_string(), json!(new_symbol_space));
+                        Some(c)
+                    } else {
+                        let mut c = serde_json::Map::new();
+                        c.insert("stale_binding_recovered".to_string(), json!(false));
+                        Some(c)
+                    };
+                    if let Some(c) = continuity {
+                        plasm.insert("continuity".to_string(), serde_json::Value::Object(c));
+                    }
+                    if !plasm.is_empty() {
+                        let mut meta = serde_json::Map::new();
+                        meta.insert("plasm".to_string(), serde_json::Value::Object(plasm));
+                        res = res.with_meta(Some(meta));
+                    }
+                    Ok(res)
+                }
+                .await;
+                let elapsed = started.elapsed();
+                match &res {
+                    Ok(_) => crate::metrics::record_mcp_tool(
+                        "add_capabilities",
+                        None,
+                        "success",
+                        "none",
+                        elapsed,
+                    ),
+                    Err(e) => crate::metrics::record_mcp_tool(
+                        "add_capabilities",
+                        None,
+                        "error",
+                        mcp_call_tool_error_class(e),
+                        elapsed,
+                    ),
+                }
+                res
+            }
+            "plasm" => {
+                let started = Instant::now();
+                let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
+                let session_ref = parse_logical_session_ref_arg("plasm", &v)?;
+                let logical_uuid = self
+                    .resolve_logical_session_ref_to_uuid("plasm", &key, &session_ref)
+                    .await?;
+                let scope = tenant_scope(principal_incoming.as_ref());
+                if !self
+                    .plasm
+                    .logical_sessions
+                    .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+                    .await
+                {
+                    return Ok(CallToolResult::with_error(CallToolError::from_message(
+                        "logical_session_ref is unknown or does not belong to this tenant scope",
+                    )));
+                }
+                let ls_key = logical_uuid.to_string();
+                let state = self.logical_mutex(&key, &ls_key).await;
+                let needs_binding_hydrate = {
+                    let g = state.lock().await;
+                    g.binding.is_none()
+                };
+                if needs_binding_hydrate {
+                    if let Some(b) = self.resolve_binding_for_logical(&key, logical_uuid).await {
+                        let mut g = state.lock().await;
+                        g.binding = Some(b);
+                    }
+                }
+                let Some(arr) = v.get("expressions").and_then(|x| x.as_array()) else {
+                    crate::metrics::record_mcp_tool(
+                        "plasm",
+                        Some(false),
+                        "error",
+                        "invalid_arguments",
+                        started.elapsed(),
+                    );
+                    return Ok(CallToolResult::with_error(
+                        CallToolError::invalid_arguments(
+                            "plasm",
+                            Some(
+                                "missing or invalid `expressions`: non-empty JSON array of strings"
+                                    .into(),
+                            ),
+                        ),
+                    ));
+                };
+                if arr.is_empty() {
+                    crate::metrics::record_mcp_tool(
+                        "plasm",
+                        Some(false),
+                        "error",
+                        "invalid_arguments",
+                        started.elapsed(),
+                    );
+                    return Ok(CallToolResult::with_error(
+                        CallToolError::invalid_arguments(
+                            "plasm",
+                            Some("`expressions` must be non-empty".into()),
+                        ),
+                    ));
+                }
+                let expressions: Vec<String> = arr
+                    .iter()
+                    .map(|x| {
+                        x.as_str()
+                            .map(str::to_string)
+                            .ok_or_else(|| "expressions[] elements must be strings".to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|msg| {
+                        crate::metrics::record_mcp_tool(
+                            "plasm",
+                            Some(false),
+                            "error",
+                            "invalid_arguments",
+                            started.elapsed(),
+                        );
+                        CallToolError::invalid_arguments("plasm", Some(msg))
+                    })?;
+
+                let reasoning = v
+                    .get("reasoning")
+                    .and_then(|x| x.as_str())
+                    .filter(|s| !s.is_empty());
+                let tsv_static_frontmatter = v
+                    .get("tsv_static_frontmatter")
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                if let Some(f) = tsv_static_frontmatter {
+                    let n = f.chars().count();
+                    if n > MAX_TSV_STATIC_FRONTMATTER_SCALARS {
+                        return Ok(CallToolResult::with_error(
+                            CallToolError::invalid_arguments(
+                                "plasm",
+                                Some(format!(
+                                    "`tsv_static_frontmatter` exceeds max length ({} Unicode scalars, max {})",
+                                    n,
+                                    MAX_TSV_STATIC_FRONTMATTER_SCALARS
+                                )),
+                            ),
+                        ));
+                    }
+                }
+                let batch_count = expressions.len();
+                let plasm_tool_span = crate::spans::mcp_tool_plasm(
+                    batch_count > 1,
+                    batch_count as u64,
+                    session_ref.as_str(),
+                );
+                let (binding, this_invocation_chars, mut idx, call_count) = {
+                    let mut g = state.lock().await;
+                    let binding = g.binding.clone();
+                    let this_invocation_chars = plasm_invocation_char_count(
+                        &expressions,
+                        reasoning,
+                        tsv_static_frontmatter,
+                    );
+                    g.stats.plasm_invocation_chars = g
+                        .stats
+                        .plasm_invocation_chars
+                        .saturating_add(this_invocation_chars);
+                    g.stats.plasm_call_count = g.stats.plasm_call_count.saturating_add(1);
+                    let call_count = g.stats.plasm_call_count;
+                    let idx = std::mem::take(&mut g.meta_index);
+                    (binding, this_invocation_chars, idx, call_count)
+                };
+                let Some(b) = binding else {
+                    crate::metrics::record_mcp_tool(
+                        "plasm",
+                        Some(batch_count > 1),
+                        "error",
+                        "no_session",
+                        started.elapsed(),
+                    );
+                    return Ok(CallToolResult::with_error(CallToolError::from_message(
+                        "No session: call `add_capabilities` with `seeds` first.",
+                    )));
+                };
+
+                if self
+                    .plasm
+                    .sessions
+                    .get_by_strs(&b.prompt_hash, &b.session_id)
+                    .await
+                    .is_none()
+                {
+                    {
+                        let mut g = state.lock().await;
+                        g.binding = None;
+                    }
+                    {
+                        let mut map = self.plasm.logical_execute_bindings.write().await;
+                        map.remove(&logical_uuid);
+                    }
+                    crate::metrics::record_mcp_tool(
+                        "plasm",
+                        Some(batch_count > 1),
+                        "error",
+                        "session_expired",
+                        started.elapsed(),
+                    );
+                    return Ok(CallToolResult::with_error(CallToolError::from_message(
+                        "Execute session expired: call `add_capabilities` again with your `seeds` to open a new session.",
+                    )));
+                }
+
+                let trace_meta = self.trace_session_meta(&key, &runtime).await;
+                let trace_id = self
+                    .plasm
+                    .trace_hub
+                    .ensure_logical_session(&ls_key, Some(&key), trace_meta)
+                    .await;
+                let mcp_trace = PlasmTraceContext {
+                    trace_id,
+                    call_index: Some(call_count as i64),
+                    mcp_session_id: Some(key.clone()),
+                    logical_session_id: Some(ls_key.clone()),
+                    logical_session_ref: Some(session_ref.clone()),
+                };
+                let reasoning_chars = reasoning.map(|r| r.chars().count() as u64);
+                let call_index = self
+                    .plasm
+                    .trace_hub
+                    .trace_record_plasm_invocation(
+                        &ls_key,
+                        batch_count > 1,
+                        batch_count,
+                        reasoning_chars,
+                        this_invocation_chars,
+                        reasoning.map(str::to_string),
+                    )
+                    .await;
+
+                let sink = McpPlasmTraceSink {
+                    hub: Arc::clone(&self.plasm.trace_hub),
+                    mcp_key: ls_key.clone(),
+                    call_index,
+                };
+
+                let run_result = execute_session_run_markdown(
+                    self.plasm.as_ref(),
+                    principal_incoming.as_ref(),
+                    &b.prompt_hash,
+                    &b.session_id,
+                    expressions,
+                    Some(&mut idx),
+                    Some(mcp_trace),
+                    Some(sink),
+                )
+                .instrument(plasm_tool_span)
+                .await;
+                {
+                    let mut g = state.lock().await;
+                    g.meta_index = idx;
+                }
+                match run_result {
+                    Ok(out) => {
+                        let response_chars = out.markdown.chars().count() as u64;
+                        if response_chars > 0 {
+                            let mut g = state.lock().await;
+                            g.stats.plasm_response_chars =
+                                g.stats.plasm_response_chars.saturating_add(response_chars);
+                            self.plasm
+                                .trace_hub
+                                .trace_note_plasm_response_chars(
+                                    &ls_key,
+                                    response_chars,
+                                    "plasm",
+                                    call_index,
+                                    batch_count > 1,
+                                    batch_count,
+                                )
+                                .await;
+                        }
+                        let (tok_prompt, tok_inv, tok_resp, tok_total) =
+                            self.mcp_plasm_token_snapshot_logical(&key, &ls_key).await;
+                        tracing::info!(
+                            target: "plasm_agent::mcp",
+                            tool = "plasm",
+                            batch_count,
+                            batch = batch_count > 1,
+                            ok = true,
+                            tokens_est_prompt = tok_prompt,
+                            tokens_est_invocation = tok_inv,
+                            tokens_est_tool_response = tok_resp,
+                            tokens_est_session_total = tok_total,
+                            "MCP tool: plasm (expression detail: plasm_agent::http_execute)"
+                        );
+                        crate::metrics::record_mcp_tool(
+                            "plasm",
+                            Some(batch_count > 1),
+                            "success",
+                            "none",
+                            started.elapsed(),
+                        );
+                        let blocks = vec![ContentBlock::TextContent(TextContent::new(
+                            out.markdown,
+                            None,
+                            None,
+                        ))];
+                        let mut res = CallToolResult::from_content(blocks);
+                        if let Some(m) = out.tool_meta {
+                            res = res.with_meta(Some(m));
+                        }
+                        Ok(res)
+                    }
+                    Err(msg) => {
+                        self.plasm
+                            .trace_hub
+                            .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
+                            .await;
+                        let (tok_prompt, tok_inv, tok_resp, tok_total) =
+                            self.mcp_plasm_token_snapshot_logical(&key, &ls_key).await;
+                        tracing::error!(
+                            target: "plasm_agent::mcp",
+                            tool = "plasm",
+                            batch_count,
+                            batch = batch_count > 1,
+                            tokens_est_prompt = tok_prompt,
+                            tokens_est_invocation = tok_inv,
+                            tokens_est_tool_response = tok_resp,
+                            tokens_est_session_total = tok_total,
+                            message = %msg,
+                            "MCP tool: plasm failed"
+                        );
+                        crate::metrics::record_mcp_tool(
+                            "plasm",
+                            Some(batch_count > 1),
+                            "error",
+                            "execute_failed",
+                            started.elapsed(),
+                        );
+                        Ok(CallToolResult::with_error(CallToolError::from_message(msg)))
+                    }
+                }
+            }
+            _ => {
+                crate::metrics::record_mcp_tool(
+                    "unknown_tool",
+                    None,
+                    "error",
+                    "unknown_tool",
+                    Duration::from_secs(0),
+                );
+                Err(CallToolError::unknown_tool(params.name))
+            }
+        }
+    }
+}
+
+/// Detect MCP transport sessions that disappeared from the SDK session store (disconnect / DELETE),
+/// finalize logical-session traces that are no longer live, and drop orphaned per-transport state.
+fn spawn_mcp_domain_prompt_session_reporter(
+    server: &HyperServer,
+    plasm: Arc<PlasmHostState>,
+    session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
+) {
+    let store = server.state().session_store.clone();
+    tokio::spawn(async move {
+        type SessionStates = Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>;
+        async fn stats_for_logical_session(
+            session_states: &SessionStates,
+            logical_id: &str,
+        ) -> McpSessionPlasmStats {
+            let g = session_states.read().await;
+            for (_tk, st) in g.iter() {
+                let s = st.lock().await;
+                if let Some(ls) = s.logical_by_id.get(logical_id) {
+                    let lg = ls.lock().await;
+                    return lg.stats.clone();
+                }
+            }
+            McpSessionPlasmStats::default()
+        }
+
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let current: HashSet<String> = store.keys().await.into_iter().collect();
+            let mut live_trace_keys: HashSet<String> = HashSet::new();
+            {
+                let g = session_states.read().await;
+                for tk in &current {
+                    if let Some(st_arc) = g.get(tk) {
+                        let s = st_arc.lock().await;
+                        for lid in s.logical_by_id.keys() {
+                            live_trace_keys.insert(lid.clone());
+                        }
+                    }
+                }
+            }
+            let trace_hub_active = plasm.trace_hub.active_mcp_session_count().await;
+            tracing::trace!(
+                target: "plasm_agent::mcp",
+                session_store_keys = current.len(),
+                live_logical_sessions = live_trace_keys.len(),
+                trace_hub_active,
+                "trace hub vs MCP session store"
+            );
+            let finalized = plasm
+                .trace_hub
+                .finalize_disconnected_sessions(&live_trace_keys)
+                .await;
+            for ended in &finalized {
+                let stats = stats_for_logical_session(&session_states, ended).await;
+                let tp = mcp_chars_to_token_est(stats.domain_prompt_chars);
+                let ti = mcp_chars_to_token_est(stats.plasm_invocation_chars);
+                let tr = mcp_chars_to_token_est(stats.plasm_response_chars);
+                let tt = tp.saturating_add(ti).saturating_add(tr);
+                tracing::info!(
+                    target: "plasm_agent::mcp",
+                    logical_session_id = %ended,
+                    domain_prompt_chars_total = stats.domain_prompt_chars,
+                    plasm_invocation_chars_total = stats.plasm_invocation_chars,
+                    plasm_response_chars_total = stats.plasm_response_chars,
+                    plasm_call_count_total = stats.plasm_call_count,
+                    tokens_est_prompt = tp,
+                    tokens_est_invocation = ti,
+                    tokens_est_tool_response = tr,
+                    tokens_est_session_total = tt,
+                    "MCP logical session trace finalized (no live transport binding)"
+                );
+            }
+            {
+                let mut g = session_states.write().await;
+                g.retain(|tk, _| current.contains(tk));
+            }
+            let idle_ms = mcp_trace_idle_finish_ms();
+            if idle_ms > 0 {
+                let finalized_idle = plasm
+                    .trace_hub
+                    .finalize_idle_traces(&live_trace_keys, idle_ms)
+                    .await;
+                for ended in finalized_idle {
+                    tracing::info!(
+                        target: "plasm_agent::mcp",
+                        logical_session_id = %ended,
+                        idle_ms,
+                        "MCP logical session trace finalized (idle timeout); transport still connected"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// When set and > 0, active traces with no hub activity for this many milliseconds are moved to
+/// `completed` even if the MCP transport session is still in the SDK store (list UIs stop showing `live`).
+fn mcp_trace_idle_finish_ms() -> u64 {
+    std::env::var("PLASM_MCP_TRACE_IDLE_FINISH_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+fn mcp_initialize_result() -> InitializeResult {
+    InitializeResult {
+        server_info: Implementation {
+            name: "plasm-agent".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            title: Some("Plasm agent".into()),
+            description: Some(
+                "Stable `client_session_key` for the whole task; `plasm_session_init` once, then mostly `plasm` with the same `logical_session_ref`. `add_capabilities` only to append new `api`/entity seeds—not every turn."
+                    .into(),
+            ),
+            icons: vec![],
+            website_url: None,
+        },
+        capabilities: ServerCapabilities {
+            tools: Some(ServerCapabilitiesTools { list_changed: None }),
+            resources: Some(ServerCapabilitiesResources {
+                list_changed: None,
+                subscribe: Some(false),
+            }),
+            ..Default::default()
+        },
+        protocol_version: ProtocolVersion::V2025_11_25.into(),
+        instructions: Some(MCP_SERVER_INITIALIZE_INSTRUCTIONS.into()),
+        meta: None,
+    }
+}
+
+/// Run Streamable HTTP MCP on `host`:`port` (default MCP path `/mcp` from the SDK).
+pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -> SdkResult<()> {
+    let handler_struct = PlasmMcpHandler::new(Arc::clone(&plasm));
+    let session_states = Arc::clone(&handler_struct.session_states);
+    let handler = handler_struct.to_mcp_server_handler();
+    let auth_provider: Arc<dyn rust_mcp_sdk::auth::AuthProvider> = Arc::new(
+        crate::mcp_stream_auth::PlasmMcpApiKeyAuthProvider::new(Arc::clone(&plasm)),
+    );
+    let server = hyper_server::create_server(
+        mcp_initialize_result(),
+        handler,
+        HyperServerOptions {
+            host: host.to_string(),
+            port,
+            event_store: Some(Arc::new(InMemoryEventStore::default())),
+            health_endpoint: Some("/health".into()),
+            sse_support: false,
+            auth: Some(auth_provider),
+            ..Default::default()
+        },
+    );
+    spawn_mcp_domain_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
+    server.start().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mcp_discover_query_from_arguments, parse_tool_seeds};
+    use insta::assert_snapshot;
+
+    #[test]
+    fn mcp_discover_maps_subset_to_capability_query() {
+        let v = serde_json::json!({
+            "query": ["electric", "type chart"],
+        });
+        let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
+        assert_eq!(q.tokens, vec!["electric", "type chart"]);
+        assert!(q.phrases.is_empty());
+        assert!(q.entity_hints.is_empty());
+        assert!(q.pick_entry.is_none());
+        assert!(q.kinds.is_empty());
+    }
+
+    #[test]
+    fn plasm_invocation_char_count_includes_tsv_static_frontmatter() {
+        let e = vec!["a".to_string()];
+        assert_eq!(super::plasm_invocation_char_count(&e, None, None), 1);
+        assert_eq!(
+            super::plasm_invocation_char_count(&e, None, Some("#c")),
+            1 + 2
+        );
+    }
+
+    #[test]
+    fn mcp_plasm_tool_and_initialize_instructions_coherent() {
+        assert!(
+            super::MCP_PLASM_TOOL_DESCRIPTION.contains("plasm_session_init")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("initialize")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Steady state")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("tsv_static_frontmatter"),
+            "plasm tool description: {}",
+            super::MCP_PLASM_TOOL_DESCRIPTION
+        );
+        assert!(
+            super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("plasm_session_init")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("logical_session_ref")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("api")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("Plasm language")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("reused")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("_meta.plasm.paging")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("Session reuse")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("plasm` only")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS
+                    .contains("_meta.plasm.tsv_static_frontmatter",),
+            "initialize instructions: {}",
+            super::MCP_SERVER_INITIALIZE_INSTRUCTIONS
+        );
+    }
+
+    #[test]
+    fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
+        let names: Vec<String> = super::PlasmMcpHandler::plasm_tools()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(!names.iter().any(|n| n == "plasm_incoming_auth"));
+        assert!(!names.iter().any(|n| n == "list_registry"));
+        assert!(names.iter().any(|n| n == "plasm_session_init"));
+        assert!(names.iter().any(|n| n == "discover_capabilities"));
+        assert!(names.iter().any(|n| n == "add_capabilities"));
+        assert!(names.iter().any(|n| n == "plasm"));
+    }
+
+    #[test]
+    fn mcp_discover_ignores_unknown_json_keys() {
+        let v = serde_json::json!({
+            "query": ["x"],
+            "kinds": ["query"],
+        });
+        let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
+        assert_eq!(q.tokens, vec!["x"]);
+        assert!(q.kinds.is_empty());
+    }
+
+    /// Reference output for `discover_capabilities` Markdown (TSV fence only).
+    #[test]
+    fn discover_markdown_emits_tsv_snapshot() {
+        use plasm_core::discovery::{
+            CapabilityQuery, DiscoveryResult, EntitySummary, RankedCandidate,
+        };
+        let r = DiscoveryResult {
+            contexts: vec![],
+            candidates: vec![RankedCandidate {
+                entry_id: "demo".into(),
+                entity: "Widget".into(),
+                capability_name: "list".into(),
+                score: 2,
+                reason_codes: vec![],
+                capability_description: "List widgets".into(),
+            }],
+            ambiguities: vec![],
+            applied_query_echo: CapabilityQuery::default(),
+            closure_stats: None,
+            schema_neighborhoods: vec![],
+            entity_summaries: vec![EntitySummary {
+                name: "Widget".into(),
+                description: " A contrived \t widget \n line ".into(),
+            }],
+        };
+        assert_snapshot!(
+            super::format_discovery_markdown(&r),
+            @"
+```tsv
+api\tentity\tdescription
+demo\tWidget\tA contrived widget line
+```
+
+"
+        );
+    }
+
+    #[test]
+    fn add_capabilities_requires_non_empty_seeds() {
+        let err = parse_tool_seeds("add_capabilities", &serde_json::json!({ "seeds": [] }))
+            .expect_err("expected invalid seeds");
+        assert!(
+            err.to_string().contains("non-empty array"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn add_capabilities_legacy_shape_returns_actionable_error() {
+        let err = parse_tool_seeds(
+            "add_capabilities",
+            &serde_json::json!({ "entry_id": "pokeapi", "entities": ["Pokemon"] }),
+        )
+        .expect_err("expected invalid legacy shape");
+        assert!(
+            err.to_string()
+                .contains("legacy top-level `{entry_id, entities}`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn add_capabilities_seeds_accept_api_or_entry_id_alias() {
+        let api = parse_tool_seeds(
+            "add_capabilities",
+            &serde_json::json!({ "seeds": [{ "api": "pokeapi", "entity": "Pokemon" }] }),
+        )
+        .expect("api key");
+        assert_eq!(api.len(), 1);
+        assert_eq!(api[0].entry_id, "pokeapi");
+        assert_eq!(api[0].entity, "Pokemon");
+
+        let legacy = parse_tool_seeds(
+            "add_capabilities",
+            &serde_json::json!({ "seeds": [{ "entry_id": "pokeapi", "entity": "Pokemon" }] }),
+        )
+        .expect("entry_id alias");
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].entry_id, "pokeapi");
+    }
+}

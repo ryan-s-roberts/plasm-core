@@ -1,0 +1,53 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "TheMealDB", "version": "1.0.0",
+    "description": "Free meal recipe database. No auth required (free tier)." },
+  "servers": [{ "url": "https://www.themealdb.com/api/json/v1/1" }],
+  "paths": {
+    "/search.php": {
+      "get": {
+        "summary": "Search meals by name or first letter",
+        "parameters": [
+          { "name": "s", "in": "query", "schema": { "type": "string" }, "description": "Meal name to search" },
+          { "name": "f", "in": "query", "schema": { "type": "string" }, "description": "First letter of meal name" }
+        ],
+        "responses": { "200": { "description": "Meal search results", "content": { "application/json": { "schema": { "type": "object", "properties": { "meals": { "type": "array", "items": { "$ref": "#/components/schemas/Meal" } } } } } } } }
+      }
+    },
+    "/filter.php": {
+      "get": {
+        "summary": "Filter meals by category, area, or ingredient",
+        "parameters": [
+          { "name": "c", "in": "query", "schema": { "type": "string" }, "description": "Category filter (e.g. Seafood, Beef)" },
+          { "name": "a", "in": "query", "schema": { "type": "string" }, "description": "Area/cuisine filter (e.g. Italian, Japanese)" },
+          { "name": "i", "in": "query", "schema": { "type": "string" }, "description": "Main ingredient filter" }
+        ],
+        "responses": { "200": { "description": "Filtered meals", "content": { "application/json": { "schema": { "type": "object", "properties": { "meals": { "type": "array", "items": { "$ref": "#/components/schemas/MealSummary" } } } } } } } }
+      }
+    },
+    "/lookup.php": {
+      "get": {
+        "summary": "Get full meal details by ID",
+        "parameters": [ { "name": "i", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Meal ID" } ],
+        "responses": { "200": { "description": "Meal detail", "content": { "application/json": { "schema": { "type": "object", "properties": { "meals": { "type": "array", "items": { "$ref": "#/components/schemas/Meal" } } } } } } } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Meal": {
+        "type": "object",
+        "properties": {
+          "idMeal": { "type": "string" }, "strMeal": { "type": "string" },
+          "strCategory": { "type": "string" }, "strArea": { "type": "string" },
+          "strInstructions": { "type": "string" }, "strMealThumb": { "type": "string" },
+          "strTags": { "type": "string" }
+        }
+      },
+      "MealSummary": {
+        "type": "object",
+        "properties": { "idMeal": { "type": "string" }, "strMeal": { "type": "string" }, "strMealThumb": { "type": "string" } }
+      }
+    }
+  }
+}

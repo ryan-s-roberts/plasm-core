@@ -1,0 +1,47 @@
+# NYT Article Search API — GET /articlesearch.json
+# Base URL: NY Times Article Search (set the API origin and path prefix with --backend).
+
+article_search:
+  method: GET
+  path:
+    - type: literal
+      value: articlesearch.json
+  # Body shape: { "response": { "docs": [ ... ] } }
+  response:
+    items_path: [response, docs]
+  pagination:
+    params:
+      page: {counter: 0}
+  query:
+    type: object
+    fields:
+      - - q
+        - type: if
+          condition: { type: exists, var: q }
+          then_expr: { type: var, name: q }
+          else_expr: { type: const, value: null }
+      - - fq
+        - type: if
+          condition: { type: exists, var: fq }
+          then_expr: { type: var, name: fq }
+          else_expr: { type: const, value: null }
+      - - begin_date
+        - type: if
+          condition: { type: exists, var: begin_date }
+          then_expr: { type: var, name: begin_date }
+          else_expr: { type: const, value: null }
+      - - end_date
+        - type: if
+          condition: { type: exists, var: end_date }
+          then_expr: { type: var, name: end_date }
+          else_expr: { type: const, value: null }
+      - - sort
+        - type: if
+          condition: { type: exists, var: sort }
+          then_expr: { type: var, name: sort }
+          else_expr: { type: const, value: null }
+      - - fl
+        - type: if
+          condition: { type: exists, var: fl }
+          then_expr: { type: var, name: fl }
+          else_expr: { type: const, value: null }

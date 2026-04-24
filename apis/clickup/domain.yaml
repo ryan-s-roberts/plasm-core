@@ -1,0 +1,1600 @@
+version: 2
+
+# OpenAPI server is `https://api.clickup.com/api`; paths in mappings begin with `v2` → `/api/v2/...`.
+http_backend: https://api.clickup.com/api
+
+entities:
+  Team:
+    id_field: id
+    expression_aliases:
+    - Workspace
+    description: A ClickUp workspace (historically called Team)
+    fields:
+      id:
+        description: Unique workspace identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Workspace display name
+        field_type: string
+        required: false
+        string_semantics: short
+      color:
+        field_type: string
+        required: false
+        string_semantics: short
+      avatar:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      spaces:
+        description: Spaces belonging to this workspace
+        target: Space
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: space_query
+          param: team_id
+      plan:
+        description: Billing plan for this workspace
+        target: WorkspacePlan
+        cardinality: one
+      seat_usage:
+        description: Member and guest seat usage
+        target: WorkspaceSeatUsage
+        cardinality: one
+  WorkspacePlan:
+    id_field: id
+    implicit_request_identity: true
+    description: Workspace billing plan from the plan subresource (body has no row id; id is the team_id from the path)
+    fields:
+      id:
+        description: Workspace identifier (same as Team.id on the wire)
+        field_type: string
+        required: true
+        string_semantics: short
+      plan_name:
+        description: Plan display name
+        field_type: string
+        required: false
+        string_semantics: short
+      plan_id:
+        description: Plan tier identifier
+        field_type: integer
+        required: false
+    relations: {}
+  WorkspaceSeatUsage:
+    id_field: id
+    implicit_request_identity: true
+    description: Seat counts for members and guests
+    fields:
+      id:
+        description: Workspace identifier (same as Team.id on the wire)
+        field_type: string
+        required: true
+        string_semantics: short
+      members:
+        description: Filled/total/empty member seats (nested object from API)
+        field_type: json
+        required: false
+      guests:
+        description: Filled/total/empty guest seats (nested object from API)
+        field_type: json
+        required: false
+    relations: {}
+  Space:
+    id_field: id
+    description: A project area within a workspace
+    fields:
+      id:
+        description: Unique space identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      archived:
+        description: Whether the space is archived
+        field_type: boolean
+        required: false
+      name:
+        description: Space display name
+        field_type: string
+        required: false
+        string_semantics: short
+      private:
+        field_type: boolean
+        required: false
+    relations:
+      folders:
+        description: Folders within this space
+        target: Folder
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: folder_query
+          param: space_id
+      lists:
+        description: Folderless lists in this space
+        target: List
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: list_query
+          param: space_id
+  Folder:
+    id_field: id
+    description: A grouping of lists within a space
+    fields:
+      id:
+        description: Unique folder identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Folder display name
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      lists:
+        description: Lists within this folder
+        target: List
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: folder_list_query
+          param: folder_id
+  List:
+    id_field: id
+    description: A container for tasks
+    fields:
+      id:
+        description: Unique list identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: List display name
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        description: List status label
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      tasks:
+        description: Tasks within this list
+        target: Task
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: list_task_query
+          param: list_id
+  Task:
+    id_field: id
+    description: A unit of work or action item
+    fields:
+      id:
+        description: >-
+          ClickUp task id (string). Use the exact value from the API, task URL, or list
+          response—alphanumeric custom ids (e.g. 86abc1234). Do not invent or paraphrase ids;
+          a mistyped id yields 404 or failed requests.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Task title
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        description: Task description (plain text or markdown)
+        field_type: string
+        required: false
+        string_semantics: markdown
+      status:
+        description: Current status name (e.g. Open, In Progress, Done)
+        field_type: string
+        required: false
+        string_semantics: short
+      priority:
+        description: 'Priority level: 1=urgent, 2=high, 3=normal, 4=low, null=none'
+        field_type: integer
+        required: false
+      due_date:
+        description: >-
+          Due date/time as Unix ms on the wire. For updates, this is not for status
+          labels or progress notes—use the `status` and `description` fields instead.
+        field_type: date
+        value_format: unix_ms
+        required: false
+      start_date:
+        description: Start date as Unix millisecond timestamp (ClickUp API)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      time_estimate:
+        description: Time estimate in milliseconds
+        field_type: integer
+        required: false
+      date_created:
+        description: Creation timestamp (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      date_updated:
+        description: Last update timestamp (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      archived:
+        description: Whether the task is archived
+        field_type: boolean
+        required: false
+      parent:
+        description: Parent task ID for subtasks
+        field_type: entity_ref
+        target: Task
+        required: false
+      url:
+        description: Public URL for this task
+        field_type: string
+        required: false
+        string_semantics: short
+      markdown_description:
+        description: Task description rendered as markdown. Populated by task_get with include_markdown_description=true.
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      comments:
+        description: Comments on this task
+        target: Comment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: comment_query
+          param: task_id
+      time_in_status:
+        description: Per-status time totals
+        target: TaskTimeInStatus
+        cardinality: one
+  TaskTimeInStatus:
+    id_field: id
+    implicit_request_identity: true
+    description: Time spent in each status for a task
+    fields:
+      id:
+        description: Task identifier (same as Task.id on the wire)
+        field_type: string
+        required: true
+        string_semantics: short
+      current_status:
+        description: Current status block including total_time (nested object from API)
+        field_type: json
+        required: false
+      status_history:
+        description: Historical status intervals
+        field_type: json
+        required: false
+    relations: {}
+  User:
+    id_field: id
+    description: An authorized ClickUp user
+    fields:
+      id:
+        description: Unique user identifier
+        field_type: integer
+        required: true
+      username:
+        description: User login name
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        description: User email address
+        field_type: string
+        required: false
+        string_semantics: short
+      color:
+        description: User color preference
+        field_type: string
+        required: false
+        string_semantics: short
+      profilePicture:
+        description: User avatar URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Group:
+    id_field: id
+    description: A user group for permissions
+    fields:
+      id:
+        description: Unique group identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Group display name
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  View:
+    id_field: id
+    description: A saved view configuration
+    fields:
+      id:
+        description: Unique view identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: View display name
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        description: View type (list, board, calendar, gantt, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Goal:
+    id_field: id
+    description: A high-level objective with key results
+    fields:
+      id:
+        description: Unique goal identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Goal title
+        field_type: string
+        required: false
+        string_semantics: short
+      due_date:
+        description: Goal due date (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      color:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      key_results:
+        description: Measurable key results for this goal
+        target: KeyResult
+        cardinality: many
+  KeyResult:
+    id_field: id
+    description: A measurable outcome tied to a goal
+    fields:
+      id:
+        description: Unique key result identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Key result title
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        description: Key result type (number, currency, boolean, percentage, automatic)
+        field_type: string
+        required: false
+        string_semantics: short
+      current:
+        description: Current value
+        field_type: integer
+        required: false
+    relations: {}
+  Attachment:
+    abstract: true
+    id_field: id
+    description: A file attached to a task
+    fields:
+      id:
+        description: Unique attachment identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        description: Attachment filename
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        description: Attachment download URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Comment:
+    id_field: id
+    description: A comment on a task or view
+    fields:
+      id:
+        description: Unique comment identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      comment_text:
+        description: Comment plain text content
+        field_type: string
+        required: false
+        string_semantics: short
+      date:
+        description: Comment creation timestamp (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+    relations: {}
+  CustomField:
+    id_field: id
+    description: A workspace-level custom field definition
+    fields:
+      id:
+        description: Unique custom field identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Custom field label
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        description: Field type (text, number, dropdown, currency, date, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  CustomTaskType:
+    id_field: id
+    description: A user-defined task type
+    fields:
+      id:
+        description: Unique task type identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Task type label
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Member:
+    id_field: id
+    id_from: user.id
+    description: A workspace or task member
+    fields:
+      id:
+        description: Member user ID
+        field_type: integer
+        required: true
+      username:
+        description: Member login name
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        description: Member email
+        field_type: string
+        required: false
+        string_semantics: short
+      color:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Role:
+    id_field: id
+    description: A custom permission role
+    fields:
+      id:
+        description: Unique role identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Role display name
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Tag:
+    id_field: name
+    description: A label tag within a space, identified by its name
+    fields:
+      name:
+        description: Tag display name (acts as the identifier within a space)
+        field_type: string
+        required: true
+        string_semantics: short
+      tag_fg:
+        description: Foreground (text) color hex
+        field_type: string
+        required: false
+        string_semantics: short
+      tag_bg:
+        description: Background color hex
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Template:
+    id_field: id
+    description: A reusable workspace template
+    fields:
+      id:
+        description: Unique template identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Template display name
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  TimeEntry:
+    id_field: id
+    description: A logged time record
+    fields:
+      id:
+        description: Unique time entry identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      start_date:
+        description: Entry start timestamp (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      end_date:
+        description: Entry end timestamp (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      duration:
+        description: Duration in milliseconds
+        field_type: integer
+        required: false
+    relations: {}
+  TimeInterval:
+    id_field: id
+    description: A tracked time interval on a task
+    fields:
+      id:
+        description: Unique interval identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      start:
+        description: Interval start (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      end:
+        description: Interval end (Unix ms)
+        field_type: date
+        value_format: unix_ms
+        required: false
+      duration:
+        description: Duration in milliseconds
+        field_type: integer
+        path: time
+        required: false
+    relations: {}
+  Webhook:
+    id_field: id
+    description: A registered webhook endpoint
+    fields:
+      id:
+        description: Unique webhook identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      endpoint:
+        description: Webhook callback URL
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        description: Webhook status (active or inactive)
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+capabilities:
+  team_query:
+    description: List all accessible workspaces
+    kind: query
+    entity: Team
+  user_get_me:
+    description: Get the currently authenticated user
+    kind: singleton
+    entity: User
+  team_member_query:
+    description: List members in a workspace
+    kind: query
+    entity: Member
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  team_seats:
+    description: Get workspace seat usage
+    kind: get
+    entity: WorkspaceSeatUsage
+    provides:
+    - id
+    - members
+    - guests
+  team_plan:
+    description: Get workspace plan details
+    kind: get
+    entity: WorkspacePlan
+    provides:
+    - id
+    - plan_name
+    - plan_id
+  team_create_space:
+    description: Create a new space in the workspace
+    kind: create
+    entity: Space
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: multiple_assignees
+      type: boolean
+      required: false
+    - name: features
+      type: json
+      required: false
+  team_create_goal:
+    description: Create a new goal in the workspace
+    kind: create
+    entity: Goal
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: due_date
+      type: date
+      value_format: unix_ms
+      required: false
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  team_create_group:
+    description: Create a user group in the workspace
+    kind: create
+    entity: Group
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  team_create_webhook:
+    description: Register a webhook for the workspace
+    kind: create
+    entity: Webhook
+    parameters:
+    - name: endpoint
+      type: string
+      required: true
+      string_semantics: short
+  team_create_view:
+    description: Create a view at workspace level
+    kind: create
+    entity: View
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  team_create_time_entry:
+    description: Create a manual time entry
+    kind: create
+    entity: TimeEntry
+    parameters:
+    - name: tid
+      type: string
+      required: false
+      string_semantics: short
+    - name: start
+      type: date
+      value_format: unix_ms
+      required: false
+    - name: stop
+      type: date
+      value_format: unix_ms
+      required: false
+  team_start_time_entry:
+    description: Start a running time entry
+    kind: action
+    entity: Team
+    output:
+      type: side_effect
+      description: Start a running time entry
+  team_stop_time_entry:
+    description: Stop the current running time entry
+    kind: action
+    entity: Team
+    output:
+      type: side_effect
+      description: Stop the current running time entry
+  space_query:
+    description: List spaces in a workspace
+    kind: query
+    entity: Space
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+    - name: archived
+      type: boolean
+      required: false
+      role: filter
+  space_get:
+    description: Get a single space by ID
+    kind: get
+    entity: Space
+    provides:
+    - id
+    - archived
+    - name
+    - private
+  space_update:
+    description: Update space properties
+    kind: update
+    entity: Space
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: color
+      type: string
+      required: false
+      string_semantics: short
+    - name: private
+      type: boolean
+      required: false
+  space_delete:
+    description: Delete a space
+    kind: delete
+    entity: Space
+  space_create_folder:
+    description: Create a folder in the space
+    kind: create
+    entity: Folder
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  space_create_list:
+    description: Create a folderless list in the space
+    kind: create
+    entity: List
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  space_views:
+    description: List views for a space
+    kind: query
+    entity: View
+    parameters:
+    - name: space_id
+      type: entity_ref
+      target: Space
+      required: true
+      role: scope
+  space_fields:
+    description: List custom fields accessible in a space
+    kind: query
+    entity: CustomField
+    parameters:
+    - name: space_id
+      type: entity_ref
+      target: Space
+      required: true
+      role: scope
+  folder_query:
+    description: List folders in a space
+    kind: query
+    entity: Folder
+    parameters:
+    - name: space_id
+      type: entity_ref
+      target: Space
+      required: true
+      role: scope
+    - name: archived
+      type: boolean
+      required: false
+      role: filter
+  folder_get:
+    description: Get a single folder by ID
+    kind: get
+    entity: Folder
+    provides:
+    - id
+    - name
+  folder_update:
+    description: Update folder properties
+    kind: update
+    entity: Folder
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+  folder_delete:
+    description: Delete a folder
+    kind: delete
+    entity: Folder
+  folder_create_list:
+    description: Create a list in the folder
+    kind: create
+    entity: List
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  folder_views:
+    description: List views for a folder
+    kind: query
+    entity: View
+    parameters:
+    - name: folder_id
+      type: entity_ref
+      target: Folder
+      required: true
+      role: scope
+  folder_fields:
+    description: List custom fields on a folder
+    kind: query
+    entity: CustomField
+    parameters:
+    - name: folder_id
+      type: entity_ref
+      target: Folder
+      required: true
+      role: scope
+  list_query:
+    description: List folderless lists in a space
+    kind: query
+    entity: List
+    parameters:
+    - name: space_id
+      type: entity_ref
+      target: Space
+      required: true
+      role: scope
+    - name: archived
+      type: boolean
+      required: false
+      role: filter
+  folder_list_query:
+    description: List lists inside a folder
+    kind: query
+    entity: List
+    parameters:
+    - name: folder_id
+      type: entity_ref
+      target: Folder
+      required: true
+      role: scope
+    - name: archived
+      type: boolean
+      required: false
+      role: filter
+  list_get:
+    description: Get a single list by ID
+    kind: get
+    entity: List
+    provides:
+    - id
+    - name
+    - status
+  list_update:
+    description: Update list properties
+    kind: update
+    entity: List
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: status
+      type: string
+      required: false
+      string_semantics: short
+  list_delete:
+    description: Delete a list
+    kind: delete
+    entity: List
+  list_members:
+    description: List members of a list
+    kind: query
+    entity: Member
+    parameters:
+    - name: list_id
+      type: entity_ref
+      target: List
+      required: true
+      role: scope
+  list_comments:
+    description: List comments on a list
+    kind: query
+    entity: Comment
+    parameters:
+    - name: list_id
+      type: entity_ref
+      target: List
+      required: true
+      role: scope
+  list_fields:
+    description: List custom fields on a list
+    kind: query
+    entity: CustomField
+    parameters:
+    - name: list_id
+      type: entity_ref
+      target: List
+      required: true
+      role: scope
+  task_query:
+    description: Query tasks across a workspace (workspace-scoped, all lists)
+    kind: query
+    entity: Task
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+    - name: order_by
+      type: select
+      required: false
+      allowed_values:
+      - id
+      - created
+      - updated
+      - due_date
+      role: sort
+    - name: reverse
+      type: boolean
+      required: false
+      role: sort_direction
+    - name: subtasks
+      type: boolean
+      required: false
+      role: filter
+    - name: include_closed
+      type: boolean
+      required: false
+      role: filter
+    - name: archived
+      type: boolean
+      required: false
+      role: filter
+    - name: date_created_gt
+      type: date
+      value_format: unix_ms
+      required: false
+      role: filter
+    - name: date_created_lt
+      type: date
+      value_format: unix_ms
+      required: false
+      role: filter
+    - name: date_updated_gt
+      type: date
+      value_format: unix_ms
+      required: false
+      role: filter
+    - name: date_updated_lt
+      type: date
+      value_format: unix_ms
+      required: false
+      role: filter
+    - name: due_date_gt
+      type: date
+      value_format: unix_ms
+      required: false
+      role: filter
+    - name: due_date_lt
+      type: date
+      value_format: unix_ms
+      required: false
+      role: filter
+    - name: include_markdown_description
+      type: boolean
+      required: false
+      role: response_control
+  list_task_query:
+    description: Query tasks within a specific list (list-scoped, preferred for List.tasks traversal)
+    kind: query
+    entity: Task
+    parameters:
+    - name: list_id
+      type: entity_ref
+      target: List
+      required: true
+      role: scope
+    - name: order_by
+      type: select
+      required: false
+      allowed_values:
+      - id
+      - created
+      - updated
+      - due_date
+      role: sort
+    - name: reverse
+      type: boolean
+      required: false
+      role: sort_direction
+    - name: subtasks
+      type: boolean
+      required: false
+      role: filter
+    - name: include_closed
+      type: boolean
+      required: false
+      role: filter
+    - name: include_markdown_description
+      type: boolean
+      required: false
+      role: response_control
+  task_get:
+    description: Get a single task by ID with full detail
+    kind: get
+    entity: Task
+    provides:
+    - id
+    - name
+    - description
+    - status
+    - priority
+    - due_date
+    - start_date
+    - time_estimate
+    - date_created
+    - date_updated
+    - archived
+    - parent
+    - url
+    - markdown_description
+  task_update:
+    description: >-
+      Update task properties
+    kind: update
+    entity: Task
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+      description: Task title (short string).
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+      description: >-
+        Longer notes, checklists, bracketed context, and commentary. Use this instead
+        of stuffing prose into `due_date` or `archived`.
+    - name: status
+      type: string
+      required: false
+      string_semantics: short
+      description: >-
+        Workflow status name as defined in the list/space (e.g. "To do", "In progress", "Done").
+        Use this for state labels—not the `due_date` or `archived` fields.
+    - name: priority
+      type: integer
+      required: false
+      description: "1=urgent, 2=high, 3=normal, 4=low; omit for none."
+    - name: due_date
+      type: date
+      value_format: unix_ms
+      required: false
+      description: >-
+        Due date/time only: RFC 3339, or other supported date forms.
+    - name: start_date
+      type: date
+      value_format: unix_ms
+      required: false
+      description: Start date/time in the same accepted formats as `due_date` (date slot, not status text).
+    - name: time_estimate
+      type: integer
+      required: false
+      description: Estimate in milliseconds (ClickUp `time_estimate`).
+    - name: archived
+      type: boolean
+      required: false
+      description: >-
+        Only `true` or `false` to archive or restore. Never pass status sentences,
+        notes, or markdown here.
+    - name: parent
+      type: entity_ref
+      target: Task
+      required: false
+      description: Parent task id if this should be a subtask—must be a valid `Task` id string, not prose.
+  list_create_task:
+    description: Create a task in a list
+    kind: create
+    entity: Task
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+      description: Optional notes
+    - name: status
+      type: string
+      required: false
+      string_semantics: short
+      description: Initial status name if the list uses custom statuses.
+    - name: priority
+      type: integer
+      required: false
+    - name: due_date
+      type: date
+      value_format: unix_ms
+      required: false
+      description: Due date/time only (same rules as `task_update.due_date`); not for status or notes.
+  task_delete:
+    description: Delete a task
+    kind: delete
+    entity: Task
+  task_create_comment:
+    description: Add a comment to a task
+    kind: create
+    entity: Comment
+    parameters:
+    - name: comment_text
+      type: string
+      required: true
+      string_semantics: short
+  task_create_attachment:
+    description: Upload an attachment to a task
+    kind: action
+    entity: Task
+    output:
+      type: side_effect
+      description: Upload an attachment to a task
+  task_create_checklist:
+    description: Create a checklist on a task
+    kind: action
+    entity: Task
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Create a checklist on a task
+  task_add_dependency:
+    description: Add a dependency to a task
+    kind: action
+    entity: Task
+    parameters:
+    - name: depends_on
+      type: string
+      required: false
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Add a dependency to a task
+  task_remove_dependency:
+    description: Remove a dependency from a task
+    kind: action
+    entity: Task
+    parameters:
+    - name: depends_on
+      type: string
+      required: true
+      string_semantics: short
+    - name: dependency_of
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Remove a dependency from a task
+  task_time_in_status:
+    description: Get time spent in each status
+    kind: get
+    entity: TaskTimeInStatus
+    provides:
+    - id
+    - current_status
+    - status_history
+  task_intervals:
+    description: List tracked time intervals on a task
+    kind: query
+    entity: TimeInterval
+    parameters:
+    - name: task_id
+      type: entity_ref
+      target: Task
+      required: true
+      role: scope
+  task_create_interval:
+    description: Create a time interval on a task
+    kind: create
+    entity: TimeInterval
+    parameters:
+    - name: start
+      type: date
+      value_format: unix_ms
+      required: false
+    - name: end
+      type: date
+      value_format: unix_ms
+      required: false
+  task_tag_add:
+    description: Add a tag to a task
+    kind: action
+    entity: Task
+    parameters:
+    - name: tag_name
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Add a tag to a task
+  task_tag_remove:
+    description: Remove a tag from a task
+    kind: action
+    entity: Task
+    parameters:
+    - name: tag_name
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Remove a tag from a task
+  view_query:
+    description: List views in a workspace
+    kind: query
+    entity: View
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  view_get:
+    description: Get a single view by ID
+    kind: get
+    entity: View
+    provides:
+    - id
+    - name
+    - type
+  view_update:
+    description: Update view properties
+    kind: update
+    entity: View
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+  view_delete:
+    description: Delete a view
+    kind: delete
+    entity: View
+  view_tasks:
+    description: List tasks shown by a view
+    kind: query
+    entity: Task
+    parameters:
+    - name: view_id
+      type: entity_ref
+      target: View
+      required: true
+      role: scope
+  view_comments:
+    description: List comments on a view
+    kind: query
+    entity: Comment
+    parameters:
+    - name: view_id
+      type: entity_ref
+      target: View
+      required: true
+      role: scope
+  view_create_comment:
+    description: Add a comment to a view
+    kind: create
+    entity: Comment
+    parameters:
+    - name: comment_text
+      type: string
+      required: true
+      string_semantics: short
+  goal_query:
+    description: List goals in a workspace
+    kind: query
+    entity: Goal
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  goal_get:
+    description: Get a single goal by ID
+    kind: get
+    entity: Goal
+    provides:
+    - id
+    - name
+    - due_date
+    - description
+    - color
+  goal_update:
+    description: Update goal properties
+    kind: update
+    entity: Goal
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: due_date
+      type: date
+      value_format: unix_ms
+      required: false
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  goal_delete:
+    description: Delete a goal
+    kind: delete
+    entity: Goal
+  goal_create_key_result:
+    description: Add a key result to a goal
+    kind: create
+    entity: KeyResult
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: type
+      type: string
+      required: false
+      string_semantics: short
+  key_result_get:
+    description: Get a single key result by ID
+    kind: get
+    entity: KeyResult
+    provides:
+    - id
+    - name
+    - type
+    - current
+  key_result_update:
+    description: Update key result properties
+    kind: update
+    entity: KeyResult
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: current
+      type: integer
+      required: false
+  key_result_delete:
+    description: Delete a key result
+    kind: delete
+    entity: KeyResult
+  comment_query:
+    description: List comments on a task
+    kind: query
+    entity: Comment
+    parameters:
+    - name: task_id
+      type: entity_ref
+      target: Task
+      required: true
+      role: scope
+  comment_get:
+    description: Get a single comment by ID
+    kind: get
+    entity: Comment
+    provides:
+    - id
+    - comment_text
+    - date
+  comment_update:
+    description: Update comment text
+    kind: update
+    entity: Comment
+    parameters:
+    - name: comment_text
+      type: string
+      required: false
+      string_semantics: short
+  comment_delete:
+    description: Delete a comment
+    kind: delete
+    entity: Comment
+  custom_field_query:
+    description: List accessible custom fields in a workspace
+    kind: query
+    entity: CustomField
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  custom_task_type_query:
+    description: List custom task types in a workspace
+    kind: query
+    entity: CustomTaskType
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  tag_query:
+    description: List tags in a space
+    kind: query
+    entity: Tag
+    parameters:
+    - name: space_id
+      type: entity_ref
+      target: Space
+      required: true
+      role: scope
+  task_member_query:
+    description: List members assigned to a task
+    kind: query
+    entity: Member
+    parameters:
+    - name: task_id
+      type: entity_ref
+      target: Task
+      required: true
+      role: scope
+  role_query:
+    description: List custom roles in a workspace
+    kind: query
+    entity: Role
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  time_entry_query:
+    description: List time entries in a workspace
+    kind: query
+    entity: TimeEntry
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  template_query:
+    description: List templates in a workspace
+    kind: query
+    entity: Template
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+    - name: page
+      type: integer
+      required: false
+      role: response_control
+  webhook_query:
+    description: List webhooks in a workspace
+    kind: query
+    entity: Webhook
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  webhook_get:
+    description: Get a single webhook by ID
+    kind: get
+    entity: Webhook
+    provides:
+    - id
+    - endpoint
+    - status
+  webhook_update:
+    description: Update webhook properties
+    kind: update
+    entity: Webhook
+    parameters:
+    - name: endpoint
+      type: string
+      required: false
+      string_semantics: short
+  webhook_delete:
+    description: Delete a webhook
+    kind: delete
+    entity: Webhook
+  group_query:
+    description: List user groups in a workspace
+    kind: query
+    entity: Group
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+  group_update:
+    description: Update group properties
+    kind: update
+    entity: Group
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+  group_delete:
+    description: Delete a user group
+    kind: delete
+    entity: Group
+auth:
+  scheme: api_key_header
+  header: Authorization
+  env: CLICKUP_API_TOKEN

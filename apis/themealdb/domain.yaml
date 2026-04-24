@@ -1,0 +1,84 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://www.themealdb.com
+
+entities:
+  Meal:
+    id_field: idMeal
+    description: A recipe in the meal database; idMeal is the numeric string ID
+    fields:
+      idMeal:
+        description: Unique numeric string identifier for the meal
+        field_type: string
+        required: true
+        string_semantics: short
+      strMeal:
+        description: The recipe or dish name
+        field_type: string
+        required: true
+        string_semantics: short
+      strCategory:
+        description: Cuisine category (e.g. Chicken, Seafood, Dessert)
+        field_type: string
+        required: false
+        string_semantics: short
+      strArea:
+        description: Country of origin (e.g. British, Italian, Japanese)
+        field_type: string
+        required: false
+        string_semantics: short
+      strMealThumb:
+        description: URL of the meal thumbnail image
+        field_type: string
+        required: false
+        string_semantics: short
+      strTags:
+        description: Comma-separated tags for the meal
+        field_type: string
+        required: false
+        string_semantics: short
+capabilities:
+  meal_search:
+    description: Search meals by name using the s parameter
+    kind: search
+    entity: Meal
+    parameters:
+    - name: s
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+  meal_filter:
+    description: Filter meals by category, area, or ingredient
+    kind: query
+    entity: Meal
+    parameters:
+    - name: c
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: a
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: i
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+  meal_get:
+    description: Retrieve full meal detail including ingredients by ID
+    kind: get
+    entity: Meal
+    provides:
+    - idMeal
+    - strMeal
+    - strCategory
+    - strArea
+    - strMealThumb
+    - strTags

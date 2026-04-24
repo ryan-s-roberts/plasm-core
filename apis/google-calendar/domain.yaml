@@ -1,0 +1,460 @@
+version: 4
+
+# Paths in mappings.yaml are relative to Calendar API v3 root (users/me/calendarList, calendars/.../events, …).
+http_backend: https://www.googleapis.com/calendar/v3
+
+entities:
+  Calendar:
+    id_field: id
+    description: A Google Calendar from the authenticated user's calendar list
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      summary:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      timeZone:
+        field_type: string
+        required: false
+        string_semantics: short
+      location:
+        field_type: string
+        required: false
+        string_semantics: short
+      backgroundColor:
+        field_type: string
+        required: false
+        string_semantics: short
+      accessRole:
+        field_type: select
+        allowed_values:
+        - none
+        - freeBusyReader
+        - reader
+        - writer
+        - owner
+        required: false
+      foregroundColor:
+        field_type: string
+        required: false
+        string_semantics: short
+      summaryOverride:
+        field_type: string
+        required: false
+        string_semantics: short
+      primary:
+        field_type: boolean
+        required: false
+      selected:
+        field_type: boolean
+        required: false
+      hidden:
+        field_type: boolean
+        required: false
+    primary_read: calendar_get
+    relations:
+      events:
+        target: Event
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: event_list
+          bindings:
+            calendarId: id
+  Event:
+    id_field: id
+    key_vars:
+    - calendarId
+    - id
+    description: A Google Calendar event
+    fields:
+      calendarId:
+        field_type: entity_ref
+        target: Calendar
+        required: true
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      summary:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      location:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: select
+        allowed_values:
+        - confirmed
+        - tentative
+        - cancelled
+        required: false
+      visibility:
+        field_type: select
+        allowed_values:
+        - default
+        - public
+        - private
+        - confidential
+        required: false
+      transparency:
+        field_type: select
+        allowed_values:
+        - opaque
+        - transparent
+        required: false
+      start_datetime:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: start.dateTime
+      start_date:
+        field_type: string
+        required: false
+        path: start.date
+        string_semantics: short
+      end_datetime:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: end.dateTime
+      end_date:
+        field_type: string
+        required: false
+        path: end.date
+        string_semantics: short
+      organizer_email:
+        field_type: string
+        required: false
+        path: organizer.email
+        string_semantics: short
+      organizer_name:
+        field_type: string
+        required: false
+        path: organizer.displayName
+        string_semantics: short
+      creator_email:
+        field_type: string
+        required: false
+        path: creator.email
+        string_semantics: short
+      recurringEventId:
+        field_type: string
+        required: false
+        string_semantics: short
+      iCalUID:
+        field_type: string
+        required: false
+        string_semantics: short
+      htmlLink:
+        field_type: string
+        required: false
+        string_semantics: short
+      etag:
+        field_type: string
+        required: false
+        string_semantics: short
+      colorId:
+        field_type: string
+        required: false
+        string_semantics: short
+      sequence:
+        field_type: integer
+        required: false
+      endTimeUnspecified:
+        field_type: boolean
+        required: false
+      hangoutLink:
+        field_type: string
+        required: false
+        string_semantics: short
+      attendees:
+        field_type: json
+        required: false
+        description: Attendee list as returned by the API (omit or truncate when maxAttendees limits response).
+      recurrence:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+        description: RRULE/EXRULE strings for recurring masters.
+      reminders:
+        field_type: json
+        required: false
+      conferenceData:
+        field_type: json
+        required: false
+      extendedProperties:
+        field_type: json
+        required: false
+      created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      eventType:
+        field_type: select
+        allowed_values:
+        - birthday
+        - default
+        - focusTime
+        - fromGmail
+        - outOfOffice
+        - workingLocation
+        required: false
+    primary_read: event_get
+capabilities:
+  calendar_get:
+    kind: get
+    entity: Calendar
+    description: Get a calendar from the authenticated user's list by its ID
+    provides:
+    - id
+    - summary
+    - description
+    - timeZone
+    - location
+    - backgroundColor
+    - foregroundColor
+    - summaryOverride
+    - accessRole
+    - primary
+    - selected
+    - hidden
+  calendar_list:
+    kind: query
+    entity: Calendar
+    description: List all calendars in the authenticated user's calendar list
+    parameters:
+    - name: showHidden
+      type: boolean
+      required: false
+    - name: showDeleted
+      type: boolean
+      required: false
+    - name: minAccessRole
+      type: select
+      allowed_values:
+      - freeBusyReader
+      - reader
+      - writer
+      - owner
+      required: false
+  event_get:
+    kind: get
+    entity: Event
+    description: Get a specific event by compound key (calendarId/eventId)
+    provides:
+    - id
+    - calendarId
+    - summary
+    - description
+    - location
+    - status
+    - visibility
+    - transparency
+    - start_datetime
+    - start_date
+    - end_datetime
+    - end_date
+    - organizer_email
+    - organizer_name
+    - creator_email
+    - recurringEventId
+    - iCalUID
+    - htmlLink
+    - etag
+    - colorId
+    - sequence
+    - endTimeUnspecified
+    - hangoutLink
+    - attendees
+    - recurrence
+    - reminders
+    - conferenceData
+    - extendedProperties
+    - created
+    - updated
+    - eventType
+  event_list:
+    kind: query
+    entity: Event
+    description: List events in a specific calendar
+    parameters:
+    - name: calendarId
+      type: entity_ref
+      target: Calendar
+      required: true
+      role: scope
+    - name: q
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: timeMin
+      type: date
+      required: false
+      value_format: rfc3339
+    - name: timeMax
+      type: date
+      required: false
+      value_format: rfc3339
+    - name: timeZone
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+      description: IANA time zone used when interpreting and returning event times in the response.
+    - name: updatedMin
+      type: date
+      required: false
+      value_format: rfc3339
+      description: Lower bound (exclusive) on event updated time; enables incremental sync style filters.
+    - name: syncToken
+      type: string
+      required: false
+      string_semantics: short
+      description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync guide).
+    - name: iCalUID
+      type: string
+      required: false
+      string_semantics: short
+    - name: maxAttendees
+      type: integer
+      required: false
+    - name: showHiddenInvitations
+      type: boolean
+      required: false
+    - name: privateExtendedProperty
+      type: array
+      required: false
+      items:
+        type: string
+        string_semantics: short
+      description: Repeated name=value constraints; matches private extended properties.
+    - name: sharedExtendedProperty
+      type: array
+      required: false
+      items:
+        type: string
+        string_semantics: short
+      description: Repeated name=value constraints; matches shared extended properties.
+    - name: orderBy
+      type: select
+      allowed_values:
+      - startTime
+      - updated
+      required: false
+      role: sort
+    - name: singleEvents
+      type: boolean
+      required: false
+    - name: showDeleted
+      type: boolean
+      required: false
+    - name: eventTypes
+      type: array
+      required: false
+      items:
+        type: string
+oauth:
+  provider: google
+  scopes:
+    https://www.googleapis.com/auth/calendar:
+      label: Full Calendar API access (calendars, events, sharing, and deletes)
+      notes: Superset of all narrower Calendar scopes; use when the product needs writes or ACL changes beyond this read-only CGS.
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.readonly:
+      label: Read calendars you can access and their events (recommended for this domain)
+      notes: Covers calendarList and events GET/list for calendars the user can open in Google Calendar; broader than the granular calendarlist/events pairs.
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.calendarlist:
+      label: Manage which calendars you are subscribed to (add/remove subscriptions)
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.calendarlist.readonly:
+      label: See the list of calendars you are subscribed to
+      notes: Sufficient for calendar_list and calendar_get when you do not need event bodies from other scopes.
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.events:
+      label: View and edit events on all calendars you can access
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.events.readonly:
+      label: View events on all calendars you can access
+      notes: Covers event_get and event_list; pair with a calendar-list scope if tokens omit calendar.readonly.
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.events.owned:
+      label: Create, change, and delete events on calendars you own
+      docs_url: https://developers.google.com/calendar/api/auth
+    https://www.googleapis.com/auth/calendar.events.owned.readonly:
+      label: View events on calendars you own
+      notes: Narrower than calendar.events.readonly; shared calendars another user owns may be inaccessible for event reads.
+      docs_url: https://developers.google.com/calendar/api/auth
+  default_scope_sets:
+    readonly_calendar_surface:
+      description: Matches this CGS (calendar list + event reads). Prefer a single calendar.readonly token when possible.
+      scopes:
+      - https://www.googleapis.com/auth/calendar.readonly
+    granular_readonly_calendarlist_plus_events:
+      description: Narrower split—calendar list metadata plus read-only events—when consent screens must avoid full calendar.readonly.
+      scopes:
+      - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+      - https://www.googleapis.com/auth/calendar.events.readonly
+  requirements:
+    capabilities:
+      calendar_list:
+        any_of:
+        - https://www.googleapis.com/auth/calendar
+        - https://www.googleapis.com/auth/calendar.readonly
+        - https://www.googleapis.com/auth/calendar.calendarlist
+        - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+      calendar_get:
+        any_of:
+        - https://www.googleapis.com/auth/calendar
+        - https://www.googleapis.com/auth/calendar.readonly
+        - https://www.googleapis.com/auth/calendar.calendarlist
+        - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+      event_list:
+        any_of:
+        - https://www.googleapis.com/auth/calendar
+        - https://www.googleapis.com/auth/calendar.readonly
+        - https://www.googleapis.com/auth/calendar.events
+        - https://www.googleapis.com/auth/calendar.events.readonly
+        - https://www.googleapis.com/auth/calendar.events.owned
+        - https://www.googleapis.com/auth/calendar.events.owned.readonly
+      event_get:
+        any_of:
+        - https://www.googleapis.com/auth/calendar
+        - https://www.googleapis.com/auth/calendar.readonly
+        - https://www.googleapis.com/auth/calendar.events
+        - https://www.googleapis.com/auth/calendar.events.readonly
+        - https://www.googleapis.com/auth/calendar.events.owned
+        - https://www.googleapis.com/auth/calendar.events.owned.readonly
+    relations:
+      Calendar.events:
+        any_of:
+        - https://www.googleapis.com/auth/calendar
+        - https://www.googleapis.com/auth/calendar.readonly
+        - https://www.googleapis.com/auth/calendar.events
+        - https://www.googleapis.com/auth/calendar.events.readonly
+        - https://www.googleapis.com/auth/calendar.events.owned
+        - https://www.googleapis.com/auth/calendar.events.owned.readonly
+auth:
+  scheme: bearer_token
+  env: GCAL_TOKEN

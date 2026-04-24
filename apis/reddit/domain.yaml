@@ -1,0 +1,426 @@
+version: 2
+
+http_backend: https://oauth.reddit.com
+
+entities:
+  Account:
+    id_field: name
+    primary_read: account_get
+    description: A Reddit user account referenced by username and optional karma metadata.
+    fields:
+      id:
+        field_type: string
+        required: false
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      created_utc:
+        field_type: integer
+        required: false
+      link_karma:
+        field_type: integer
+        required: false
+      comment_karma:
+        field_type: integer
+        required: false
+      is_gold:
+        field_type: boolean
+        required: false
+      is_mod:
+        field_type: boolean
+        required: false
+      has_verified_email:
+        field_type: boolean
+        required: false
+      icon_img:
+        field_type: string
+        required: false
+        string_semantics: short
+
+  Subreddit:
+    id_field: display_name
+    primary_read: subreddit_get
+    description: A Reddit community identified by its display name (without the r/ prefix).
+    fields:
+      display_name:
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      public_description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      subscribers:
+        field_type: integer
+        required: false
+      active_user_count:
+        field_type: integer
+        required: false
+      created_utc:
+        field_type: integer
+        required: false
+      over18:
+        field_type: boolean
+        required: false
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      posts:
+        description: Hot, new, top, rising, or controversial posts in this community.
+        target: Post
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: post_feed_query
+          param: subreddit
+
+  Post:
+    id_field: name
+    primary_read: post_get
+    description: A link or self post on Reddit, identified by its fullname (t3_…).
+    fields:
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      id:
+        field_type: string
+        required: false
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        string_semantics: short
+      author:
+        field_type: entity_ref
+        target: Account
+        required: false
+      subreddit:
+        field_type: entity_ref
+        target: Subreddit
+        required: false
+      score:
+        field_type: integer
+        required: false
+      ups:
+        field_type: integer
+        required: false
+      downs:
+        field_type: integer
+        required: false
+      num_comments:
+        field_type: integer
+        required: false
+      created_utc:
+        field_type: number
+        required: false
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+      selftext:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      is_self:
+        field_type: boolean
+        required: false
+      permalink:
+        field_type: string
+        required: false
+        string_semantics: short
+      thumbnail:
+        field_type: string
+        required: false
+        string_semantics: short
+      stickied:
+        field_type: boolean
+        required: false
+      locked:
+        field_type: boolean
+        required: false
+      archived:
+        field_type: boolean
+        required: false
+      over_18:
+        field_type: boolean
+        required: false
+      spoiler:
+        field_type: boolean
+        required: false
+      domain:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      comments:
+        description: Top-level comments returned with the post’s comment thread listing.
+        target: Comment
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: comment_thread_query
+          bindings:
+            subreddit: subreddit
+            article: id
+
+  Comment:
+    id_field: name
+    primary_read: comment_get
+    description: A comment on a post, identified by fullname (t1_…).
+    fields:
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      id:
+        field_type: string
+        required: false
+        string_semantics: short
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      author:
+        field_type: entity_ref
+        target: Account
+        required: false
+      created_utc:
+        field_type: number
+        required: false
+      parent_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      link_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      subreddit:
+        field_type: string
+        required: false
+        string_semantics: short
+      score:
+        field_type: integer
+        required: false
+
+capabilities:
+  account_me_read:
+    kind: action
+    entity: Account
+    description: Load the authenticated Reddit account profile.
+    provides:
+      - id
+      - name
+      - created_utc
+      - link_karma
+      - comment_karma
+      - is_gold
+      - is_mod
+      - has_verified_email
+      - icon_img
+
+  account_get:
+    kind: get
+    entity: Account
+    provides:
+      - id
+      - name
+      - created_utc
+      - link_karma
+      - comment_karma
+      - is_gold
+      - is_mod
+      - has_verified_email
+      - icon_img
+
+  subreddit_get:
+    kind: get
+    entity: Subreddit
+    provides:
+      - display_name
+      - title
+      - public_description
+      - description
+      - subscribers
+      - active_user_count
+      - created_utc
+      - over18
+      - url
+
+  post_feed_query:
+    kind: query
+    entity: Post
+    parameters:
+      - name: subreddit
+        type: entity_ref
+        target: Subreddit
+        required: true
+        role: scope
+      - name: feed
+        type: select
+        required: true
+        allowed_values: [hot, new, top, rising, controversial]
+      - name: time
+        type: select
+        required: false
+        role: response_control
+        allowed_values: [hour, day, week, month, year, all]
+
+  post_get:
+    kind: get
+    entity: Post
+    provides:
+      - name
+      - id
+      - title
+      - author
+      - subreddit
+      - score
+      - ups
+      - downs
+      - num_comments
+      - created_utc
+      - url
+      - selftext
+      - is_self
+      - permalink
+      - thumbnail
+      - stickied
+      - locked
+      - archived
+      - over_18
+      - spoiler
+      - domain
+
+  post_search_query:
+    kind: search
+    entity: Post
+    parameters:
+      - name: q
+        type: string
+        required: true
+        role: search
+        string_semantics: short
+      - name: subreddit
+        type: entity_ref
+        target: Subreddit
+        required: false
+        role: filter
+      - name: sort
+        type: select
+        required: false
+        role: sort
+        allowed_values: [relevance, hot, top, new, comments]
+      - name: time
+        type: select
+        required: false
+        role: response_control
+        allowed_values: [hour, day, week, month, year, all]
+
+  subreddit_popular_query:
+    kind: query
+    entity: Subreddit
+
+  subreddit_search_query:
+    kind: search
+    entity: Subreddit
+    parameters:
+      - name: q
+        type: string
+        required: true
+        role: search
+        string_semantics: short
+
+  comment_thread_query:
+    kind: query
+    entity: Comment
+    description: Lists comments for a post using its subreddit and short article id from the thread JSON.
+    parameters:
+      - name: subreddit
+        type: entity_ref
+        target: Subreddit
+        required: true
+        role: scope
+      - name: article
+        type: string
+        required: true
+        role: scope
+        string_semantics: short
+
+  comment_get:
+    kind: get
+    entity: Comment
+    provides:
+      - name
+      - id
+      - body
+      - author
+      - created_utc
+      - parent_id
+      - link_id
+      - subreddit
+      - score
+
+  post_comment_submit:
+    kind: action
+    entity: Post
+    description: Publishes a top-level comment on this post as the authenticated user.
+    parameters:
+      - name: text
+        type: string
+        required: true
+        string_semantics: markdown
+    output:
+      type: side_effect
+      description: Inserts a new public comment under the post identified by this row’s fullname.
+
+oauth:
+  provider: reddit
+  scopes:
+    identity:
+      label: Read the authenticated account username and related profile fields.
+    read:
+      label: Read posts, comments, subreddits, listings, and search results the app can access.
+    submit:
+      label: Create posts and comments on behalf of the authenticated user.
+  requirements:
+    capabilities:
+      account_me_read:
+        any_of: [identity]
+      account_get:
+        any_of: [read]
+      subreddit_get:
+        any_of: [read]
+      post_feed_query:
+        any_of: [read]
+      post_get:
+        any_of: [read]
+      post_search_query:
+        any_of: [read]
+      subreddit_popular_query:
+        any_of: [read]
+      subreddit_search_query:
+        any_of: [read]
+      comment_thread_query:
+        any_of: [read]
+      comment_get:
+        any_of: [read]
+      post_comment_submit:
+        any_of: [submit]
+
+auth:
+  scheme: bearer_token
+  env: REDDIT_ACCESS_TOKEN

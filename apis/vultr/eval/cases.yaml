@@ -1,0 +1,205 @@
+# Natural-language eval cases for the Vultr CGS. Every case ties `goal` to `expect.entities_any`:
+# goals describe what a capable agent would actually do; entities listed are the domains those steps touch.
+
+# — Account, regions, plan catalog, IAM (read) — one coherent “onboarding / capacity” smoke.
+- id: vultr-smoke-regions-iam-and-account
+  schema: vultr
+  goal: >
+    For capacity planning, list all regions, then list compute plans filtered to a high-CPU or high-frequency
+    class (e.g. vhf), paged; open the current account’s billing email, read BGP peering state, and read the
+    account aggregate bandwidth/usage; finally list (read-only) managed IAM policies, roles, and groups
+    to see what the team can attach.
+  covers: [get, query_filtered, page_next, multi_step, projection]
+  tags: [vultr, smoke, account, catalog, iam]
+  expect:
+    entities_any:
+      - Account
+      - AccountBgp
+      - AccountBandwidth
+      - Region
+      - Plan
+      - IamPolicy
+      - IamRole
+      - IamGroup
+
+# — Deploy-time image catalogs (OS, marketplace, bare metal) — separate from plan/region.
+- id: vultr-smoke-image-and-baremetal-catalogs
+  schema: vultr
+  goal: >
+    Before provisioning, list standard OS images, then marketplace/one-click applications with an optional
+    type filter, and list bare metal plans so a human can pick an OS, app, or dedicated server class.
+  covers: [query_filtered, page_next, multi_step, projection]
+  tags: [vultr, smoke, catalog, os, app]
+  expect:
+    entities_any:
+      - Os
+      - Application
+      - BareMetalPlan
+
+# — Identity, keys, org networking primitives (no compute instances here).
+- id: vultr-identity-keys-vpc-and-firewall-shell
+  schema: vultr
+  goal: >
+    Run an unfiltered list of all API keys (the raw account-wide key table), then list team users, create
+    a new named SSH public key, update a user’s ACLs, and stand up a VPC plus a new firewall group;
+    finally rename a firewall group and, when discarding a throwaway, delete a firewall and delete an
+    unneeded API key. No instance or load balancer steps in this goal.
+  covers: [query_all, create, update, delete]
+  tags: [vultr, identity, api-key, user, ssh, network]
+  expect:
+    entities_any:
+      - ApiKey
+      - User
+      - SshKey
+      - Vpc
+      - FirewallGroup
+
+# — Compute, LB, public IP, firewall scoping, power actions, relation navigation.
+- id: vultr-compute-network-lb-and-firewall-rules
+  schema: vultr
+  goal: >
+    In one region, list and filter running instances, open a specific load balancer and a reserved
+    (floating) IP in full, list all firewall rules scoped to a chosen group, then from that same group
+    list instances that reference it; start a stopped instance as a power action, and from a reserved IP
+    follow the `instance_id` to load that server row (forward relation navigation).
+  covers: [chain, invoke, reverse, query_filtered, get, page_next]
+  tags: [vultr, compute, load-balancer, firewall, network]
+  expect:
+    entities_any:
+      - Instance
+      - LoadBalancer
+      - ReservedIp
+      - FirewallGroup
+      - FirewallRule
+
+# — Snapshots, auto-backups, block storage, and account ISOs (storage / media plane).
+- id: vultr-storage-snapshots-backups-blocks-and-iso
+  schema: vultr
+  goal: >
+    List instance snapshots and automatic instance backups, list block storage volumes, and list custom
+    ISOs uploaded to the account so you can see restore points, block inventory, and deployable custom media.
+  covers: [get, query_filtered, page_next, multi_step, projection]
+  tags: [vultr, storage, snapshot, backup, block, iso]
+  expect:
+    entities_any:
+      - Snapshot
+      - Backup
+      - BlockStorage
+      - Iso
+
+# — User-data and first-boot execution material.
+- id: vultr-startup-scripts
+  schema: vultr
+  goal: >
+    List startup/pxe-style scripts, create a small new script, tweak its name or body on a test row,
+    and remove a clearly disposable test script; these drive first-boot for new deploys.
+  covers: [get, query_filtered, page_next, create, update, delete]
+  tags: [vultr, startup, automation]
+  expect:
+    entities_any:
+      - StartupScript
+
+# — Hosted DNS: zones and records, including scoped sub-resource work.
+- id: vultr-dns-zones-and-records
+  schema: vultr
+  goal: >
+    List all DNS hosted zones, open a zone, list its resource records in paged form with the zone as
+    scope, fetch one record in full, add a new record under that zone, adjust TTL or rdata, and delete
+    a temporary test record so the graph exercises domain + compound record relations.
+  covers: [get, create, update, delete, query_filtered, page_next, multi_step, projection]
+  tags: [vultr, dns, records]
+  expect:
+    entities_any:
+      - DnsDomain
+      - DnsRecord
+
+# — Object storage and managed database inventory (PaaS-style).
+- id: vultr-object-storage-and-managed-database
+  schema: vultr
+  goal: >
+    List S3-compatible object storage subscriptions in the account and, separately, list managed database
+    clusters, opening one of each in detail for host string, plan, and engine to compare edge storage vs
+    managed RDB/NoSQL footprint.
+  covers: [get, query_filtered, page_next, multi_step, projection]
+  tags: [vultr, object-storage, database, dbaas]
+  expect:
+    entities_any:
+      - ObjectStorage
+      - ManagedDatabase
+
+# — Invoices and line-item history (kept as its own narrow case).
+- id: vultr-billing-history-and-invoices
+  schema: vultr
+  goal: "Show paged recent billing line items, then open the first invoice in full if any exist."
+  covers: [get, page_next, projection]
+  tags: [vultr, billing]
+  expect:
+    entities_any: [BillingLine, Invoice]
+
+# — VKE, dedicated bare metal, and CDN (P5): control planes, metal power, and edge rules.
+- id: vultr-vke-bare-metal-and-cdn
+  schema: vultr
+  goal: >
+    For Kubernetes, list all VKE clusters, open one cluster in full, then fetch the kubeconfig
+    document (kubectl connection file) so an operator can wire kubectl, and delete an abandoned test cluster if policy allows. For
+    dedicated hardware, list bare metal instances, get one by id, and perform start, reboot, or halt as
+    a lifecycle drill. For CDN, list both pull and push edge zones, open a pull origin zone and a push
+    content zone, adjust labels on one zone via the API update, trigger a cache purge on a pull zone, and
+    plan removal of an unused push zone. These paths stay distinct from the generic VM (Instance) surface.
+  covers: [get, query_filtered, page_next, multi_step, invoke, create, update, delete, projection]
+  tags: [vultr, p5, vke, baremetal, cdn, kubernetes]
+  expect:
+    entities_any:
+      - KubernetesCluster
+      - VkeKubeconfig
+      - BareMetal
+      - CdnPullZone
+      - CdnPushZone
+
+# — VKE sub-resources, push-zone files, and extra bare metal ops (P5b).
+- id: vultr-p5b-vke-pools-cdn-files-baremetal-extras
+  schema: vultr
+  goal: >
+    Read the catalog of Vultr-supported Kubernetes versions, then for a target VKE cluster list and open
+    node pools, add or inspect taints and labels on a pool, recycle a stuck worker or delete a pool node
+    for replacement, and list or fetch push-zone file inventory including requesting a presigned upload
+    slot. On bare metal, reinstall an OS with a new hostname, fetch a web VNC URL for remote hands, and
+    attach or detach a high-performance VPC from the same machine when networking changes.
+  covers: [get, create, update, delete, query_filtered, page_next, multi_step, invoke, projection]
+  tags: [vultr, p5b, vke, node-pool, cdn, baremetal, kubernetes]
+  expect:
+    entities_any:
+      - KubernetesVersion
+      - KubernetesNodePool
+      - KubernetesNodePoolLabel
+      - KubernetesNodePoolTaint
+      - KubernetesNodePoolNode
+      - CdnPushZoneFile
+      - CdnUploadEndpoint
+      - BareMetal
+
+# — VKE control-plane add-ons, bare metal networking, and account bulk (post-P5b remainder).
+- id: vultr-vke-resources-baremetal-networking-and-bulk
+  schema: vultr
+  goal: >
+    For a VKE cluster, read the add-on resource inventory, list available post-upgrade version strings, and
+    start an upgrade; optionally delete a cluster and opt into removing linked IaaS in one call. For bare
+    metal, paged list IPv4 and IPv6, adjust PTR records or defaults, read bandwidth, user data, the
+    available upgrades catalog, and the attached VPC lists (including the deprecated VPC2 path). Use the
+    account bulk start/halt/reboot endpoints when an operator must touch many physical servers at once.
+  covers: [get, query_filtered, page_next, delete, multi_step, invoke, projection]
+  tags: [vultr, vke, baremetal, account, network, ptr]
+  expect:
+    entities_any:
+      - Account
+      - KubernetesCluster
+      - VkeResourceInventory
+      - VkeAvailableUpgrade
+      - BareMetal
+      - BareMetalIpV4
+      - BareMetalIpV6
+      - BareMetalBandwidth
+      - BareMetalUserData
+      - BareMetalUpgradeCatalog
+      - BareMetalVpcAttachment
+      - BareMetalVpc2Attachment

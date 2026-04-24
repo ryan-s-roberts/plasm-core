@@ -1,0 +1,38 @@
+# NL eval cases for google-drive (goal-oriented; coverage checked by plasm-eval).
+
+- id: google-drive-workbench
+  schema: google-drive
+  goal: >-
+    Open my Drive: show account storage (about), search files with q, open one file by id,
+    list permissions and comments on it, page file results when truncated, create a permission,
+    update file metadata, copy then delete a test file, export a Doc to PDF bytes, start a download
+    operation, list changes from a start token, stop a channel, and manage a shared drive and
+    legacy team drive entry — exercising projection, filters, pagination, chain and reverse traversal,
+    creates, updates, deletes, and side-effect actions.
+  covers:
+    - chain
+    - create
+    - delete
+    - get
+    - invoke
+    - multi_step
+    - page_next
+    - projection
+    - query_filtered
+    - reverse
+    - update
+  tags: [drive]
+  expect:
+    entities_any:
+      - About
+      - ChannelStop
+      - DriveChange
+      - DriveComment
+      - DriveOperation
+      - DrivePermission
+      - DriveReply
+      - DriveRevision
+      - File
+      - SharedDrive
+      - StartPageToken
+      - TeamDrive

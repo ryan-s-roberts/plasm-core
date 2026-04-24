@@ -1,0 +1,54 @@
+# All three capabilities use GET / on api.omdbapi.com with different required query params.
+# movie_get uses ?i=imdbID
+# movie_search uses ?s=title_text (returns Search[] list wrapped in {Search:[...], totalResults, Response})
+# movie_get_by_title uses ?t=exact_title
+
+movie_get:
+  method: GET
+  path:
+    - type: literal
+      value: ""
+  query:
+    type: object
+    fields:
+      - [i, { type: var, name: id }]
+
+movie_search:
+  method: GET
+  path:
+    - type: literal
+      value: ""
+  query:
+    type: object
+    fields:
+      - [s, { type: var, name: s }]
+      - - y
+        - type: if
+          condition: { type: exists, var: y }
+          then_expr: { type: var, name: y }
+          else_expr: { type: const, value: null }
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+
+movie_get_by_title:
+  method: GET
+  path:
+    - type: literal
+      value: ""
+  query:
+    type: object
+    fields:
+      - [t, { type: var, name: t }]
+      - - y
+        - type: if
+          condition: { type: exists, var: y }
+          then_expr: { type: var, name: y }
+          else_expr: { type: const, value: null }
+      - - plot
+        - type: if
+          condition: { type: exists, var: plot }
+          then_expr: { type: var, name: plot }
+          else_expr: { type: const, value: null }

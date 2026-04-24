@@ -1,0 +1,80 @@
+# Notion API — pages, databases, users, comments (wiki + structured DB rows).
+- id: no-01
+  schema: notion
+  goal: "Search workspace content for pages mentioning 'Q3 roadmap'"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Page]
+
+- id: no-02
+  schema: notion
+  goal: "Query database rows where Status is In Progress for the sprint board"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Page]
+
+- id: no-03
+  schema: notion
+  goal: "Open page UUID … for the spec viewer"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Page]
+
+- id: no-04
+  schema: notion
+  goal: "Create a new meeting-notes page under the team space"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Page]
+
+- id: no-05
+  schema: notion
+  goal: "Archive the outdated policy page so it stops appearing in search"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Page]
+
+- id: no-06
+  schema: notion
+  goal: "Render the page body as Markdown for publishing to the static site"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Page]
+
+- id: no-07
+  schema: notion
+  goal: "For this page, who last edited it — resolve the editor user record"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Page, User]
+
+- id: no-08
+  schema: notion
+  goal: "Find a database by title, then list its first page of rows"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Database, Page]
+
+- id: no-09
+  schema: notion
+  goal: "Database query returning only title and last_edited_time for the CSV export"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Page]
+
+- id: no-10
+  schema: notion
+  goal: "List discussion comments on the spec page for the review thread"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Page, Comment]

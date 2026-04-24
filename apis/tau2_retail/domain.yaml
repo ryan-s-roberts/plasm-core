@@ -1,0 +1,365 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: http://localhost:1080
+
+entities:
+  Order:
+    id_field: order_id
+    description: Customer order
+    fields:
+      order_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      user_id:
+        field_type: entity_ref
+        target: User
+        required: true
+      status:
+        field_type: select
+        required: true
+        allowed_values:
+        - processed
+        - pending
+        - pending (item modified)
+        - delivered
+        - cancelled
+        - exchange requested
+        - return requested
+      cancel_reason:
+        field_type: select
+        required: false
+        allowed_values:
+        - no longer needed
+        - ordered by mistake
+    relations: {}
+  User:
+    id_field: user_id
+    description: Retail customer profile
+    fields:
+      user_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Product:
+    id_field: product_id
+    description: Sellable product with variants
+    fields:
+      product_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations:
+      variants:
+        description: SKUs / line items for this product
+        target: Variant
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: list_variants_by_product
+          param: product_id
+  Variant:
+    id_field: item_id
+    description: Product variant
+    fields:
+      item_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      product_id:
+        field_type: entity_ref
+        target: Product
+        required: true
+      available:
+        field_type: boolean
+        required: false
+      price:
+        field_type: number
+        required: false
+    relations: {}
+  CatalogLine:
+    id_field: product_id
+    description: One row from product types
+    fields:
+      product_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+  CalcJob:
+    id_field: result
+    description: Arithmetic evaluation via calculate()
+    fields:
+      result:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+    domain_projection_examples: false
+  HumanHandoff:
+    id_field: status
+    description: transfer_to_human_agents outcome
+    fields:
+      status:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+    domain_projection_examples: false
+capabilities:
+  get_order_details:
+    kind: get
+    entity: Order
+    description: Get order
+    provides:
+    - order_id
+    - user_id
+    - status
+    - cancel_reason
+  get_user_details:
+    kind: get
+    entity: User
+    description: Get user profile
+    provides:
+    - user_id
+    - email
+  get_product_details:
+    kind: get
+    entity: Product
+    description: Get product and variant inventory
+    provides:
+    - product_id
+    - name
+  get_item_details:
+    kind: get
+    entity: Variant
+    description: Get variant by item id
+    provides:
+    - item_id
+    - product_id
+    - available
+    - price
+  list_variants_by_product:
+    kind: query
+    entity: Variant
+    description: Variants for a product
+    parameters:
+    - name: product_id
+      type: entity_ref
+      target: Product
+      required: true
+      role: scope
+  find_user_id_by_email:
+    kind: query
+    entity: User
+    description: Resolve user by email
+    provides:
+    - user_id
+    parameters:
+    - name: email
+      type: string
+      required: true
+      string_semantics: short
+  find_user_id_by_name_zip:
+    kind: query
+    entity: User
+    description: Resolve user by name and zip
+    provides:
+    - user_id
+    parameters:
+    - name: first_name
+      type: string
+      required: true
+      string_semantics: short
+    - name: last_name
+      type: string
+      required: true
+      string_semantics: short
+    - name: zip
+      type: string
+      required: true
+      string_semantics: short
+  list_all_product_types:
+    kind: query
+    entity: CatalogLine
+    description: List all product types
+  calculate:
+    kind: create
+    entity: CalcJob
+    description: Evaluate a safe arithmetic expression
+    provides:
+    - result
+    parameters:
+    - name: expression
+      type: string
+      required: true
+      string_semantics: short
+  transfer_to_human_agents:
+    kind: create
+    entity: HumanHandoff
+    description: Escalate to human with summary
+    parameters:
+    - name: summary
+      type: string
+      required: true
+      string_semantics: short
+  cancel_pending_order:
+    kind: update
+    entity: Order
+    description: Cancel pending order with policy reason
+    parameters:
+    - name: reason
+      type: select
+      required: true
+      allowed_values:
+      - no longer needed
+      - ordered by mistake
+  modify_pending_order_address:
+    kind: update
+    entity: Order
+    description: Change shipping address on a pending order
+    parameters:
+    - name: address1
+      type: string
+      required: true
+      string_semantics: short
+    - name: address2
+      type: string
+      required: false
+      string_semantics: short
+    - name: city
+      type: string
+      required: true
+      string_semantics: short
+    - name: state
+      type: string
+      required: true
+      string_semantics: short
+    - name: country
+      type: string
+      required: true
+      string_semantics: short
+    - name: zip
+      type: string
+      required: true
+      string_semantics: short
+  modify_pending_order_payment:
+    kind: update
+    entity: Order
+    description: Switch payment method on a pending order
+    parameters:
+    - name: payment_method_id
+      type: string
+      required: true
+      string_semantics: short
+  modify_pending_order_items:
+    kind: action
+    entity: Order
+    description: Replace line items on pending order
+    parameters:
+    - name: item_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: Variant
+    - name: new_item_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: Variant
+    - name: payment_method_id
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Replace line items on pending order
+  exchange_delivered_order_items:
+    kind: action
+    entity: Order
+    description: Exchange items on a delivered order
+    parameters:
+    - name: item_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: Variant
+    - name: new_item_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: Variant
+    - name: payment_method_id
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Exchange items on a delivered order
+  return_delivered_order_items:
+    kind: action
+    entity: Order
+    description: Request return for delivered order lines
+    parameters:
+    - name: item_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: Variant
+    - name: payment_method_id
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Request return for delivered order lines
+  modify_user_address:
+    kind: update
+    entity: User
+    description: Update user's default address
+    parameters:
+    - name: address1
+      type: string
+      required: true
+      string_semantics: short
+    - name: address2
+      type: string
+      required: false
+      string_semantics: short
+    - name: city
+      type: string
+      required: true
+      string_semantics: short
+    - name: state
+      type: string
+      required: true
+      string_semantics: short
+    - name: country
+      type: string
+      required: true
+      string_semantics: short
+    - name: zip
+      type: string
+      required: true
+      string_semantics: short

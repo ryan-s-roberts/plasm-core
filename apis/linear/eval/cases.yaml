@@ -1,0 +1,138 @@
+# Linear — NL→Plasm eval goals (schema: linear)
+#
+# `covers` — buckets for `plasm-eval coverage` (required set comes from CGS).
+# `reference_expr` — optional one-line Plasm expression (UUIDs are placeholders).
+#   Use: `plasm-eval coverage … --compare-derived --compare-derived-allow-extra-claims`
+#   Default coverage ignores `reference_expr` and uses YAML `covers` only.
+#
+- id: lin-01
+  schema: linear
+  goal: "List open issues"
+  tags: [query]
+  covers: [projection]
+  expect:
+    entities_any: [Issue]
+
+- id: lin-02
+  schema: linear
+  goal: "Get issue by id"
+  tags: [get]
+  covers: [get]
+  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1)
+  expect:
+    entities_any: [Issue]
+
+- id: lin-03
+  schema: linear
+  goal: "List workflow states for team ENG"
+  tags: [query, reverse]
+  covers: [query_filtered, reverse]
+  reference_expr: WorkflowState{team=Team(00000000-0000-0000-0000-0000000000b2)}
+  expect:
+    entities_any: [Team, WorkflowState]
+
+- id: lin-04
+  schema: linear
+  goal: "Open an issue then show its assignee"
+  tags: [get, chain]
+  covers: [chain, get, multi_step]
+  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).assignee
+  expect:
+    entities_any: [Issue, User]
+
+- id: lin-05
+  schema: linear
+  goal: "List teams, projects, users, labels, and comments in one workflow"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Team, Project, User, Label, Comment]
+
+- id: lin-06
+  schema: linear
+  goal: "List issues for a specific team"
+  tags: [query]
+  covers: [query_filtered]
+  reference_expr: Issue{team=Team(00000000-0000-0000-0000-0000000000b2)}
+  expect:
+    entities_any: [Issue]
+    pred_fields_any: [team]
+
+- id: lin-07
+  schema: linear
+  goal: "Create an issue titled Sprint task in team ENG"
+  tags: [create]
+  covers: [create]
+  reference_expr: Issue.create(team=Team(00000000-0000-0000-0000-0000000000b2), title=Sprint task)
+  expect:
+    entities_any: [Issue]
+
+- id: lin-08
+  schema: linear
+  goal: "Update issue abc123 title to Renamed"
+  tags: [update]
+  covers: [update]
+  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).update(title=Renamed)
+  expect:
+    entities_any: [Issue]
+
+- id: lin-09
+  schema: linear
+  goal: "Trash issue abc123"
+  tags: [delete]
+  covers: [delete]
+  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).delete
+  expect:
+    entities_any: [Issue]
+
+- id: lin-10
+  schema: linear
+  goal: "Comment on issue abc123 with body LGTM"
+  tags: [create]
+  covers: [create]
+  reference_expr: Comment.create(issue=Issue(00000000-0000-0000-0000-0000000000a1), body=LGTM)
+  expect:
+    entities_any: [Comment]
+
+- id: lin-11
+  schema: linear
+  goal: "Browse all issue labels in the workspace"
+  tags: [query]
+  covers: [projection]
+  expect:
+    entities_any: [Label]
+
+- id: lin-12
+  schema: linear
+  goal: "Open project details by id"
+  tags: [get]
+  covers: [get]
+  reference_expr: Project(00000000-0000-0000-0000-0000000000c3)
+  expect:
+    entities_any: [Project]
+
+- id: lin-13
+  schema: linear
+  goal: "List users in the workspace"
+  tags: [query]
+  covers: [projection]
+  expect:
+    entities_any: [User]
+
+- id: lin-14
+  schema: linear
+  goal: "Move issue abc123 to the In Progress column"
+  tags: [update, workflow]
+  covers: [update]
+  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).update(state=WorkflowState(00000000-0000-0000-0000-0000000000d4))
+  expect:
+    entities_any: [Issue, WorkflowState]
+
+- id: lin-15
+  schema: linear
+  goal: "List sprint cycles for team ENG"
+  tags: [query, reverse]
+  covers: [query_filtered, reverse]
+  reference_expr: Cycle{team=Team(00000000-0000-0000-0000-0000000000b2)}
+  expect:
+    entities_any: [Team, Cycle]

@@ -1,0 +1,51 @@
+# Rick and Morty API — `Character`, `Location`, `Episode` with relations (chain + multi-step).
+- id: rm-01
+  schema: rickandmorty
+  goal: "List characters who are still alive for a status breakdown chart"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Character]
+    pred_fields_any: [status]
+
+- id: rm-02
+  schema: rickandmorty
+  goal: "Fetch character 2 in full for the character sheet modal"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Character]
+
+- id: rm-03
+  schema: rickandmorty
+  goal: "Enumerate all locations so the user can pick one from a dropdown"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Location]
+
+- id: rm-04
+  schema: rickandmorty
+  goal: "For Rick (character 1), where was he last seen — resolve his current location record"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Character, Location]
+    chain_selectors_any: [location]
+
+- id: rm-05
+  schema: rickandmorty
+  goal: "From episode S01E01, list which characters appear so we can render the cast list"
+  tags: [multi_step, chain]
+  covers: [multi_step, chain]
+  expect:
+    entities_any: [Episode, Character]
+
+- id: rm-06
+  schema: rickandmorty
+  goal: "Episode 28: return only id, name, and air date for the TV guide row"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Episode]
+    projection_contains: [name, air_date]

@@ -1,0 +1,300 @@
+# Reddit OAuth API (oauth.reddit.com). Listings return { data: { children: [ { kind, data } ], after } }.
+# `item_inner_key: data` unwraps each Listing child for entity decode (see plasm-cml `HttpResponseDecode`).
+# Use a descriptive User-Agent on every call; Reddit rejects anonymous defaults.
+
+account_me_read:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: v1
+    - type: literal
+      value: me
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    single: true
+
+account_get:
+  method: GET
+  path:
+    - type: literal
+      value: user
+    - type: var
+      name: id
+    - type: literal
+      value: about.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    single: true
+    item_inner_key: data
+
+subreddit_get:
+  method: GET
+  path:
+    - type: literal
+      value: r
+    - type: var
+      name: id
+    - type: literal
+      value: about.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    single: true
+    item_inner_key: data
+
+post_feed_query:
+  method: GET
+  path:
+    - type: literal
+      value: r
+    - type: var
+      name: subreddit
+    - type: var
+      name: feed
+      suffix: .json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    items_path: [data, children]
+    item_inner_key: data
+  pagination:
+    params:
+      limit: { fixed: 25 }
+      after: { from_response: after }
+    response_prefix: [data]
+  query:
+    type: object
+    fields:
+      - - t
+        - type: if
+          condition: { type: exists, var: time }
+          then_expr: { type: var, name: time }
+          else_expr: { type: const, value: null }
+
+post_get:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: info.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  query:
+    type: object
+    fields:
+      - - id
+        - type: var
+          name: id
+  response:
+    single: true
+    items_path: [data, children]
+    item_inner_key: data
+
+post_search_query:
+  method: GET
+  path:
+    - type: literal
+      value: search.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    items_path: [data, children]
+    item_inner_key: data
+  pagination:
+    params:
+      limit: { fixed: 25 }
+      after: { from_response: after }
+    response_prefix: [data]
+  query:
+    type: object
+    fields:
+      - - q
+        - type: var
+          name: q
+      - - sort
+        - type: if
+          condition: { type: exists, var: sort }
+          then_expr: { type: var, name: sort }
+          else_expr: { type: const, value: null }
+      - - t
+        - type: if
+          condition: { type: exists, var: time }
+          then_expr: { type: var, name: time }
+          else_expr: { type: const, value: null }
+      - - restrict_sr
+        - type: if
+          condition: { type: exists, var: subreddit }
+          then_expr: { type: const, value: "true" }
+          else_expr: { type: const, value: "false" }
+      - - sr
+        - type: if
+          condition: { type: exists, var: subreddit }
+          then_expr: { type: var, name: subreddit }
+          else_expr: { type: const, value: null }
+      - - type
+        - type: const
+          value: link
+
+subreddit_popular_query:
+  method: GET
+  path:
+    - type: literal
+      value: subreddits
+    - type: literal
+      value: popular.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    items_path: [data, children]
+    item_inner_key: data
+  pagination:
+    params:
+      limit: { fixed: 25 }
+      after: { from_response: after }
+    response_prefix: [data]
+
+subreddit_search_query:
+  method: GET
+  path:
+    - type: literal
+      value: subreddits
+    - type: literal
+      value: search.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    items_path: [data, children]
+    item_inner_key: data
+  pagination:
+    params:
+      limit: { fixed: 25 }
+      after: { from_response: after }
+    response_prefix: [data]
+  query:
+    type: object
+    fields:
+      - - q
+        - type: var
+          name: q
+
+# Thread JSON is a root array: [ post_listing, comment_listing ]; items_path starts at index 1.
+comment_thread_query:
+  method: GET
+  path:
+    - type: literal
+      value: r
+    - type: var
+      name: subreddit
+    - type: literal
+      value: comments
+    - type: var
+      name: article
+      suffix: .json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  response:
+    items_path: ["1", "data", "children"]
+    item_inner_key: data
+  pagination:
+    params:
+      limit: { fixed: 25 }
+      after: { from_response: after }
+    response_prefix: ["1", "data"]
+  query:
+    type: object
+    fields:
+      - - depth
+        - type: const
+          value: 1
+
+comment_get:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: info.json
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)
+  query:
+    type: object
+    fields:
+      - - id
+        - type: var
+          name: id
+  response:
+    single: true
+    items_path: [data, children]
+    item_inner_key: data
+
+post_comment_submit:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: comment
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+      - - api_type
+        - type: const
+          value: json
+      - - thing_id
+        - type: var
+          name: name
+      - - text
+        - type: var
+          name: text
+  headers:
+    type: object
+    fields:
+      - - User-Agent
+        - type: const
+          value: plasm:reddit-schema/1.0 (by plasm-agent)

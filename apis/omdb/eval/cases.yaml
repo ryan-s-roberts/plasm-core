@@ -1,0 +1,33 @@
+# OMDb — movies (`Movie`): IMDb lookup, title search, and title-based query.
+- id: omdb-01
+  schema: omdb
+  goal: "Someone pasted IMDb id tt1375666 — fetch the full record for my watchlist app"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Movie]
+
+- id: omdb-02
+  schema: omdb
+  goal: "Search for films titled 'Blade Runner' and let me pick from the hits"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Movie]
+
+- id: omdb-03
+  schema: omdb
+  goal: "Get the 1999 'The Matrix' entry with the long plot synopsis for the wiki"
+  tags: [query, title]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Movie]
+
+- id: omdb-04
+  schema: omdb
+  goal: "For that Matrix record, return title, year, and poster URL only"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Movie]
+    projection_contains: [Title, Year, Poster]

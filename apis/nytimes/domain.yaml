@@ -1,0 +1,92 @@
+version: 1
+
+http_backend: https://api.nytimes.com
+
+entities:
+  Article:
+    id_field: web_url
+    description: A New York Times article from the archive
+    fields:
+      web_url:
+        description: Canonical URL of the article on nytimes.com
+        field_type: string
+        required: true
+        string_semantics: short
+      headline:
+        description: Primary headline text of the article
+        field_type: string
+        required: false
+        string_semantics: markdown
+      abstract:
+        description: Short summary paragraph of the article
+        field_type: string
+        required: false
+        string_semantics: markdown
+      pub_date:
+        description: 'Publication date (Article Search API: YYYY-MM-DD)'
+        field_type: date
+        value_format: iso8601_date
+        required: false
+      source:
+        description: Originating publication source name
+        field_type: string
+        required: false
+        string_semantics: short
+      section_name:
+        description: Editorial section the article belongs to
+        field_type: string
+        required: false
+        string_semantics: short
+      news_desk:
+        description: Newsroom desk that produced the article
+        field_type: string
+        required: false
+        string_semantics: short
+      document_type:
+        description: Type of document (article, blog post, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+capabilities:
+  article_search:
+    description: Full-text search across NYT article archive
+    kind: search
+    entity: Article
+    parameters:
+    - name: q
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: fq
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: begin_date
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: end_date
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: sort
+      type: select
+      required: false
+      allowed_values:
+      - relevance
+      - newest
+      - oldest
+      role: sort
+    - name: fl
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+auth:
+  scheme: api_key_query
+  param: api-key
+  env: NYTIMES_API_KEY

@@ -1,0 +1,187 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://api.openbrewerydb.org
+
+entities:
+  Brewery:
+    id_field: id
+    description: A beer brewing establishment
+    fields:
+      id:
+        description: Unique UUID string identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Brewery name
+        field_type: string
+        required: true
+        string_semantics: short
+      brewery_type:
+        description: Classification (micro, nano, regional, brewpub, large, etc.)
+        field_type: select
+        required: false
+        allowed_values:
+        - micro
+        - nano
+        - regional
+        - brewpub
+        - large
+        - planning
+        - bar
+        - contract
+        - proprietor
+        - closed
+      address_1:
+        description: Street address
+        field_type: string
+        required: false
+        string_semantics: short
+      city:
+        description: City name
+        field_type: string
+        required: false
+        string_semantics: short
+      state:
+        description: US state or international equivalent
+        field_type: string
+        required: false
+        string_semantics: short
+      postal_code:
+        description: ZIP or postal code
+        field_type: string
+        required: false
+        string_semantics: short
+      country:
+        description: Country name
+        field_type: string
+        required: false
+        string_semantics: short
+      longitude:
+        description: Geographic longitude coordinate as string
+        field_type: string
+        required: false
+        string_semantics: short
+      latitude:
+        description: Geographic latitude coordinate as string
+        field_type: string
+        required: false
+        string_semantics: short
+      phone:
+        description: Contact phone number
+        field_type: string
+        required: false
+        string_semantics: short
+      website_url:
+        description: Official website URL
+        field_type: string
+        required: false
+        string_semantics: short
+capabilities:
+  brewery_query:
+    description: List breweries with optional field filters and sort
+    kind: query
+    entity: Brewery
+    parameters:
+    - name: by_city
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: by_state
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: by_postal
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: by_country
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: by_type
+      type: select
+      required: false
+      allowed_values:
+      - micro
+      - nano
+      - regional
+      - brewpub
+      - large
+      - planning
+      - bar
+      - contract
+      - proprietor
+      - closed
+      role: filter
+    - name: by_name
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: by_ids
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: sort
+      type: string
+      required: false
+      role: sort
+      string_semantics: short
+  brewery_search:
+    description: Free-text search across brewery name and location fields
+    kind: search
+    entity: Brewery
+    parameters:
+    - name: query
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+  brewery_get:
+    description: Retrieve a single brewery by its UUID
+    kind: get
+    entity: Brewery
+    provides:
+    - id
+    - name
+    - brewery_type
+    - address_1
+    - city
+    - state
+    - postal_code
+    - country
+    - longitude
+    - latitude
+    - phone
+    - website_url
+  brewery_autocomplete:
+    description: Fast typeahead name lookup returning only id and name
+    kind: search
+    entity: Brewery
+    parameters:
+    - name: query
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+  brewery_random:
+    description: Return N random breweries; size controls count
+    kind: action
+    entity: Brewery
+    parameters:
+    - name: size
+      type: integer
+      required: false
+      role: response_control
+    output:
+      type: side_effect
+      description: Return N random breweries; size controls count

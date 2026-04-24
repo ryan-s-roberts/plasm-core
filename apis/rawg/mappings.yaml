@@ -1,0 +1,66 @@
+game_query:
+  method: GET
+  path:
+    - type: literal
+      value: games
+  pagination:
+    params:
+      page: {counter: 1}
+      page_size: {fixed: 20}
+    stop_when: {field: next, absent: true}
+  query:
+    type: object
+    fields:
+      - - search
+        - type: if
+          condition: { type: exists, var: search }
+          then_expr: { type: var, name: search }
+          else_expr: { type: const, value: null }
+      - - genres
+        - type: if
+          condition: { type: exists, var: genres }
+          then_expr: { type: var, name: genres }
+          else_expr: { type: const, value: null }
+      - - platforms
+        - type: if
+          condition: { type: exists, var: platforms }
+          then_expr: { type: var, name: platforms }
+          else_expr: { type: const, value: null }
+      - - developers
+        - type: if
+          condition: { type: exists, var: developers }
+          then_expr: { type: var, name: developers }
+          else_expr: { type: const, value: null }
+      - - publishers
+        - type: if
+          condition: { type: exists, var: publishers }
+          then_expr: { type: var, name: publishers }
+          else_expr: { type: const, value: null }
+      - - tags
+        - type: if
+          condition: { type: exists, var: tags }
+          then_expr: { type: var, name: tags }
+          else_expr: { type: const, value: null }
+      - - dates
+        - type: if
+          condition: { type: exists, var: dates }
+          then_expr: { type: var, name: dates }
+          else_expr: { type: const, value: null }
+      - - metacritic
+        - type: if
+          condition: { type: exists, var: metacritic }
+          then_expr: { type: var, name: metacritic }
+          else_expr: { type: const, value: null }
+      - - ordering
+        - type: if
+          condition: { type: exists, var: ordering }
+          then_expr: { type: var, name: ordering }
+          else_expr: { type: const, value: null }
+
+game_get:
+  method: GET
+  path:
+    - type: literal
+      value: games
+    - type: var
+      name: id

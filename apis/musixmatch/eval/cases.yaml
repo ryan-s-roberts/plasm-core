@@ -1,0 +1,57 @@
+# Musixmatch — `Artist`, `Track`, `Lyrics` (track → lyrics relation for chain).
+- id: mm-01
+  schema: musixmatch
+  goal: "Find artists whose names match 'magma' for a playlist builder"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Artist]
+
+- id: mm-02
+  schema: musixmatch
+  goal: "Top charting artists in the UK this week"
+  tags: [query, chart]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Artist]
+
+- id: mm-03
+  schema: musixmatch
+  goal: "Fetch track id 12345 metadata before showing the player UI"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Track]
+
+- id: mm-04
+  schema: musixmatch
+  goal: "For that track, load the synced lyrics body for karaoke mode"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Track, Lyrics]
+    chain_selectors_any: [lyrics]
+
+- id: mm-05
+  schema: musixmatch
+  goal: "Search tracks mentioning 'zeuhl' then open lyrics for the first hit"
+  tags: [multi_step, search]
+  covers: [multi_step, search_text]
+  expect:
+    entities_any: [Track, Lyrics]
+
+- id: mm-06
+  schema: musixmatch
+  goal: "Chart tracks in US with lyrics available — only id and title for the carousel"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Track]
+
+- id: mm-07
+  schema: musixmatch
+  goal: "Global top artists chart — browse the leaderboard without a country filter"
+  tags: [query, chart]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Artist]

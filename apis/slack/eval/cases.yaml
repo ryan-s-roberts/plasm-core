@@ -1,0 +1,162 @@
+# Slack Web API — channels, messages, users (reads + writes + search).
+# Goals are ops / collaboration scenarios, not method names.
+- id: sl-01
+  schema: slack
+  goal: "List every public channel in the workspace so I can join the right standup room"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [Channel]
+
+- id: sl-02
+  schema: slack
+  goal: "Show archived channels only — we are auditing stale project rooms"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Channel]
+
+- id: sl-03
+  schema: slack
+  goal: "Search workspace messages mentioning 'deploy freeze' from last month"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Message]
+
+- id: sl-04
+  schema: slack
+  goal: "Open channel C01234567 metadata (topic, purpose, member count) for the handoff doc"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Channel]
+
+- id: sl-05
+  schema: slack
+  goal: "Post an update to #incidents that we mitigated the outage"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Message]
+
+- id: sl-06
+  schema: slack
+  goal: "Fix the typo in my last standup message"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Message]
+
+- id: sl-07
+  schema: slack
+  goal: "Delete the accidental credential paste in thread ts=123.456"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Message]
+
+- id: sl-08
+  schema: slack
+  goal: "Join channel C01 so I can participate in the design review"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Channel]
+
+- id: sl-09
+  schema: slack
+  goal: "From message ts=111.222, jump to the parent channel record for moderation"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Message, Channel]
+
+- id: sl-10
+  schema: slack
+  goal: "Pull the member roster for channel C01, then fetch full user profiles for leads"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Channel, User]
+
+- id: sl-11
+  schema: slack
+  goal: "List workspace users but only id, name, and title for the org chart export"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [User]
+
+- id: sl-12
+  schema: slack
+  goal: "List every message in channel C01 posted after the incident start cursor"
+  tags: [reverse, query]
+  covers: [reverse]
+  expect:
+    entities_any: [Message, Channel]
+
+# Remaining capability domains (entity coverage).
+- id: sl-13
+  schema: slack
+  goal: "List app bots in workspace T123 for integration health"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Bot]
+
+- id: sl-14
+  schema: slack
+  goal: "Files shared in channel C456 for the compliance scan"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [File]
+
+- id: sl-15
+  schema: slack
+  goal: "Pinned items in channel C789 for the onboarding doc"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Pin]
+
+- id: sl-16
+  schema: slack
+  goal: "My reminders for today in the assistant digest"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Reminder]
+
+- id: sl-17
+  schema: slack
+  goal: "Workspace T999 metadata for the org directory"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Team]
+
+- id: sl-18
+  schema: slack
+  goal: "User groups mentioning on-call for the escalation policy"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [UserGroup]
+
+- id: sl-19
+  schema: slack
+  goal: "List scheduled messages queued for channel C01 before the release window"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [ScheduledMessage, Channel]
+
+- id: sl-20
+  schema: slack
+  goal: "Bookmarks on channel C99 for the runbook header"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Bookmark, Channel]

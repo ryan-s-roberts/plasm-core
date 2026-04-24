@@ -1,0 +1,193 @@
+# D&D 5e SRD — NL→Plasm eval (schema: dnd5e). Goals are player/DM tasks, not endpoint names.
+- id: dnd-01
+  schema: dnd5e
+  goal: "Which spells can a wizard learn from the SRD for a level-up choice?"
+  tags: [chain, class, spells]
+  covers: [chain, multi_step]
+  expect:
+    entities_any: [Class, Spell]
+    chain_selectors_any: [spells]
+
+- id: dnd-02
+  schema: dnd5e
+  goal: "Show the wizard class stats and proficiencies for a new character sheet"
+  tags: [get, class]
+  covers: [get]
+  expect:
+    entities_any: [Class]
+    pred_values_any: [wizard]
+
+- id: dnd-03
+  schema: dnd5e
+  goal: "List barbarian subclasses so the player can pick a path at level 3"
+  tags: [query, relation]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Subclass]
+
+- id: dnd-04
+  schema: dnd5e
+  goal: "Spells of 3rd level or higher for a boss encounter filter"
+  tags: [query, numeric]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Spell]
+    pred_fields_any: [level]
+
+- id: dnd-05
+  schema: dnd5e
+  goal: "Pull full Fireball text for the rules lawyer at the table"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Spell]
+    pred_values_any: [fireball]
+
+- id: dnd-06
+  schema: dnd5e
+  goal: "Stat block summary for an ancient black dragon encounter"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Monster]
+    pred_values_any: [ancient-black-dragon]
+
+- id: dnd-07
+  schema: dnd5e
+  goal: "Huge-sized monsters suitable for a kaiju-style fight"
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Monster]
+    pred_fields_any: [size]
+    pred_values_any: [Huge]
+
+- id: dnd-08
+  schema: dnd5e
+  goal: "Find the longsword equipment entry for attack/damage dice"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Equipment]
+
+- id: dnd-09
+  schema: dnd5e
+  goal: "Class features the fighter gets for the level progression chart"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Class, Feature]
+    chain_selectors_any: [features]
+
+- id: dnd-10
+  schema: dnd5e
+  goal: "What school is evocation under for spell prep rules?"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [MagicSchool]
+    pred_values_any: [evocation]
+
+- id: dnd-11
+  schema: dnd5e
+  goal: "Browse the full SRD spell list from the top (paginate) for homebrew auditing"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [Spell]
+
+- id: dnd-12
+  schema: dnd5e
+  goal: "Fireball on the spell card UI — only name and level columns"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Spell]
+    pred_values_any: [fireball]
+    projection_contains: [name, level]
+
+# Remaining capability domains (entity coverage).
+- id: dnd-13
+  schema: dnd5e
+  goal: "Character background options for a level-1 builder"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Background]
+
+- id: dnd-14
+  schema: dnd5e
+  goal: "Rules glossary: blinded vs charmed for the condition cheat sheet"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Condition]
+
+- id: dnd-15
+  schema: dnd5e
+  goal: "Legendary items tagged rare for loot tables"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [MagicItem]
+
+- id: dnd-16
+  schema: dnd5e
+  goal: "Playable races for a one-shot party roster"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Race]
+
+- id: dnd-17
+  schema: dnd5e
+  goal: "Skill list for the proficiency picker"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Skill]
+
+- id: dnd-18
+  schema: dnd5e
+  goal: "Halfling subraces for variant features"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Subrace]
+
+- id: dnd-19
+  schema: dnd5e
+  goal: "Class traits reference for the character sheet tooltips"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Trait]
+
+- id: dnd-20
+  schema: dnd5e
+  goal: "Halfling racial proficiencies for sheet setup (reverse from race into proficiency list)"
+  tags: [coverage, reverse]
+  covers: [reverse, query_filtered]
+  expect:
+    entities_any: [Race, Proficiency]
+
+- id: dnd-21
+  schema: dnd5e
+  goal: "Extended SRD catalog entities for eval coverage (ability scores, alignments, rules, levels, spellcasting)"
+  tags: [coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any:
+      - AbilityScore
+      - Alignment
+      - ClassLevel
+      - ClassMulticlassing
+      - ClassSpellcasting
+      - DamageType
+      - EquipmentCategory
+      - Feat
+      - Language
+      - Rule
+      - RuleSection
+      - SubclassLevel
+      - WeaponProperty

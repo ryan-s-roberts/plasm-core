@@ -1,0 +1,24 @@
+- id: gh-04
+  schema: github
+  goal: "From that issue, load the milestone metadata for the roadmap view"
+  tags: [chain, frontmatter]
+  covers: [chain]
+  expect:
+    entities_any: [Issue, Milestone]
+
+- id: gh-08
+  schema: github
+  goal: "Get issue #1 but only title and state for the compact widget"
+  tags: [get, projection, frontmatter]
+  covers: [get, projection]
+  expect:
+    entities_any: [Issue]
+    projection_contains: [title, state]
+
+- id: gh-52
+  schema: github
+  goal: "Rename issue plasm/plasm#7 title to ‘Polish pass: tracking’ for the benchmark checklist (no other fields)"
+  tags: [update, write, frontmatter]
+  covers: [update]
+  expect:
+    entities_any: [Issue]

@@ -1,0 +1,24 @@
+[package]
+name = "plasm-eval"
+version = "0.1.0"
+edition = "2021"
+description = "LLM eval harness for Plasm path expressions (schema prompt + soft scoring)"
+readme = "README.md"
+
+[[bin]]
+name = "plasm-eval"
+path = "src/main.rs"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile", features = ["evm"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+baml = { workspace = true }
+dotenvy = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

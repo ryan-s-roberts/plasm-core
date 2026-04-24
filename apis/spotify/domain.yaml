@@ -1,0 +1,451 @@
+version: 1
+
+http_backend: https://api.spotify.com
+
+entities:
+  Album:
+    id_field: id
+    description: A music album on Spotify
+    fields:
+      id:
+        description: Unique Spotify album identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Album title
+        field_type: string
+        required: false
+        string_semantics: short
+      album_type:
+        description: Album, single, or compilation
+        field_type: select
+        required: false
+        allowed_values:
+        - album
+        - single
+        - compilation
+      total_tracks:
+        description: Number of tracks on the album
+        field_type: integer
+        required: false
+      release_date:
+        description: Date the album was released
+        field_type: string
+        required: false
+        string_semantics: short
+      popularity:
+        description: Popularity score from 0 to 100
+        field_type: integer
+        required: false
+    relations: {}
+  Artist:
+    id_field: id
+    description: A musical artist or band on Spotify
+    fields:
+      id:
+        description: Unique Spotify artist identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Artist or band name
+        field_type: string
+        required: false
+        string_semantics: short
+      popularity:
+        description: Popularity score from 0 to 100
+        field_type: integer
+        required: false
+      genres:
+        description: List of associated music genres
+        field_type: array
+        required: false
+        items:
+          type: string
+    relations: {}
+  Track:
+    id_field: id
+    description: A single music track on Spotify
+    fields:
+      id:
+        description: Unique Spotify track identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Track title
+        field_type: string
+        required: false
+        string_semantics: short
+      duration_ms:
+        description: Track length in milliseconds
+        field_type: integer
+        required: false
+      explicit:
+        description: Whether the track has explicit lyrics
+        field_type: boolean
+        required: false
+      popularity:
+        description: Popularity score from 0 to 100
+        field_type: integer
+        required: false
+      danceability:
+        field_type: number
+        required: false
+        description: How suitable for dancing 0.0–1.0. Populated by track_get_audio_features.
+      energy:
+        field_type: number
+        required: false
+        description: Intensity/activity 0.0–1.0. Populated by track_get_audio_features.
+      valence:
+        field_type: number
+        required: false
+        description: Musical positiveness 0.0–1.0. Populated by track_get_audio_features.
+      tempo:
+        field_type: number
+        required: false
+        description: Estimated beats per minute. Populated by track_get_audio_features.
+      acousticness:
+        field_type: number
+        required: false
+        description: Confidence the track is acoustic 0.0–1.0. Populated by track_get_audio_features.
+      instrumentalness:
+        field_type: number
+        required: false
+        description: Predicts whether track has no vocals 0.0–1.0. Populated by track_get_audio_features.
+      liveness:
+        field_type: number
+        required: false
+        description: Presence of live audience 0.0–1.0. Populated by track_get_audio_features.
+      speechiness:
+        field_type: number
+        required: false
+        description: Presence of spoken words 0.0–1.0. Populated by track_get_audio_features.
+      loudness:
+        field_type: number
+        required: false
+        description: Overall loudness in dB, typically -60 to 0. Populated by track_get_audio_features.
+      key:
+        field_type: integer
+        required: false
+        description: Estimated key (0=C, 1=C#, ... 11=B). Populated by track_get_audio_features.
+      mode:
+        field_type: integer
+        required: false
+        description: 'Modality: 1=major, 0=minor. Populated by track_get_audio_features.'
+      time_signature:
+        field_type: integer
+        required: false
+        description: Estimated meter (beats per bar, usually 3–7). Populated by track_get_audio_features.
+    relations: {}
+  Playlist:
+    id_field: id
+    description: A curated playlist of tracks
+    fields:
+      id:
+        description: Unique Spotify playlist identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Playlist name
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        description: User-provided playlist description text
+        field_type: string
+        required: false
+        string_semantics: markdown
+      public:
+        description: Whether the playlist is publicly visible
+        field_type: boolean
+        required: false
+      collaborative:
+        description: Whether others can add tracks
+        field_type: boolean
+        required: false
+      snapshot_id:
+        description: Version identifier for playlist state
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  User:
+    id_field: id
+    description: A Spotify user profile
+    fields:
+      id:
+        description: Unique Spotify user identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      display_name:
+        description: User's public display name
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+capabilities:
+  album_query:
+    description: Batch-fetch multiple albums by their Spotify IDs
+    kind: query
+    entity: Album
+    parameters:
+    - name: ids
+      type: string
+      required: true
+      role: filter
+      string_semantics: short
+    - name: market
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+  album_get:
+    description: Retrieve a single album by ID
+    kind: get
+    entity: Album
+    provides:
+    - id
+    - name
+    - album_type
+    - total_tracks
+    - release_date
+    - popularity
+  album_tracks:
+    description: List tracks belonging to an album
+    kind: action
+    entity: Album
+    parameters:
+    - name: market
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+    - name: limit
+      type: integer
+      required: false
+      role: response_control
+    - name: offset
+      type: integer
+      required: false
+      role: response_control
+    output:
+      type: side_effect
+      description: List tracks belonging to an album
+  artist_query:
+    description: Batch-fetch multiple artists by their Spotify IDs
+    kind: query
+    entity: Artist
+    parameters:
+    - name: ids
+      type: string
+      required: true
+      role: filter
+      string_semantics: short
+  artist_get:
+    description: Retrieve a single artist by ID
+    kind: get
+    entity: Artist
+    provides:
+    - id
+    - name
+    - popularity
+    - genres
+  artist_albums:
+    description: List albums released by an artist
+    kind: action
+    entity: Artist
+    parameters:
+    - name: include_groups
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: market
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+    - name: limit
+      type: integer
+      required: false
+      role: response_control
+    - name: offset
+      type: integer
+      required: false
+      role: response_control
+    output:
+      type: side_effect
+      description: List albums released by an artist
+  artist_related:
+    description: Get artists related to a given artist
+    kind: action
+    entity: Artist
+    output:
+      type: side_effect
+      description: Get artists related to a given artist
+  artist_top_tracks:
+    description: Get an artist's most popular tracks
+    kind: action
+    entity: Artist
+    parameters:
+    - name: market
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Get an artist's most popular tracks
+  track_query:
+    description: Batch-fetch multiple tracks by their Spotify IDs
+    kind: query
+    entity: Track
+    parameters:
+    - name: ids
+      type: string
+      required: true
+      role: filter
+      string_semantics: short
+    - name: market
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+  track_get:
+    description: 'Retrieve a single track by ID (catalog metadata: name, duration, explicit, popularity).'
+    kind: get
+    entity: Track
+    provides:
+    - id
+    - name
+    - duration_ms
+    - explicit
+    - popularity
+  track_get_audio_features:
+    description: 'Retrieve audio analysis features for a track. Populates the Track entity''s audio projection fields (danceability, energy, valence, tempo, key, mode, etc.) via additive merge — the catalog fields from track_get are preserved. Same Spotify track ID. Pattern: GET /audio-features/{id} — disjoint field projection of the Track entity.
+
+      '
+    kind: action
+    entity: Track
+    provides:
+    - id
+    - danceability
+    - energy
+    - valence
+    - tempo
+    - acousticness
+    - instrumentalness
+    - liveness
+    - speechiness
+    - loudness
+    - key
+    - mode
+    - time_signature
+  playlist_get:
+    description: Retrieve a single playlist by ID
+    kind: get
+    entity: Playlist
+    provides:
+    - id
+    - name
+    - description
+    - public
+    - collaborative
+    - snapshot_id
+  playlist_tracks:
+    description: List tracks contained in a playlist
+    kind: action
+    entity: Playlist
+    parameters:
+    - name: market
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+    - name: limit
+      type: integer
+      required: false
+      role: response_control
+    - name: offset
+      type: integer
+      required: false
+      role: response_control
+    - name: fields
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+    output:
+      type: side_effect
+      description: List tracks contained in a playlist
+  playlist_update:
+    description: Update a playlist's metadata
+    kind: update
+    entity: Playlist
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: public
+      type: boolean
+      required: false
+    - name: collaborative
+      type: boolean
+      required: false
+  user_get:
+    description: Retrieve a user profile by ID
+    kind: get
+    entity: User
+    provides:
+    - id
+    - display_name
+  user_playlists:
+    description: List playlists owned by a user
+    kind: action
+    entity: User
+    parameters:
+    - name: limit
+      type: integer
+      required: false
+    - name: offset
+      type: integer
+      required: false
+    output:
+      type: side_effect
+      description: List playlists owned by a user
+  user_create_playlist:
+    description: Create a new playlist for a user
+    kind: action
+    entity: User
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: public
+      type: boolean
+      required: false
+    - name: collaborative
+      type: boolean
+      required: false
+    output:
+      type: side_effect
+      description: Create a new playlist for a user
+auth:
+  scheme: oauth2_client_credentials
+  token_url: https://accounts.spotify.com/api/token
+  client_id_env: SPOTIFY_CLIENT_ID
+  client_secret_env: SPOTIFY_CLIENT_SECRET

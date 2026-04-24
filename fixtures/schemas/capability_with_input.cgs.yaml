@@ -1,0 +1,90 @@
+---
+http_backend: http://localhost:1080
+entities:
+  Account:
+    name: Account
+    id_field: id
+    fields:
+      id:
+        name: id
+        field_type: string
+        allowed_values: 
+        required: true
+      name:
+        name: name
+        field_type: string
+        allowed_values: 
+        required: true
+      revenue:
+        name: revenue
+        field_type: number
+        allowed_values: 
+        required: false
+    relations: {}
+capabilities:
+  update_account:
+    name: update_account
+    kind: update
+    domain: Account
+    mapping:
+      template:
+        method: PATCH
+        path:
+        - type: literal
+          value: accounts
+        - type: var
+          name: id
+        body:
+          type: var
+          name: input
+    input_schema:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          field_type: string
+          required: false
+          description: Updated account name
+        - name: revenue
+          field_type: number
+          required: false
+          description: Updated revenue amount
+        - name: priority
+          field_type: select
+          required: false
+          allowed_values:
+          - low
+          - medium
+          - high
+          description: Account priority level
+        - name: artifact
+          field_type: blob
+          required: false
+          description: Optional opaque attachment bytes (fixture — interchange `blob` on input_schema).
+        additional_fields: false
+      validation:
+        predicates:
+        - field_path: revenue
+          operator: min_value
+          value: 0
+          error_message: Revenue must be non-negative
+        - field_path: name
+          operator: min_length
+          value: 2
+          error_message: Name must be at least 2 characters
+        allow_null: false
+        cross_field_rules:
+        - rule_type: at_least_one
+          fields:
+          - name
+          - revenue
+          - priority
+          error_message: At least one field must be provided for update
+      description: Update account fields
+      examples:
+      - name: Updated Corp
+        revenue: 1500
+      - priority: high
+      - name: New Name
+        priority: medium
+        revenue: 2000

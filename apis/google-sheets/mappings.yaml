@@ -1,0 +1,301 @@
+# Google Sheets API v4 — CML mappings. Semantic model is in domain.yaml.
+#
+# Base URL: https://sheets.googleapis.com (set via http_backend / --backend).
+# Paths begin with v4/spreadsheets/...
+#
+# Auth: OAuth 2.0 access token as Bearer (GOOGLE_SHEETS_ACCESS_TOKEN).
+#
+# Path templates: Google uses suffix forms like values/{range}:append and
+# spreadsheets/{spreadsheetId}:batchUpdate. CML path vars support an optional
+# `suffix` appended without an extra slash (see plasm-cml PathSegment::Var).
+
+# ── Spreadsheet ─────────────────────────────────────────────────────────────
+
+spreadsheet_get:
+  response: single
+  method: GET
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+  query:
+    type: object
+    fields:
+      - [ranges, { type: if, condition: { type: exists, var: ranges },
+          then_expr: { type: var, name: ranges },
+          else_expr: { type: const, value: null } }]
+      - [includeGridData, { type: if, condition: { type: exists, var: includeGridData },
+          then_expr: { type: var, name: includeGridData },
+          else_expr: { type: const, value: null } }]
+      - [excludeTablesInBandedRanges, { type: if, condition: { type: exists, var: excludeTablesInBandedRanges },
+          then_expr: { type: var, name: excludeTablesInBandedRanges },
+          else_expr: { type: const, value: null } }]
+
+spreadsheet_create:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+  # Sheets v4: writable metadata belongs under Spreadsheet.properties, not top-level keys.
+  body:
+    type: object
+    fields:
+      - [properties, { type: object, fields: [
+          [title, { type: if, condition: { type: exists, var: title },
+              then_expr: { type: var, name: title },
+              else_expr: { type: const, value: null } }],
+          [locale, { type: if, condition: { type: exists, var: locale },
+              then_expr: { type: var, name: locale },
+              else_expr: { type: const, value: null } }],
+          [timeZone, { type: if, condition: { type: exists, var: timeZone },
+              then_expr: { type: var, name: timeZone },
+              else_expr: { type: const, value: null } }],
+        ]}]
+      - [sheets, { type: if, condition: { type: exists, var: sheets },
+          then_expr: { type: var, name: sheets },
+          else_expr: { type: const, value: null } }]
+
+spreadsheet_batch_update:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id, suffix: ":batchUpdate" }
+  body:
+    type: var
+    name: input
+
+spreadsheet_get_by_data_filter:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id, suffix: ":getByDataFilter" }
+  body:
+    type: var
+    name: input
+
+# ── Value range (cells) ─────────────────────────────────────────────────────
+
+value_range_get:
+  response: single
+  method: GET
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: spreadsheetId }
+    - { type: literal, value: values }
+    - { type: var, name: range }
+  query:
+    type: object
+    fields:
+      - [majorDimension, { type: if, condition: { type: exists, var: majorDimension },
+          then_expr: { type: var, name: majorDimension },
+          else_expr: { type: const, value: null } }]
+      - [valueRenderOption, { type: if, condition: { type: exists, var: valueRenderOption },
+          then_expr: { type: var, name: valueRenderOption },
+          else_expr: { type: const, value: null } }]
+      - [dateTimeRenderOption, { type: if, condition: { type: exists, var: dateTimeRenderOption },
+          then_expr: { type: var, name: dateTimeRenderOption },
+          else_expr: { type: const, value: null } }]
+
+spreadsheet_values_batch_get:
+  response: single
+  method: GET
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "values:batchGet" }
+  query:
+    type: object
+    fields:
+      - [ranges, { type: if, condition: { type: exists, var: ranges },
+          then_expr: { type: var, name: ranges },
+          else_expr: { type: const, value: null } }]
+      - [majorDimension, { type: if, condition: { type: exists, var: majorDimension },
+          then_expr: { type: var, name: majorDimension },
+          else_expr: { type: const, value: null } }]
+      - [valueRenderOption, { type: if, condition: { type: exists, var: valueRenderOption },
+          then_expr: { type: var, name: valueRenderOption },
+          else_expr: { type: const, value: null } }]
+      - [dateTimeRenderOption, { type: if, condition: { type: exists, var: dateTimeRenderOption },
+          then_expr: { type: var, name: dateTimeRenderOption },
+          else_expr: { type: const, value: null } }]
+
+value_range_update:
+  response: single
+  method: PUT
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: spreadsheetId }
+    - { type: literal, value: values }
+    - { type: var, name: range }
+  query:
+    type: object
+    fields:
+      - [valueInputOption, { type: if, condition: { type: exists, var: valueInputOption },
+          then_expr: { type: var, name: valueInputOption },
+          else_expr: { type: const, value: null } }]
+      - [includeValuesInResponse, { type: if, condition: { type: exists, var: includeValuesInResponse },
+          then_expr: { type: var, name: includeValuesInResponse },
+          else_expr: { type: const, value: null } }]
+      - [responseValueRenderOption, { type: if, condition: { type: exists, var: responseValueRenderOption },
+          then_expr: { type: var, name: responseValueRenderOption },
+          else_expr: { type: const, value: null } }]
+      - [responseDateTimeRenderOption, { type: if, condition: { type: exists, var: responseDateTimeRenderOption },
+          then_expr: { type: var, name: responseDateTimeRenderOption },
+          else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+
+spreadsheet_values_batch_update:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "values:batchUpdate" }
+  body:
+    type: var
+    name: input
+
+value_range_append:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: values }
+    - { type: var, name: range, suffix: ":append" }
+  query:
+    type: object
+    fields:
+      - [valueInputOption, { type: if, condition: { type: exists, var: valueInputOption },
+          then_expr: { type: var, name: valueInputOption },
+          else_expr: { type: const, value: null } }]
+      - [insertDataOption, { type: if, condition: { type: exists, var: insertDataOption },
+          then_expr: { type: var, name: insertDataOption },
+          else_expr: { type: const, value: null } }]
+      - [includeValuesInResponse, { type: if, condition: { type: exists, var: includeValuesInResponse },
+          then_expr: { type: var, name: includeValuesInResponse },
+          else_expr: { type: const, value: null } }]
+      - [responseValueRenderOption, { type: if, condition: { type: exists, var: responseValueRenderOption },
+          then_expr: { type: var, name: responseValueRenderOption },
+          else_expr: { type: const, value: null } }]
+      - [responseDateTimeRenderOption, { type: if, condition: { type: exists, var: responseDateTimeRenderOption },
+          then_expr: { type: var, name: responseDateTimeRenderOption },
+          else_expr: { type: const, value: null } }]
+  body:
+    type: var
+    name: input
+
+# ── Sheet (tab) ─────────────────────────────────────────────────────────────
+
+sheet_copy_to:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: spreadsheetId }
+    - { type: literal, value: sheets }
+    - { type: var, name: sheetId, suffix: ":copyTo" }
+  body:
+    type: object
+    fields:
+      - - destinationSpreadsheetId
+        - type: var
+          name: destinationSpreadsheetId
+
+value_range_clear:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: spreadsheetId }
+    - { type: literal, value: values }
+    - { type: var, name: range, suffix: ":clear" }
+  body:
+    type: object
+    fields: []
+
+spreadsheet_values_batch_clear:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "values:batchClear" }
+  body:
+    type: var
+    name: input
+
+spreadsheet_values_batch_get_by_data_filter:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "values:batchGetByDataFilter" }
+  body:
+    type: var
+    name: input
+
+spreadsheet_values_batch_update_by_data_filter:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "values:batchUpdateByDataFilter" }
+  body:
+    type: var
+    name: input
+
+spreadsheet_values_batch_clear_by_data_filter:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "values:batchClearByDataFilter" }
+  body:
+    type: var
+    name: input
+
+# ── Developer metadata ───────────────────────────────────────────────────────
+
+developer_metadata_get:
+  response: single
+  method: GET
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: spreadsheetId }
+    - { type: literal, value: developerMetadata }
+    - { type: var, name: metadataId }
+
+developer_metadata_search:
+  response: single
+  method: POST
+  path:
+    - { type: literal, value: v4 }
+    - { type: literal, value: spreadsheets }
+    - { type: var, name: id }
+    - { type: literal, value: "developerMetadata:search" }
+  body:
+    type: var
+    name: input

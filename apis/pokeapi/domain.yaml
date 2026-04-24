@@ -1,0 +1,2125 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://pokeapi.co
+
+entities:
+  Ability:
+    id_field: name
+    description: A special power a Pokémon can have
+    fields:
+      id:
+        description: Numeric ability identifier
+        field_type: integer
+        required: false
+      name:
+        description: Ability name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      is_main_series:
+        description: Whether this ability is from the main series
+        field_type: boolean
+        required: false
+    relations:
+      generation:
+        description: Generation this ability was introduced
+        target: Generation
+        cardinality: one
+      pokemon:
+        description: Pokémon that can have this ability
+        target: Pokemon
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: pokemon
+          - wildcard: true
+          - key: pokemon
+  Berry:
+    id_field: name
+    description: A berry item found in the Pokémon world
+    fields:
+      id:
+        description: Numeric berry identifier
+        field_type: integer
+        required: false
+      name:
+        description: Berry name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      growth_time:
+        description: Hours for one growth stage
+        field_type: integer
+        required: false
+      max_harvest:
+        description: Maximum number harvestable at once
+        field_type: integer
+        required: false
+      natural_gift_power:
+        description: Power of Natural Gift when held
+        field_type: integer
+        required: false
+      size:
+        description: Size of the berry in millimeters
+        field_type: integer
+        required: false
+      smoothness:
+        description: Smoothness value for Pokéblocks
+        field_type: integer
+        required: false
+      soil_dryness:
+        description: Rate at which soil dries with this berry
+        field_type: integer
+        required: false
+    relations:
+      firmness:
+        description: Firmness category of this berry
+        target: BerryFirmness
+        cardinality: one
+      item:
+        description: Corresponding item resource
+        target: Item
+        cardinality: one
+      natural_gift_type:
+        description: Type granted by Natural Gift
+        target: Type
+        cardinality: one
+  BerryFirmness:
+    id_field: name
+    description: Firmness rating for berries
+    fields:
+      id:
+        description: Numeric firmness identifier
+        field_type: integer
+        required: false
+      name:
+        description: Firmness name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      berries:
+        description: Berries with this firmness
+        target: Berry
+        cardinality: many
+  BerryFlavor:
+    id_field: name
+    description: A flavor profile for berries
+    fields:
+      id:
+        description: Numeric flavor identifier
+        field_type: integer
+        required: false
+      name:
+        description: Flavor name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      contest_type:
+        description: Contest type linked to this flavor
+        target: ContestType
+        cardinality: one
+  Characteristic:
+    id_field: url
+    description: A genetic characteristic from IVs
+    fields:
+      id:
+        description: Numeric characteristic identifier
+        field_type: integer
+        required: false
+      url:
+        description: API resource URL (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      gene_modulo:
+        description: Remainder when dividing highest IV by 5
+        field_type: integer
+        required: false
+      possible_values:
+        description: Possible IV values for this characteristic
+        field_type: array
+        required: false
+        items:
+          type: string
+    relations:
+      highest_stat:
+        description: Stat this characteristic indicates
+        target: Stat
+        cardinality: one
+  ContestType:
+    id_field: name
+    description: A Pokémon contest category
+    fields:
+      id:
+        description: Numeric contest type identifier
+        field_type: integer
+        required: false
+      name:
+        description: Contest type name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      berry_flavor:
+        description: Berry flavor linked to this contest type
+        target: BerryFlavor
+        cardinality: one
+  ContestEffect:
+    id_field: url
+    description: Effect of a move in a Pokémon contest
+    fields:
+      id:
+        description: Numeric contest effect identifier
+        field_type: integer
+        required: false
+      url:
+        description: API resource URL (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      appeal:
+        description: Appeal points gained in contest
+        field_type: integer
+        required: false
+      jam:
+        description: Jam points caused to opponents
+        field_type: integer
+        required: false
+  EggGroup:
+    id_field: name
+    description: A breeding compatibility group
+    fields:
+      id:
+        description: Numeric egg group identifier
+        field_type: integer
+        required: false
+      name:
+        description: Egg group name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species in this egg group
+        target: PokemonSpecies
+        cardinality: many
+  EncounterMethod:
+    id_field: name
+    description: Method of encountering wild Pokémon
+    fields:
+      id:
+        description: Numeric encounter method identifier
+        field_type: integer
+        required: false
+      name:
+        description: Method name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      order:
+        description: Display sort order
+        field_type: integer
+        required: false
+  EncounterCondition:
+    id_field: name
+    description: A condition affecting wild encounters
+    fields:
+      id:
+        description: Numeric condition identifier
+        field_type: integer
+        required: false
+      name:
+        description: Condition name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      values:
+        description: Possible values for this condition
+        target: EncounterConditionValue
+        cardinality: many
+  EncounterConditionValue:
+    id_field: name
+    description: A specific value for an encounter condition
+    fields:
+      id:
+        description: Numeric condition value identifier
+        field_type: integer
+        required: false
+      name:
+        description: Value name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      condition:
+        description: Parent encounter condition
+        target: EncounterCondition
+        cardinality: one
+  EvolutionChain:
+    id_field: url
+    description: A chain of Pokémon evolution stages
+    fields:
+      id:
+        description: Numeric evolution chain identifier
+        field_type: integer
+        required: false
+      url:
+        description: API resource URL (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+    relations:
+      baby_trigger_item:
+        description: Item that triggers baby Pokémon breeding
+        target: Item
+        cardinality: one
+  EvolutionTrigger:
+    id_field: name
+    description: An event that triggers evolution
+    fields:
+      id:
+        description: Numeric trigger identifier
+        field_type: integer
+        required: false
+      name:
+        description: Trigger name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species that evolve via this trigger
+        target: PokemonSpecies
+        cardinality: many
+  Generation:
+    id_field: name
+    description: A game generation (e.g. Gen I, Gen II)
+    fields:
+      id:
+        description: Numeric generation identifier
+        field_type: integer
+        required: false
+      name:
+        description: Generation name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      main_region:
+        description: Primary region for this generation
+        target: Region
+        cardinality: one
+  Gender:
+    id_field: name
+    description: A Pokémon gender option
+    fields:
+      id:
+        description: Numeric gender identifier
+        field_type: integer
+        required: false
+      name:
+        description: Gender name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species_details:
+        description: Species with gender-specific details
+        target: PokemonSpecies
+        cardinality: many
+      required_for_evolution:
+        description: Species requiring this gender to evolve
+        target: PokemonSpecies
+        cardinality: many
+  GrowthRate:
+    id_field: name
+    description: An experience growth rate curve
+    fields:
+      id:
+        description: Numeric growth rate identifier
+        field_type: integer
+        required: false
+      name:
+        description: Growth rate name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      formula:
+        description: Mathematical formula for leveling
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species that use this growth rate
+        target: PokemonSpecies
+        cardinality: many
+  Item:
+    id_field: name
+    description: A collectible item in the Pokémon world
+    fields:
+      id:
+        description: Numeric item identifier
+        field_type: integer
+        required: false
+      name:
+        description: Item name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      cost:
+        description: Price in Pokémon currency
+        field_type: integer
+        required: false
+      fling_power:
+        description: Power when used with Fling
+        field_type: integer
+        required: false
+    relations:
+      fling_effect:
+        description: Effect when used with Fling
+        target: ItemFlingEffect
+        cardinality: one
+      category:
+        description: Item category classification
+        target: ItemCategory
+        cardinality: one
+      baby_trigger_for:
+        description: Evolution chain this item triggers
+        target: EvolutionChain
+        cardinality: one
+  ItemCategory:
+    id_field: name
+    description: A category grouping for items
+    fields:
+      id:
+        description: Numeric category identifier
+        field_type: integer
+        required: false
+      name:
+        description: Category name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pocket:
+        description: Bag pocket this category belongs to
+        target: ItemPocket
+        cardinality: one
+      items:
+        description: Items in this category
+        target: Item
+        cardinality: many
+  ItemAttribute:
+    id_field: name
+    description: A trait or property of items
+    fields:
+      id:
+        description: Numeric attribute identifier
+        field_type: integer
+        required: false
+      name:
+        description: Attribute name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      items:
+        description: Items with this attribute
+        target: Item
+        cardinality: many
+  ItemFlingEffect:
+    id_field: name
+    description: Effect when an item is flung in battle
+    fields:
+      id:
+        description: Numeric fling effect identifier
+        field_type: integer
+        required: false
+      name:
+        description: Fling effect name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      items:
+        description: Items with this fling effect
+        target: Item
+        cardinality: many
+  ItemPocket:
+    id_field: name
+    description: A pocket in the player's bag
+    fields:
+      id:
+        description: Numeric pocket identifier
+        field_type: integer
+        required: false
+      name:
+        description: Pocket name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      categories:
+        description: Item categories in this pocket
+        target: ItemCategory
+        cardinality: many
+  Language:
+    id_field: name
+    description: A language for localized game text
+    fields:
+      id:
+        description: Numeric language identifier
+        field_type: integer
+        required: false
+      name:
+        description: Language name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      official:
+        description: Whether this is an official game language
+        field_type: boolean
+        required: false
+      iso639:
+        description: ISO 639 language code
+        field_type: string
+        required: false
+        string_semantics: short
+      iso3166:
+        description: ISO 3166 country code
+        field_type: string
+        required: false
+        string_semantics: short
+  Location:
+    id_field: name
+    description: A location in the Pokémon world
+    fields:
+      id:
+        description: Numeric location identifier
+        field_type: integer
+        required: false
+      name:
+        description: Location name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      region:
+        description: Region this location belongs to
+        target: Region
+        cardinality: one
+      areas:
+        description: Sub-areas within this location
+        target: LocationArea
+        cardinality: many
+  LocationArea:
+    id_field: name
+    description: A sub-area within a location
+    fields:
+      id:
+        description: Numeric area identifier
+        field_type: integer
+        required: false
+      name:
+        description: Area name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      game_index:
+        description: Internal game index for this area
+        field_type: integer
+        required: false
+    relations:
+      location:
+        description: Parent location
+        target: Location
+        cardinality: one
+  Machine:
+    id_field: url
+    description: A TM or HM that teaches a move
+    fields:
+      id:
+        description: Numeric machine identifier
+        field_type: integer
+        required: false
+      url:
+        description: API resource URL (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+    relations:
+      item:
+        description: Item form of this machine
+        target: Item
+        cardinality: one
+      version_group:
+        description: Version group this machine appears in
+        target: VersionGroup
+        cardinality: one
+      move:
+        description: Move this machine teaches
+        target: Move
+        cardinality: one
+  Move:
+    id_field: name
+    description: An attack or technique usable in battle
+    fields:
+      id:
+        description: Numeric move identifier
+        field_type: integer
+        required: false
+      name:
+        description: Move name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      accuracy:
+        description: Move accuracy percentage
+        field_type: integer
+        required: false
+      effect_chance:
+        description: Chance of secondary effect occurring
+        field_type: integer
+        required: false
+      pp:
+        description: Base power points
+        field_type: integer
+        required: false
+      priority:
+        description: Move priority bracket
+        field_type: integer
+        required: false
+      power:
+        description: Base power of the move
+        field_type: integer
+        required: false
+    relations:
+      contest_type:
+        description: Contest type this move belongs to
+        target: ContestType
+        cardinality: one
+      contest_effect:
+        description: Effect in Pokémon contests
+        target: ContestEffect
+        cardinality: one
+      damage_class:
+        description: Physical, special, or status
+        target: MoveDamageClass
+        cardinality: one
+      generation:
+        description: Generation this move was introduced
+        target: Generation
+        cardinality: one
+      super_contest_effect:
+        description: Effect in Super Contests
+        target: SuperContestEffect
+        cardinality: one
+      target:
+        description: Targeting mode for this move
+        target: MoveTarget
+        cardinality: one
+      type:
+        description: Elemental type of this move
+        target: Type
+        cardinality: one
+      ailment:
+        description: Status ailment this move inflicts
+        target: MoveAilment
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: meta
+          - key: ailment
+  MoveAilment:
+    id_field: name
+    description: A status condition caused by moves
+    fields:
+      id:
+        description: Numeric ailment identifier
+        field_type: integer
+        required: false
+      name:
+        description: Ailment name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      moves:
+        description: Moves that cause this ailment
+        target: Move
+        cardinality: many
+  MoveBattleStyle:
+    id_field: name
+    description: A battle style for move preferences
+    fields:
+      id:
+        description: Numeric battle style identifier
+        field_type: integer
+        required: false
+      name:
+        description: Battle style name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+  MoveCategory:
+    id_field: name
+    description: A meta-category grouping for moves
+    fields:
+      id:
+        description: Numeric category identifier
+        field_type: integer
+        required: false
+      name:
+        description: Category name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      moves:
+        description: Moves in this category
+        target: Move
+        cardinality: many
+  MoveDamageClass:
+    id_field: name
+    description: Physical, special, or status classification
+    fields:
+      id:
+        description: Numeric damage class identifier
+        field_type: integer
+        required: false
+      name:
+        description: Damage class name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      moves:
+        description: Moves with this damage class
+        target: Move
+        cardinality: many
+  MoveLearnMethod:
+    id_field: name
+    description: How a Pokémon can learn a move
+    fields:
+      id:
+        description: Numeric learn method identifier
+        field_type: integer
+        required: false
+      name:
+        description: Learn method name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      version_groups:
+        description: Version groups using this learn method
+        target: VersionGroup
+        cardinality: many
+  MoveTarget:
+    id_field: name
+    description: What a move can target in battle
+    fields:
+      id:
+        description: Numeric target identifier
+        field_type: integer
+        required: false
+      name:
+        description: Target name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      moves:
+        description: Moves with this target type
+        target: Move
+        cardinality: many
+  Nature:
+    id_field: name
+    description: A nature affecting stat growth
+    fields:
+      id:
+        description: Numeric nature identifier
+        field_type: integer
+        required: false
+      name:
+        description: Nature name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      decreased_stat:
+        description: Stat decreased by this nature
+        target: Stat
+        cardinality: one
+      increased_stat:
+        description: Stat increased by this nature
+        target: Stat
+        cardinality: one
+      likes_flavor:
+        description: Flavor preferred by this nature
+        target: BerryFlavor
+        cardinality: one
+      hates_flavor:
+        description: Flavor disliked by this nature
+        target: BerryFlavor
+        cardinality: one
+      berries:
+        description: Berries associated with this nature
+        target: Berry
+        cardinality: many
+  PalParkArea:
+    id_field: name
+    description: An area in Pal Park for migration
+    fields:
+      id:
+        description: Numeric Pal Park area identifier
+        field_type: integer
+        required: false
+      name:
+        description: Area name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species found in this area
+        target: PokemonSpecies
+        cardinality: many
+  Pokedex:
+    id_field: name
+    description: A regional Pokédex catalog
+    fields:
+      id:
+        description: Numeric Pokédex identifier
+        field_type: integer
+        required: false
+      name:
+        description: Pokédex name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      is_main_series:
+        description: Whether from the main game series
+        field_type: boolean
+        required: false
+    relations:
+      region:
+        description: Region this Pokédex covers
+        target: Region
+        cardinality: one
+  Pokemon:
+    id_field: name
+    description: A Pokémon with base stats and forms
+    fields:
+      id:
+        description: National Pokédex number
+        field_type: integer
+        required: false
+      name:
+        description: Pokémon name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      base_experience:
+        description: Base experience yield when defeated
+        field_type: integer
+        required: false
+      height:
+        description: Height in decimetres
+        field_type: integer
+        required: false
+      is_default:
+        description: Whether this is the default form
+        field_type: boolean
+        required: false
+      order:
+        description: Display sort order
+        field_type: integer
+        required: false
+      weight:
+        description: Weight in hectograms
+        field_type: integer
+        required: false
+    relations:
+      species:
+        description: Species this Pokémon belongs to
+        target: PokemonSpecies
+        cardinality: one
+      forms:
+        description: Visual forms of this Pokémon
+        target: PokemonForm
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: forms
+          - wildcard: true
+      abilities:
+        description: Abilities this Pokémon can have
+        target: Ability
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: abilities
+          - wildcard: true
+          - key: ability
+      types:
+        description: Elemental types of this Pokémon
+        target: Type
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: types
+          - wildcard: true
+          - key: type
+      moves:
+        description: Moves this Pokémon can learn
+        target: Move
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: moves
+          - wildcard: true
+          - key: move
+  PokemonColor:
+    id_field: name
+    description: A color used to categorize Pokémon
+    fields:
+      id:
+        description: Numeric color identifier
+        field_type: integer
+        required: false
+      name:
+        description: Color name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species with this body color
+        target: PokemonSpecies
+        cardinality: many
+  PokemonEncounter:
+    id_field: url
+    description: Where a specific Pokémon can be found
+    id_from: location_area.url
+    fields:
+      pokemon_id:
+        description: Pokémon this encounter is for
+        field_type: entity_ref
+        target: Pokemon
+        required: false
+    relations:
+      location_area:
+        description: Area where this encounter occurs
+        target: LocationArea
+        cardinality: one
+  PokemonForm:
+    id_field: name
+    description: A visual variant of a Pokémon
+    fields:
+      id:
+        description: Numeric form identifier
+        field_type: integer
+        required: false
+      name:
+        description: Form name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      order:
+        description: Global display order
+        field_type: integer
+        required: false
+      form_order:
+        description: Order among forms of same species
+        field_type: integer
+        required: false
+      is_default:
+        description: Whether this is the default form
+        field_type: boolean
+        required: false
+      is_battle_only:
+        description: Whether form only appears in battle
+        field_type: boolean
+        required: false
+      is_mega:
+        description: Whether this is a Mega Evolution form
+        field_type: boolean
+        required: false
+      form_name:
+        description: Name of this specific form
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon:
+        description: Base Pokémon for this form
+        target: Pokemon
+        cardinality: one
+      version_group:
+        description: Version group this form was introduced
+        target: VersionGroup
+        cardinality: one
+  PokemonHabitat:
+    id_field: name
+    description: A habitat where Pokémon live
+    fields:
+      id:
+        description: Numeric habitat identifier
+        field_type: integer
+        required: false
+      name:
+        description: Habitat name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species found in this habitat
+        target: PokemonSpecies
+        cardinality: many
+  PokemonShape:
+    id_field: name
+    description: A body shape classification for Pokémon
+    fields:
+      id:
+        description: Numeric shape identifier
+        field_type: integer
+        required: false
+      name:
+        description: Shape name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      pokemon_species:
+        description: Species with this body shape
+        target: PokemonSpecies
+        cardinality: many
+  PokemonSpecies:
+    id_field: name
+    description: A Pokémon species with lore and breeding data
+    fields:
+      id:
+        description: National Pokédex species number
+        field_type: integer
+        required: false
+      name:
+        description: Species name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      order:
+        description: Display sort order
+        field_type: integer
+        required: false
+      gender_rate:
+        description: Gender ratio (eighths female, -1=genderless)
+        field_type: integer
+        required: false
+      capture_rate:
+        description: Base catch rate (0-255)
+        field_type: integer
+        required: false
+      base_happiness:
+        description: Starting friendship value
+        field_type: integer
+        required: false
+      is_baby:
+        description: Whether this is a baby Pokémon
+        field_type: boolean
+        required: false
+      is_legendary:
+        description: Whether this is a legendary Pokémon
+        field_type: boolean
+        required: false
+      is_mythical:
+        description: Whether this is a mythical Pokémon
+        field_type: boolean
+        required: false
+      hatch_counter:
+        description: Egg cycles required to hatch
+        field_type: integer
+        required: false
+      has_gender_differences:
+        description: Whether males and females look different
+        field_type: boolean
+        required: false
+      forms_switchable:
+        description: Whether forms can change in battle
+        field_type: boolean
+        required: false
+    relations:
+      color:
+        description: Body color of this species
+        target: PokemonColor
+        cardinality: one
+      evolution_chain:
+        description: Evolution chain this species belongs to
+        target: EvolutionChain
+        cardinality: one
+      evolves_from_species:
+        description: Species this one evolves from
+        target: PokemonSpecies
+        cardinality: one
+      generation:
+        description: Generation this species was introduced
+        target: Generation
+        cardinality: one
+      growth_rate:
+        description: Experience growth rate curve
+        target: GrowthRate
+        cardinality: one
+      habitat:
+        description: Natural habitat of this species
+        target: PokemonHabitat
+        cardinality: one
+      shape:
+        description: Body shape classification
+        target: PokemonShape
+        cardinality: one
+      egg_groups:
+        description: Breeding compatibility groups
+        target: EggGroup
+        cardinality: many
+      varieties:
+        description: Pokémon variants of this species
+        target: Pokemon
+        cardinality: many
+      pal_park_areas:
+        description: Pal Park areas for migration
+        target: PalParkArea
+        cardinality: many
+  PokeathlonStat:
+    id_field: name
+    description: A stat used in Pokéathlon events
+    fields:
+      id:
+        description: Numeric Pokéathlon stat identifier
+        field_type: integer
+        required: false
+      name:
+        description: Stat name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+  Region:
+    id_field: name
+    description: A geographic region in the Pokémon world
+    fields:
+      id:
+        description: Numeric region identifier
+        field_type: integer
+        required: false
+      name:
+        description: Region name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      locations:
+        description: Locations within this region
+        target: Location
+        cardinality: many
+      main_generation:
+        description: Primary generation for this region
+        target: Generation
+        cardinality: one
+      pokedexes:
+        description: Pokédex catalogs for this region
+        target: Pokedex
+        cardinality: many
+      version_groups:
+        description: Version groups set in this region
+        target: VersionGroup
+        cardinality: many
+  Stat:
+    id_field: name
+    description: A base stat (HP, Attack, etc.)
+    fields:
+      id:
+        description: Numeric stat identifier
+        field_type: integer
+        required: false
+      name:
+        description: Stat name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+      game_index:
+        description: Internal game index for this stat
+        field_type: integer
+        required: false
+      is_battle_only:
+        description: Whether stat only applies in battle
+        field_type: boolean
+        required: false
+    relations:
+      move_damage_class:
+        description: Damage class linked to this stat
+        target: MoveDamageClass
+        cardinality: one
+  SuperContestEffect:
+    id_field: url
+    description: An effect in Super Contest shows
+    fields:
+      id:
+        description: Numeric super contest effect identifier
+        field_type: integer
+        required: false
+      url:
+        description: API resource URL (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      appeal:
+        description: Appeal points in Super Contests
+        field_type: integer
+        required: false
+    relations:
+      moves:
+        description: Moves with this super contest effect
+        target: Move
+        cardinality: many
+  Type:
+    id_field: name
+    description: An elemental type (Fire, Water, etc.)
+    fields:
+      id:
+        description: Numeric type identifier
+        field_type: integer
+        required: false
+      name:
+        description: Type name (unique key)
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        description: API resource URL
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      generation:
+        description: Generation this type was introduced
+        target: Generation
+        cardinality: one
+      move_damage_class:
+        description: Default damage class for this type
+        target: MoveDamageClass
+        cardinality: one
+      moves:
+        description: Moves of this elemental type
+        target: Move
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: moves
+          - wildcard: true
+      pokemon:
+        description: Pokémon with this type
+        target: Pokemon
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: pokemon
+          - wildcard: true
+          - key: pokemon
+  Version:
+    id_field: name
+    description: A specific game version (e.g. Red, Blue)
+    fields:
+      id:
+        description: Numeric version identifier
+        field_type: integer
+        required: false
+      name:
+        description: Version name (unique key)
+        field_type: string
+        string_semantics: short
+        required: true
+      url:
+        description: API resource URL
+        field_type: string
+        string_semantics: short
+        required: false
+    relations:
+      version_group:
+        description: Version group this belongs to
+        target: VersionGroup
+        cardinality: one
+  VersionGroup:
+    id_field: name
+    description: A set of related game versions
+    fields:
+      id:
+        description: Numeric version group identifier
+        field_type: integer
+        required: false
+      name:
+        description: Version group name (unique key)
+        field_type: string
+        string_semantics: short
+        required: true
+      url:
+        description: API resource URL
+        field_type: string
+        string_semantics: short
+        required: false
+      order:
+        description: Release order of this version group
+        field_type: integer
+        required: false
+    relations:
+      generation:
+        description: Generation this version group belongs to
+        target: Generation
+        cardinality: one
+capabilities:
+  ability_query:
+    description: List all Pokémon abilities
+    kind: query
+    entity: Ability
+  ability_get:
+    description: Get an ability by name or ID
+    kind: get
+    entity: Ability
+    provides:
+    - name
+    - id
+    - url
+    - is_main_series
+  berry_query:
+    description: List all berries
+    kind: query
+    entity: Berry
+  berry_get:
+    description: Get a berry by name or ID
+    kind: get
+    entity: Berry
+    provides:
+    - name
+    - id
+    - url
+    - growth_time
+    - max_harvest
+    - natural_gift_power
+    - size
+    - smoothness
+    - soil_dryness
+  berryfirmness_query:
+    description: List all berry firmness levels
+    kind: query
+    entity: BerryFirmness
+  berryfirmness_get:
+    description: Get a berry firmness by name or ID
+    kind: get
+    entity: BerryFirmness
+    provides:
+    - name
+    - id
+    - url
+  berryflavor_query:
+    description: List all berry flavors
+    kind: query
+    entity: BerryFlavor
+  berryflavor_get:
+    description: Get a berry flavor by name or ID
+    kind: get
+    entity: BerryFlavor
+    provides:
+    - name
+    - id
+    - url
+  characteristic_query:
+    description: List all genetic characteristics
+    kind: query
+    entity: Characteristic
+  characteristic_get:
+    description: Get a characteristic by ID
+    kind: get
+    entity: Characteristic
+    provides:
+    - url
+    - id
+    - gene_modulo
+    - possible_values
+  contesttype_query:
+    description: List all contest types
+    kind: query
+    entity: ContestType
+  contesttype_get:
+    description: Get a contest type by name or ID
+    kind: get
+    entity: ContestType
+    provides:
+    - name
+    - id
+    - url
+  contesteffect_query:
+    description: List all contest effects
+    kind: query
+    entity: ContestEffect
+  contesteffect_get:
+    description: Get a contest effect by ID
+    kind: get
+    entity: ContestEffect
+    provides:
+    - url
+    - id
+    - appeal
+    - jam
+  egggroup_query:
+    description: List all egg groups
+    kind: query
+    entity: EggGroup
+  egggroup_get:
+    description: Get an egg group by name or ID
+    kind: get
+    entity: EggGroup
+    provides:
+    - name
+    - id
+    - url
+  encountermethod_query:
+    description: List all encounter methods
+    kind: query
+    entity: EncounterMethod
+  encountermethod_get:
+    description: Get an encounter method by name or ID
+    kind: get
+    entity: EncounterMethod
+    provides:
+    - name
+    - id
+    - url
+    - order
+  encountercondition_query:
+    description: List all encounter conditions
+    kind: query
+    entity: EncounterCondition
+  encountercondition_get:
+    description: Get an encounter condition by name or ID
+    kind: get
+    entity: EncounterCondition
+    provides:
+    - name
+    - id
+    - url
+  encounterconditionvalue_query:
+    description: List all encounter condition values
+    kind: query
+    entity: EncounterConditionValue
+  encounterconditionvalue_get:
+    description: Get an encounter condition value by name or ID
+    kind: get
+    entity: EncounterConditionValue
+    provides:
+    - name
+    - id
+    - url
+  evolutionchain_query:
+    description: List all evolution chains
+    kind: query
+    entity: EvolutionChain
+  evolutionchain_get:
+    description: Get an evolution chain by ID
+    kind: get
+    entity: EvolutionChain
+    provides:
+    - url
+    - id
+  evolutiontrigger_query:
+    description: List all evolution triggers
+    kind: query
+    entity: EvolutionTrigger
+  evolutiontrigger_get:
+    description: Get an evolution trigger by name or ID
+    kind: get
+    entity: EvolutionTrigger
+    provides:
+    - name
+    - id
+    - url
+  generation_query:
+    description: List all game generations
+    kind: query
+    entity: Generation
+  generation_get:
+    description: Get a generation by name or ID
+    kind: get
+    entity: Generation
+    provides:
+    - name
+    - id
+    - url
+  gender_query:
+    description: List all gender categories
+    kind: query
+    entity: Gender
+  gender_get:
+    description: Get a gender by name or ID
+    kind: get
+    entity: Gender
+    provides:
+    - name
+    - id
+    - url
+  growthrate_query:
+    description: List all experience growth rates
+    kind: query
+    entity: GrowthRate
+  growthrate_get:
+    description: Get a growth rate by name or ID
+    kind: get
+    entity: GrowthRate
+    provides:
+    - name
+    - id
+    - url
+    - formula
+  item_query:
+    description: List all items
+    kind: query
+    entity: Item
+  item_get:
+    description: Get an item by name or ID
+    kind: get
+    entity: Item
+    provides:
+    - name
+    - id
+    - url
+    - cost
+    - fling_power
+  itemcategory_query:
+    description: List all item categories
+    kind: query
+    entity: ItemCategory
+  itemcategory_get:
+    description: Get an item category by name or ID
+    kind: get
+    entity: ItemCategory
+    provides:
+    - name
+    - id
+    - url
+  itemattribute_query:
+    description: List all item attributes
+    kind: query
+    entity: ItemAttribute
+  itemattribute_get:
+    description: Get an item attribute by name or ID
+    kind: get
+    entity: ItemAttribute
+    provides:
+    - name
+    - id
+    - url
+  itemflingeffect_query:
+    description: List all item fling effects
+    kind: query
+    entity: ItemFlingEffect
+  itemflingeffect_get:
+    description: Get an item fling effect by name or ID
+    kind: get
+    entity: ItemFlingEffect
+    provides:
+    - name
+    - id
+    - url
+  itempocket_query:
+    description: List all bag pockets
+    kind: query
+    entity: ItemPocket
+  itempocket_get:
+    description: Get a bag pocket by name or ID
+    kind: get
+    entity: ItemPocket
+    provides:
+    - name
+    - id
+    - url
+  language_query:
+    description: List all game languages
+    kind: query
+    entity: Language
+  language_get:
+    description: Get a language by name or ID
+    kind: get
+    entity: Language
+    provides:
+    - name
+    - id
+    - url
+    - official
+    - iso639
+    - iso3166
+  location_query:
+    description: List all locations
+    kind: query
+    entity: Location
+  location_get:
+    description: Get a location by name or ID
+    kind: get
+    entity: Location
+    provides:
+    - name
+    - id
+    - url
+  locationarea_query:
+    description: List all location areas
+    kind: query
+    entity: LocationArea
+  locationarea_get:
+    description: Get a location area by name or ID
+    kind: get
+    entity: LocationArea
+    provides:
+    - name
+    - id
+    - url
+    - game_index
+  machine_query:
+    description: List all TM/HM machines
+    kind: query
+    entity: Machine
+  machine_get:
+    description: Get a machine by ID
+    kind: get
+    entity: Machine
+    provides:
+    - url
+    - id
+  move_query:
+    description: List all moves
+    kind: query
+    entity: Move
+  move_get:
+    description: Get a move by name or ID
+    kind: get
+    entity: Move
+    provides:
+    - name
+    - id
+    - url
+    - accuracy
+    - effect_chance
+    - pp
+    - priority
+    - power
+  moveailment_query:
+    description: List all move ailments
+    kind: query
+    entity: MoveAilment
+  moveailment_get:
+    description: Get a move ailment by name or ID
+    kind: get
+    entity: MoveAilment
+    provides:
+    - name
+    - id
+    - url
+  movebattlestyle_query:
+    description: List all battle styles
+    kind: query
+    entity: MoveBattleStyle
+  movebattlestyle_get:
+    description: Get a battle style by name or ID
+    kind: get
+    entity: MoveBattleStyle
+    provides:
+    - name
+    - id
+    - url
+  movecategory_query:
+    description: List all move categories
+    kind: query
+    entity: MoveCategory
+  movecategory_get:
+    description: Get a move category by name or ID
+    kind: get
+    entity: MoveCategory
+    provides:
+    - name
+    - id
+    - url
+  movedamageclass_query:
+    description: List all damage classes
+    kind: query
+    entity: MoveDamageClass
+  movedamageclass_get:
+    description: Get a damage class by name or ID
+    kind: get
+    entity: MoveDamageClass
+    provides:
+    - name
+    - id
+    - url
+  movelearnmethod_query:
+    description: List all move learn methods
+    kind: query
+    entity: MoveLearnMethod
+  movelearnmethod_get:
+    description: Get a move learn method by name or ID
+    kind: get
+    entity: MoveLearnMethod
+    provides:
+    - name
+    - id
+    - url
+  movetarget_query:
+    description: List all move targets
+    kind: query
+    entity: MoveTarget
+  movetarget_get:
+    description: Get a move target by name or ID
+    kind: get
+    entity: MoveTarget
+    provides:
+    - name
+    - id
+    - url
+  nature_query:
+    description: List all natures
+    kind: query
+    entity: Nature
+  nature_get:
+    description: Get a nature by name or ID
+    kind: get
+    entity: Nature
+    provides:
+    - name
+    - id
+    - url
+  palparkarea_query:
+    description: List all Pal Park areas
+    kind: query
+    entity: PalParkArea
+  palparkarea_get:
+    description: Get a Pal Park area by name or ID
+    kind: get
+    entity: PalParkArea
+    provides:
+    - name
+    - id
+    - url
+  pokedex_query:
+    description: List all Pokédex catalogs
+    kind: query
+    entity: Pokedex
+  pokedex_get:
+    description: Get a Pokédex by name or ID
+    kind: get
+    entity: Pokedex
+    provides:
+    - name
+    - id
+    - url
+    - is_main_series
+  pokemonencounter_query:
+    description: List wild encounter areas for one Pokémon.
+    kind: query
+    entity: PokemonEncounter
+    parameters:
+    - name: pokemon_id
+      type: entity_ref
+      target: Pokemon
+      required: true
+      role: scope
+      description: Pokémon whose encounters to list.
+  pokemon_query:
+    description: List all Pokémon
+    kind: query
+    entity: Pokemon
+  pokemon_get:
+    description: Get a Pokémon by name or ID
+    kind: get
+    entity: Pokemon
+    provides:
+    - name
+    - id
+    - url
+    - base_experience
+    - height
+    - is_default
+    - order
+    - weight
+  pokemoncolor_query:
+    description: List all Pokémon colors
+    kind: query
+    entity: PokemonColor
+  pokemoncolor_get:
+    description: Get a Pokémon color by name or ID
+    kind: get
+    entity: PokemonColor
+    provides:
+    - name
+    - id
+    - url
+  pokemonform_query:
+    description: List all Pokémon forms
+    kind: query
+    entity: PokemonForm
+  pokemonform_get:
+    description: Get a Pokémon form by name or ID
+    kind: get
+    entity: PokemonForm
+    provides:
+    - name
+    - id
+    - url
+    - order
+    - form_order
+    - is_default
+    - is_battle_only
+    - is_mega
+    - form_name
+  pokemonhabitat_query:
+    description: List all Pokémon habitats
+    kind: query
+    entity: PokemonHabitat
+  pokemonhabitat_get:
+    description: Get a Pokémon habitat by name or ID
+    kind: get
+    entity: PokemonHabitat
+    provides:
+    - name
+    - id
+    - url
+  pokemonshape_query:
+    description: List all Pokémon body shapes
+    kind: query
+    entity: PokemonShape
+  pokemonshape_get:
+    description: Get a Pokémon shape by name or ID
+    kind: get
+    entity: PokemonShape
+    provides:
+    - name
+    - id
+    - url
+  pokemonspecies_query:
+    description: List all Pokémon species
+    kind: query
+    entity: PokemonSpecies
+  pokemonspecies_get:
+    description: Get a Pokémon species by name or ID
+    kind: get
+    entity: PokemonSpecies
+    provides:
+    - name
+    - id
+    - url
+    - order
+    - gender_rate
+    - capture_rate
+    - base_happiness
+    - is_baby
+    - is_legendary
+    - is_mythical
+    - hatch_counter
+    - has_gender_differences
+    - forms_switchable
+  pokeathlonstat_query:
+    description: List all Pokéathlon stats
+    kind: query
+    entity: PokeathlonStat
+  pokeathlonstat_get:
+    description: Get a Pokéathlon stat by name or ID
+    kind: get
+    entity: PokeathlonStat
+    provides:
+    - name
+    - id
+    - url
+  region_query:
+    description: List all regions
+    kind: query
+    entity: Region
+  region_get:
+    description: Get a region by name or ID
+    kind: get
+    entity: Region
+    provides:
+    - name
+    - id
+    - url
+  stat_query:
+    description: List all base stats
+    kind: query
+    entity: Stat
+  stat_get:
+    description: Get a stat by name or ID
+    kind: get
+    entity: Stat
+    provides:
+    - name
+    - id
+    - url
+    - game_index
+    - is_battle_only
+  supercontesteffect_query:
+    description: List all super contest effects
+    kind: query
+    entity: SuperContestEffect
+  supercontesteffect_get:
+    description: Get a super contest effect by ID
+    kind: get
+    entity: SuperContestEffect
+    provides:
+    - url
+    - id
+    - appeal
+  type_query:
+    description: List all elemental types
+    kind: query
+    entity: Type
+  type_get:
+    description: Get an elemental type by name or ID
+    kind: get
+    entity: Type
+    provides:
+    - name
+    - id
+    - url
+  version_query:
+    description: List all game versions
+    kind: query
+    entity: Version
+  version_get:
+    description: Get a game version by name or ID
+    kind: get
+    entity: Version
+    provides:
+    - name
+    - id
+    - url
+  versiongroup_query:
+    description: List all version groups
+    kind: query
+    entity: VersionGroup
+  versiongroup_get:
+    description: Get a version group by name or ID
+    kind: get
+    entity: VersionGroup
+    provides:
+    - name
+    - id
+    - url
+    - order

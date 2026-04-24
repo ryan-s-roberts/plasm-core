@@ -1,0 +1,49 @@
+[package]
+name = "plasm-e2e"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+# End-to-end integration tests using hermit (in-process OpenAPI mock server).
+# No Docker required — hermit runs as a library inside the test process.
+
+[features]
+default = []
+# Declared for `cfg(feature = "evm")` on optional Anvil / EVM integration tests.
+evm = []
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile" }
+plasm-runtime = { path = "../plasm-runtime" }
+plasm-agent = { path = "../plasm-agent" }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+indexmap = { workspace = true }
+tempfile = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["anvil"] }
+alloy = { workspace = true, features = [
+    "network",
+    "providers",
+    "transports",
+    "transport-http",
+    "rpc",
+    "rpc-types",
+    "rpc-client",
+    "contract",
+    "sol-types",
+    "signer-local",
+] }
+alloy-rpc-client = { workspace = true }
+
+[dev-dependencies]
+beavuck-hermit = { workspace = true }
+axum = { workspace = true }
+url = { workspace = true }
+serde_yaml = { workspace = true }
+serial_test = { workspace = true }

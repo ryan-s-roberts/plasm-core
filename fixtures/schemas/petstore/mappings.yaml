@@ -1,0 +1,189 @@
+pet_create:
+  response: single
+  method: POST
+  path:
+  - type: literal
+    value: pet
+pet_update:
+  response: single
+  method: PUT
+  path:
+  - type: literal
+    value: pet
+pet_findByStatus:
+  method: GET
+  path:
+  - type: literal
+    value: pet
+  - type: literal
+    value: findByStatus
+  query:
+    fields:
+    - - status
+      - name: status
+        type: var
+    type: object
+pet_findByTags:
+  method: GET
+  path:
+  - type: literal
+    value: pet
+  - type: literal
+    value: findByTags
+  query:
+    fields:
+    - - tags
+      - name: tags
+        type: var
+    type: object
+pet_get:
+  response: single
+  method: GET
+  path:
+  - type: literal
+    value: pet
+  - name: id
+    type: var
+pet_updateForm:
+  method: POST
+  path:
+  - type: literal
+    value: pet
+  - name: id
+    type: var
+  query:
+    fields:
+    - - name
+      - name: name
+        type: var
+    - - status
+      - name: status
+        type: var
+    type: object
+pet_delete:
+  response: single
+  method: DELETE
+  path:
+  - type: literal
+    value: pet
+  - name: id
+    type: var
+pet_uploadImage:
+  method: POST
+  path:
+  - type: literal
+    value: pet
+  - name: id
+    type: var
+  - type: literal
+    value: uploadImage
+  body_format: multipart
+  multipart:
+    parts:
+    - name: additionalMetadata
+      content:
+        type: if
+        condition:
+          type: exists
+          var: additionalMetadata
+        then_expr:
+          type: var
+          name: additionalMetadata
+        else_expr:
+          type: const
+          value: null
+    - name: file
+      file_name: upload.png
+      content:
+        type: var
+        name: file
+order_create:
+  response: single
+  method: POST
+  path:
+  - type: literal
+    value: store
+  - type: literal
+    value: order
+order_get:
+  response: single
+  method: GET
+  path:
+  - type: literal
+    value: store
+  - type: literal
+    value: order
+  - name: id
+    type: var
+order_delete:
+  response: single
+  method: DELETE
+  path:
+  - type: literal
+    value: store
+  - type: literal
+    value: order
+  - name: id
+    type: var
+user_create:
+  response: single
+  method: POST
+  path:
+  - type: literal
+    value: user
+user_createList:
+  method: POST
+  path:
+  - type: literal
+    value: user
+  - type: literal
+    value: createWithList
+user_login:
+  response: single
+  method: GET
+  path:
+  - type: literal
+    value: user
+  - type: literal
+    value: login
+  query:
+    fields:
+    - - username
+      - name: username
+        type: var
+    - - password
+      - name: password
+        type: var
+    type: object
+user_logout:
+  response: single
+  method: GET
+  path:
+  - type: literal
+    value: user
+  - type: literal
+    value: logout
+user_get:
+  response: single
+  method: GET
+  path:
+  - type: literal
+    value: user
+  - name: username
+    type: var
+user_update:
+  response: single
+  method: PUT
+  path:
+  - type: literal
+    value: user
+  - name: username
+    type: var
+user_delete:
+  response: single
+  method: DELETE
+  path:
+  - type: literal
+    value: user
+  - name: username
+    type: var

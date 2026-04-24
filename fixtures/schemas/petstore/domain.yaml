@@ -1,0 +1,316 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://petstore.swagger.io/v2
+
+entities:
+  Pet:
+    id_field: id
+    description: A pet available for adoption in the store
+    fields:
+      id:
+        description: Unique numeric pet identifier
+        field_type: integer
+        required: true
+      name:
+        description: Display name of the pet
+        field_type: string
+        required: true
+        string_semantics: short
+      photoUrls:
+        description: URLs of photos showing the pet
+        field_type: array
+        required: true
+        items:
+          type: string
+      status:
+        description: Adoption availability status
+        field_type: select
+        required: false
+        allowed_values:
+        - available
+        - pending
+        - sold
+    relations:
+      category:
+        description: Classification category for this pet
+        target: Category
+        cardinality: one
+      tags:
+        description: Searchable tags attached to this pet
+        target: Tag
+        cardinality: many
+  Order:
+    id_field: id
+    description: A purchase order for a pet from the store
+    fields:
+      id:
+        description: Unique numeric order identifier
+        field_type: integer
+        required: true
+      quantity:
+        description: Number of pets ordered
+        field_type: integer
+        required: false
+      shipDate:
+        description: Scheduled shipping date for the order
+        field_type: date
+        value_format: rfc3339
+        required: false
+      status:
+        description: Current fulfilment status of the order
+        field_type: select
+        required: false
+        allowed_values:
+        - placed
+        - approved
+        - delivered
+      complete:
+        description: Whether the order has been fulfilled
+        field_type: boolean
+        required: false
+    relations:
+      pet:
+        description: The pet being purchased in this order
+        target: Pet
+        cardinality: one
+  User:
+    id_field: id
+    description: A registered user of the pet store
+    fields:
+      id:
+        description: Unique numeric user identifier
+        field_type: integer
+        required: true
+      username:
+        description: Login username for authentication
+        field_type: string
+        required: false
+        string_semantics: short
+      firstName:
+        description: User's given name
+        field_type: string
+        required: false
+        string_semantics: short
+      lastName:
+        description: User's family name
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        description: User's email address
+        field_type: string
+        required: false
+        string_semantics: short
+      password:
+        description: Hashed password for authentication
+        field_type: string
+        required: false
+        string_semantics: short
+      phone:
+        description: User's phone number
+        field_type: string
+        required: false
+        string_semantics: short
+      userStatus:
+        description: Numeric status code for the user account
+        field_type: integer
+        required: false
+    relations: {}
+  Category:
+    abstract: true
+    id_field: id
+    description: A classification group for pets
+    fields:
+      id:
+        description: Unique numeric category identifier
+        field_type: integer
+        required: true
+      name:
+        description: Human-readable category label
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Tag:
+    abstract: true
+    id_field: id
+    description: A keyword tag for filtering and searching pets
+    fields:
+      id:
+        description: Unique numeric tag identifier
+        field_type: integer
+        required: true
+      name:
+        description: Tag label text
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  ApiResponse:
+    abstract: true
+    id_field: code
+    description: Generic API response wrapper with status info
+    fields:
+      code:
+        description: HTTP-style numeric status code
+        field_type: integer
+        required: true
+      type:
+        description: Response type classifier string
+        field_type: string
+        required: false
+        string_semantics: short
+      message:
+        description: Human-readable response message
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations: {}
+capabilities:
+  pet_create:
+    description: Add a new pet to the store inventory
+    kind: create
+    entity: Pet
+  pet_update:
+    description: Update an existing pet's information
+    kind: update
+    entity: Pet
+  pet_findByStatus:
+    description: Find pets filtered by adoption status
+    kind: query
+    entity: Pet
+    parameters:
+    - name: status
+      type: select
+      required: true
+      allowed_values:
+      - available
+      - pending
+      - sold
+  pet_findByTags:
+    description: Find pets matching one or more tags
+    kind: query
+    entity: Pet
+    parameters:
+    - name: tags
+      type: array
+      required: true
+      items:
+        type: string
+  pet_get:
+    description: Retrieve a single pet by its ID
+    kind: get
+    entity: Pet
+    provides:
+    - id
+    - name
+    - photoUrls
+    - status
+  pet_updateForm:
+    description: Partially update a pet via form fields
+    kind: update
+    entity: Pet
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: status
+      type: select
+      required: false
+      allowed_values:
+      - available
+      - pending
+      - sold
+  pet_delete:
+    description: Remove a pet from the store
+    kind: delete
+    entity: Pet
+  pet_uploadImage:
+    description: Upload a photo for an existing pet
+    kind: action
+    entity: Pet
+    parameters:
+    - name: file
+      type: json
+      required: true
+    - name: additionalMetadata
+      type: string
+      required: false
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Upload a photo for an existing pet
+  order_create:
+    description: Place a new purchase order for a pet
+    kind: create
+    entity: Order
+  order_get:
+    description: Retrieve a purchase order by its ID
+    kind: get
+    entity: Order
+    provides:
+    - id
+    - quantity
+    - shipDate
+    - status
+    - complete
+  order_delete:
+    description: Cancel and remove a purchase order
+    kind: delete
+    entity: Order
+  user_create:
+    description: Register a new user account
+    kind: create
+    entity: User
+  user_createList:
+    description: Bulk-create multiple user accounts at once
+    kind: create
+    entity: User
+  user_login:
+    description: Authenticate a user and start a session
+    kind: action
+    entity: User
+    parameters:
+    - name: username
+      type: string
+      required: false
+      string_semantics: short
+    - name: password
+      type: string
+      required: false
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Authenticate a user and start a session
+  user_logout:
+    description: End the current user session
+    kind: action
+    entity: User
+    output:
+      type: side_effect
+      description: End the current user session
+  user_get:
+    description: Retrieve a user profile by username
+    kind: get
+    entity: User
+    provides:
+    - id
+    - username
+    - firstName
+    - lastName
+    - email
+    - password
+    - phone
+    - userStatus
+  user_update:
+    description: Modify an existing user's profile
+    kind: update
+    entity: User
+  user_delete:
+    description: Remove a user account from the system
+    kind: delete
+    entity: User

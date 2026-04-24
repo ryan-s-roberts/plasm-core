@@ -1,0 +1,3313 @@
+version: 16
+
+http_backend: https://api.vultr.com
+
+entities:
+  Account:
+    id_field: email
+    description: Vultr account profile and billing flags for the authenticated user
+    fields:
+      email:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      balance:
+        field_type: number
+        required: false
+      pending_charges:
+        field_type: number
+        required: false
+      last_payment_amount:
+        field_type: number
+        required: false
+      last_payment_date:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      acls:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+    relations: {}
+
+  AccountBgp:
+    id_field: id
+    implicit_request_identity: true
+    description: Public BGP status for the authenticated account
+    fields:
+      enabled:
+        field_type: boolean
+        required: false
+      asn:
+        field_type: integer
+        required: false
+      password:
+        field_type: string
+        path: pasword
+        string_semantics: short
+        required: false
+    relations: {}
+
+  AccountBandwidth:
+    id_field: id
+    implicit_request_identity: true
+    description: Aggregated bandwidth and usage meters for the authenticated account
+    fields:
+      usage:
+        field_type: json
+        path: bandwidth
+        required: false
+    relations: {}
+
+  Region:
+    id_field: id
+    description: A Vultr deployment region
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      city:
+        field_type: string
+        required: false
+        string_semantics: short
+      country:
+        field_type: string
+        required: false
+        string_semantics: short
+      continent:
+        field_type: string
+        required: false
+        string_semantics: short
+      options:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      connectivity:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+    relations:
+      instances:
+        target: Instance
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: instance_query
+          param: region
+
+  Plan:
+    id_field: id
+    description: A deployable Vultr compute plan and associated pricing
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      vcpu_count:
+        field_type: integer
+        required: false
+      ram:
+        field_type: integer
+        required: false
+      disk:
+        field_type: integer
+        required: false
+      disk_count:
+        field_type: integer
+        required: false
+      bandwidth:
+        field_type: integer
+        required: false
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      locations:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      monthly_cost:
+        field_type: number
+        required: false
+      hourly_cost:
+        field_type: number
+        required: false
+    relations: {}
+
+  BareMetalPlan:
+    id_field: id
+    description: A bare metal server plan at Vultr
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      cpu_count:
+        field_type: integer
+        required: false
+      cpu_threads:
+        field_type: integer
+        required: false
+      cpu_model:
+        field_type: string
+        required: false
+        string_semantics: short
+      ram:
+        field_type: integer
+        required: false
+      disk:
+        field_type: integer
+        required: false
+      disk_count:
+        field_type: integer
+        required: false
+      bandwidth:
+        field_type: integer
+        required: false
+      locations:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+    relations: {}
+
+  Os:
+    id_field: id
+    description: A Vultr OS or application image that can be selected at deploy time
+    fields:
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      arch:
+        field_type: string
+        required: false
+        string_semantics: short
+      family:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  Application:
+    id_field: id
+    description: A One-Click or Marketplace application image
+    fields:
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      vendor:
+        field_type: string
+        required: false
+        string_semantics: short
+      short_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      deploy_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      image_id:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  BillingLine:
+    id_field: id
+    description: A line on the account billing or credit history
+    fields:
+      id:
+        field_type: integer
+        required: true
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      amount:
+        field_type: number
+        required: false
+      balance:
+        field_type: number
+        required: false
+      date:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations: {}
+
+  Invoice:
+    id_field: id
+    description: A billing invoice or credit document
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      amount:
+        field_type: number
+        required: false
+      date:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations: {}
+
+  ApiKey:
+    id_field: id
+    description: A Vultr account API key row (value is always masked in list and get, except for create)
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      masked_key:
+        field_type: string
+        path: api_key
+        string_semantics: short
+        required: false
+      expire:
+        field_type: boolean
+        required: false
+      date_expire:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations: {}
+
+  User:
+    id_field: id
+    description: A user account in your Vultr team, with their own API keys and ACLs
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      first_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      last_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+      api_enabled:
+        field_type: boolean
+        required: false
+      service_user:
+        field_type: boolean
+        required: false
+      status:
+        field_type: boolean
+        required: false
+      invited_by:
+        field_type: string
+        required: false
+        string_semantics: short
+      invited_on:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      invite_accepted:
+        field_type: boolean
+        required: false
+      last_activity:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      acls:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+    relations: {}
+
+  SshKey:
+    id_field: id
+    description: A public SSH key you can copy onto new server deployments
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      public_key:
+        field_type: string
+        path: ssh_key
+        string_semantics: short
+        required: false
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations: {}
+
+  IamPolicy:
+    id_field: id
+    description: IAM access policy (pre-release API) attached to roles and the account
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      version:
+        field_type: string
+        required: false
+        string_semantics: short
+      is_system_policy:
+        field_type: boolean
+        required: false
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      policy_document:
+        field_type: json
+        required: false
+    relations: {}
+
+  IamRole:
+    id_field: id
+    description: An IAM role bundling one or more policies
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      role_type:
+        field_type: string
+        string_semantics: short
+        required: false
+      max_session_duration:
+        field_type: integer
+        required: false
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      policies:
+        field_type: json
+        required: false
+    relations: {}
+
+  IamGroup:
+    id_field: id
+    description: An IAM group that bundles users
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      display_name:
+        field_type: string
+        string_semantics: short
+        required: false
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      last_activity:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      date_updated:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      members:
+        field_type: json
+        required: false
+    relations: {}
+
+  Vpc:
+    id_field: id
+    description: A per-region private network you attach instances to
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      v4_subnet:
+        field_type: string
+        required: false
+        string_semantics: short
+      v4_subnet_mask:
+        field_type: integer
+        required: false
+      nodes:
+        field_type: json
+        required: false
+    relations: {}
+
+  FirewallGroup:
+    id_field: id
+    description: A group of firewall rules that you bind to one or more instances
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      date_modified:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      instance_count:
+        field_type: integer
+        required: false
+      rule_count:
+        field_type: integer
+        required: false
+      max_rule_count:
+        field_type: integer
+        required: false
+    relations:
+      rules:
+        target: FirewallRule
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: firewallrule_query
+          param: firewall_group_id
+      instances:
+        target: Instance
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: instance_query
+          param: firewall_group_id
+
+  Instance:
+    id_field: id
+    description: A Vultr cloud instance (VPS) in your account
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      hostname:
+        field_type: string
+        required: false
+        string_semantics: short
+      os:
+        field_type: string
+        required: false
+        string_semantics: short
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      plan:
+        field_type: entity_ref
+        target: Plan
+        required: false
+      main_ip:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      power_status:
+        field_type: string
+        required: false
+        string_semantics: short
+      server_status:
+        field_type: string
+        required: false
+        string_semantics: short
+      ram:
+        field_type: integer
+        required: false
+      disk:
+        field_type: integer
+        required: false
+      vcpu_count:
+        field_type: integer
+        required: false
+      os_id:
+        field_type: entity_ref
+        target: Os
+        required: false
+      app_id:
+        field_type: entity_ref
+        target: Application
+        required: false
+      image_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      allowed_bandwidth:
+        field_type: integer
+        required: false
+      pending_charges:
+        field_type: number
+        required: false
+      firewall_group_id:
+        field_type: entity_ref
+        target: FirewallGroup
+        required: false
+      vpcs:
+        field_type: json
+        required: false
+      features:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      tags:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+    relations: {}
+
+  ReservedIp:
+    id_field: id
+    description: A region-scoped reserved or floating IPv4 or IPv6 address
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      ip_type:
+        field_type: select
+        required: false
+        allowed_values: [v4, v6]
+      subnet:
+        field_type: string
+        required: false
+        string_semantics: short
+      subnet_size:
+        field_type: integer
+        required: false
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      instance_id:
+        field_type: entity_ref
+        target: Instance
+        required: false
+    relations: {}
+
+  LoadBalancer:
+    id_field: id
+    description: A regional L4/L7 load balancer in front of one or more instances
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      ipv4:
+        field_type: string
+        required: false
+        string_semantics: short
+      ipv6:
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      pending_charges:
+        field_type: number
+        required: false
+      has_ssl:
+        field_type: boolean
+        required: false
+      http2:
+        field_type: boolean
+        required: false
+      http3:
+        field_type: boolean
+        required: false
+      nodes:
+        field_type: integer
+        required: false
+      cname:
+        field_type: string
+        required: false
+        string_semantics: short
+      generic_info:
+        field_type: json
+        path: generic_info
+        required: false
+      health_check:
+        field_type: json
+        path: health_check
+        required: false
+      forwarding_rules:
+        field_type: json
+        path: forwarding_rules
+        required: false
+      node_ips:
+        field_type: json
+        path: node_ips
+        required: false
+    relations: {}
+
+  FirewallRule:
+    id_field: id
+    key_vars: [firewall_group_id, id]
+    description: A single rule inside a firewall group, scoped to that group
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      firewall_group_id:
+        field_type: entity_ref
+        target: FirewallGroup
+        required: true
+      kind:
+        field_type: select
+        path: type
+        required: false
+        allowed_values: [v4, v6]
+      ip_type:
+        field_type: select
+        required: false
+        allowed_values: [v4, v6]
+      action:
+        field_type: string
+        required: false
+        string_semantics: short
+      protocol:
+        field_type: select
+        required: false
+        allowed_values: [tcp, udp, icmp, gre, esp, ah]
+      port:
+        field_type: string
+        required: false
+        string_semantics: short
+      subnet:
+        field_type: string
+        required: false
+        string_semantics: short
+      subnet_size:
+        field_type: integer
+        required: false
+      source:
+        field_type: string
+        required: false
+        string_semantics: short
+      notes:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  Snapshot:
+    id_field: id
+    description: A point-in-time block snapshot of a compute instance or imported image
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      size:
+        field_type: integer
+        required: false
+      compressed_size:
+        field_type: integer
+        required: false
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      os_id:
+        field_type: entity_ref
+        target: Os
+        required: false
+      app_id:
+        field_type: entity_ref
+        target: Application
+        required: false
+    relations: {}
+
+  BlockStorage:
+    id_field: id
+    description: A block volume that can be attached to a compute instance in one region
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      cost:
+        field_type: number
+        required: false
+      status:
+        field_type: select
+        required: false
+        allowed_values: [pending, active]
+      size_gb:
+        field_type: integer
+        required: false
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      attached_to_instance:
+        field_type: entity_ref
+        target: Instance
+        required: false
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      mount_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      block_type:
+        field_type: select
+        required: false
+        allowed_values: [high_perf, storage_opt]
+    relations: {}
+
+  Iso:
+    id_field: id
+    description: A private ISO image in the account, or a catalog entry used when deploying
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      filename:
+        field_type: string
+        required: false
+        string_semantics: short
+      size:
+        field_type: integer
+        required: false
+      md5sum:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  StartupScript:
+    id_field: id
+    description: A user-supplied script executed on first boot (payload is base64 on the wire)
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      date_modified:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: select
+        required: false
+        allowed_values: [boot, pxe]
+      script:
+        field_type: blob
+        required: false
+    relations: {}
+
+  Backup:
+    id_field: id
+    description: An automatic backup of an instance as retained by the platform
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      size:
+        field_type: integer
+        required: false
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      os_id:
+        field_type: entity_ref
+        target: Os
+        required: false
+      app_id:
+        field_type: entity_ref
+        target: Application
+        required: false
+    relations: {}
+
+  DnsDomain:
+    id_field: domain
+    description: A DNS zone hosted on Vultr
+    fields:
+      domain:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      dns_sec:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      records:
+        target: DnsRecord
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: dnsrecord_query
+          param: domain
+
+  DnsRecord:
+    id_field: id
+    key_vars: [domain, id]
+    description: A single DNS record row inside a domain zone
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      domain:
+        field_type: entity_ref
+        target: DnsDomain
+        required: true
+      type:
+        field_type: select
+        required: false
+        allowed_values: [A, AAAA, CNAME, NS, MX, SRV, TXT, CAA, SSHFP]
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      data:
+        field_type: string
+        required: false
+        string_semantics: short
+      priority:
+        field_type: integer
+        required: false
+      ttl:
+        field_type: integer
+        required: false
+    relations: {}
+
+  ObjectStorage:
+    id_field: id
+    description: S3-compatible object storage subscription in a cluster and region
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      cluster_id:
+        field_type: integer
+        required: false
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      s3_hostname:
+        field_type: string
+        required: false
+        string_semantics: short
+      s3_access_key:
+        field_type: string
+        required: false
+        string_semantics: short
+      s3_secret_key:
+        field_type: string
+        required: false
+        string_semantics: short
+      pending_charges:
+        field_type: number
+        required: false
+    relations: {}
+
+  ManagedDatabase:
+    id_field: id
+    description: A managed MySQL, PostgreSQL, Valkey, or Kafka cluster
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      plan:
+        field_type: string
+        required: false
+        string_semantics: short
+      plan_disk:
+        field_type: integer
+        required: false
+      plan_ram:
+        field_type: integer
+        required: false
+      plan_vcpus:
+        field_type: integer
+        required: false
+      plan_replicas:
+        field_type: integer
+        required: false
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      database_engine:
+        field_type: string
+        required: false
+        string_semantics: short
+      database_engine_version:
+        field_type: integer
+        required: false
+      vpc_id:
+        field_type: entity_ref
+        target: Vpc
+        required: false
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      tag:
+        field_type: string
+        required: false
+        string_semantics: short
+      dbname:
+        field_type: string
+        required: false
+        string_semantics: short
+      host:
+        field_type: string
+        required: false
+        string_semantics: short
+      public_host:
+        field_type: string
+        required: false
+        string_semantics: short
+      user:
+        field_type: string
+        required: false
+        string_semantics: short
+      password:
+        field_type: string
+        required: false
+        string_semantics: short
+      port:
+        field_type: integer
+        required: false
+      maintenance_dow:
+        field_type: select
+        required: false
+        allowed_values:
+          [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+      maintenance_time:
+        field_type: string
+        required: false
+        string_semantics: short
+      backup_hour:
+        field_type: string
+        required: false
+        string_semantics: short
+      backup_minute:
+        field_type: string
+        required: false
+        string_semantics: short
+      pending_charges:
+        field_type: number
+        required: false
+    relations: {}
+
+  KubernetesCluster:
+    id_field: id
+    description: A Vultr managed Kubernetes (VKE) control plane and its node pool summary
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      version:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      endpoint:
+        field_type: string
+        required: false
+        string_semantics: short
+      ip:
+        field_type: string
+        required: false
+        string_semantics: short
+      cluster_subnet:
+        field_type: string
+        required: false
+        string_semantics: short
+      service_subnet:
+        field_type: string
+        required: false
+        string_semantics: short
+      ha_controlplanes:
+        field_type: boolean
+        required: false
+      firewall_group_id:
+        field_type: entity_ref
+        target: FirewallGroup
+        required: false
+      oidc:
+        field_type: json
+        required: false
+      node_pools:
+        field_type: json
+        path: node_pools
+        required: false
+      vpcs:
+        field_type: json
+        path: vpcs
+        required: false
+    relations:
+      vke_node_pools:
+        target: KubernetesNodePool
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: kubernetesnodepool_query
+          param: vke_id
+      available_versions:
+        target: VkeAvailableUpgrade
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: vkeavailableupgrade_query
+          param: vke_id
+
+  BareMetal:
+    id_field: id
+    description: A dedicated bare metal server (distinct from a bare metal plan catalog row)
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      os:
+        field_type: string
+        required: false
+        string_semantics: short
+      main_ip:
+        field_type: string
+        required: false
+        string_semantics: short
+      region:
+        field_type: entity_ref
+        target: Region
+        required: false
+      plan:
+        field_type: entity_ref
+        target: BareMetalPlan
+        required: false
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      hostname:
+        field_type: string
+        required: false
+        string_semantics: short
+      os_id:
+        field_type: entity_ref
+        target: Os
+        required: false
+      app_id:
+        field_type: entity_ref
+        target: Application
+        required: false
+      image_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      snapshot_id:
+        field_type: entity_ref
+        target: Snapshot
+        required: false
+      features:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      tags:
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      vpcs:
+        field_type: json
+        path: vpcs
+        required: false
+      vnc_url:
+        field_type: string
+        path: url
+        required: false
+        string_semantics: short
+    relations:
+      ipv4_addresses:
+        target: BareMetalIpV4
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: baremetalipv4_query
+          bindings:
+            bare_metal_id: id
+      ipv6_addresses:
+        target: BareMetalIpV6
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: baremetalipv6_query
+          bindings:
+            bare_metal_id: id
+      vpc_networks:
+        target: BareMetalVpcAttachment
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: baremetalvpc_query
+          bindings:
+            bare_metal_id: id
+      legacy_vpc2_networks:
+        target: BareMetalVpc2Attachment
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: baremetalvpc2_query
+          bindings:
+            bare_metal_id: id
+
+  CdnPullZone:
+    id_field: id
+    description: A CDN origin-pull zone in front of an existing HTTP or HTTPS site
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      status:
+        field_type: select
+        required: false
+        allowed_values: [active, pending]
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      origin_scheme:
+        field_type: select
+        required: false
+        allowed_values: [http, https]
+      origin_domain:
+        field_type: string
+        required: false
+        string_semantics: short
+      cdn_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      vanity_domain:
+        field_type: string
+        required: false
+        string_semantics: short
+      cache_size:
+        field_type: integer
+        required: false
+      cors:
+        field_type: boolean
+        required: false
+      gzip:
+        field_type: boolean
+        required: false
+      block_ai:
+        field_type: boolean
+        required: false
+      block_bad_bots:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  CdnPushZone:
+    id_field: id
+    description: A CDN push zone for uploading static assets to the edge
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      status:
+        field_type: select
+        required: false
+        allowed_values: [active, pending]
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      cdn_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      vanity_domain:
+        field_type: string
+        required: false
+        string_semantics: short
+      cache_size:
+        field_type: integer
+        required: false
+      cors:
+        field_type: boolean
+        required: false
+      gzip:
+        field_type: boolean
+        required: false
+      block_ai:
+        field_type: boolean
+        required: false
+      block_bad_bots:
+        field_type: boolean
+        required: false
+    relations:
+      files:
+        target: CdnPushZoneFile
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: cdnpushzonefile_query
+          param: push_zone_id
+
+  KubernetesVersion:
+    id_field: id
+    description: A Vultr-supported major Kubernetes version string offered for new VKE clusters
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+
+  KubernetesNodePool:
+    id_field: id
+    key_vars: [vke_id, id]
+    description: A worker node pool belonging to a managed VKE cluster
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      vke_id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      date_updated:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      tag:
+        field_type: string
+        required: false
+        string_semantics: short
+      plan:
+        field_type: string
+        required: false
+        string_semantics: short
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+      node_quantity:
+        field_type: integer
+        required: false
+      min_nodes:
+        field_type: integer
+        required: false
+      max_nodes:
+        field_type: integer
+        required: false
+      auto_scaler:
+        field_type: boolean
+        required: false
+      nodes:
+        field_type: json
+        path: nodes
+        required: false
+      pool_labels:
+        field_type: json
+        path: labels
+        required: false
+      taints:
+        field_type: json
+        path: taints
+        required: false
+    relations:
+      vke_labels:
+        target: KubernetesNodePoolLabel
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: kubernetesnodepoollabel_query
+          bindings:
+            vke_id: vke_id
+            nodepool_id: id
+      vke_taints:
+        target: KubernetesNodePoolTaint
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: kubernetesnodepooltaint_query
+          bindings:
+            vke_id: vke_id
+            nodepool_id: id
+
+  KubernetesNodePoolLabel:
+    id_field: id
+    key_vars: [vke_id, nodepool_id, id]
+    description: A key-value label on a VKE node pool, managed as its own sub-resource
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      vke_id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+      nodepool_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      key:
+        field_type: string
+        required: false
+        string_semantics: short
+      value:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  KubernetesNodePoolTaint:
+    id_field: id
+    key_vars: [vke_id, nodepool_id, id]
+    description: A taint (key, value, effect) on a VKE node pool
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      vke_id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+      nodepool_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      key:
+        field_type: string
+        required: false
+        string_semantics: short
+      value:
+        field_type: string
+        required: false
+        string_semantics: short
+      effect:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  KubernetesNodePoolNode:
+    id_field: id
+    key_vars: [vke_id, nodepool_id, id]
+    description: A single worker node in a VKE node pool, addressable for replace or recycle operations
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      vke_id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+      nodepool_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      label:
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      status:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  CdnUploadEndpoint:
+    id_field: url
+    description: A time-limited upload slot for a push-zone object, including a target URL and form fields the client must submit
+    fields:
+      url:
+        field_type: string
+        path: URL
+        required: true
+        string_semantics: short
+      inputs:
+        field_type: json
+        path: inputs
+        required: false
+    relations: {}
+
+  CdnPushZoneFile:
+    id_field: name
+    key_vars: [push_zone_id, name]
+    description: A file object stored in a push zone at the origin after upload
+    fields:
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      push_zone_id:
+        field_type: entity_ref
+        target: CdnPushZone
+        required: true
+      size:
+        field_type: integer
+        required: false
+      last_modified:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      mime:
+        field_type: string
+        required: false
+        string_semantics: short
+      content:
+        field_type: blob
+        required: false
+    relations: {}
+
+  VkeResourceInventory:
+    id_field: id
+    description: Block storage and load balancer add-ons the provider associates with a given VKE cluster
+    fields:
+      id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+      resources:
+        field_type: json
+        path: resources
+        required: false
+    relations: {}
+
+  VkeKubeconfig:
+    id_field: id
+    description: The kubectl connection file (usually YAML) for a managed VKE cluster, for use with KUBECONFIG or kubectl
+    fields:
+      id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+      content:
+        field_type: blob
+        path: [__plasm_attachment]
+        required: true
+        mime_type_hint: application/x-yaml
+        attachment_media: document
+    relations: {}
+
+  VkeAvailableUpgrade:
+    id_field: id
+    key_vars: [vke_id, id]
+    description: A Kubernetes version string the control plane may be upgraded to for a given cluster
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      vke_id:
+        field_type: entity_ref
+        target: KubernetesCluster
+        required: true
+    relations: {}
+
+  BareMetalIpV4:
+    id_field: ip
+    key_vars: [bare_metal_id, ip]
+    description: An IPv4 address assignment on a bare metal host, including reverse-DNS when present
+    fields:
+      ip:
+        field_type: string
+        required: true
+        string_semantics: short
+      bare_metal_id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      netmask:
+        field_type: string
+        required: false
+        string_semantics: short
+      gateway:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      reverse:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  BareMetalIpV6:
+    id_field: ip
+    key_vars: [bare_metal_id, ip]
+    description: An IPv6 address and prefix information for a bare metal host
+    fields:
+      ip:
+        field_type: string
+        required: true
+        string_semantics: short
+      bare_metal_id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      network:
+        field_type: string
+        required: false
+        string_semantics: short
+      network_size:
+        field_type: integer
+        required: false
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  BareMetalBandwidth:
+    id_field: id
+    description: Per-day ingress and egress byte totals for a bare metal instance, keyed by local date
+    fields:
+      id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      series:
+        field_type: json
+        path: bandwidth
+        required: false
+    relations: {}
+
+  BareMetalUserData:
+    id_field: id
+    description: User data or first-boot material supplied when the bare metal instance was created, as the provider later exposes it
+    fields:
+      id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      data:
+        field_type: blob
+        path: [user_data, data]
+        required: false
+    relations: {}
+
+  BareMetalUpgradeCatalog:
+    id_field: id
+    description: Eligible plan, OS, and one-click application upgrades the provider offers for a bare metal instance
+    fields:
+      id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      upgrades:
+        field_type: json
+        path: upgrades
+        required: false
+    relations: {}
+
+  BareMetalVpcAttachment:
+    id_field: id
+    key_vars: [bare_metal_id, id]
+    description: A VPC network attachment and private address row for a bare metal instance
+    fields:
+      id:
+        field_type: entity_ref
+        target: Vpc
+        required: true
+      bare_metal_id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      mac_address:
+        field_type: string
+        required: false
+        string_semantics: short
+      ip_address:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  BareMetalVpc2Attachment:
+    id_field: id
+    key_vars: [bare_metal_id, id]
+    description: A legacy VPC 2.0 style attachment for bare metal; new integrations should use BareMetalVpcAttachment
+    fields:
+      id:
+        field_type: entity_ref
+        target: Vpc
+        required: true
+      bare_metal_id:
+        field_type: entity_ref
+        target: BareMetal
+        required: true
+      mac_address:
+        field_type: string
+        required: false
+        string_semantics: short
+      ip_address:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+capabilities:
+  account_get:
+    kind: get
+    entity: Account
+  account_bgp_get:
+    kind: get
+    entity: AccountBgp
+  account_bandwidth_get:
+    kind: get
+    entity: AccountBandwidth
+  region_query:
+    kind: query
+    entity: Region
+  plan_query:
+    kind: query
+    entity: Plan
+    parameters:
+    - name: type
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: os
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+  bare_metal_plan_query:
+    kind: query
+    entity: BareMetalPlan
+  os_query:
+    kind: query
+    entity: Os
+  application_query:
+    kind: query
+    entity: Application
+    parameters:
+    - name: type
+      type: select
+      required: false
+      allowed_values: [all, marketplace, one-click]
+  billingline_query:
+    kind: query
+    entity: BillingLine
+  invoice_query:
+    kind: query
+    entity: Invoice
+  invoice_get:
+    kind: get
+    entity: Invoice
+  apikey_query:
+    kind: query
+    entity: ApiKey
+  apikey_get:
+    kind: get
+    entity: ApiKey
+  apikey_create:
+    kind: create
+    entity: ApiKey
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: expire
+      type: boolean
+      required: false
+    - name: date_expire
+      type: date
+      value_format: rfc3339
+      required: false
+  apikey_delete:
+    kind: delete
+    entity: ApiKey
+  user_query:
+    kind: query
+    entity: User
+  user_get:
+    kind: get
+    entity: User
+  user_create:
+    kind: create
+    entity: User
+    parameters:
+    - name: email
+      type: string
+      required: true
+      string_semantics: short
+    - name: first_name
+      type: string
+      required: true
+      string_semantics: short
+    - name: last_name
+      type: string
+      required: true
+      string_semantics: short
+    - name: password
+      type: string
+      required: true
+      string_semantics: short
+    - name: api_enabled
+      type: boolean
+      required: false
+    - name: service_user
+      type: boolean
+      required: false
+    - name: acls
+      type: array
+      required: false
+      items:
+        type: string
+        string_semantics: short
+  user_update:
+    kind: update
+    entity: User
+    parameters:
+    - name: email
+      type: string
+      required: false
+      string_semantics: short
+    - name: first_name
+      type: string
+      required: false
+      string_semantics: short
+    - name: last_name
+      type: string
+      required: false
+      string_semantics: short
+    - name: password
+      type: string
+      required: false
+      string_semantics: short
+    - name: api_enabled
+      type: boolean
+      required: false
+    - name: acls
+      type: array
+      required: false
+      items:
+        type: string
+        string_semantics: short
+  user_delete:
+    kind: delete
+    entity: User
+  sshkey_query:
+    kind: query
+    entity: SshKey
+  sshkey_get:
+    kind: get
+    entity: SshKey
+  sshkey_create:
+    kind: create
+    entity: SshKey
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: key_material
+      type: string
+      required: true
+      string_semantics: short
+  sshkey_update:
+    kind: update
+    entity: SshKey
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: key_material
+      type: string
+      required: false
+      string_semantics: short
+  sshkey_delete:
+    kind: delete
+    entity: SshKey
+  iampolicy_query:
+    kind: query
+    entity: IamPolicy
+  iampolicy_get:
+    kind: get
+    entity: IamPolicy
+  iamrole_query:
+    kind: query
+    entity: IamRole
+  iamrole_get:
+    kind: get
+    entity: IamRole
+  iamgroup_query:
+    kind: query
+    entity: IamGroup
+  iamgroup_get:
+    kind: get
+    entity: IamGroup
+  vpc_query:
+    kind: query
+    entity: Vpc
+  vpc_get:
+    kind: get
+    entity: Vpc
+  vpc_create:
+    kind: create
+    entity: Vpc
+    parameters:
+    - name: region
+      type: entity_ref
+      target: Region
+      required: true
+    - name: description
+      type: string
+      required: true
+      string_semantics: short
+    - name: v4_subnet
+      type: string
+      required: true
+      string_semantics: short
+    - name: v4_subnet_mask
+      type: integer
+      required: true
+  vpc_update:
+    kind: update
+    entity: Vpc
+    parameters:
+    - name: description
+      type: string
+      required: true
+      string_semantics: short
+  vpc_delete:
+    kind: delete
+    entity: Vpc
+  firewallgroup_query:
+    kind: query
+    entity: FirewallGroup
+  firewallgroup_get:
+    kind: get
+    entity: FirewallGroup
+  firewallgroup_create:
+    kind: create
+    entity: FirewallGroup
+    parameters:
+    - name: description
+      type: string
+      required: true
+      string_semantics: short
+  firewallgroup_update:
+    kind: update
+    entity: FirewallGroup
+    parameters:
+    - name: description
+      type: string
+      required: true
+      string_semantics: short
+  firewallgroup_delete:
+    kind: delete
+    entity: FirewallGroup
+  instance_query:
+    kind: query
+    entity: Instance
+    parameters:
+    - name: tag
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: label
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: main_ip
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: region
+      type: entity_ref
+      target: Region
+      required: false
+      role: filter
+    - name: hostname
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: firewall_group_id
+      type: entity_ref
+      target: FirewallGroup
+      required: false
+    - name: show_pending_charges
+      type: boolean
+      required: false
+  instance_get:
+    kind: get
+    entity: Instance
+  instance_create:
+    kind: create
+    entity: Instance
+    parameters:
+    - name: region
+      type: entity_ref
+      target: Region
+      required: true
+    - name: plan
+      type: entity_ref
+      target: Plan
+      required: true
+    - name: os_id
+      type: entity_ref
+      target: Os
+      required: true
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+    - name: hostname
+      type: string
+      required: false
+      string_semantics: short
+    - name: enable_ipv6
+      type: boolean
+      required: false
+    - name: firewall_group_id
+      type: entity_ref
+      target: FirewallGroup
+      required: false
+  instance_update:
+    kind: update
+    entity: Instance
+    parameters:
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+    - name: hostname
+      type: string
+      required: false
+      string_semantics: short
+  instance_delete:
+    kind: delete
+    entity: Instance
+  instance_start:
+    kind: action
+    entity: Instance
+    output:
+      type: side_effect
+      description: Transitions a stopped instance to running power state.
+  instance_reboot:
+    kind: action
+    entity: Instance
+    output:
+      type: side_effect
+      description: Forcibly reboots the instance operating system and stack.
+  instance_halt:
+    kind: action
+    entity: Instance
+    output:
+      type: side_effect
+      description: Stops the instance so it no longer incurs full compute use (may still have storage charges).
+  reservedip_query:
+    kind: query
+    entity: ReservedIp
+  reservedip_get:
+    kind: get
+    entity: ReservedIp
+  reservedip_create:
+    kind: create
+    entity: ReservedIp
+    parameters:
+    - name: region
+      type: entity_ref
+      target: Region
+      required: true
+    - name: ip_type
+      type: select
+      required: true
+      allowed_values: [v4, v6]
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+  reservedip_update:
+    kind: update
+    entity: ReservedIp
+    parameters:
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+  reservedip_delete:
+    kind: delete
+    entity: ReservedIp
+  loadbalancer_query:
+    kind: query
+    entity: LoadBalancer
+  loadbalancer_get:
+    kind: get
+    entity: LoadBalancer
+  loadbalancer_create:
+    kind: create
+    entity: LoadBalancer
+    parameters:
+    - name: region
+      type: entity_ref
+      target: Region
+      required: true
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+    - name: nodes
+      type: integer
+      required: false
+    - name: ssl_redirect
+      type: boolean
+      required: false
+    - name: http2
+      type: boolean
+      required: false
+    - name: http3
+      type: boolean
+      required: false
+    - name: proxy_protocol
+      type: boolean
+      required: false
+    - name: timeout
+      type: integer
+      required: false
+    - name: balancing_algorithm
+      type: string
+      required: false
+      string_semantics: short
+    - name: vpc
+      type: entity_ref
+      target: Vpc
+      required: false
+  loadbalancer_update:
+    kind: update
+    entity: LoadBalancer
+    parameters:
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+    - name: nodes
+      type: integer
+      required: false
+    - name: ssl_redirect
+      type: boolean
+      required: false
+    - name: http2
+      type: boolean
+      required: false
+    - name: http3
+      type: boolean
+      required: false
+    - name: proxy_protocol
+      type: boolean
+      required: false
+    - name: timeout
+      type: integer
+      required: false
+    - name: balancing_algorithm
+      type: string
+      required: false
+      string_semantics: short
+  loadbalancer_delete:
+    kind: delete
+    entity: LoadBalancer
+  firewallrule_query:
+    kind: query
+    entity: FirewallRule
+    parameters:
+    - name: firewall_group_id
+      type: entity_ref
+      target: FirewallGroup
+      required: true
+      role: scope
+  firewallrule_get:
+    kind: get
+    entity: FirewallRule
+  firewallrule_create:
+    kind: create
+    entity: FirewallRule
+    parameters:
+    - name: firewall_group_id
+      type: entity_ref
+      target: FirewallGroup
+      required: true
+    - name: ip_type
+      type: select
+      required: true
+      allowed_values: [v4, v6]
+    - name: protocol
+      type: select
+      required: true
+      allowed_values: [tcp, udp, icmp, gre, esp, ah]
+    - name: subnet
+      type: string
+      required: true
+      string_semantics: short
+    - name: subnet_size
+      type: integer
+      required: true
+    - name: port
+      type: string
+      required: false
+      string_semantics: short
+    - name: source
+      type: string
+      required: false
+      string_semantics: short
+    - name: notes
+      type: string
+      required: false
+      string_semantics: short
+  firewallrule_delete:
+    kind: delete
+    entity: FirewallRule
+  snapshot_query:
+    kind: query
+    entity: Snapshot
+  snapshot_get:
+    kind: get
+    entity: Snapshot
+  snapshot_create:
+    kind: create
+    entity: Snapshot
+    parameters:
+    - name: instance_id
+      type: entity_ref
+      target: Instance
+      required: true
+    - name: description
+      type: string
+      required: false
+      string_semantics: short
+  snapshot_create_from_url:
+    kind: create
+    entity: Snapshot
+    parameters:
+    - name: url
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: short
+    - name: uefi
+      type: boolean
+      required: false
+  snapshot_delete:
+    kind: delete
+    entity: Snapshot
+  block_query:
+    kind: query
+    entity: BlockStorage
+  block_get:
+    kind: get
+    entity: BlockStorage
+  block_create:
+    kind: create
+    entity: BlockStorage
+    parameters:
+    - name: region
+      type: entity_ref
+      target: Region
+      required: true
+    - name: size_gb
+      type: integer
+      required: true
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+    - name: block_type
+      type: select
+      required: false
+      allowed_values: [high_perf, storage_opt]
+    - name: snapshot_id
+      type: entity_ref
+      target: Snapshot
+      required: false
+    - name: bootable
+      type: boolean
+      required: false
+  block_update:
+    kind: update
+    entity: BlockStorage
+    parameters:
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+    - name: size_gb
+      type: integer
+      required: false
+  block_delete:
+    kind: delete
+    entity: BlockStorage
+  block_attach:
+    kind: action
+    entity: BlockStorage
+    output:
+      type: side_effect
+      description: Attaches this block volume to an instance, with optional live attach to avoid reboot.
+    parameters:
+    - name: instance_id
+      type: entity_ref
+      target: Instance
+      required: true
+    - name: live
+      type: boolean
+      required: false
+  block_detach:
+    kind: action
+    entity: BlockStorage
+    output:
+      type: side_effect
+      description: Detaches this block volume, with optional live detach to avoid reboot.
+    parameters:
+    - name: live
+      type: boolean
+      required: false
+  iso_query:
+    kind: query
+    entity: Iso
+  iso_get:
+    kind: get
+    entity: Iso
+  iso_create:
+    kind: create
+    entity: Iso
+    parameters:
+    - name: url
+      type: string
+      required: true
+      string_semantics: short
+  iso_delete:
+    kind: delete
+    entity: Iso
+  startupscript_query:
+    kind: query
+    entity: StartupScript
+  startupscript_get:
+    kind: get
+    entity: StartupScript
+  startupscript_create:
+    kind: create
+    entity: StartupScript
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: type
+      type: select
+      required: true
+      allowed_values: [boot, pxe]
+    - name: script
+      type: blob
+      required: true
+  startupscript_update:
+    kind: update
+    entity: StartupScript
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: script
+      type: blob
+      required: false
+  startupscript_delete:
+    kind: delete
+    entity: StartupScript
+  backup_query:
+    kind: query
+    entity: Backup
+  backup_get:
+    kind: get
+    entity: Backup
+  dnsdomain_query:
+    kind: query
+    entity: DnsDomain
+  dnsdomain_get:
+    kind: get
+    entity: DnsDomain
+  dnsdomain_create:
+    kind: create
+    entity: DnsDomain
+    parameters:
+    - name: domain
+      type: string
+      required: true
+      string_semantics: short
+    - name: ip
+      type: string
+      required: false
+      string_semantics: short
+    - name: dns_sec
+      type: string
+      required: false
+      string_semantics: short
+  dnsdomain_delete:
+    kind: delete
+    entity: DnsDomain
+  dnsrecord_query:
+    kind: query
+    entity: DnsRecord
+    parameters:
+    - name: domain
+      type: entity_ref
+      target: DnsDomain
+      required: true
+      role: scope
+  dnsrecord_get:
+    kind: get
+    entity: DnsRecord
+  dnsrecord_create:
+    kind: create
+    entity: DnsRecord
+    parameters:
+    - name: domain
+      type: entity_ref
+      target: DnsDomain
+      required: true
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: type
+      type: select
+      required: true
+      allowed_values: [A, AAAA, CNAME, NS, MX, SRV, TXT, CAA, SSHFP]
+    - name: data
+      type: string
+      required: true
+      string_semantics: short
+    - name: ttl
+      type: integer
+      required: true
+    - name: priority
+      type: integer
+      required: false
+  dnsrecord_update:
+    kind: update
+    entity: DnsRecord
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: data
+      type: string
+      required: false
+      string_semantics: short
+    - name: ttl
+      type: integer
+      required: false
+    - name: priority
+      type: integer
+      required: false
+  dnsrecord_delete:
+    kind: delete
+    entity: DnsRecord
+  objectstorage_query:
+    kind: query
+    entity: ObjectStorage
+  objectstorage_get:
+    kind: get
+    entity: ObjectStorage
+  objectstorage_create:
+    kind: create
+    entity: ObjectStorage
+    parameters:
+    - name: cluster_id
+      type: integer
+      required: true
+    - name: tier_id
+      type: integer
+      required: true
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+  objectstorage_update:
+    kind: update
+    entity: ObjectStorage
+    parameters:
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+  objectstorage_delete:
+    kind: delete
+    entity: ObjectStorage
+  manageddatabase_query:
+    kind: query
+    entity: ManagedDatabase
+  manageddatabase_get:
+    kind: get
+    entity: ManagedDatabase
+  manageddatabase_create:
+    kind: create
+    entity: ManagedDatabase
+    parameters:
+    - name: database_engine
+      type: string
+      required: true
+      string_semantics: short
+    - name: database_engine_version
+      type: integer
+      required: true
+    - name: region
+      type: entity_ref
+      target: Region
+      required: true
+    - name: plan
+      type: string
+      required: true
+      string_semantics: short
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+    - name: tag
+      type: string
+      required: false
+      string_semantics: short
+    - name: vpc_id
+      type: entity_ref
+      target: Vpc
+      required: false
+    - name: maintenance_dow
+      type: select
+      required: false
+      allowed_values:
+        [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    - name: maintenance_time
+      type: string
+      required: false
+      string_semantics: short
+    - name: backup_hour
+      type: string
+      required: false
+      string_semantics: short
+    - name: backup_minute
+      type: string
+      required: false
+      string_semantics: short
+  manageddatabase_update:
+    kind: update
+    entity: ManagedDatabase
+    parameters:
+    - name: plan
+      type: string
+      required: false
+      string_semantics: short
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+    - name: tag
+      type: string
+      required: false
+      string_semantics: short
+  manageddatabase_delete:
+    kind: delete
+    entity: ManagedDatabase
+  kubernetescluster_query:
+    kind: query
+    entity: KubernetesCluster
+  kubernetescluster_get:
+    kind: get
+    entity: KubernetesCluster
+  kubernetescluster_create:
+    kind: create
+    entity: KubernetesCluster
+    parameters:
+    - name: input
+      type: json
+      required: true
+  kubernetescluster_update:
+    kind: update
+    entity: KubernetesCluster
+    parameters:
+    - name: input
+      type: json
+      required: true
+  kubernetescluster_delete:
+    kind: delete
+    entity: KubernetesCluster
+  vkekubeconfig_get:
+    kind: get
+    entity: VkeKubeconfig
+    description: Fetches the raw kubeconfig document for a cluster; the control plane typically returns YAML bytes (non-JSON), which the client treats as a downloadable file.
+    provides:
+    - id
+    - content
+  vkeresourceinventory_get:
+    kind: get
+    entity: VkeResourceInventory
+  vkeavailableupgrade_query:
+    kind: query
+    entity: VkeAvailableUpgrade
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+      role: scope
+  kubernetescluster_start_upgrade:
+    kind: action
+    entity: KubernetesCluster
+    output:
+      type: side_effect
+      description: Enqueues a control plane upgrade to a target available Kubernetes version for this cluster.
+    parameters:
+    - name: upgrade_version
+      type: string
+      required: true
+      string_semantics: short
+  kubernetescluster_delete_with_linked_resources:
+    kind: delete
+    entity: KubernetesCluster
+  baremetal_query:
+    kind: query
+    entity: BareMetal
+  baremetal_get:
+    kind: get
+    entity: BareMetal
+  baremetal_create:
+    kind: create
+    entity: BareMetal
+    parameters:
+    - name: input
+      type: json
+      required: true
+  baremetal_update:
+    kind: update
+    entity: BareMetal
+    parameters:
+    - name: label
+      type: string
+      required: false
+      string_semantics: short
+    - name: tags
+      type: array
+      required: false
+      items:
+        type: string
+        string_semantics: short
+    - name: user_data
+      type: string
+      required: false
+      string_semantics: short
+  baremetal_delete:
+    kind: delete
+    entity: BareMetal
+  baremetal_start:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Powers on a stopped bare metal server.
+  baremetal_reboot:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Reboots the bare metal server and its operating system.
+  baremetal_halt:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Stops a running bare metal server.
+  baremetals_bulk_halt:
+    kind: action
+    entity: Account
+    output:
+      type: side_effect
+      description: Powers off every server whose id is listed, in one request.
+    parameters:
+    - name: bare_metal_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: BareMetal
+  baremetals_bulk_reboot:
+    kind: action
+    entity: Account
+    output:
+      type: side_effect
+      description: Reboots every server whose id is listed, in one request.
+    parameters:
+    - name: bare_metal_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: BareMetal
+  baremetals_bulk_start:
+    kind: action
+    entity: Account
+    output:
+      type: side_effect
+      description: Powers on every server whose id is listed, in one request.
+    parameters:
+    - name: bare_metal_ids
+      type: array
+      required: true
+      items:
+        type: entity_ref
+        target: BareMetal
+  baremetalipv4_query:
+    kind: query
+    entity: BareMetalIpV4
+    parameters:
+    - name: bare_metal_id
+      type: entity_ref
+      target: BareMetal
+      required: true
+      role: scope
+  baremetalipv6_query:
+    kind: query
+    entity: BareMetalIpV6
+    parameters:
+    - name: bare_metal_id
+      type: entity_ref
+      target: BareMetal
+      required: true
+      role: scope
+  baremetal_set_ipv4_reverse:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Publishes or updates reverse DNS (PTR) for a specific IPv4 address on this server.
+    parameters:
+    - name: ip
+      type: string
+      required: true
+      string_semantics: short
+    - name: reverse
+      type: string
+      required: true
+      string_semantics: short
+  baremetal_set_ipv6_reverse:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Publishes or updates reverse DNS (PTR) for a specific full-length IPv6 address on this server.
+    parameters:
+    - name: ip
+      type: string
+      required: true
+      string_semantics: short
+    - name: reverse
+      type: string
+      required: true
+      string_semantics: short
+  baremetal_set_ipv4_default_reverse:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Restores default Vultr reverse DNS for a given primary IPv4 address.
+    parameters:
+    - name: ip
+      type: string
+      required: true
+      string_semantics: short
+  baremetal_delete_ipv6_reverse:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Clears a user-defined reverse record for a specific IPv6 address.
+    parameters:
+    - name: ip
+      type: string
+      required: true
+      string_semantics: short
+  baremetalbandwidth_get:
+    kind: get
+    entity: BareMetalBandwidth
+  baremetaluserdata_get:
+    kind: get
+    entity: BareMetalUserData
+  baremetalupgradecatalog_get:
+    kind: get
+    entity: BareMetalUpgradeCatalog
+    parameters:
+    - name: type
+      type: select
+      required: false
+      role: filter
+      allowed_values: [all, applications, os]
+  baremetalvpc_query:
+    kind: query
+    entity: BareMetalVpcAttachment
+    parameters:
+    - name: bare_metal_id
+      type: entity_ref
+      target: BareMetal
+      required: true
+      role: scope
+  baremetalvpc2_query:
+    kind: query
+    entity: BareMetalVpc2Attachment
+    parameters:
+    - name: bare_metal_id
+      type: entity_ref
+      target: BareMetal
+      required: true
+      role: scope
+  baremetal_vpc2_attach:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Connects a legacy-style VPC 2.0 network with a chosen private address; new integrations should use the current VPC attach flow instead.
+    parameters:
+    - name: vpc_id
+      type: entity_ref
+      target: Vpc
+      required: true
+    - name: ip_address
+      type: string
+      required: true
+      string_semantics: short
+  baremetal_vpc2_detach:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Removes a previously attached legacy VPC 2.0 network from the server.
+    parameters:
+    - name: vpc_id
+      type: entity_ref
+      target: Vpc
+      required: true
+  cdnpullzone_query:
+    kind: query
+    entity: CdnPullZone
+  cdnpullzone_get:
+    kind: get
+    entity: CdnPullZone
+  cdnpullzone_create:
+    kind: create
+    entity: CdnPullZone
+    parameters:
+    - name: input
+      type: json
+      required: true
+  cdnpullzone_update:
+    kind: update
+    entity: CdnPullZone
+    parameters:
+    - name: input
+      type: json
+      required: true
+  cdnpullzone_delete:
+    kind: delete
+    entity: CdnPullZone
+  cdnpullzone_purge:
+    kind: action
+    entity: CdnPullZone
+    output:
+      type: side_effect
+      description: Invalidates cached content for the pull zone so the next fetches revalidate from the origin.
+  cdnpushzone_query:
+    kind: query
+    entity: CdnPushZone
+  cdnpushzone_get:
+    kind: get
+    entity: CdnPushZone
+  cdnpushzone_create:
+    kind: create
+    entity: CdnPushZone
+    parameters:
+    - name: input
+      type: json
+      required: true
+  cdnpushzone_update:
+    kind: update
+    entity: CdnPushZone
+    parameters:
+    - name: input
+      type: json
+      required: true
+  cdnpushzone_delete:
+    kind: delete
+    entity: CdnPushZone
+  kubernetesversion_query:
+    kind: query
+    entity: KubernetesVersion
+  kubernetesnodepool_query:
+    kind: query
+    entity: KubernetesNodePool
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+      role: scope
+  kubernetesnodepool_get:
+    kind: get
+    entity: KubernetesNodePool
+  kubernetesnodepool_create:
+    kind: create
+    entity: KubernetesNodePool
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+    - name: input
+      type: json
+      required: true
+  kubernetesnodepool_update:
+    kind: update
+    entity: KubernetesNodePool
+    parameters:
+    - name: input
+      type: json
+      required: true
+  kubernetesnodepool_delete:
+    kind: delete
+    entity: KubernetesNodePool
+  kubernetesnodepoollabel_query:
+    kind: query
+    entity: KubernetesNodePoolLabel
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+      role: scope
+    - name: nodepool_id
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+  kubernetesnodepoollabel_get:
+    kind: get
+    entity: KubernetesNodePoolLabel
+  kubernetesnodepoollabel_create:
+    kind: create
+    entity: KubernetesNodePoolLabel
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+    - name: nodepool_id
+      type: string
+      required: true
+      string_semantics: short
+    - name: key
+      type: string
+      required: true
+      string_semantics: short
+    - name: value
+      type: string
+      required: true
+      string_semantics: short
+  kubernetesnodepoollabel_delete:
+    kind: delete
+    entity: KubernetesNodePoolLabel
+  kubernetesnodepooltaint_query:
+    kind: query
+    entity: KubernetesNodePoolTaint
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+      role: scope
+    - name: nodepool_id
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+  kubernetesnodepooltaint_get:
+    kind: get
+    entity: KubernetesNodePoolTaint
+  kubernetesnodepooltaint_create:
+    kind: create
+    entity: KubernetesNodePoolTaint
+    parameters:
+    - name: vke_id
+      type: entity_ref
+      target: KubernetesCluster
+      required: true
+    - name: nodepool_id
+      type: string
+      required: true
+      string_semantics: short
+    - name: key
+      type: string
+      required: true
+      string_semantics: short
+    - name: value
+      type: string
+      required: true
+      string_semantics: short
+    - name: effect
+      type: string
+      required: true
+      string_semantics: short
+  kubernetesnodepooltaint_delete:
+    kind: delete
+    entity: KubernetesNodePoolTaint
+  kubernetesnodepoolnode_delete:
+    kind: delete
+    entity: KubernetesNodePoolNode
+  kubernetesnodepoolnode_recycle:
+    kind: action
+    entity: KubernetesNodePoolNode
+    output:
+      type: side_effect
+      description: Recycles a single worker node, replacing the underlying instance while preserving pool membership.
+  cdnpushzonefile_query:
+    kind: query
+    entity: CdnPushZoneFile
+    parameters:
+    - name: push_zone_id
+      type: entity_ref
+      target: CdnPushZone
+      required: true
+      role: scope
+  cdnpushzonefile_get:
+    kind: get
+    entity: CdnPushZoneFile
+  cdnpushzonefile_delete:
+    kind: delete
+    entity: CdnPushZoneFile
+  cdnpushzonefile_request_upload:
+    kind: create
+    entity: CdnUploadEndpoint
+    parameters:
+    - name: push_zone_id
+      type: entity_ref
+      target: CdnPushZone
+      required: true
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: size
+      type: integer
+      required: true
+  baremetal_reinstall:
+    kind: action
+    entity: BareMetal
+    provides:
+    - id
+    - status
+    - label
+    - main_ip
+    - region
+    - plan
+    - os
+    - hostname
+    - date_created
+    parameters:
+    - name: hostname
+      type: string
+      required: true
+      string_semantics: short
+  baremetal_vnc:
+    kind: action
+    entity: BareMetal
+    provides:
+    - vnc_url
+  baremetal_vpc_attach:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Joins this server to a VPC for private network traffic.
+    parameters:
+    - name: vpc_id
+      type: entity_ref
+      target: Vpc
+      required: true
+  baremetal_vpc_detach:
+    kind: action
+    entity: BareMetal
+    output:
+      type: side_effect
+      description: Removes this server from a previously attached VPC.
+    parameters:
+    - name: vpc_id
+      type: entity_ref
+      target: Vpc
+      required: true
+
+auth:
+  scheme: bearer_token
+  env: VULTR_API_KEY

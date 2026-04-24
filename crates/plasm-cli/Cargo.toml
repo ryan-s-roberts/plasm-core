@@ -1,0 +1,43 @@
+[package]
+name = "plasm-cli"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+[[bin]]
+name = "plasm"
+path = "src/main.rs"
+
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"
+
+[[bin]]
+name = "cache_demo"
+path = "src/bin/cache_demo.rs"
+
+[[bin]]
+name = "mock_server_demo"
+path = "src/bin/mock_server_demo.rs"
+
+[[bin]]
+name = "input_validation_demo"
+path = "src/bin/input_validation_demo.rs"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile" }
+plasm-runtime = { path = "../plasm-runtime" }
+plasm-mock = { path = "../plasm-mock" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_yaml = { workspace = true }
+indexmap = { workspace = true }
+beavuck-hermit = { workspace = true }
+axum = { workspace = true }
+url = { workspace = true }

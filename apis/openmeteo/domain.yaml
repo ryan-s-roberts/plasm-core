@@ -1,0 +1,74 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://api.open-meteo.com
+
+entities:
+  Forecast:
+    id_field: id
+    id_from:
+    - latitude
+    description: Weather forecast data for a geographic location
+    fields:
+      latitude:
+        description: Decimal latitude of the forecast location
+        field_type: number
+        required: true
+      longitude:
+        description: Decimal longitude of the forecast location
+        field_type: number
+        required: true
+      timezone:
+        description: IANA timezone name for the location
+        field_type: string
+        required: false
+        string_semantics: short
+      elevation:
+        description: Terrain elevation in metres
+        field_type: number
+        required: false
+capabilities:
+  weather_forecast:
+    description: Fetch weather forecast for a lat/lon coordinate
+    kind: query
+    entity: Forecast
+    parameters:
+    - name: latitude
+      type: number
+      required: true
+      role: filter
+    - name: longitude
+      type: number
+      required: true
+      role: filter
+    - name: current_weather
+      type: boolean
+      required: false
+      role: response_control
+    - name: temperature_unit
+      type: select
+      required: false
+      allowed_values:
+      - celsius
+      - fahrenheit
+      role: response_control
+    - name: wind_speed_unit
+      type: select
+      required: false
+      allowed_values:
+      - kmh
+      - ms
+      - mph
+      - kn
+      role: response_control
+    - name: timezone
+      type: string
+      required: false
+      role: response_control
+      string_semantics: short
+    - name: past_days
+      type: integer
+      required: false
+      role: filter

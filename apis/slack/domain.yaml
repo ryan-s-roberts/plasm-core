@@ -1,0 +1,1739 @@
+version: 1
+
+http_backend: https://slack.com/api
+
+entities:
+  Channel:
+    id_field: id
+    description: A Slack channel, DM, group DM, or multi-party IM (conversation)
+    fields:
+      id:
+        description: Channel identifier (e.g. C012AB3CDX)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: 'Channel name (without the # prefix)'
+        field_type: string
+        required: false
+        string_semantics: short
+      is_channel:
+        description: True for public channels
+        field_type: boolean
+        required: false
+      is_group:
+        description: True for private channels
+        field_type: boolean
+        required: false
+      is_im:
+        description: True for direct messages
+        field_type: boolean
+        required: false
+      is_mpim:
+        description: True for multi-party IMs
+        field_type: boolean
+        required: false
+      is_private:
+        description: True for private channels and DMs
+        field_type: boolean
+        required: false
+      is_archived:
+        description: True if the channel is archived
+        field_type: boolean
+        required: false
+      is_general:
+        description: 'True for the default #general channel'
+        field_type: boolean
+        required: false
+      is_member:
+        description: True if the calling user is a member
+        field_type: boolean
+        required: false
+      is_shared:
+        description: True if the channel is shared across workspaces
+        field_type: boolean
+        required: false
+      num_members:
+        description: Number of members in the channel
+        field_type: integer
+        required: false
+      topic:
+        description: Channel topic text
+        field_type: string
+        required: false
+        string_semantics: markdown
+      purpose:
+        description: Channel purpose text
+        field_type: string
+        required: false
+        string_semantics: markdown
+      created:
+        description: Channel creation Unix timestamp (seconds; Slack Web API)
+        field_type: date
+        value_format: unix_sec
+        required: false
+    relations:
+      messages:
+        description: Message history in this channel
+        target: Message
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: channel_history
+          param: channel
+      members:
+        description: Members of this channel
+        target: User
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: channel_members
+          param: channel
+      pins:
+        description: Pinned items in this channel
+        target: Pin
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: pin_list
+          param: channel
+      bookmarks:
+        description: Bookmarks in this channel header
+        target: Bookmark
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: bookmark_list
+          param: channel
+      scheduled_messages:
+        description: Messages scheduled for future delivery in this channel
+        target: ScheduledMessage
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: scheduledmessage_list
+          param: channel
+  Message:
+    id_field: ts
+    description: A Slack message, identified by its timestamp within a channel
+    fields:
+      ts:
+        description: Message timestamp (e.g. '1512085950.000216') — unique workspace ID
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        description: Event type (message, bot_message, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+      text:
+        description: Plain text content of the message
+        field_type: string
+        required: false
+        string_semantics: markdown
+      subtype:
+        description: Message subtype for system messages (channel_join, bot_message, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+      thread_ts:
+        description: Parent thread timestamp for threaded replies
+        field_type: string
+        required: false
+        string_semantics: short
+      reply_count:
+        description: Number of replies in the thread
+        field_type: integer
+        required: false
+      latest_reply:
+        description: Timestamp of the most recent reply
+        field_type: string
+        required: false
+        string_semantics: short
+      permalink:
+        description: Permanent URL to this message
+        field_type: string
+        required: false
+        string_semantics: short
+      channel:
+        description: Channel ID for this message when the API includes it (e.g. conversations.history)
+        field_type: entity_ref
+        target: Channel
+        required: false
+      user:
+        description: User who sent the message when the API includes it (`user` on message objects; absent for some bot/system messages)
+        field_type: entity_ref
+        target: User
+        required: false
+    relations: {}
+  User:
+    id_field: id
+    description: A Slack workspace member
+    fields:
+      id:
+        description: User identifier (e.g. W012A3CDE)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Username (login handle)
+        field_type: string
+        required: false
+        string_semantics: short
+      real_name:
+        description: Full display name
+        field_type: string
+        required: false
+        string_semantics: short
+      display_name:
+        description: Display name from profile
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        description: Email address from profile
+        field_type: string
+        required: false
+        string_semantics: short
+      is_bot:
+        description: True if this is a bot user
+        field_type: boolean
+        required: false
+      is_admin:
+        description: True if this user is a workspace admin
+        field_type: boolean
+        required: false
+      is_owner:
+        description: True if this user is the workspace owner
+        field_type: boolean
+        required: false
+      deleted:
+        description: True if the user account has been deactivated
+        field_type: boolean
+        required: false
+      tz:
+        description: User's timezone identifier
+        field_type: string
+        required: false
+        string_semantics: short
+      tz_label:
+        description: Human-readable timezone label
+        field_type: string
+        required: false
+        string_semantics: short
+      updated:
+        description: Last profile update Unix timestamp (seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+    relations: {}
+  File:
+    id_field: id
+    description: A file uploaded to Slack
+    fields:
+      id:
+        description: File identifier (e.g. F0S43P1CZ)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Filename
+        field_type: string
+        required: false
+        string_semantics: short
+      title:
+        description: File title
+        field_type: string
+        required: false
+        string_semantics: short
+      mimetype:
+        description: MIME type
+        field_type: string
+        required: false
+        string_semantics: short
+      filetype:
+        description: Slack file type (gif, png, pdf, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+      size:
+        description: File size in bytes
+        field_type: integer
+        required: false
+      created:
+        description: Upload Unix timestamp (seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+      url_private:
+        description: Private URL (requires auth to access)
+        field_type: string
+        required: false
+        string_semantics: short
+      permalink:
+        description: Permalink URL
+        field_type: string
+        required: false
+        string_semantics: short
+      is_public:
+        description: True if the file is publicly shared
+        field_type: boolean
+        required: false
+      is_external:
+        description: True if this is an externally hosted file
+        field_type: boolean
+        required: false
+    relations: {}
+  UserGroup:
+    id_field: id
+    description: A Slack user group (sub-team)
+    fields:
+      id:
+        description: UserGroup identifier (e.g. S0614TZR7)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Group display name
+        field_type: string
+        required: false
+        string_semantics: short
+      handle:
+        description: Group mention handle (without @)
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        description: Group description
+        field_type: string
+        required: false
+        string_semantics: markdown
+      is_usergroup:
+        description: True for user-created groups (not auto-groups)
+        field_type: boolean
+        required: false
+      is_external:
+        description: True if this is an external shared group
+        field_type: boolean
+        required: false
+      date_create:
+        description: Creation Unix timestamp (seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+      user_count:
+        description: Number of users in the group (returned as string by Slack)
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Team:
+    id_field: id
+    description: A Slack workspace
+    fields:
+      id:
+        description: Team identifier (e.g. T012AB3C4)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Workspace display name
+        field_type: string
+        required: false
+        string_semantics: short
+      domain:
+        description: Slack subdomain (workspace.slack.com)
+        field_type: string
+        required: false
+        string_semantics: short
+      email_domain:
+        description: Domain used for email-based sign-up
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+  Reminder:
+    id_field: id
+    description: A Slack reminder
+    fields:
+      id:
+        description: Reminder identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      text:
+        description: Reminder message text
+        field_type: string
+        required: false
+        string_semantics: markdown
+      recurring:
+        description: True if this reminder recurs
+        field_type: boolean
+        required: false
+      time:
+        description: Reminder fire time (Unix timestamp, seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+      complete_count:
+        description: Number of times the reminder has fired
+        field_type: integer
+        required: false
+      completed:
+        description: True if the reminder has been completed
+        field_type: boolean
+        required: false
+    relations: {}
+  Bot:
+    id_field: id
+    description: A Slack bot user
+    fields:
+      id:
+        description: Bot identifier (e.g. B19LU7CSY)
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Bot name
+        field_type: string
+        required: false
+        string_semantics: short
+      deleted:
+        description: True if the bot has been removed
+        field_type: boolean
+        required: false
+    relations: {}
+  Pin:
+    id_field: id
+    description: A pinned item in a channel
+    fields:
+      id:
+        description: Pin identifier
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        description: Pinned item type (message, file, etc.)
+        field_type: string
+        required: false
+        string_semantics: short
+      created:
+        description: Pin creation Unix timestamp (seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+    relations: {}
+  Bookmark:
+    id_field: id
+    description: A channel bookmark (external link or Slack resource)
+    fields:
+      id:
+        description: Bookmark identifier (e.g. Bk123ABC4DEF)
+        field_type: string
+        required: true
+        string_semantics: short
+      title:
+        description: Bookmark title
+        field_type: string
+        required: false
+        string_semantics: short
+      link:
+        description: URL or Slack deep link
+        field_type: string
+        required: false
+        string_semantics: short
+      emoji:
+        description: Emoji name for the bookmark icon
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        description: Bookmark type (e.g. link, message, file)
+        field_type: string
+        required: false
+        string_semantics: short
+      channel_id:
+        description: Channel this bookmark belongs to
+        field_type: entity_ref
+        target: Channel
+        required: false
+      rank:
+        description: Sort rank key from Slack
+        field_type: string
+        required: false
+        string_semantics: short
+      date_created:
+        description: Creation time (Unix seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+    relations: {}
+  ScheduledMessage:
+    id_field: id
+    description: A message queued to post to a channel at a future time (chat.scheduleMessage)
+    fields:
+      id:
+        description: Scheduled message identifier (Slack may return a numeric id in list responses; treat as opaque)
+        field_type: string
+        required: true
+        string_semantics: short
+      channel_id:
+        description: Target channel for the scheduled send
+        field_type: entity_ref
+        target: Channel
+        required: false
+      post_at:
+        description: Unix time when the message will be posted (seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+      date_created:
+        description: When the schedule was created (Unix seconds)
+        field_type: date
+        value_format: unix_sec
+        required: false
+      text:
+        description: Message text (when returned by list)
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations: {}
+capabilities:
+  channel_list:
+    description: List all channels (conversations) in the workspace
+    kind: query
+    entity: Channel
+    parameters:
+    - name: exclude_archived
+      type: boolean
+      required: false
+      role: filter
+      description: Set to true to exclude archived channels
+    - name: types
+      type: string
+      required: false
+      role: filter
+      description: 'Comma-separated channel types: public_channel,private_channel,mpim,im'
+      string_semantics: short
+    provides:
+    - id
+    - name
+    - is_channel
+    - is_group
+    - is_im
+    - is_mpim
+    - is_private
+    - is_archived
+    - is_general
+    - is_member
+    - is_shared
+    - created
+  channel_info:
+    description: Get details about a single channel by ID
+    kind: get
+    entity: Channel
+    provides:
+    - id
+    - name
+    - is_channel
+    - is_group
+    - is_im
+    - is_mpim
+    - is_private
+    - is_archived
+    - is_general
+    - is_member
+    - is_shared
+    - num_members
+    - topic
+    - purpose
+    - created
+  channel_history:
+    description: Fetch the message history of a channel
+    kind: query
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+      role: scope
+    - name: oldest
+      type: number
+      required: false
+      role: filter
+      description: Start of time range (Unix timestamp)
+    - name: latest
+      type: number
+      required: false
+      role: filter
+      description: End of time range (Unix timestamp)
+    - name: inclusive
+      type: boolean
+      required: false
+      role: filter
+    provides:
+    - ts
+    - type
+    - text
+    - subtype
+    - thread_ts
+    - reply_count
+    - latest_reply
+    - permalink
+    - channel
+    - user
+  channel_replies:
+    description: Get replies in a message thread
+    kind: query
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+      role: scope
+    - name: ts
+      type: string
+      required: true
+      description: Timestamp of the parent message (thread identifier)
+      string_semantics: short
+    provides:
+    - ts
+    - type
+    - text
+    - subtype
+    - thread_ts
+    - reply_count
+    - latest_reply
+    - permalink
+    - channel
+    - user
+  channel_members:
+    description: List members of a channel
+    kind: query
+    entity: User
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+      role: scope
+  channel_create:
+    description: Create a new channel
+    kind: create
+    entity: Channel
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: is_private
+      type: boolean
+      required: false
+  channel_archive:
+    description: Archive a channel
+    kind: action
+    entity: Channel
+    output:
+      type: side_effect
+      description: Archive a channel
+  channel_unarchive:
+    description: Unarchive a channel
+    kind: action
+    entity: Channel
+    output:
+      type: side_effect
+      description: Unarchive a channel
+  channel_join:
+    description: Join a channel
+    kind: action
+    entity: Channel
+    output:
+      type: side_effect
+      description: Join a channel
+  channel_leave:
+    description: Leave a channel
+    kind: action
+    entity: Channel
+    output:
+      type: side_effect
+      description: Leave a channel
+  channel_rename:
+    description: Rename a channel
+    kind: update
+    entity: Channel
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+  channel_set_topic:
+    description: Set the topic of a channel
+    kind: action
+    entity: Channel
+    parameters:
+    - name: topic
+      type: string
+      required: true
+      string_semantics: markdown
+    output:
+      type: side_effect
+      description: Set the topic of a channel
+  channel_set_purpose:
+    description: Set the purpose of a channel
+    kind: action
+    entity: Channel
+    parameters:
+    - name: purpose
+      type: string
+      required: true
+      string_semantics: markdown
+    output:
+      type: side_effect
+      description: Set the purpose of a channel
+  channel_invite:
+    description: Invite a user to a channel
+    kind: action
+    entity: Channel
+    parameters:
+    - name: users
+      type: string
+      required: true
+      description: Comma-separated user IDs to invite
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Invite a user to a channel
+  channel_kick:
+    description: Remove a user from a channel
+    kind: action
+    entity: Channel
+    parameters:
+    - name: user
+      type: entity_ref
+      target: User
+      required: true
+    output:
+      type: side_effect
+      description: Remove a user from a channel
+  channel_mark:
+    description: Mark the read position in a channel
+    kind: action
+    entity: Channel
+    parameters:
+    - name: ts
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Mark the read position in a channel
+  message_search:
+    description: Search messages across all accessible channels
+    kind: search
+    entity: Message
+    parameters:
+    - name: query
+      type: string
+      required: true
+      role: search
+      description: 'Search query (supports Slack modifiers: in:, from:, etc.)'
+      string_semantics: short
+    - name: sort
+      type: select
+      required: false
+      allowed_values:
+      - score
+      - timestamp
+      role: sort
+    - name: sort_dir
+      type: select
+      required: false
+      allowed_values:
+      - asc
+      - desc
+      role: sort_direction
+    - name: highlight
+      type: boolean
+      required: false
+      role: response_control
+  message_post:
+    description: Send a message to a channel
+    kind: create
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: text
+      type: string
+      required: false
+      description: Plain text message (required if blocks not provided)
+      string_semantics: markdown
+    - name: thread_ts
+      type: string
+      required: false
+      description: Reply in a thread by providing the parent message timestamp
+      string_semantics: short
+    - name: blocks
+      type: string
+      required: false
+      description: JSON array of Block Kit blocks (merged into the request body with text and other fields)
+      string_semantics: json_text
+    - name: attachments
+      type: string
+      required: false
+      description: JSON array of legacy attachments
+      string_semantics: json_text
+    - name: unfurl_links
+      type: boolean
+      required: false
+      description: Enable URL unfurling for links in the message
+    - name: unfurl_media
+      type: boolean
+      required: false
+      description: Enable media unfurling
+    - name: mrkdwn
+      type: boolean
+      required: false
+      description: When false, disable Slack mrkdwn parsing for the text field
+  message_update:
+    description: Update a message
+    kind: update
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: text
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: blocks
+      type: string
+      required: false
+      description: JSON array of Block Kit blocks
+      string_semantics: json_text
+    - name: attachments
+      type: string
+      required: false
+      description: JSON array of legacy attachments
+      string_semantics: json_text
+  message_delete:
+    description: Delete a message
+    kind: delete
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+  message_permalink:
+    description: Get a permanent link to a message
+    kind: action
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    output:
+      type: side_effect
+      description: Get a permanent link to a message
+  message_react_add:
+    description: Add an emoji reaction to a message
+    kind: action
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: name
+      type: string
+      required: true
+      description: Emoji name without colons (e.g. thumbsup)
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Add an emoji reaction to a message
+  message_react_remove:
+    description: Remove an emoji reaction from a message
+    kind: action
+    entity: Message
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Remove an emoji reaction from a message
+  user_list:
+    description: List all users in the workspace
+    kind: query
+    entity: User
+    parameters:
+    - name: include_locale
+      type: boolean
+      required: false
+      role: response_control
+    provides:
+    - id
+    - name
+    - is_bot
+    - deleted
+  user_info:
+    description: Get info about a specific user by ID
+    kind: get
+    entity: User
+    provides:
+    - id
+    - name
+    - real_name
+    - display_name
+    - email
+    - is_bot
+    - is_admin
+    - is_owner
+    - deleted
+    - tz
+    - tz_label
+    - updated
+  user_lookup_by_email:
+    description: Look up a user by email address
+    kind: action
+    entity: User
+    parameters:
+    - name: email
+      type: string
+      required: true
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Look up a user by email address
+  user_get_presence:
+    description: Get the presence status of a user
+    kind: action
+    entity: User
+    output:
+      type: side_effect
+      description: Get the presence status of a user
+  user_identity:
+    description: Get identity of the calling user (requires identity.* scopes)
+    kind: singleton
+    entity: User
+  file_list:
+    description: List files in the workspace, optionally filtered by user or channel
+    kind: query
+    entity: File
+    parameters:
+    - name: user
+      type: entity_ref
+      target: User
+      required: false
+      role: filter
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: false
+      role: filter
+    - name: types
+      type: string
+      required: false
+      role: filter
+      description: 'Comma-separated file types: all, spaces, snippets, images, etc.'
+      string_semantics: short
+    - name: ts_from
+      type: number
+      required: false
+      role: filter
+    - name: ts_to
+      type: number
+      required: false
+      role: filter
+    provides:
+    - id
+    - name
+    - title
+    - mimetype
+    - filetype
+    - size
+    - created
+    - is_public
+  file_info:
+    description: Get info about a specific file
+    kind: get
+    entity: File
+    provides:
+    - id
+    - name
+    - title
+    - mimetype
+    - filetype
+    - size
+    - created
+    - url_private
+    - permalink
+    - is_public
+    - is_external
+  file_upload:
+    description: Upload a file to a channel
+    kind: create
+    entity: File
+    parameters:
+    - name: channels
+      type: string
+      required: false
+      description: Comma-separated channel IDs to share the file
+      string_semantics: short
+    - name: content
+      type: string
+      required: false
+      description: File content (for snippet-style uploads)
+      string_semantics: markdown
+    - name: filename
+      type: string
+      required: false
+      string_semantics: short
+  file_delete:
+    description: Delete a file
+    kind: delete
+    entity: File
+  file_revoke_public_url:
+    description: Revoke the public URL for a file
+    kind: action
+    entity: File
+    output:
+      type: side_effect
+      description: Revoke the public URL for a file
+  usergroup_list:
+    description: List all user groups in the workspace
+    kind: query
+    entity: UserGroup
+    parameters:
+    - name: include_users
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_count
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_disabled
+      type: boolean
+      required: false
+      role: filter
+    provides:
+    - id
+    - name
+    - handle
+    - description
+    - is_usergroup
+    - date_create
+    - user_count
+  usergroup_create:
+    description: Create a new user group
+    kind: create
+    entity: UserGroup
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: handle
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  usergroup_update:
+    description: Update a user group
+    kind: update
+    entity: UserGroup
+    parameters:
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: handle
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  usergroup_enable:
+    description: Enable a disabled user group
+    kind: action
+    entity: UserGroup
+    output:
+      type: side_effect
+      description: Enable a disabled user group
+  usergroup_disable:
+    description: Disable an active user group
+    kind: action
+    entity: UserGroup
+    output:
+      type: side_effect
+      description: Disable an active user group
+  usergroup_member_list:
+    description: List the members of a user group
+    kind: query
+    entity: User
+    parameters:
+    - name: usergroup
+      type: entity_ref
+      target: UserGroup
+      required: true
+      role: scope
+    - name: include_disabled
+      type: boolean
+      required: false
+      role: filter
+  team_info:
+    description: Get information about the current workspace
+    kind: singleton
+    entity: Team
+  reminder_list:
+    description: List reminders for the current user
+    kind: query
+    entity: Reminder
+    provides:
+    - id
+    - text
+    - time
+    - completed
+  reminder_info:
+    description: Get a single reminder by ID
+    kind: get
+    entity: Reminder
+    provides:
+    - id
+    - text
+    - recurring
+    - time
+    - complete_count
+    - completed
+  reminder_add:
+    description: Create a reminder for a user
+    kind: create
+    entity: Reminder
+    parameters:
+    - name: text
+      type: string
+      required: true
+      string_semantics: markdown
+    - name: time
+      type: string
+      required: true
+      description: When to remind (Unix timestamp or natural language like 'in 10 minutes')
+      string_semantics: short
+  reminder_complete:
+    description: Mark a reminder as complete
+    kind: action
+    entity: Reminder
+    output:
+      type: side_effect
+      description: Mark a reminder as complete
+  reminder_delete:
+    description: Delete a reminder
+    kind: delete
+    entity: Reminder
+  pin_list:
+    description: List pinned items in a channel
+    kind: query
+    entity: Pin
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+      role: scope
+    provides:
+    - id
+    - type
+    - created
+  pin_add:
+    description: Pin a message or file to a channel
+    kind: action
+    entity: Pin
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: timestamp
+      type: string
+      required: false
+      description: Timestamp of message to pin
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Pin a message or file to a channel
+  pin_remove:
+    description: Remove a pinned item from a channel
+    kind: action
+    entity: Pin
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: timestamp
+      type: string
+      required: false
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Remove a pinned item from a channel
+  bot_info:
+    description: Get information about a bot user
+    kind: get
+    entity: Bot
+    provides:
+    - id
+    - name
+    - deleted
+  bookmark_list:
+    description: List bookmarks in a channel
+    kind: query
+    entity: Bookmark
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+      role: scope
+    provides:
+    - id
+    - title
+    - link
+    - emoji
+    - type
+    - channel_id
+    - rank
+    - date_created
+  bookmark_add:
+    description: Add a bookmark to a channel
+    kind: create
+    entity: Bookmark
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: type
+      type: select
+      required: true
+      allowed_values:
+      - link
+      - message
+      - file
+      description: Bookmark resource type (link is the common external-URL case)
+    - name: link
+      type: string
+      required: false
+      description: Required for type link (http or https URL)
+      string_semantics: short
+    - name: emoji
+      type: string
+      required: false
+      string_semantics: short
+  bookmark_edit:
+    description: Edit an existing bookmark
+    kind: update
+    entity: Bookmark
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: link
+      type: string
+      required: false
+      string_semantics: short
+    - name: emoji
+      type: string
+      required: false
+      string_semantics: short
+  bookmark_remove:
+    description: Remove a bookmark from a channel
+    kind: action
+    entity: Bookmark
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    output:
+      type: side_effect
+      description: Remove this bookmark from the Slack channel header
+  scheduledmessage_list:
+    description: List pending scheduled messages (optionally filtered to one channel)
+    kind: query
+    entity: ScheduledMessage
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+      role: scope
+    - name: oldest
+      type: string
+      required: false
+      description: Oldest boundary as Unix timestamp string
+      string_semantics: short
+    - name: latest
+      type: string
+      required: false
+      description: Latest boundary as Unix timestamp string
+      string_semantics: short
+    provides:
+    - id
+    - channel_id
+    - post_at
+    - date_created
+    - text
+  scheduledmessage_create:
+    description: Schedule a message to be sent later (chat.scheduleMessage)
+    kind: create
+    entity: ScheduledMessage
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+    - name: post_at
+      type: integer
+      required: true
+      description: Unix time when the message should post (seconds; matches Slack post_at)
+    - name: text
+      type: string
+      required: false
+      description: Plain text (required if blocks not provided)
+      string_semantics: markdown
+    - name: thread_ts
+      type: string
+      required: false
+      description: Post as a thread reply under this parent ts
+      string_semantics: short
+    - name: blocks
+      type: string
+      required: false
+      description: JSON array of Block Kit blocks (merged into the request body)
+      string_semantics: json_text
+    - name: attachments
+      type: string
+      required: false
+      description: JSON array of legacy attachments
+      string_semantics: json_text
+    - name: unfurl_links
+      type: boolean
+      required: false
+    - name: unfurl_media
+      type: boolean
+      required: false
+    - name: mrkdwn
+      type: boolean
+      required: false
+      description: When false, disable mrkdwn parsing for text
+  scheduledmessage_delete:
+    description: Delete a pending scheduled message before it sends
+    kind: delete
+    entity: ScheduledMessage
+    parameters:
+    - name: channel
+      type: entity_ref
+      target: Channel
+      required: true
+  auth_test:
+    description: Test the authentication token and get caller identity
+    kind: singleton
+    entity: User
+oauth:
+  provider: slack
+  scopes:
+    # Conversations / channels (public C…, private G…, IM, MPIM)
+    channels:read:
+      label: View basic channel metadata (public channels)
+      notes: Bot tokens with this scope see public channels; private channels and DMs need groups:read, im:read, or mpim:read respectively. Full coverage across conversation types usually means multiple scopes.
+      docs_url: https://api.slack.com/scopes/channels:read
+    channels:manage:
+      label: Manage public channels (create, archive, rename, membership admin)
+      docs_url: https://api.slack.com/scopes/channels:manage
+    channels:history:
+      label: View messages and other content in public channels
+      docs_url: https://api.slack.com/scopes/channels:history
+    channels:join:
+      label: Join public channels
+      docs_url: https://api.slack.com/scopes/channels:join
+    groups:read:
+      label: View basic metadata about private channels
+      docs_url: https://api.slack.com/scopes/groups:read
+    groups:write:
+      label: Manage private channels (create, rename, archive, invite, kick)
+      docs_url: https://api.slack.com/scopes/groups:write
+    groups:history:
+      label: View messages in private channels
+      docs_url: https://api.slack.com/scopes/groups:history
+    im:read:
+      label: View basic DM metadata
+      docs_url: https://api.slack.com/scopes/im:read
+    im:history:
+      label: View DM message history
+      docs_url: https://api.slack.com/scopes/im:history
+    mpim:read:
+      label: View basic group DM metadata
+      docs_url: https://api.slack.com/scopes/mpim:read
+    mpim:history:
+      label: View group DM message history
+      docs_url: https://api.slack.com/scopes/mpim:history
+    # Messaging
+    chat:write:
+      label: Post and update messages as the app
+      docs_url: https://api.slack.com/scopes/chat:write
+    chat:write.public:
+      label: Post to channels the app is not a member of (public channels)
+      notes: Complements chat:write for posting without prior membership in some cases.
+      docs_url: https://api.slack.com/scopes/chat:write.public
+    chat:write.customize:
+      label: Post with custom username/icon (legacy-style customization where supported)
+      notes: Optional; not required by this toolkit’s mapped methods but listed for OAuth bundle completeness.
+      docs_url: https://api.slack.com/scopes/chat:write.customize
+    # Search
+    search:read:
+      label: Search messages and files visible to the user
+      docs_url: https://api.slack.com/scopes/search:read
+    # People
+    users:read:
+      label: View people in the workspace (users.list, users.info, presence, bots.info)
+      notes: Slack’s auth.test validates a token without listing a bot/user OAuth scope; this catalog does not gate auth_test. Typical bot installs include users:read for directory features.
+      docs_url: https://api.slack.com/scopes/users:read
+    users:read.email:
+      label: View email addresses of people in the workspace
+      docs_url: https://api.slack.com/scopes/users:read.email
+    users.profile:read:
+      label: View user profile details (title, status, fields)
+      docs_url: https://api.slack.com/scopes/users.profile:read
+    # Sign in with Slack / user identity
+    identity.basic:
+      label: View basic user identity (users.identity)
+      docs_url: https://api.slack.com/scopes/identity.basic
+    identity.email:
+      label: View user email (users.identity)
+      docs_url: https://api.slack.com/scopes/identity.email
+    identity.team:
+      label: View workspace/team for the authorized user (users.identity)
+      docs_url: https://api.slack.com/scopes/identity.team
+    identity.avatar:
+      label: View user avatar URL (users.identity)
+      docs_url: https://api.slack.com/scopes/identity.avatar
+    # Files
+    files:read:
+      label: View file metadata and contents the app can access
+      docs_url: https://api.slack.com/scopes/files:read
+    files:write:
+      label: Upload, delete, and change file visibility
+      docs_url: https://api.slack.com/scopes/files:write
+    # User groups
+    usergroups:read:
+      label: View user groups and membership
+      docs_url: https://api.slack.com/scopes/usergroups:read
+    usergroups:write:
+      label: Create and manage user groups
+      docs_url: https://api.slack.com/scopes/usergroups:write
+    # Workspace
+    team:read:
+      label: View workspace name, domain, and icon (team.info)
+      docs_url: https://api.slack.com/scopes/team:read
+    # Reminders
+    reminders:read:
+      label: View reminders for the user
+      docs_url: https://api.slack.com/scopes/reminders:read
+    reminders:write:
+      label: Add, complete, and delete reminders
+      docs_url: https://api.slack.com/scopes/reminders:write
+    # Pins
+    pins:read:
+      label: View pinned items in channels
+      docs_url: https://api.slack.com/scopes/pins:read
+    pins:write:
+      label: Add and remove pinned items
+      docs_url: https://api.slack.com/scopes/pins:write
+    # Reactions
+    reactions:read:
+      label: View emoji reactions on messages
+      docs_url: https://api.slack.com/scopes/reactions:read
+    reactions:write:
+      label: Add and remove emoji reactions
+      docs_url: https://api.slack.com/scopes/reactions:write
+    bookmarks:read:
+      label: View channel bookmarks
+      docs_url: https://api.slack.com/scopes/bookmarks:read
+    bookmarks:write:
+      label: Add, edit, and remove channel bookmarks
+      docs_url: https://api.slack.com/scopes/bookmarks:write
+  default_scope_sets:
+    typical_bot_assistant:
+      description: Common read-and-post bot bundle (browse public and private channels, DM history, post messages). Not sufficient for channel admin, file uploads, search, or usergroups by itself.
+      scopes:
+      - channels:read
+      - channels:history
+      - chat:write
+      - users:read
+      - groups:read
+      - groups:history
+      - im:history
+      - mpim:history
+    workspace_directory_readonly:
+      description: Discovery-only bundle (workspace info, membership directory, channel lists) without posting.
+      scopes:
+      - users:read
+      - team:read
+      - channels:read
+      - groups:read
+  requirements:
+    capabilities:
+      channel_list:
+        any_of:
+        - channels:read
+        - groups:read
+        - im:read
+        - mpim:read
+      channel_info:
+        any_of:
+        - channels:read
+        - groups:read
+        - im:read
+        - mpim:read
+      channel_history:
+        any_of:
+        - channels:history
+        - groups:history
+        - im:history
+        - mpim:history
+      channel_replies:
+        any_of:
+        - channels:history
+        - groups:history
+        - im:history
+        - mpim:history
+      channel_members:
+        any_of:
+        - channels:read
+        - groups:read
+      channel_create:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_archive:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_unarchive:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_join:
+        any_of:
+        - channels:join
+      channel_leave:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_rename:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_set_topic:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_set_purpose:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_invite:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_kick:
+        any_of:
+        - channels:manage
+        - groups:write
+      channel_mark:
+        any_of:
+        - channels:history
+        - groups:history
+        - im:history
+        - mpim:history
+      message_search:
+        any_of:
+        - search:read
+      message_post:
+        any_of:
+        - chat:write
+        - chat:write.public
+      message_update:
+        any_of:
+        - chat:write
+      message_delete:
+        any_of:
+        - chat:write
+      message_permalink:
+        any_of:
+        - channels:history
+        - groups:history
+        - im:history
+        - mpim:history
+      message_react_add:
+        any_of:
+        - reactions:write
+      message_react_remove:
+        any_of:
+        - reactions:write
+      user_list:
+        any_of:
+        - users:read
+      user_info:
+        any_of:
+        - users:read
+      user_lookup_by_email:
+        any_of:
+        - users:read.email
+      user_get_presence:
+        any_of:
+        - users:read
+      user_identity:
+        any_of:
+        - identity.basic
+        - identity.email
+        - identity.team
+        - identity.avatar
+      file_list:
+        any_of:
+        - files:read
+      file_info:
+        any_of:
+        - files:read
+      file_upload:
+        any_of:
+        - files:write
+      file_delete:
+        any_of:
+        - files:write
+      file_revoke_public_url:
+        any_of:
+        - files:write
+      usergroup_list:
+        any_of:
+        - usergroups:read
+      usergroup_create:
+        any_of:
+        - usergroups:write
+      usergroup_update:
+        any_of:
+        - usergroups:write
+      usergroup_enable:
+        any_of:
+        - usergroups:write
+      usergroup_disable:
+        any_of:
+        - usergroups:write
+      usergroup_member_list:
+        any_of:
+        - usergroups:read
+      team_info:
+        any_of:
+        - team:read
+      reminder_list:
+        any_of:
+        - reminders:read
+      reminder_info:
+        any_of:
+        - reminders:read
+      reminder_add:
+        any_of:
+        - reminders:write
+      reminder_complete:
+        any_of:
+        - reminders:write
+      reminder_delete:
+        any_of:
+        - reminders:write
+      pin_list:
+        any_of:
+        - pins:read
+      pin_add:
+        any_of:
+        - pins:write
+      pin_remove:
+        any_of:
+        - pins:write
+      bot_info:
+        any_of:
+        - users:read
+      bookmark_list:
+        any_of:
+        - bookmarks:read
+      bookmark_add:
+        any_of:
+        - bookmarks:write
+      bookmark_edit:
+        any_of:
+        - bookmarks:write
+      bookmark_remove:
+        any_of:
+        - bookmarks:write
+      scheduledmessage_list:
+        any_of:
+        - chat:write
+      scheduledmessage_create:
+        any_of:
+        - chat:write
+      scheduledmessage_delete:
+        any_of:
+        - chat:write
+    relations:
+      Channel.messages:
+        any_of:
+        - channels:history
+        - groups:history
+        - im:history
+        - mpim:history
+      Channel.members:
+        any_of:
+        - channels:read
+        - groups:read
+      Channel.pins:
+        any_of:
+        - pins:read
+      Channel.bookmarks:
+        any_of:
+        - bookmarks:read
+      Channel.scheduled_messages:
+        any_of:
+        - chat:write
+auth:
+  scheme: bearer_token
+  env: SLACK_BOT_TOKEN

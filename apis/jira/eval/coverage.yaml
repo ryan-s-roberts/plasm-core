@@ -1,0 +1,8 @@
+# NL eval cases in cases.yaml focus on read/query flows. Write capabilities (create,
+# update, delete, action) are exercised via the CLI and live API; exclude them from
+# required expression-form buckets until we add dedicated NL goals.
+exclude:
+  - create
+  - delete
+  - update
+  - invoke

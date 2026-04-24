@@ -1,0 +1,374 @@
+# GraphQL over HTTP — `transport: graphql` (POST JSON with `query` / `variables`).
+# List endpoints use `PageQueryOptions` (`variables.o.paginate.{page,limit}`); pagination is merged via `body_merge_path`.
+
+user_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($o: PageQueryOptions){ users(options: $o) { data { id name username email } meta { totalCount } } }'
+      - - variables
+        - type: object
+          fields:
+            - - o
+              - type: object
+                fields: []
+  response:
+    items_path: [data, users, data]
+  pagination:
+    location: body
+    body_merge_path: [variables, o, paginate]
+    params:
+      page: {counter: 1}
+      limit: {fixed: 20}
+
+user_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: ID!){ user(id: $id) { id name username email phone website } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, user]
+
+post_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($o: PageQueryOptions){ posts(options: $o) { data { id title body } meta { totalCount } } }'
+      - - variables
+        - type: object
+          fields:
+            - - o
+              - type: object
+                fields: []
+  response:
+    items_path: [data, posts, data]
+  pagination:
+    location: body
+    body_merge_path: [variables, o, paginate]
+    params:
+      page: {counter: 1}
+      limit: {fixed: 20}
+
+post_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: ID!){ post(id: $id) { id title body user { id name username } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, post]
+
+comment_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($o: PageQueryOptions){ comments(options: $o) { data { id name email body } meta { totalCount } } }'
+      - - variables
+        - type: object
+          fields:
+            - - o
+              - type: object
+                fields: []
+  response:
+    items_path: [data, comments, data]
+  pagination:
+    location: body
+    body_merge_path: [variables, o, paginate]
+    params:
+      page: {counter: 1}
+      limit: {fixed: 20}
+
+comment_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: ID!){ comment(id: $id) { id name email body post { id } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, comment]
+
+todo_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($o: PageQueryOptions){ todos(options: $o) { data { id title completed } meta { totalCount } } }'
+      - - variables
+        - type: object
+          fields:
+            - - o
+              - type: object
+                fields: []
+  response:
+    items_path: [data, todos, data]
+  pagination:
+    location: body
+    body_merge_path: [variables, o, paginate]
+    params:
+      page: {counter: 1}
+      limit: {fixed: 20}
+
+todo_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: ID!){ todo(id: $id) { id title completed user { id name } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, todo]
+
+album_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($o: PageQueryOptions){ albums(options: $o) { data { id title } meta { totalCount } } }'
+      - - variables
+        - type: object
+          fields:
+            - - o
+              - type: object
+                fields: []
+  response:
+    items_path: [data, albums, data]
+  pagination:
+    location: body
+    body_merge_path: [variables, o, paginate]
+    params:
+      page: {counter: 1}
+      limit: {fixed: 20}
+
+album_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: ID!){ album(id: $id) { id title user { id name } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, album]
+
+photo_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($o: PageQueryOptions){ photos(options: $o) { data { id title url thumbnailUrl } meta { totalCount } } }'
+      - - variables
+        - type: object
+          fields:
+            - - o
+              - type: object
+                fields: []
+  response:
+    items_path: [data, photos, data]
+  pagination:
+    location: body
+    body_merge_path: [variables, o, paginate]
+    params:
+      page: {counter: 1}
+      limit: {fixed: 20}
+
+photo_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: ID!){ photo(id: $id) { id title url thumbnailUrl album { id title } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, photo]
+
+post_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: CreatePostInput!){ createPost(input: $input) { id title body } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - title
+                    - type: var
+                      name: title
+                  - - body
+                    - type: var
+                      name: body
+  response:
+    single: true
+    items_path: [data, createPost]
+
+post_update:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: ID!, $input: UpdatePostInput!){ updatePost(id: $id, input: $input) { id title body } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - title
+                    - type: var
+                      name: title
+                  - - body
+                    - type: var
+                      name: body
+  response:
+    single: true
+    items_path: [data, updatePost]
+
+post_delete:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: api
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: ID!){ deletePost(id: $id) }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id

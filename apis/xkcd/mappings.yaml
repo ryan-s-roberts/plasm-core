@@ -1,0 +1,10 @@
+# XKCD has no list/query endpoint — only get-by-id.
+# GET /{comicId}/info.0.json
+
+comic_get:
+  method: GET
+  path:
+    - type: var
+      name: id
+    - type: literal
+      value: info.0.json

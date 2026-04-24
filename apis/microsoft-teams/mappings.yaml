@@ -1,0 +1,33 @@
+# Microsoft Graph v1.0 — Teams slice. Semantic model is in domain.yaml.
+#
+# Product docs (Microsoft Graph / Teams) describe OAuth and permission names; keep
+# transport notes here, not in DOMAIN copy.
+#
+# Base origin: https://graph.microsoft.com — paths are relative to that host.
+# Delegated flow: `team_query` uses `/me/joinedTeams` (requires a user context token).
+#
+# Pagination: many Graph collections return `@odata.nextLink` as a full URL in the
+# JSON body. Today’s Plasm HTTP pagination follows cursor/query params or Link headers,
+# not body next URLs, so this mapping does not declare `pagination:` — first response
+# page only (see README).
+
+team_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: joinedTeams }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - [$top, { type: const, value: 100 }]
+
+team_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: teams }
+    - { type: var, name: id }
+  response: single

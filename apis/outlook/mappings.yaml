@@ -1,0 +1,191 @@
+# Outlook / Microsoft Graph v1.0 — CML mappings. Semantic model lives in domain.yaml.
+#
+# Base origin: https://graph.microsoft.com
+# Auth: bearer token via MICROSOFT_GRAPH_ACCESS_TOKEN
+#
+# Important runtime note:
+# Graph mailbox collections commonly paginate with @odata.nextLink absolute URLs.
+# Plasm's current HTTP pagination machinery does not replay those body URLs yet, so
+# these mappings intentionally fetch the first page only and pin $top=100.
+
+mail_folder_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: mailFolders }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $top
+        - { type: const, value: 100 }
+      - - includeHiddenFolders
+        - type: if
+          condition: { type: exists, var: includeHiddenFolders }
+          then_expr: { type: var, name: includeHiddenFolders }
+          else_expr: { type: const, value: null }
+
+mail_folder_child_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: mailFolders }
+    - { type: var, name: mailFolderId }
+    - { type: literal, value: childFolders }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $top
+        - { type: const, value: 100 }
+      - - includeHiddenFolders
+        - type: if
+          condition: { type: exists, var: includeHiddenFolders }
+          then_expr: { type: var, name: includeHiddenFolders }
+          else_expr: { type: const, value: null }
+
+mail_folder_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: mailFolders }
+    - { type: var, name: id }
+  response: single
+
+message_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $top
+        - { type: const, value: 100 }
+      - - $select
+        - { type: const, value: "id,subject,bodyPreview,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
+
+message_folder_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: mailFolders }
+    - { type: var, name: mailFolderId }
+    - { type: literal, value: messages }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $top
+        - { type: const, value: 100 }
+      - - $select
+        - { type: const, value: "id,subject,bodyPreview,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
+
+message_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+  response: single
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,subject,bodyPreview,body,internetMessageId,conversationId,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
+
+message_update:
+  method: PATCH
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+  response: single
+  body:
+    type: object
+    fields:
+      - - isRead
+        - type: if
+          condition: { type: exists, var: isRead }
+          then_expr: { type: var, name: isRead }
+          else_expr: { type: const, value: null }
+      - - importance
+        - type: if
+          condition: { type: exists, var: importance }
+          then_expr: { type: var, name: importance }
+          else_expr: { type: const, value: null }
+      - - categories
+        - type: if
+          condition: { type: exists, var: categories }
+          then_expr: { type: var, name: categories }
+          else_expr: { type: const, value: null }
+
+message_move:
+  method: POST
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+    - { type: literal, value: move }
+  body:
+    type: object
+    fields:
+      - - destinationId
+        - { type: var, name: destinationFolderId }
+
+message_send:
+  method: POST
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+    - { type: literal, value: send }
+
+message_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+
+attachment_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: messageId }
+    - { type: literal, value: attachments }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $top
+        - { type: const, value: 100 }
+
+attachment_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+    - { type: var, name: messageId }
+    - { type: literal, value: attachments }
+    - { type: var, name: id }
+  response: single

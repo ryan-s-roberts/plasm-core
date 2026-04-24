@@ -1,0 +1,11 @@
+# NL eval cases for google-docs.
+
+- id: google-docs-workbench
+  schema: google-docs
+  goal: >-
+    Create a new Google Doc, fetch it by document id with optional tab content, then batch-update
+    structure — using projection on title and body fields where supported.
+  covers: [create, get, invoke, projection]
+  tags: [docs]
+  expect:
+    entities_any: [Document]

@@ -1,0 +1,15 @@
+[package]
+name = "plasm-sdk-transport"
+version = "0.1.0"
+edition = "2021"
+description = "Trait boundary for plugging external Rust SDKs into plasm as transport backends"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+
+[dependencies]
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

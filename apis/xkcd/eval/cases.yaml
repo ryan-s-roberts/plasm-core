@@ -1,0 +1,20 @@
+# xkcd JSON API — NL→Plasm eval (read-only Get on `Comic` by strip number).
+# Schema: single entity; goals emphasize user intent (lookup, sharing, citation).
+- id: xkcd-01
+  schema: xkcd
+  goal: "Show me xkcd comic 614 so I can send the link to a friend"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Comic]
+    pred_values_any: ["614"]
+
+- id: xkcd-02
+  schema: xkcd
+  goal: "What was the title and hover text for strip 149?"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Comic]
+    pred_values_any: ["149"]
+    projection_contains: [title, alt]

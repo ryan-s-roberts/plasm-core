@@ -1,0 +1,328 @@
+openapi: 3.0.3
+info:
+  title: Plasm agent HTTP (discovery + execute)
+  version: 0.1.0
+  description: |
+    Discovery (`/v1/*`) returns catalog metadata and ranked capabilities with `entry_id` + `entity` (CGS domain).
+    Execute (`/execute`) creates a session (`303` + `Location` only); `GET` that URL returns session JSON
+    including the DOMAIN `prompt`; `POST` the same URL runs one or more Plasm expressions sequentially
+    (shared session cache). Single-expression responses are unchanged. Multi-expression batches return
+    per-step intent, StepSummary semantics, and query JSON; use
+    `Accept: application/json` or `application/x-ndjson` for batches.
+paths:
+  /v1/health:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /v1/registry:
+    get:
+      summary: List catalog entries
+      responses:
+        "200":
+          description: Registry metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CatalogEntryMeta"
+  /v1/registry/{entry_id}:
+    get:
+      summary: One catalog entry
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include_cgs
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: |
+            Entry metadata and optional full CGS (`cgs` includes `oauth` when present in domain.yaml).
+        "404":
+          description: Unknown entry
+  /v1/discover:
+    post:
+      summary: Search capabilities (use candidate `entry_id` + `entity` for execute)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapabilityQuery"
+      responses:
+        "200":
+          description: Discovery result
+        "400":
+          description: Empty query
+  /execute:
+    post:
+      summary: Create execute session (focused prompt + session key)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entry_id, entities]
+              properties:
+                entry_id:
+                  type: string
+                entities:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+      responses:
+        "303":
+          description: |
+            See Other — `Location` is `/execute/{prompt_hash}/{session_id}` (relative).
+            **No response body**; `prompt_hash` and `session_id` are in that URL. Use `GET` on it for JSON
+            (`prompt`, `entry_id`, `entities`, …).
+        "400":
+          description: Invalid body or unknown entity
+        "404":
+          description: Unknown `entry_id`
+  /execute/{prompt_hash}/{session_id}:
+    get:
+      summary: Fetch execute session (DOMAIN prompt + metadata)
+      parameters:
+        - name: prompt_hash
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteSessionResponse"
+        "404":
+          description: Unknown or expired session
+    post:
+      summary: Run one or more Plasm expressions (sequential, shared cache)
+      parameters:
+        - name: prompt_hash
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+            description: |
+              One expression, or newline-separated expressions (`#` starts a comment line).
+              Multiple expressions require `Accept: application/json` or `application/x-ndjson`.
+          application/json:
+            schema:
+              oneOf:
+                - type: array
+                  items:
+                    type: string
+                  description: Array of expression strings
+                - type: object
+                  required: [expressions]
+                  properties:
+                    expressions:
+                      type: array
+                      items:
+                        type: string
+                      minItems: 1
+      responses:
+        "200":
+          description: |
+            Single expression — same JSON/table/toon/ndjson as before.
+            Multiple expressions — `application/json` batch object (`batch`, `step_count`, `steps[]` with
+            `semantic.intent`, `semantic.summary`, `result`) or `application/x-ndjson` with one JSON object per line per step.
+        "400":
+          description: Parse or validation error
+        "404":
+          description: Unknown or expired session
+        "406":
+          description: Unsupported Accept
+components:
+  schemas:
+    ExecuteSessionResponse:
+      type: object
+      required: [prompt_hash, session, prompt, entry_id, entities]
+      properties:
+        prompt_hash:
+          type: string
+          description: Lowercase hex SHA-256 of `prompt`
+        session:
+          type: string
+          description: UUID simple form (32 hex digits)
+        prompt:
+          type: string
+          description: Rendered DOMAIN prompt for this session
+        entry_id:
+          type: string
+        entities:
+          type: array
+          items:
+            type: string
+        reused:
+          type: boolean
+          description: |
+            When true, this session was satisfied by reusing an existing non-expired session with the same
+            `entry_id` and entity seed set (no new DOMAIN render). Omitted or false for GET session JSON.
+    CatalogEntryMeta:
+      type: object
+      properties:
+        entry_id:
+          type: string
+        label:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    CapabilityQuery:
+      type: object
+      properties:
+        tokens:
+          type: array
+          items:
+            type: string
+        phrases:
+          type: array
+          items:
+            type: string
+        entity_hints:
+          type: array
+          items:
+            type: string
+        kinds:
+          type: array
+          items:
+            type: string
+        capability_names:
+          type: array
+          items:
+            type: string
+        entry_ids:
+          type: array
+          items:
+            type: string
+        pick_entry:
+          type: string
+        pick_capabilities:
+          type: array
+          items:
+            type: string
+    CgsOauthScopeEntry:
+      type: object
+      description: Metadata for one OAuth scope string in a CGS catalog.
+      properties:
+        label:
+          type: string
+        notes:
+          type: string
+        docs_url:
+          type: string
+    CgsOauthDefaultScopeSet:
+      type: object
+      properties:
+        description:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    CgsScopeRequirement:
+      type: object
+      description: |
+        Either `any_of` (non-empty) or `all_of` (non-empty), not both at the same level.
+        Satisfied when any listed scope is granted, or every nested requirement holds.
+      properties:
+        any_of:
+          type: array
+          items:
+            type: string
+        all_of:
+          type: array
+          items:
+            $ref: "#/components/schemas/CgsScopeRequirement"
+    CgsOauthExtension:
+      type: object
+      description: |
+        Declarative OAuth scope implications for a catalog (domain.yaml `oauth:`).
+        Runtime granted scopes come from the control plane; CGS maps scopes to capabilities/relations.
+      required:
+        - provider
+      properties:
+        provider:
+          type: string
+        scopes:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CgsOauthScopeEntry"
+        default_scope_sets:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CgsOauthDefaultScopeSet"
+        requirements:
+          type: object
+          properties:
+            capabilities:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/CgsScopeRequirement"
+            relations:
+              type: object
+              description: Keys are `Entity.relation` (e.g. `Issue.comments`).
+              additionalProperties:
+                $ref: "#/components/schemas/CgsScopeRequirement"
+    CGS:
+      type: object
+      description: |
+        Capability Graph Schema. When `GET /v1/registry/{entry_id}?include_cgs=true` or discovery returns
+        embedded contexts, JSON matches the Rust `CGS` type (`entities`, `capabilities`, optional `auth`, optional `oauth`).
+        When present, `auth` is a tagged object whose `scheme` may be `none` (no outbound credentials), `api_key_header`,
+        `api_key_query`, `bearer_token`, or `oauth2_client_credentials`.
+      properties:
+        entities:
+          type: object
+          additionalProperties: true
+        capabilities:
+          type: object
+          additionalProperties: true
+        auth:
+          nullable: true
+        oauth:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CgsOauthExtension"

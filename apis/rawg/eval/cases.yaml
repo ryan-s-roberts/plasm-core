@@ -1,0 +1,41 @@
+# RAWG — games catalog (`Game`): filtered query and detail get.
+- id: rawg-01
+  schema: rawg
+  goal: "Surface well-rated RPGs released in the last few years for a backlog picker"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Game]
+
+- id: rawg-02
+  schema: rawg
+  goal: "Show me everything about game id 3498 (full detail page)"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Game]
+
+- id: rawg-03
+  schema: rawg
+  goal: "Browse games matching 'zelda' in the title search, sorted by metacritic"
+  tags: [query, search]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Game]
+
+- id: rawg-04
+  schema: rawg
+  goal: "Catalog crawl: first page of the global games list for smoke tests"
+  tags: [query, browse]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Game]
+
+- id: rawg-05
+  schema: rawg
+  goal: "Game id 3498 — only name, released, and metacritic for the storefront tile"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Game]
+    projection_contains: [name, released, metacritic]

@@ -1,0 +1,296 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://hacker-news.firebaseio.com
+
+entities:
+  Item:
+    id_field: id
+    description: >-
+      A Hacker News item (story, comment, job, poll, or poll option). Use item_search (Algolia)
+      to discover ids from text, then item_get for full rows from Firebase. Feed endpoints return
+      only numeric ids; use item_get to load title, text, score, and comment trees. Direct
+      replies are listed under kids as further item ids. Poll posts expose poll option ids
+      under parts; each option is another Item row.
+    fields:
+      id:
+        description: Numeric item id used in Firebase paths
+        field_type: integer
+        required: true
+      type:
+        description: Wire kind such as story, comment, job, poll, or pollopt
+        field_type: string
+        required: false
+        string_semantics: short
+      by:
+        description: Username of the author when present
+        field_type: string
+        required: false
+        string_semantics: short
+      time:
+        description: Unix time the item was created
+        field_type: integer
+        required: false
+      title:
+        description: Story or job title when applicable
+        field_type: string
+        required: false
+        string_semantics: short
+      text:
+        description: Comment or story text payload when present
+        field_type: string
+        required: false
+        string_semantics: markdown
+      url:
+        description: Outbound link for link posts when present
+        field_type: string
+        required: false
+        string_semantics: short
+      score:
+        description: Net votes for stories and jobs when present
+        field_type: integer
+        required: false
+      descendants:
+        description: Comment count for stories when known
+        field_type: integer
+        required: false
+      parent:
+        description: Parent item id for comments and poll options
+        field_type: integer
+        required: false
+      poll:
+        description: Poll id when this item is a story that hosts a poll
+        field_type: integer
+        required: false
+      parts:
+        description: Poll option item ids when type is poll (empty or absent otherwise)
+        field_type: array
+        required: false
+        items:
+          type: integer
+      deleted:
+        description: Whether the item was deleted
+        field_type: boolean
+        required: false
+      dead:
+        description: Whether the item is dead
+        field_type: boolean
+        required: false
+    relations:
+      kids:
+        description: Direct child item ids (typically comments under a story)
+        target: Item
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: kids
+          - wildcard: true
+      poll_options:
+        description: Poll option rows referenced by parts (each id is an Item)
+        target: Item
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: parts
+          - wildcard: true
+  User:
+    id_field: id
+    description: >-
+      A Hacker News user profile keyed by username. The submitted list holds item ids only;
+      fetch each via item_get when you need titles or comment bodies.
+    fields:
+      id:
+        description: Unique username
+        field_type: string
+        required: true
+        string_semantics: short
+      created:
+        description: Unix time the account was created
+        field_type: integer
+        required: false
+      karma:
+        description: User karma score
+        field_type: integer
+        required: false
+      about:
+        description: Self-description text when set
+        field_type: string
+        required: false
+        string_semantics: markdown
+      delay:
+        description: Account delay setting when present
+        field_type: integer
+        required: false
+    relations:
+      submitted:
+        description: Item ids this user has submitted
+        target: Item
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: submitted
+          - wildcard: true
+  MaxItemId:
+    id_field: id
+    description: >-
+      Current largest item id reported by maxitem.json (a bare JSON integer on the wire).
+      Hydrate the referenced row with item_get when you need the full record.
+    fields:
+      id:
+        description: Largest item id currently allocated on HN
+        field_type: integer
+        required: true
+  RecentUpdatedItem:
+    id_field: id
+    description: >-
+      Item ids listed under updates.json items (live slice of ids with recent activity).
+      Each row is an id only; use item_get for payloads.
+    fields:
+      id:
+        description: Item id from the live updates snapshot
+        field_type: integer
+        required: true
+  RecentUpdatedUser:
+    id_field: id
+    description: >-
+      Usernames listed under updates.json profiles (accounts whose profile data changed).
+      Each row is the username string only; use user_get for karma and about text.
+    fields:
+      id:
+        description: Username from the live updates snapshot
+        field_type: string
+        required: true
+        string_semantics: short
+
+capabilities:
+  item_search:
+    description: >-
+      Full-text search over HN via the public Algolia index (https://hn.algolia.com/api). Returns
+      story Item rows with id from objectID and title/url from the hit; use item_get to hydrate
+      the full Firebase record, kids, and score.
+    kind: search
+    entity: Item
+    provides:
+    - id
+    - title
+    - url
+    parameters:
+    - name: query
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: tags
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: page
+      type: integer
+      required: false
+      role: response_control
+    - name: per_page
+      type: integer
+      required: false
+      role: response_control
+  item_search_by_date:
+    description: >-
+      Same as item_search but sorted by time (search_by_date). Use for recency; combine with
+      item_get for full items.
+    kind: search
+    entity: Item
+    provides:
+    - id
+    - title
+    - url
+    parameters:
+    - name: query
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: tags
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: page
+      type: integer
+      required: false
+      role: response_control
+    - name: per_page
+      type: integer
+      required: false
+      role: response_control
+  item_feed_query:
+    description: >-
+      Ordered list of item ids for a public feed (top, new, best, ask, show, or job). Each row
+      is an Item id only; hydrate with item_get for full records and kids.
+    kind: query
+    entity: Item
+    provides:
+    - id
+    parameters:
+    - name: feed
+      type: select
+      required: true
+      role: filter
+      allowed_values:
+      - top
+      - new
+      - best
+      - ask
+      - show
+      - job
+  max_item_id_query:
+    description: Current largest item id (maxitem.json)
+    kind: query
+    entity: MaxItemId
+    provides:
+    - id
+  recent_updated_item_query:
+    description: Item ids from the live updates snapshot (updates.json items array)
+    kind: query
+    entity: RecentUpdatedItem
+    provides:
+    - id
+  recent_updated_user_query:
+    description: Usernames from the live updates snapshot (updates.json profiles array)
+    kind: query
+    entity: RecentUpdatedUser
+    provides:
+    - id
+  item_get:
+    description: Load one item by numeric id including kids and parts id lists when present
+    kind: get
+    entity: Item
+    provides:
+    - id
+    - type
+    - by
+    - time
+    - title
+    - text
+    - url
+    - score
+    - descendants
+    - parent
+    - poll
+    - parts
+    - deleted
+    - dead
+  user_get:
+    description: Load a user profile by username
+    kind: get
+    entity: User
+    provides:
+    - id
+    - created
+    - karma
+    - about
+    - delay

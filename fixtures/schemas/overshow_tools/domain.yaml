@@ -1,0 +1,391 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: http://127.0.0.1
+
+entities:
+  RecordedContent:
+    id_field: id
+    description: A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      text:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      content_type:
+        field_type: select
+        allowed_values: [all, ocr, audio, ui]
+        required: false
+      captured_at:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      app_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      window_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      profile_id:
+        field_type: entity_ref
+        target: Profile
+        required: false
+
+  Profile:
+    id_field: id
+    description: A person, organisation, or project profile.
+    fields:
+      id:
+        field_type: integer
+        required: true
+      profile_type:
+        field_type: select
+        allowed_values: [person, organisation, project]
+        required: false
+      display_name:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      recorded_matches:
+        target: RecordedContent
+        cardinality: many
+        description: Content scoped to this profile.
+        materialize:
+          kind: query_scoped
+          capability: recorded_content_query_by_profile
+          param: profile_id
+
+  DetectedQuestion:
+    id_field: id
+    description: A detected question with optional answers.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      question_text:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      resolved:
+        field_type: boolean
+        required: false
+
+  Meeting:
+    id_field: meeting_uuid
+    description: A detected meeting.
+    fields:
+      meeting_uuid:
+        field_type: string
+        required: true
+        string_semantics: short
+      meeting_id:
+        field_type: integer
+        required: false
+      status:
+        field_type: select
+        allowed_values: [active, ended, cancelled]
+        required: false
+      summary:
+        field_type: string
+        required: false
+        string_semantics: markdown
+
+  CaptureItem:
+    key_vars: [id, content_type]
+    id_field: id
+    description: One capture pipeline item.
+    fields:
+      id:
+        field_type: integer
+        required: true
+      content_type:
+        field_type: select
+        allowed_values: [ui, ocr, audio, document]
+        required: true
+      text_preview:
+        field_type: string
+        required: false
+        string_semantics: short
+
+  PipelineSnapshot:
+    id_field: id
+    description: Pipeline health snapshot.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      workers:
+        field_type: string
+        required: false
+        string_semantics: short
+
+  CaptureSession:
+    id_field: id
+    description: Capture running or paused.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      screen_capture_running:
+        field_type: boolean
+        required: false
+
+  PipelineEvent:
+    id_field: id
+    description: One pipeline bus event.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      severity:
+        field_type: select
+        allowed_values: [debug, info, warning, error, critical]
+        required: false
+
+  PromptRun:
+    id_field: id
+    description: Action prompt execution result.
+    fields:
+      id:
+        field_type: string
+        required: false
+        string_semantics: short
+      slug:
+        field_type: string
+        required: true
+        string_semantics: short
+      output:
+        field_type: string
+        required: false
+        string_semantics: markdown
+
+capabilities:
+  recorded_content_search:
+    kind: search
+    entity: RecordedContent
+    description: Search recorded OCR, transcripts, and UI text.
+    parameters:
+      - name: q
+        type: string
+        required: true
+        role: search
+        string_semantics: short
+      - name: content_type
+        type: select
+        allowed_values: [all, ocr, audio, ui]
+        required: false
+      - name: limit
+        type: integer
+        required: false
+      - name: offset
+        type: integer
+        required: false
+      - name: start_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: end_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: app_name
+        type: string
+        required: false
+        string_semantics: short
+      - name: window_name
+        type: string
+        required: false
+        string_semantics: short
+      - name: min_length
+        type: integer
+        required: false
+      - name: max_length
+        type: integer
+        required: false
+
+  recorded_content_query_by_profile:
+    kind: query
+    entity: RecordedContent
+    description: Search content scoped to one profile.
+    parameters:
+      - name: profile_id
+        type: entity_ref
+        target: Profile
+        required: true
+        role: scope
+      - name: query
+        type: string
+        required: false
+        string_semantics: short
+      - name: limit
+        type: integer
+        required: false
+      - name: mode
+        type: select
+        allowed_values: [auto, keyword, natural]
+        required: false
+
+  detected_question_query:
+    kind: query
+    entity: DetectedQuestion
+    parameters:
+      - name: unresolved_only
+        type: boolean
+        required: false
+      - name: app_name
+        type: string
+        required: false
+        string_semantics: short
+      - name: speaker_id
+        type: integer
+        required: false
+      - name: include_answers
+        type: boolean
+        required: false
+      - name: min_answer_similarity
+        type: number
+        required: false
+      - name: limit
+        type: integer
+        required: false
+      - name: offset
+        type: integer
+        required: false
+
+  meeting_query:
+    kind: query
+    entity: Meeting
+    parameters:
+      - name: status
+        type: select
+        allowed_values: [active, ended, cancelled]
+        required: false
+      - name: start_date
+        type: date
+        required: false
+        value_format: iso8601_date
+      - name: end_date
+        type: date
+        required: false
+        value_format: iso8601_date
+      - name: limit
+        type: integer
+        required: false
+
+  meeting_get:
+    kind: get
+    entity: Meeting
+
+  prompt_run_create:
+    kind: create
+    entity: PromptRun
+    parameters:
+      - name: slug
+        type: string
+        required: true
+        string_semantics: short
+      - name: meeting_id
+        type: integer
+        required: false
+      - name: meeting_uuid
+        type: string
+        required: false
+        string_semantics: short
+      - name: meeting_ids
+        type: array
+        required: false
+        items:
+          type: integer
+      - name: start_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: end_time
+        type: date
+        required: false
+        value_format: rfc3339
+
+  profile_query:
+    kind: query
+    entity: Profile
+    parameters:
+      - name: profile_type
+        type: select
+        allowed_values: [person, organisation, project]
+        required: false
+      - name: limit
+        type: integer
+        required: false
+
+  profile_get:
+    kind: get
+    entity: Profile
+
+  pipeline_snapshot_get:
+    kind: singleton
+    entity: PipelineSnapshot
+
+  capture_item_query:
+    kind: query
+    entity: CaptureItem
+    parameters:
+      - name: limit
+        type: integer
+        required: false
+      - name: app_name
+        type: string
+        required: false
+        string_semantics: short
+      - name: start_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: end_time
+        type: date
+        required: false
+        value_format: rfc3339
+
+  capture_item_get:
+    kind: get
+    entity: CaptureItem
+
+  capture_session_get:
+    kind: singleton
+    entity: CaptureSession
+
+  pipeline_event_query:
+    kind: query
+    entity: PipelineEvent
+    parameters:
+      - name: names
+        type: string
+        required: false
+        string_semantics: short
+      - name: sources
+        type: string
+        required: false
+        string_semantics: short
+      - name: min_severity
+        type: select
+        allowed_values: [debug, info, warning, error, critical]
+        required: false
+      - name: limit
+        type: integer
+        required: false

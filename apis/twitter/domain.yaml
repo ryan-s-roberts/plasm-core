@@ -1,0 +1,568 @@
+version: 1
+
+http_backend: https://api.x.com
+
+entities:
+  User:
+    id_field: id
+    description: An X user account (handle, profile, and identifiers).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      username:
+        field_type: string
+        required: true
+        string_semantics: short
+      created_at:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      location:
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+      protected:
+        field_type: boolean
+        required: false
+      verified:
+        field_type: boolean
+        required: false
+      verified_type:
+        field_type: string
+        required: false
+        string_semantics: short
+      profile_image_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      most_recent_tweet_id:
+        field_type: entity_ref
+        target: Tweet
+        required: false
+    relations:
+      tweets:
+        description: Posts authored by this user (reverse-chronological when paginated).
+        target: Tweet
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: tweet_timeline_query
+          param: id
+      mentions:
+        description: Posts that mention this user.
+        target: Tweet
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: tweet_mentions_query
+          param: id
+      liked_tweets:
+        description: Posts this user has liked.
+        target: Tweet
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: user_liked_tweets_query
+          param: id
+
+  Tweet:
+    id_field: id
+    description: A post on X (tweet), including text, author, and reply metadata.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      text:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      author_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      created_at:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      conversation_id:
+        field_type: entity_ref
+        target: Tweet
+        required: false
+      in_reply_to_user_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      lang:
+        field_type: string
+        required: false
+        string_semantics: short
+      possibly_sensitive:
+        field_type: boolean
+        required: false
+      reply_count:
+        field_type: integer
+        required: false
+        path: public_metrics.reply_count
+      retweet_count:
+        field_type: integer
+        required: false
+        path: public_metrics.retweet_count
+      like_count:
+        field_type: integer
+        required: false
+        path: public_metrics.like_count
+      quote_count:
+        field_type: integer
+        required: false
+        path: public_metrics.quote_count
+      impression_count:
+        field_type: integer
+        required: false
+        path: public_metrics.impression_count
+      bookmark_count:
+        field_type: integer
+        required: false
+        path: public_metrics.bookmark_count
+    relations:
+      author:
+        target: User
+        cardinality: one
+
+  List:
+    id_field: id
+    description: A curated list of accounts; list timelines surface member posts.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      private:
+        field_type: boolean
+        required: false
+      follower_count:
+        field_type: integer
+        required: false
+      member_count:
+        field_type: integer
+        required: false
+      created_at:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      owner_id:
+        field_type: entity_ref
+        target: User
+        required: false
+    relations:
+      owner:
+        target: User
+        cardinality: one
+      tweets:
+        description: Posts from accounts that are members of this list.
+        target: Tweet
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: list_tweets_query
+          param: id
+
+capabilities:
+  user_get:
+    kind: get
+    entity: User
+  user_get_me:
+    kind: singleton
+    entity: User
+    description: The authenticated user for the current bearer token.
+  user_query:
+    kind: query
+    entity: User
+    description: Resolve up to 100 users by handle (username).
+    parameters:
+      - name: usernames
+        type: array
+        required: true
+        items:
+          type: string
+
+  tweet_get:
+    kind: get
+    entity: Tweet
+  tweet_lookup_query:
+    kind: query
+    entity: Tweet
+    description: Batch lookup of posts by snowflake id (comma-separated on the wire).
+    parameters:
+      - name: ids
+        type: array
+        required: true
+        items:
+          type: string
+  tweet_search:
+    kind: search
+    entity: Tweet
+    description: Recent search over the last seven days of public posts.
+    parameters:
+      - name: query
+        type: string
+        required: true
+        role: search
+        string_semantics: short
+      - name: sort_order
+        type: select
+        required: false
+        role: sort
+        allowed_values:
+          - recency
+          - relevancy
+      - name: start_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: end_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: since_id
+        type: string
+        required: false
+        string_semantics: short
+      - name: until_id
+        type: string
+        required: false
+        string_semantics: short
+  tweet_timeline_query:
+    kind: query
+    entity: Tweet
+    description: Posts authored by a specific user.
+    parameters:
+      - name: id
+        type: entity_ref
+        target: User
+        required: true
+        role: scope
+      - name: exclude
+        type: multi_select
+        required: false
+        allowed_values:
+          - replies
+          - retweets
+      - name: start_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: end_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: since_id
+        type: string
+        required: false
+        string_semantics: short
+      - name: until_id
+        type: string
+        required: false
+        string_semantics: short
+  tweet_mentions_query:
+    kind: query
+    entity: Tweet
+    description: Posts that mention a specific user.
+    parameters:
+      - name: id
+        type: entity_ref
+        target: User
+        required: true
+        role: scope
+      - name: start_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: end_time
+        type: date
+        required: false
+        value_format: rfc3339
+      - name: since_id
+        type: string
+        required: false
+        string_semantics: short
+      - name: until_id
+        type: string
+        required: false
+        string_semantics: short
+  user_liked_tweets_query:
+    kind: query
+    entity: Tweet
+    description: Posts liked by a specific user.
+    parameters:
+      - name: id
+        type: entity_ref
+        target: User
+        required: true
+        role: scope
+  tweet_create:
+    kind: create
+    entity: Tweet
+    description: Create a new post for the authenticated user.
+    provides:
+      - id
+      - text
+    parameters:
+      - name: text
+        type: string
+        required: true
+        string_semantics: markdown
+      - name: quote_tweet_id
+        type: entity_ref
+        target: Tweet
+        required: false
+      - name: reply_to_tweet_id
+        type: entity_ref
+        target: Tweet
+        required: false
+  tweet_delete:
+    kind: action
+    entity: Tweet
+    output:
+      type: side_effect
+      description: Removes the post from X when the authenticated user is allowed to delete it.
+
+  list_get:
+    kind: get
+    entity: List
+  list_create:
+    kind: create
+    entity: List
+    provides:
+      - id
+      - name
+    parameters:
+      - name: name
+        type: string
+        required: true
+        string_semantics: short
+      - name: description
+        type: string
+        required: false
+        string_semantics: markdown
+      - name: private
+        type: boolean
+        required: false
+  list_delete:
+    kind: action
+    entity: List
+    output:
+      type: side_effect
+      description: Deletes the list when the authenticated user owns it.
+  list_tweets_query:
+    kind: query
+    entity: Tweet
+    description: Posts from members of a specific list.
+    parameters:
+      - name: id
+        type: entity_ref
+        target: List
+        required: true
+        role: scope
+
+oauth:
+  provider: twitter
+  scopes:
+    tweet.read:
+      label: Read posts, timelines, search, and metrics surfaced with reads.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    tweet.write:
+      label: Create, delete, repost, like, and other post mutations.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    users.read:
+      label: Read account profile and identifiers for users you can access.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    list.read:
+      label: Read lists, memberships, and pinned lists.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    list.write:
+      label: Create, update, or delete lists you own.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    like.read:
+      label: Read who liked a post or which posts a user liked.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    like.write:
+      label: Like or unlike posts on behalf of the user.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    follows.read:
+      label: Read follow relationships.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    follows.write:
+      label: Follow or unfollow accounts.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    bookmark.read:
+      label: Read bookmarks.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    bookmark.write:
+      label: Add or remove bookmarks.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    offline.access:
+      label: Receive a refresh token for long-lived user authorization.
+      docs_url: https://docs.x.com/fundamentals/authentication/oauth-2-0/overview
+    space.read:
+      label: Read Spaces metadata and participants.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    dm.read:
+      label: Read direct message events.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    dm.write:
+      label: Send and manage direct messages.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    mute.read:
+      label: Read muted accounts.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    mute.write:
+      label: Mute or unmute accounts.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    block.read:
+      label: Read blocked accounts.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+    block.write:
+      label: Block or unblock accounts.
+      docs_url: https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping
+  default_scope_sets:
+    plasm_twitter_read_core:
+      description: Read timelines, profiles, list metadata, and recent search.
+      scopes:
+        - tweet.read
+        - users.read
+        - list.read
+        - like.read
+    plasm_twitter_write_core:
+      description: Post, delete, manage lists, and read relationships needed for writes.
+      scopes:
+        - tweet.read
+        - tweet.write
+        - users.read
+        - list.read
+        - list.write
+        - offline.access
+  requirements:
+    capabilities:
+      user_get:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      user_get_me:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      user_query:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      tweet_get:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      tweet_lookup_query:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      tweet_search:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      tweet_timeline_query:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      tweet_mentions_query:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      user_liked_tweets_query:
+        all_of:
+          - any_of: [like.read]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      tweet_create:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [tweet.write]
+          - any_of: [users.read]
+      tweet_delete:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [tweet.write]
+          - any_of: [users.read]
+      list_get:
+        all_of:
+          - any_of: [list.read]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      list_create:
+        all_of:
+          - any_of: [list.read]
+          - any_of: [list.write]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      list_delete:
+        all_of:
+          - any_of: [list.write]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      list_tweets_query:
+        all_of:
+          - any_of: [list.read]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+    relations:
+      User.tweets:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      User.mentions:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      User.liked_tweets:
+        all_of:
+          - any_of: [like.read]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      Tweet.author:
+        all_of:
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      List.owner:
+        all_of:
+          - any_of: [list.read]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+      List.tweets:
+        all_of:
+          - any_of: [list.read]
+          - any_of: [tweet.read]
+          - any_of: [users.read]
+
+auth:
+  scheme: bearer_token
+  env: TWITTER_ACCESS_TOKEN

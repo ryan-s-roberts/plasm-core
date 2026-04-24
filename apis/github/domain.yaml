@@ -1,0 +1,3050 @@
+version: 13
+
+http_backend: https://api.github.com
+
+entities:
+  Repository:
+    id_field: id
+    key_vars:
+    - owner
+    - repo
+    description: A GitHub repository
+    fields:
+      id:
+        field_type: integer
+        required: true
+      owner:
+        field_type: string
+        path: owner.login
+        string_semantics: short
+        required: false
+      repo:
+        field_type: string
+        path: name
+        string_semantics: short
+        required: true
+      full_name:
+        field_type: string
+        string_semantics: short
+        required: true
+      description:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      private:
+        field_type: boolean
+        required: true
+      fork:
+        field_type: boolean
+        required: true
+      language:
+        field_type: string
+        string_semantics: short
+        required: false
+      stargazers_count:
+        field_type: integer
+        required: false
+      forks_count:
+        field_type: integer
+        required: false
+      open_issues_count:
+        field_type: integer
+        required: false
+      default_branch:
+        field_type: string
+        string_semantics: short
+        required: false
+      archived:
+        field_type: boolean
+        required: false
+      visibility:
+        field_type: select
+        allowed_values:
+        - public
+        - private
+        - internal
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      pushed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+    relations:
+      repo_owner:
+        target: User
+        cardinality: one
+  Issue:
+    id_field: id
+    key_vars:
+    - owner
+    - repo
+    - number
+    description: A GitHub issue in a repository
+    fields:
+      repository_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+        path: repository_url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 0
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+        path: repository_url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 1
+      number:
+        field_type: integer
+        required: true
+      id:
+        field_type: integer
+        required: true
+      title:
+        field_type: string
+        string_semantics: short
+        required: true
+      body:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      state:
+        field_type: select
+        allowed_values:
+        - open
+        - closed
+        required: true
+      state_reason:
+        field_type: select
+        allowed_values:
+        - completed
+        - reopened
+        - not_planned
+        - duplicate
+        required: false
+      locked:
+        field_type: boolean
+        required: false
+      comments:
+        field_type: integer
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      closed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+    relations:
+      user:
+        target: User
+        cardinality: one
+      assignee:
+        target: User
+        cardinality: one
+      milestone:
+        target: Milestone
+        cardinality: one
+      labels:
+        target: Label
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: issue_label_query
+          bindings:
+            owner: owner
+            repo: repo
+            issue_number: number
+  PullRequest:
+    id_field: id
+    key_vars:
+    - owner
+    - repo
+    - number
+    description: >-
+      A GitHub pull request. Use this entity when the goal is to list, search,
+      filter, or update pull requests themselves.
+    fields:
+      repository_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+        path: repository_url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 0
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+        path: repository_url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 1
+      number:
+        field_type: integer
+        required: true
+      id:
+        field_type: integer
+        required: true
+      title:
+        field_type: string
+        string_semantics: short
+        required: true
+      body:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      state:
+        field_type: select
+        allowed_values:
+        - open
+        - closed
+        required: true
+      locked:
+        field_type: boolean
+        required: false
+      draft:
+        field_type: boolean
+        required: false
+      merged_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      closed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+    relations:
+      user:
+        target: User
+        cardinality: one
+      assignee:
+        target: User
+        cardinality: one
+      milestone:
+        target: Milestone
+        cardinality: one
+  Commit:
+    id_field: sha
+    key_vars:
+    - owner
+    - repo
+    - sha
+    description: >-
+      A Git commit identified by repository scope and commit SHA. Resolve branch/tag names
+      via the commit_get capability path segment (CML `sha`); the API accepts SHAs or ref names there.
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      sha:
+        field_type: string
+        string_semantics: short
+        required: true
+      message:
+        field_type: string
+        string_semantics: markdown
+        required: false
+        path: commit.message
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+  Branch:
+    id_field: name
+    key_vars:
+    - owner
+    - repo
+    - name
+    description: Git branch for a repository (owner, repo, and branch name).
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: true
+      commit_sha:
+        field_type: string
+        string_semantics: short
+        required: false
+        path: commit.sha
+      protected:
+        field_type: boolean
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+  PullRequestReview:
+    key_vars:
+    - owner
+    - repo
+    - pull_number
+    - id
+    id_field: id
+    description: A review on a pull request
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: false
+      repo:
+        field_type: string
+        string_semantics: short
+        required: false
+      pull_number:
+        field_type: integer
+        required: false
+      id:
+        field_type: integer
+        required: true
+      state:
+        field_type: select
+        allowed_values:
+        - APPROVED
+        - CHANGES_REQUESTED
+        - COMMENTED
+        - DISMISSED
+        - PENDING
+        required: false
+      body:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      submitted_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+  PullRequestFile:
+    id_field: filename
+    description: >-
+      A file changed inside one specific pull request diff. Use this only when
+      you already know the pull request number and want changed files for that
+      pull request, not when the goal is to discover or enumerate pull requests.
+    fields:
+      filename:
+        field_type: string
+        string_semantics: short
+        required: true
+      sha:
+        field_type: string
+        string_semantics: short
+        required: false
+      status:
+        field_type: select
+        allowed_values:
+        - added
+        - removed
+        - modified
+        - renamed
+        - copied
+        - changed
+        - unchanged
+        required: false
+      additions:
+        field_type: integer
+        required: false
+      deletions:
+        field_type: integer
+        required: false
+      patch:
+        field_type: string
+        string_semantics: markdown
+        required: false
+  User:
+    id_field: login
+    description: A GitHub user account
+    fields:
+      login:
+        field_type: string
+        string_semantics: short
+        required: true
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: false
+      company:
+        field_type: string
+        string_semantics: short
+        required: false
+      blog:
+        field_type: string
+        string_semantics: short
+        required: false
+      location:
+        field_type: string
+        string_semantics: short
+        required: false
+      email:
+        field_type: string
+        string_semantics: short
+        required: false
+      bio:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      public_repos:
+        field_type: integer
+        required: false
+      public_gists:
+        field_type: integer
+        required: false
+      hireable:
+        field_type: boolean
+        required: false
+      site_admin:
+        field_type: boolean
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      avatar_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  Label:
+    key_vars:
+    - owner
+    - repo
+    - name
+    id_field: name
+    description: A label that can be applied to issues and pull requests
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: true
+      id:
+        field_type: integer
+        required: true
+      description:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      color:
+        field_type: string
+        string_semantics: short
+        required: false
+      default:
+        field_type: boolean
+        required: false
+  Milestone:
+    key_vars:
+    - owner
+    - repo
+    - number
+    id_field: number
+    description: A milestone grouping issues and pull requests
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      number:
+        field_type: integer
+        required: true
+      id:
+        field_type: integer
+        required: true
+      title:
+        field_type: string
+        string_semantics: short
+        required: true
+      description:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      state:
+        field_type: select
+        allowed_values:
+        - open
+        - closed
+        required: true
+      open_issues:
+        field_type: integer
+        required: false
+      closed_issues:
+        field_type: integer
+        required: false
+      due_on:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      closed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+  Release:
+    key_vars:
+    - owner
+    - repo
+    - id
+    id_field: id
+    description: A GitHub release with assets and release notes
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      id:
+        field_type: integer
+        required: true
+      tag_name:
+        field_type: string
+        string_semantics: short
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: false
+      body:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      draft:
+        field_type: boolean
+        required: false
+      prerelease:
+        field_type: boolean
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      published_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+    relations:
+      author:
+        target: User
+        cardinality: one
+  IssueComment:
+    id_field: id
+    description: A comment on a GitHub issue or pull request
+    fields:
+      id:
+        field_type: integer
+        required: true
+      body:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+    relations:
+      user:
+        target: User
+        cardinality: one
+  Organization:
+    id_field: login
+    description: >-
+      Organization profile keyed by login (public metadata, counts, and contact fields).
+    fields:
+      login:
+        field_type: string
+        string_semantics: short
+        required: true
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: false
+      description:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      blog:
+        field_type: string
+        string_semantics: short
+        required: false
+      location:
+        field_type: string
+        string_semantics: short
+        required: false
+      email:
+        field_type: string
+        string_semantics: short
+        required: false
+      avatar_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      url:
+        field_type: string
+        string_semantics: short
+        required: false
+      public_repos:
+        field_type: integer
+        required: false
+      public_gists:
+        field_type: integer
+        required: false
+      followers:
+        field_type: integer
+        required: false
+      following:
+        field_type: integer
+        required: false
+      type:
+        field_type: string
+        string_semantics: short
+        required: false
+  Gist:
+    id_field: id
+    description: >-
+      User-hosted gist (paste or small multi-file snippet) identified by gist id.
+    fields:
+      id:
+        field_type: string
+        string_semantics: short
+        required: true
+      description:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      public:
+        field_type: boolean
+        required: false
+      comments:
+        field_type: integer
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations:
+      owner:
+        target: User
+        cardinality: one
+  PullRequestReviewComment:
+    key_vars:
+    - owner
+    - repo
+    - id
+    id_field: id
+    description: An inline review comment on a pull request diff (distinct from issue timeline comments)
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: false
+      repo:
+        field_type: string
+        string_semantics: short
+        required: false
+      id:
+        field_type: integer
+        required: true
+      body:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      path:
+        field_type: string
+        string_semantics: short
+        required: false
+      diff_hunk:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      commit_id:
+        field_type: string
+        string_semantics: short
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations:
+      user:
+        target: User
+        cardinality: one
+  RepositoryTag:
+    id_field: name
+    description: A lightweight tag pointing at a commit (not the same as a GitHub Release)
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: true
+      commit_sha:
+        field_type: string
+        string_semantics: short
+        required: false
+        path: commit.sha
+      zipball_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      tarball_url:
+        field_type: string
+        string_semantics: short
+        required: false
+  Contributor:
+    id_field: login
+    description: Repository contributor with aggregated commit counts (from the contributors API)
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      login:
+        field_type: string
+        string_semantics: short
+        required: true
+      contributions:
+        field_type: integer
+        required: false
+  WorkflowRun:
+    key_vars:
+    - owner
+    - repo
+    - id
+    id_field: id
+    description: A single GitHub Actions workflow run for a repository
+    fields:
+      owner:
+        field_type: string
+        string_semantics: short
+        required: true
+      repo:
+        field_type: string
+        string_semantics: short
+        required: true
+      id:
+        field_type: integer
+        required: true
+      name:
+        field_type: string
+        string_semantics: short
+        required: false
+      status:
+        field_type: string
+        string_semantics: short
+        required: false
+      conclusion:
+        field_type: string
+        string_semantics: short
+        required: false
+      event:
+        field_type: string
+        string_semantics: short
+        required: false
+      workflow_id:
+        field_type: integer
+        required: false
+      html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      run_started_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  Notification:
+    id_field: id
+    description: One row in the notification inbox for subscribed activity (issues, pull requests, and similar)
+    fields:
+      id:
+        field_type: string
+        string_semantics: short
+        required: true
+      unread:
+        field_type: boolean
+        required: false
+      reason:
+        field_type: string
+        string_semantics: short
+        required: false
+      updated_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      last_read_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      url:
+        field_type: string
+        string_semantics: short
+        required: false
+      subscription_url:
+        field_type: string
+        string_semantics: short
+        required: false
+capabilities:
+  repo_search:
+    kind: search
+    entity: Repository
+    description: Search GitHub repositories.
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: sort
+      type: select
+      allowed_values:
+      - stars
+      - forks
+      - help-wanted-issues
+      - updated
+      required: false
+      role: sort
+    - name: order
+      type: select
+      allowed_values:
+      - desc
+      - asc
+      required: false
+      role: sort_direction
+  user_repos_query:
+    kind: query
+    entity: Repository
+    description: List repositories for a specific user.
+    parameters:
+    - name: username
+      type: entity_ref
+      target: User
+      required: true
+      role: scope
+    - name: type
+      type: select
+      allowed_values:
+      - all
+      - owner
+      - member
+      required: false
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      - pushed
+      - full_name
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  auth_user_repos_query:
+    kind: query
+    entity: Repository
+    description: >-
+      List repositories the authenticated token can access via GET /user/repos (owned,
+      collaborator, and organization repos depending on affiliation). This is not the same
+      set as `public_repos` on the User profile.
+    parameters:
+    - name: visibility
+      type: select
+      allowed_values:
+      - all
+      - public
+      - private
+      required: false
+    - name: affiliation
+      type: string
+      required: false
+      string_semantics: short
+      description: >-
+        Comma-separated GitHub `affiliation` filter (owner, collaborator, organization_member).
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      - pushed
+      - full_name
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  repo_get:
+    kind: get
+    entity: Repository
+    description: Get a repository by owner and repo slug.
+    provides:
+    - id
+    - owner
+    - repo
+    - full_name
+    - description
+    - private
+    - fork
+    - language
+    - stargazers_count
+    - forks_count
+    - open_issues_count
+    - default_branch
+    - archived
+    - visibility
+    - created_at
+    - updated_at
+    - pushed_at
+    - html_url
+  repo_collaborators_query:
+    kind: query
+    entity: User
+    description: >-
+      List users who can access a given repository (collaborators / inherited access), scoped by `repository=…`.
+      This is not organization membership; use the org-scoped members query when the goal is “who is in org X”.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: affiliation
+      type: select
+      allowed_values:
+      - outside
+      - direct
+      - all
+      required: false
+  repo_forks_query:
+    kind: query
+    entity: Repository
+    description: List forks of a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: sort
+      type: select
+      allowed_values:
+      - newest
+      - oldest
+      - stargazers
+      required: false
+      role: sort
+  issue_get:
+    kind: get
+    entity: Issue
+    description: Get an issue by owner, repo, and number.
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - state_reason
+    - locked
+    - comments
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+  issue_query:
+    kind: query
+    entity: Issue
+    description: >-
+      List issues and pull requests in a repository (this list endpoint returns both types).
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      - all
+      required: false
+    - name: assignee
+      type: entity_ref
+      target: User
+      required: false
+      description: Filter by assignee login (omit for any assignee).
+    - name: labels
+      type: string
+      required: false
+      string_semantics: short
+    - name: milestone
+      type: string
+      required: false
+      string_semantics: short
+    - name: since
+      type: date
+      value_format: rfc3339
+      required: false
+      description: Only issues updated at or after this time (ISO 8601).
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      - comments
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  issue_search:
+    kind: search
+    entity: Issue
+    description: >-
+      Search issues and pull requests globally. Prefix q with 'is:issue' to restrict to issues only.
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: sort
+      type: select
+      allowed_values:
+      - comments
+      - reactions
+      - created
+      - updated
+      - interactions
+      required: false
+      role: sort
+    - name: order
+      type: select
+      allowed_values:
+      - desc
+      - asc
+      required: false
+      role: sort_direction
+  pr_get:
+    kind: get
+    entity: PullRequest
+    description: Get a pull request by owner, repo, and number.
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - locked
+    - draft
+    - merged_at
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+  pr_query:
+    kind: query
+    entity: PullRequest
+    description: List pull requests in a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      - all
+      required: false
+    - name: head
+      type: string
+      required: false
+      string_semantics: short
+    - name: base
+      type: string
+      required: false
+      string_semantics: short
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      - popularity
+      - long-running
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  pr_search:
+    kind: search
+    entity: PullRequest
+    description: >-
+      Search pull requests globally. Add 'is:pr' to q to restrict to PRs.
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: sort
+      type: select
+      allowed_values:
+      - comments
+      - reactions
+      - created
+      - updated
+      - interactions
+      required: false
+      role: sort
+    - name: order
+      type: select
+      allowed_values:
+      - desc
+      - asc
+      required: false
+      role: sort_direction
+  pr_touching_path_search:
+    kind: query
+    entity: PullRequest
+    description: >-
+      Search pull requests in a repository by path, crate, file, or directory
+      text. Use this when the goal is to find which pull requests touch a named
+      path or crate.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: q
+      type: string
+      required: true
+      string_semantics: short
+      description: >-
+        Path or crate text to match in the pull request search, such as a
+        directory name, file path fragment, or crate name.
+    - name: sort
+      type: select
+      allowed_values:
+      - comments
+      - reactions
+      - created
+      - updated
+      - interactions
+      required: false
+      role: sort
+    - name: order
+      type: select
+      allowed_values:
+      - desc
+      - asc
+      required: false
+      role: sort_direction
+  commit_query:
+    kind: query
+    entity: Commit
+    description: List commits for a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: sha
+      type: string
+      required: false
+      string_semantics: short
+    - name: path
+      type: string
+      required: false
+      string_semantics: short
+    - name: author
+      type: string
+      required: false
+      string_semantics: short
+  commit_get:
+    kind: get
+    entity: Commit
+    description: Get a commit by owner, repo, and revision (SHA, branch, or tag name).
+    provides:
+    - owner
+    - repo
+    - sha
+    - message
+    - html_url
+  pr_review_query:
+    kind: query
+    entity: PullRequestReview
+    description: List reviews on a pull request.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: pull_number
+      type: integer
+      required: true
+      role: scope
+  pr_file_query:
+    kind: query
+    entity: PullRequestFile
+    description: >-
+      List files changed in one specific pull request. Requires a known pull
+      request number and returns file rows, not pull request rows.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: pull_number
+      type: integer
+      required: true
+      role: scope
+  pr_review_comment_query:
+    kind: query
+    entity: PullRequestReviewComment
+    description: List inline review comments on a pull request.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: pull_number
+      type: integer
+      required: true
+      role: scope
+    - name: since
+      type: date
+      value_format: rfc3339
+      required: false
+      description: Only comments updated at or after this time.
+  pr_review_get:
+    kind: get
+    entity: PullRequestReview
+    description: Get a pull request review by id.
+    provides:
+    - id
+    - owner
+    - repo
+    - pull_number
+    - state
+    - body
+    - submitted_at
+    - html_url
+  pr_review_comment_get:
+    kind: get
+    entity: PullRequestReviewComment
+    description: Get a pull request review comment by id.
+    provides:
+    - id
+    - owner
+    - repo
+    - body
+    - path
+    - diff_hunk
+    - commit_id
+    - html_url
+    - created_at
+    - updated_at
+  branch_query:
+    kind: query
+    entity: Branch
+    description: List branches in a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+  branch_get:
+    kind: get
+    entity: Branch
+    description: >-
+      Get branch metadata by owner, repo, and branch name (tip SHA, protection, URLs).
+    provides:
+    - owner
+    - repo
+    - name
+    - commit_sha
+    - protected
+    - html_url
+  repo_tags_query:
+    kind: query
+    entity: RepositoryTag
+    description: List git tags for a repository (distinct from Releases).
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+  contributor_query:
+    kind: query
+    entity: Contributor
+    description: List repository contributors with commit counts.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: anon
+      type: boolean
+      required: false
+      description: GitHub `anon` query parameter — include anonymous contributors (boolean filter, not a user reference).
+  workflow_run_query:
+    kind: query
+    entity: WorkflowRun
+    description: List GitHub Actions workflow runs for a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: branch
+      type: string
+      required: false
+      string_semantics: short
+      description: Filter runs for this head branch name.
+    - name: event
+      type: select
+      allowed_values:
+      - check_run
+      - check_suite
+      - create
+      - delete
+      - deployment
+      - deployment_status
+      - dynamic
+      - fork
+      - gollum
+      - issue_comment
+      - issues
+      - label
+      - member
+      - membership
+      - milestone
+      - page_build
+      - project
+      - project_card
+      - project_column
+      - public
+      - pull_request
+      - pull_request_review
+      - pull_request_review_comment
+      - pull_request_target
+      - push
+      - registry_package
+      - release
+      - repository_dispatch
+      - status
+      - team_add
+      - watch
+      - workflow_dispatch
+      - workflow_run
+      required: false
+      description: Event type that triggered the workflow (GitHub query enum).
+    - name: status
+      type: select
+      allowed_values:
+      - completed
+      - action_required
+      - cancelled
+      - failure
+      - neutral
+      - skipped
+      - stale
+      - success
+      - timed_out
+      - in_progress
+      - queued
+      - requested
+      - waiting
+      required: false
+      description: Run status filter (GitHub Actions run status, not check conclusion).
+    - name: actor
+      type: entity_ref
+      target: User
+      required: false
+      description: Filter runs triggered by this user login (GitHub `actor` query param).
+    - name: head_sha
+      type: string
+      required: false
+      string_semantics: short
+      description: Filter by the SHA of the head commit.
+  workflow_run_get:
+    kind: get
+    entity: WorkflowRun
+    description: Get a workflow run by numeric run id.
+    provides:
+    - id
+    - owner
+    - repo
+    - name
+    - status
+    - conclusion
+    - event
+    - workflow_id
+    - html_url
+    - run_started_at
+    - created_at
+    - updated_at
+  user_get:
+    kind: get
+    entity: User
+    description: Get a public user profile by login.
+    provides:
+    - login
+    - id
+    - name
+    - company
+    - blog
+    - location
+    - email
+    - bio
+    - public_repos
+    - public_gists
+    - hireable
+    - site_admin
+    - html_url
+    - avatar_url
+    - created_at
+  user_get_me:
+    kind: singleton
+    entity: User
+    description: Get the authenticated user.
+  user_search:
+    kind: search
+    entity: User
+    description: Search GitHub users.
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: sort
+      type: select
+      allowed_values:
+      - followers
+      - repositories
+      - joined
+      required: false
+      role: sort
+    - name: order
+      type: select
+      allowed_values:
+      - desc
+      - asc
+      required: false
+      role: sort_direction
+  org_get:
+    kind: get
+    entity: Organization
+    description: Get a public organization by login.
+    provides:
+    - login
+    - id
+    - name
+    - description
+    - blog
+    - location
+    - email
+    - avatar_url
+    - url
+    - public_repos
+    - public_gists
+    - followers
+    - following
+    - type
+  org_repos_query:
+    kind: query
+    entity: Repository
+    description: List repositories for an organization.
+    parameters:
+    - name: org
+      type: entity_ref
+      target: Organization
+      required: true
+      role: scope
+    - name: type
+      type: select
+      allowed_values:
+      - all
+      - public
+      - private
+      - forks
+      - sources
+      - member
+      required: false
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      - pushed
+      - full_name
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  org_public_repos_query:
+    kind: query
+    entity: Repository
+    description: List public repositories for an organization.
+    parameters:
+    - name: org
+      type: entity_ref
+      target: Organization
+      required: true
+      role: scope
+    - name: visibility
+      type: select
+      allowed_values:
+      - public
+      required: true
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      - pushed
+      - full_name
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  org_members_query:
+    kind: query
+    entity: User
+    description: >-
+      List members of a GitHub organization (org roster), scoped by `org=…`.
+      For “who can access this repo” use the repository-collaborators query instead.
+    parameters:
+    - name: org
+      type: entity_ref
+      target: Organization
+      required: true
+      role: scope
+    - name: filter
+      type: select
+      allowed_values:
+      - 2fa_disabled
+      - 2fa_insecure
+      - all
+      required: false
+    - name: role
+      type: select
+      allowed_values:
+      - all
+      - admin
+      - member
+      required: false
+  gist_query:
+    kind: query
+    entity: Gist
+    description: List gists for the authenticated user.
+  gist_get:
+    kind: get
+    entity: Gist
+    description: Get a gist by id.
+    provides:
+    - id
+    - description
+    - html_url
+    - public
+    - comments
+    - created_at
+    - updated_at
+  notification_query:
+    kind: query
+    entity: Notification
+    description: List notification threads for the authenticated user.
+    parameters:
+    - name: all
+      type: boolean
+      required: false
+    - name: participating
+      type: boolean
+      required: false
+    - name: since
+      type: date
+      value_format: rfc3339
+      required: false
+      description: Only notifications updated at or after this time.
+    - name: before
+      type: date
+      value_format: rfc3339
+      required: false
+      description: Only notifications updated before this time.
+  notification_get:
+    kind: get
+    entity: Notification
+    description: Get a notification thread.
+    provides:
+    - id
+    - unread
+    - reason
+    - updated_at
+    - last_read_at
+    - url
+    - subscription_url
+  notification_mark_read:
+    kind: action
+    entity: Notification
+    description: Mark a notification thread as read.
+    output:
+      type: side_effect
+      description: Clears unread state for this thread in the recipient's inbox
+  label_query:
+    kind: query
+    entity: Label
+    description: List labels for a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+  label_get:
+    kind: get
+    entity: Label
+    description: Get a label in a repository by name.
+    provides:
+    - name
+    - owner
+    - repo
+    - id
+    - description
+    - color
+    - default
+  issue_label_query:
+    kind: query
+    entity: Label
+    description: List labels on an issue.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: owner
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+    - name: repo
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+    - name: issue_number
+      type: integer
+      required: true
+      role: scope
+  milestone_query:
+    kind: query
+    entity: Milestone
+    description: List milestones for a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      - all
+      required: false
+    - name: sort
+      type: select
+      allowed_values:
+      - due_on
+      - completeness
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+  milestone_get:
+    kind: get
+    entity: Milestone
+    description: Get a milestone by owner, repo, and number.
+    provides:
+    - number
+    - owner
+    - repo
+    - id
+    - title
+    - description
+    - state
+    - open_issues
+    - closed_issues
+    - due_on
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+  milestone_create:
+    kind: create
+    entity: Milestone
+    description: Create a milestone in a repository.
+    provides:
+    - number
+    - owner
+    - repo
+    - id
+    - title
+    - description
+    - state
+    - open_issues
+    - closed_issues
+    - due_on
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      required: false
+    - name: due_on
+      type: date
+      value_format: rfc3339
+      required: false
+  milestone_update:
+    kind: update
+    entity: Milestone
+    description: Update a milestone (title, state, description, due date).
+    provides:
+    - number
+    - owner
+    - repo
+    - id
+    - title
+    - description
+    - state
+    - open_issues
+    - closed_issues
+    - due_on
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      required: false
+    - name: due_on
+      type: date
+      value_format: rfc3339
+      required: false
+  milestone_delete:
+    kind: delete
+    entity: Milestone
+    description: Delete a milestone from a repository.
+  release_query:
+    kind: query
+    entity: Release
+    description: List releases for a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+  release_get:
+    kind: get
+    entity: Release
+    description: Get a release by id in a repository.
+    provides:
+    - id
+    - owner
+    - repo
+    - tag_name
+    - name
+    - body
+    - draft
+    - prerelease
+    - created_at
+    - published_at
+    - html_url
+  release_create:
+    kind: create
+    entity: Release
+    description: Create a GitHub release (tag).
+    provides:
+    - id
+    - owner
+    - repo
+    - tag_name
+    - name
+    - body
+    - draft
+    - prerelease
+    - created_at
+    - published_at
+    - html_url
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: tag_name
+      type: string
+      required: true
+      string_semantics: short
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: draft
+      type: boolean
+      required: false
+    - name: prerelease
+      type: boolean
+      required: false
+    - name: target_commitish
+      type: string
+      required: false
+      description: Branch or commit SHA the tag targets when creating the release.
+      string_semantics: short
+    - name: generate_release_notes
+      type: boolean
+      required: false
+      description: Ask GitHub to auto-generate release notes from merged PRs when supported.
+  release_update:
+    kind: update
+    entity: Release
+    description: Update an existing release.
+    provides:
+    - id
+    - owner
+    - repo
+    - tag_name
+    - name
+    - body
+    - draft
+    - prerelease
+    - created_at
+    - published_at
+    - html_url
+    parameters:
+    - name: tag_name
+      type: string
+      required: false
+      string_semantics: short
+    - name: name
+      type: string
+      required: false
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: draft
+      type: boolean
+      required: false
+    - name: prerelease
+      type: boolean
+      required: false
+    - name: target_commitish
+      type: string
+      required: false
+      string_semantics: short
+  release_delete:
+    kind: delete
+    entity: Release
+    description: Delete a release by id in a repository.
+  issue_comment_query:
+    kind: query
+    entity: IssueComment
+    description: List comments on an issue.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: issue_number
+      type: integer
+      required: true
+      role: scope
+    - name: since
+      type: date
+      value_format: rfc3339
+      required: false
+      description: Only comments updated at or after this time.
+  repo_comment_query:
+    kind: query
+    entity: IssueComment
+    description: List issue comments in a repository.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: sort
+      type: select
+      allowed_values:
+      - created
+      - updated
+      required: false
+      role: sort
+    - name: direction
+      type: select
+      allowed_values:
+      - asc
+      - desc
+      required: false
+      role: sort_direction
+    - name: since
+      type: date
+      value_format: rfc3339
+      required: false
+      description: Only comments updated at or after this time.
+  issue_create:
+    kind: create
+    entity: Issue
+    description: Open a new issue in a repository.
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - state_reason
+    - locked
+    - comments
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+      description: Label names to apply (requires push access; otherwise silently dropped).
+    - name: assignees
+      type: array
+      required: false
+      items:
+        type: entity_ref
+        target: User
+      description: Assignee logins (requires push access; otherwise silently dropped).
+    - name: milestone
+      type: integer
+      required: false
+      description: Milestone number in the repo (requires push access; otherwise silently dropped).
+  issue_update:
+    kind: update
+    entity: Issue
+    description: Update an issue.
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - state_reason
+    - locked
+    - comments
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      required: false
+    - name: state_reason
+      type: select
+      allowed_values:
+      - completed
+      - reopened
+      - not_planned
+      - duplicate
+      required: false
+      description: Reason for state change (ignored unless state is changed).
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+      description: Full replacement list of label names (omit to leave labels unchanged).
+    - name: assignees
+      type: array
+      required: false
+      items:
+        type: entity_ref
+        target: User
+      description: Full replacement list of assignee logins.
+    - name: milestone
+      type: integer
+      required: false
+      description: Milestone number in the repo, or omit to leave unchanged.
+    - name: locked
+      type: boolean
+      required: false
+      description: Lock or unlock conversation on the issue.
+  issue_delete:
+    kind: delete
+    entity: Issue
+    description: Delete an issue (requires admin or sufficient repo permission).
+  issue_comment_create:
+    kind: create
+    entity: IssueComment
+    description: Post a comment on an issue or pull request thread.
+    provides:
+    - id
+    - body
+    - created_at
+    - updated_at
+    - html_url
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: issue_number
+      type: integer
+      required: true
+      role: scope
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  issue_comment_update:
+    kind: update
+    entity: IssueComment
+    description: Update an issue or pull request comment.
+    provides:
+    - id
+    - body
+    - created_at
+    - updated_at
+    - html_url
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: body
+      type: string
+      required: true
+      string_semantics: markdown
+  issue_comment_delete:
+    kind: delete
+    entity: IssueComment
+    description: Delete an issue or pull request timeline comment.
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+  pr_patch:
+    kind: update
+    entity: PullRequest
+    description: Update a pull request.
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - locked
+    - draft
+    - merged_at
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+    parameters:
+    - name: title
+      type: string
+      required: false
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: state
+      type: select
+      allowed_values:
+      - open
+      - closed
+      required: false
+    - name: base
+      type: string
+      required: false
+      description: Base branch name to target (if changing).
+      string_semantics: short
+  pr_merge:
+    kind: action
+    entity: PullRequest
+    description: Merge a pull request.
+    parameters:
+    - name: commit_title
+      type: string
+      required: false
+      string_semantics: short
+    - name: commit_message
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: merge_method
+      type: select
+      allowed_values:
+      - merge
+      - squash
+      - rebase
+      required: false
+    output:
+      type: side_effect
+      description: Merge the pull request into its base branch when the API call succeeds.
+  pr_create:
+    kind: create
+    entity: PullRequest
+    description: Open a new pull request (head branch into base).
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - locked
+    - draft
+    - merged_at
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: title
+      type: string
+      required: true
+      string_semantics: short
+    - name: head
+      type: string
+      required: true
+      description: >-
+        Branch containing changes, or user:branch for cross-fork pull requests.
+      string_semantics: short
+    - name: base
+      type: string
+      required: true
+      description: Branch you want to merge into.
+      string_semantics: short
+    - name: body
+      type: string
+      required: false
+      string_semantics: markdown
+    - name: draft
+      type: boolean
+      required: false
+    - name: maintainer_can_modify
+      type: boolean
+      required: false
+      description: Allow upstream maintainers to edit this pull request (fork workflows).
+    - name: issue
+      type: integer
+      required: false
+      description: Existing issue number to convert into a pull request when the API allows.
+  label_create:
+    kind: create
+    entity: Label
+    description: Create a label in a repository.
+    provides:
+    - name
+    - owner
+    - repo
+    - id
+    - description
+    - color
+    - default
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: color
+      type: string
+      required: false
+      description: Hex color without leading # (e.g. f29513).
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  label_update:
+    kind: update
+    entity: Label
+    description: Update a repository label (rename, color, or description).
+    provides:
+    - name
+    - owner
+    - repo
+    - id
+    - description
+    - color
+    - default
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: new_name
+      type: string
+      required: false
+      description: New label name (GitHub JSON field new_name).
+      string_semantics: short
+    - name: color
+      type: string
+      required: false
+      description: Hex color without leading #.
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+  label_delete:
+    kind: delete
+    entity: Label
+    description: Delete a label from a repository.
+  repo_content_put:
+    kind: action
+    entity: Repository
+    description: Create or replace a file in a repository (base64 content per Contents API).
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: path
+      type: string
+      required: true
+      string_semantics: short
+    - name: message
+      type: string
+      required: true
+      string_semantics: short
+    - name: content
+      type: blob
+      required: true
+      description: File contents already base64-encoded for the GitHub Contents API JSON body.
+    - name: branch
+      type: string
+      required: false
+      string_semantics: short
+    - name: sha
+      type: string
+      required: false
+      description: Blob SHA of the file being replaced (required when updating an existing path).
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Creates or replaces the file at the path when the API call succeeds.
+  repo_content_delete:
+    kind: action
+    entity: Repository
+    description: Delete a file from a repository via the Contents API (requires commit message and blob SHA).
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      type: entity_ref
+      target: Repository
+      required: true
+      role: scope
+    - name: path
+      type: string
+      required: true
+      string_semantics: short
+    - name: message
+      type: string
+      required: true
+      string_semantics: short
+    - name: sha
+      type: string
+      required: true
+      description: SHA of the file blob being removed (from the current tree).
+      string_semantics: short
+    - name: branch
+      type: string
+      required: false
+      string_semantics: short
+    output:
+      type: side_effect
+      description: Deletes the file at the path when the API call succeeds.
+oauth:
+  provider: github
+  scopes:
+    admin:gpg_key:
+      label: Full control of GPG keys
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    admin:org:
+      label: Full organization control (teams, projects, memberships)
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    admin:org_hook:
+      label: Full control of organization webhooks (OAuth-created hooks)
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    admin:public_key:
+      label: Full control of user SSH keys
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    admin:repo_hook:
+      label: Full control of repository hooks
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    codespace:
+      label: Create and manage GitHub Codespaces
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    delete:packages:
+      label: Delete packages from GitHub Packages
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    delete_repo:
+      label: Delete repositories you can administer
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    gist:
+      label: Create and update gists
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    notifications:
+      label: Notifications inbox, mark read, watch/unwatch, thread subscriptions
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    project:
+      label: Read and write user and organization projects (classic)
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    public_repo:
+      label: Access public repositories only (read/write on public repos and orgs)
+      notes: "Narrower than repo: only public repositories (and related public-org operations)."
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:audit_log:
+      label: Read organization audit log data (where available)
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:org:
+      label: Read organization membership, teams, and projects
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:packages:
+      label: Download and install packages from GitHub Packages
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:project:
+      label: Read-only access to user and organization projects (classic)
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:public_key:
+      label: List and view SSH public keys
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:repo_hook:
+      label: Read and ping repository hooks
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    read:user:
+      label: Read user profile data
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    repo:
+      label: Full control of private and public repositories, issues, PRs, and related org resources
+      notes: "Classic OAuth-app scopes (space-separated on /login/oauth/authorize). Not GitHub App installation permissions or fine-grained PAT permission sets."
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    repo:invite:
+      label: Accept or decline repository collaboration invitations
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    repo:status:
+      label: Read/write commit statuses without full code access
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    repo_deployment:
+      label: View deployment statuses without full code access
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    security_events:
+      label: Read and write code scanning security events
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    user:
+      label: Read/write profile (includes read:user, user:email, user:follow when normalized)
+      notes: "GitHub normalizes tokens: requesting user may drop redundant read:user / user:email entries."
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    user:email:
+      label: Read user email addresses
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    user:follow:
+      label: Follow and unfollow users
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    workflow:
+      label: Add or update GitHub Actions workflow files (.github/workflows); often needed with repo for new workflow YAML
+      notes: "Required in addition to repo for many new or changed workflow files under .github/workflows (see GitHub Actions docs)."
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    write:gpg_key:
+      label: Create, list, and view GPG keys
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    write:org:
+      label: Read and write organization membership and organization projects
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    write:packages:
+      label: Upload and publish packages to GitHub Packages
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    write:public_key:
+      label: Create, list, and view SSH public keys
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    write:repo_hook:
+      label: Read, write, and ping repository hooks
+      docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+  default_scope_sets:
+    plasm_github_readonly_core:
+      description: Read-heavy automation — repos, org directory, notifications, profile.
+      scopes:
+      - read:user
+      - repo
+      - read:org
+      - notifications
+    plasm_github_contributor_core:
+      description: Issue/PR edits, file pushes, Actions workflow YAML, gists, inbox.
+      scopes:
+      - user
+      - repo
+      - workflow
+      - notifications
+      - gist
+      - read:org
+    plasm_github_public_repo_focus:
+      description: Narrow grant — public repositories plus basic profile reads.
+      scopes:
+      - public_repo
+      - read:user
+  requirements:
+    capabilities:
+      auth_user_repos_query:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      branch_get:
+        any_of:
+        - repo
+        - public_repo
+      branch_query:
+        any_of:
+        - repo
+        - public_repo
+      commit_get:
+        any_of:
+        - repo
+        - public_repo
+      commit_query:
+        any_of:
+        - repo
+        - public_repo
+      contributor_query:
+        any_of:
+        - repo
+        - public_repo
+      gist_get:
+        any_of:
+        - gist
+      gist_query:
+        any_of:
+        - gist
+      issue_comment_create:
+        any_of:
+        - repo
+        - public_repo
+      issue_comment_delete:
+        any_of:
+        - repo
+        - public_repo
+      issue_create:
+        any_of:
+        - repo
+        - public_repo
+      issue_delete:
+        any_of:
+        - repo
+        - public_repo
+      issue_comment_query:
+        any_of:
+        - repo
+        - public_repo
+      issue_comment_update:
+        any_of:
+        - repo
+        - public_repo
+      issue_get:
+        any_of:
+        - repo
+        - public_repo
+      issue_query:
+        any_of:
+        - repo
+        - public_repo
+      issue_search:
+        any_of:
+        - repo
+        - public_repo
+      issue_update:
+        any_of:
+        - repo
+        - public_repo
+      label_create:
+        any_of:
+        - repo
+        - public_repo
+      label_delete:
+        any_of:
+        - repo
+        - public_repo
+      label_update:
+        any_of:
+        - repo
+        - public_repo
+      label_get:
+        any_of:
+        - repo
+        - public_repo
+      label_query:
+        any_of:
+        - repo
+        - public_repo
+      issue_label_query:
+        any_of:
+        - repo
+        - public_repo
+      milestone_get:
+        any_of:
+        - repo
+        - public_repo
+      milestone_create:
+        any_of:
+        - repo
+        - public_repo
+      milestone_delete:
+        any_of:
+        - repo
+        - public_repo
+      milestone_query:
+        any_of:
+        - repo
+        - public_repo
+      milestone_update:
+        any_of:
+        - repo
+        - public_repo
+      notification_get:
+        any_of:
+        - notifications
+      notification_mark_read:
+        any_of:
+        - notifications
+      notification_query:
+        any_of:
+        - notifications
+      org_get:
+        any_of:
+        - read:org
+        - write:org
+        - admin:org
+        - repo
+      org_members_query:
+        any_of:
+        - read:org
+        - write:org
+        - admin:org
+        - repo
+      org_repos_query:
+        any_of:
+        - read:org
+        - write:org
+        - admin:org
+        - repo
+      org_public_repos_query:
+        any_of:
+        - read:org
+        - write:org
+        - admin:org
+        - repo
+      pr_file_query:
+        any_of:
+        - repo
+        - public_repo
+      pr_get:
+        any_of:
+        - repo
+        - public_repo
+      pr_merge:
+        any_of:
+        - repo
+        - public_repo
+      pr_create:
+        any_of:
+        - repo
+        - public_repo
+      pr_patch:
+        any_of:
+        - repo
+        - public_repo
+      pr_query:
+        any_of:
+        - repo
+        - public_repo
+      pr_review_comment_get:
+        any_of:
+        - repo
+        - public_repo
+      pr_review_comment_query:
+        any_of:
+        - repo
+        - public_repo
+      pr_review_get:
+        any_of:
+        - repo
+        - public_repo
+      pr_review_query:
+        any_of:
+        - repo
+        - public_repo
+      pr_search:
+        any_of:
+        - repo
+        - public_repo
+      pr_touching_path_search:
+        any_of:
+        - repo
+        - public_repo
+      release_get:
+        any_of:
+        - repo
+        - public_repo
+      release_create:
+        any_of:
+        - repo
+        - public_repo
+      release_delete:
+        any_of:
+        - repo
+        - public_repo
+      release_query:
+        any_of:
+        - repo
+        - public_repo
+      release_update:
+        any_of:
+        - repo
+        - public_repo
+      repo_collaborators_query:
+        any_of:
+        - repo
+        - public_repo
+      repo_comment_query:
+        any_of:
+        - repo
+        - public_repo
+      repo_content_put:
+        any_of:
+        - repo
+        - public_repo
+      repo_content_delete:
+        any_of:
+        - repo
+        - public_repo
+      repo_forks_query:
+        any_of:
+        - repo
+        - public_repo
+      repo_get:
+        any_of:
+        - repo
+        - public_repo
+      repo_search:
+        any_of:
+        - repo
+        - public_repo
+      repo_tags_query:
+        any_of:
+        - repo
+        - public_repo
+      user_get:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      user_get_me:
+        any_of:
+        - read:user
+        - user
+      user_repos_query:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      user_search:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      workflow_run_get:
+        any_of:
+        - repo
+        - public_repo
+      workflow_run_query:
+        any_of:
+        - repo
+        - public_repo
+    relations:
+      Gist.owner:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      Issue.assignee:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      Issue.milestone:
+        any_of:
+        - repo
+        - public_repo
+      Issue.labels:
+        any_of:
+        - repo
+        - public_repo
+      Issue.user:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      IssueComment.user:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      PullRequest.assignee:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      PullRequest.milestone:
+        any_of:
+        - repo
+        - public_repo
+      PullRequest.user:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      PullRequestReviewComment.user:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      Release.author:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+      Repository.repo_owner:
+        any_of:
+        - read:user
+        - user
+        - repo
+        - public_repo
+auth:
+  scheme: bearer_token
+  env: GITHUB_TOKEN

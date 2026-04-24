@@ -1,0 +1,64 @@
+# Google Calendar — calendars and events (compound keys, scoped lists).
+- id: gc-01
+  schema: google-calendar
+  goal: "Show every calendar I can see so I can pick where to create the event"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Calendar]
+
+- id: gc-02
+  schema: google-calendar
+  goal: "List next week's events on my primary calendar matching standup"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Event]
+
+- id: gc-03
+  schema: google-calendar
+  goal: "Open event primary/abc123xyz for the conference room display"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Event]
+
+- id: gc-04
+  schema: google-calendar
+  goal: "From calendar 'primary', enumerate upcoming events for the travel summary"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Calendar, Event]
+
+- id: gc-05
+  schema: google-calendar
+  goal: "Find my work calendar id, then list today's meetings on it"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Calendar, Event]
+
+- id: gc-06
+  schema: google-calendar
+  goal: "Event list for Friday but only summary, start, and location for the agenda email"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Event]
+
+- id: gc-07
+  schema: google-calendar
+  goal: "Events I organized — reverse lookup from my user identity"
+  tags: [reverse]
+  covers: [reverse]
+  expect:
+    entities_any: [Event]
+
+- id: gc-08
+  schema: google-calendar
+  goal: "List many events on primary and continue with the next page when the first result page is full"
+  tags: [pagination]
+  covers: [page_next]
+  expect:
+    entities_any: [Event]

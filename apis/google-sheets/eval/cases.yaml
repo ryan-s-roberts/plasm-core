@@ -1,0 +1,57 @@
+# Google Sheets v4 — NL eval cases (goal-oriented; coverage for plasm-eval).
+# Run: cargo run -p plasm-eval -- coverage --schema apis/google-sheets --cases apis/google-sheets/eval/cases.yaml
+- id: gs-01
+  schema: google-sheets
+  goal: Open spreadsheet abc123 and list worksheet tab titles for the workbook overview
+  tags: [get, chain]
+  covers: [get, chain]
+  expect:
+    entities_any: [Spreadsheet, Sheet]
+
+- id: gs-02
+  schema: google-sheets
+  goal: Create a new blank spreadsheet titled Q2 Planning for the finance workspace
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Spreadsheet]
+
+- id: gs-03
+  schema: google-sheets
+  goal: Read only column A labels from Sheet1!A1:A10 in spreadsheet xyz for the summary widget
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [ValueRange]
+
+- id: gs-04
+  schema: google-sheets
+  goal: Overwrite cells in Sheet1!B2:D4 with the revised forecast matrix
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [ValueRange]
+
+- id: gs-05
+  schema: google-sheets
+  goal: Append the imported CSV rows after the inventory table starting at Sheet1!A1
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Spreadsheet]
+
+- id: gs-06
+  schema: google-sheets
+  goal: Load spreadsheet meta for deck-id then fetch values from Summary!A1:C5 for the slide deck
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Spreadsheet, ValueRange]
+
+- id: gs-07
+  schema: google-sheets
+  goal: Retrieve developer metadata entry 42 in spreadsheet meta-sheet for debugging
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [DeveloperMetadata]

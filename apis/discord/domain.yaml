@@ -1,0 +1,2540 @@
+version: 2
+
+http_backend: https://discord.com/api/v10
+
+entities:
+  Guild:
+    id_field: id
+    description: A Discord server (guild).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      owner_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      icon:
+        field_type: string
+        required: false
+        string_semantics: short
+      splash:
+        field_type: string
+        required: false
+        string_semantics: short
+      verification_level:
+        field_type: integer
+        required: false
+      premium_tier:
+        field_type: integer
+        required: false
+      pruned:
+        field_type: integer
+        required: false
+    relations:
+      channels:
+        description: Channels belonging to this guild.
+        target: Channel
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: channel_list_for_guild
+          param: guild_id
+      members:
+        description: Members of this guild.
+        target: GuildMember
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_member_list
+          param: guild_id
+      roles:
+        description: Roles defined in this guild.
+        target: Role
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_role_list
+          param: guild_id
+      bans:
+        description: Bans for this guild.
+        target: Ban
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: ban_list
+          param: guild_id
+      webhooks:
+        description: Webhooks configured on guild channels.
+        target: Webhook
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_webhook_list
+          param: guild_id
+      emojis:
+        description: Custom emojis uploaded to this guild.
+        target: CustomEmoji
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_emoji_list
+          param: guild_id
+      stickers:
+        description: Stickers uploaded to this guild.
+        target: Sticker
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_sticker_list
+          param: guild_id
+      scheduled_events:
+        description: Scheduled community events.
+        target: ScheduledEvent
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: scheduled_event_list
+          param: guild_id
+      soundboard_sounds:
+        description: Soundboard sounds available in this guild.
+        target: SoundboardSound
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: soundboard_sound_list
+          param: guild_id
+      templates:
+        description: Server templates derived from this guild.
+        target: GuildTemplate
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_template_list
+          param: guild_id
+      auto_moderation_rules:
+        description: AutoMod rules for this guild.
+        target: AutoModerationRule
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: auto_moderation_rule_list
+          param: guild_id
+      integrations:
+        description: Third-party integrations attached to this guild.
+        target: GuildIntegration
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_integration_list
+          param: guild_id
+      threads:
+        description: Active threads in this guild.
+        target: Thread
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: guild_active_thread_list
+          param: guild_id
+
+  Channel:
+    id_field: id
+    description: A channel, thread parent, or DM channel.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        field_type: integer
+        required: false
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      topic:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      parent_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      nsfw:
+        field_type: boolean
+        required: false
+    relations:
+      messages:
+        description: Messages in this channel (non-thread parent).
+        target: Message
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: message_in_channel
+          param: channel_id
+      webhooks:
+        description: Webhooks targeting this channel.
+        target: Webhook
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: channel_webhook_list
+          param: channel_id
+      threads:
+        description: Threads created under this channel.
+        target: Thread
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: channel_thread_list_archived_public
+          param: channel_id
+
+  Message:
+    id_field: id
+    description: A message in a channel.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      author_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      content:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      timestamp:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      edited_timestamp:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      pinned:
+        field_type: boolean
+        required: false
+      tts:
+        field_type: boolean
+        required: false
+
+  User:
+    id_field: id
+    description: A Discord user.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      username:
+        field_type: string
+        required: false
+        string_semantics: short
+      discriminator:
+        field_type: string
+        required: false
+        string_semantics: short
+      global_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      avatar:
+        field_type: string
+        required: false
+        string_semantics: short
+      bot:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  GuildMember:
+    id_field: user_id
+    key_vars:
+      - guild_id
+      - user_id
+    description: A user membership in a guild.
+    fields:
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      user_id:
+        field_type: entity_ref
+        target: User
+        required: true
+      nick:
+        field_type: string
+        required: false
+        string_semantics: short
+      joined_at:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      deaf:
+        field_type: boolean
+        required: false
+      mute:
+        field_type: boolean
+        required: false
+      pending:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  Role:
+    id_field: id
+    key_vars:
+      - guild_id
+      - id
+    description: A permission role in a guild.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      color:
+        field_type: integer
+        required: false
+      hoist:
+        field_type: boolean
+        required: false
+      position:
+        field_type: integer
+        required: false
+      managed:
+        field_type: boolean
+        required: false
+      mentionable:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  Ban:
+    id_field: user_id
+    key_vars:
+      - guild_id
+      - user_id
+    description: A ban record for a user in a guild.
+    fields:
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      user_id:
+        field_type: entity_ref
+        target: User
+        required: true
+      reason:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  ChannelPermissionOverwrite:
+    id_field: id
+    key_vars:
+      - channel_id
+      - id
+    description: Permission overwrite for a member or role on a channel.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: true
+      type:
+        field_type: integer
+        required: false
+    relations: {}
+
+  Application:
+    id_field: id
+    description: A Discord application (developer portal app).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      icon:
+        field_type: string
+        required: false
+        string_semantics: short
+      bot_public:
+        field_type: boolean
+        required: false
+      bot_require_code_grant:
+        field_type: boolean
+        required: false
+    relations:
+      commands:
+        description: Global application commands.
+        target: ApplicationCommand
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: application_command_list
+          param: application_id
+      emojis:
+        description: Emojis owned by this application.
+        target: CustomEmoji
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: application_emoji_list
+          param: application_id
+      entitlements:
+        description: Entitlements for this application.
+        target: Entitlement
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: entitlement_list
+          param: application_id
+
+  ApplicationCommand:
+    id_field: id
+    key_vars:
+      - application_id
+      - id
+    description: A global slash or context-menu command for an application.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      application_id:
+        field_type: entity_ref
+        target: Application
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      type:
+        field_type: integer
+        required: false
+      version:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  GuildApplicationCommand:
+    id_field: id
+    key_vars:
+      - application_id
+      - guild_id
+      - id
+    description: A guild-scoped application command (overrides and guild installs).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      application_id:
+        field_type: entity_ref
+        target: Application
+        required: true
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      type:
+        field_type: integer
+        required: false
+      version:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  Entitlement:
+    id_field: id
+    key_vars:
+      - application_id
+      - id
+    description: A monetization entitlement for an SKU.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      application_id:
+        field_type: entity_ref
+        target: Application
+        required: true
+      sku_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      user_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      type:
+        field_type: integer
+        required: false
+      deleted:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  Webhook:
+    id_field: id
+    description: A channel webhook (management APIs; execute uses token path and is deferred).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        field_type: integer
+        required: false
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      token:
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+  Invite:
+    id_field: id
+    description: An invite code and metadata.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      code:
+        field_type: string
+        required: false
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      inviter_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      uses:
+        field_type: integer
+        required: false
+      max_uses:
+        field_type: integer
+        required: false
+      temporary:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  StageInstance:
+    id_field: id
+    description: A live stage instance tied to a stage channel.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      topic:
+        field_type: string
+        required: false
+        string_semantics: short
+      privacy_level:
+        field_type: integer
+        required: false
+      discoverable_disabled:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  VoiceRegion:
+    id_field: id
+    description: A voice region identifier.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      vip:
+        field_type: boolean
+        required: false
+      optimal:
+        field_type: boolean
+        required: false
+      deprecated:
+        field_type: boolean
+        required: false
+      custom:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  Sticker:
+    id_field: id
+    description: A sticker (standard or guild-uploaded).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: short
+      tags:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: integer
+        required: false
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      sort_value:
+        field_type: integer
+        required: false
+    relations: {}
+
+  StickerPack:
+    id_field: id
+    description: A pack of standard stickers.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      stickers:
+        field_type: json
+        required: false
+    relations: {}
+
+  ScheduledEvent:
+    id_field: id
+    key_vars:
+      - guild_id
+      - id
+    description: A scheduled guild event.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      scheduled_start_time:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      scheduled_end_time:
+        field_type: date
+        required: false
+        value_format: rfc3339
+      privacy_level:
+        field_type: integer
+        required: false
+      status:
+        field_type: integer
+        required: false
+      entity_type:
+        field_type: integer
+        required: false
+    relations: {}
+
+  SoundboardSound:
+    id_field: id
+    key_vars:
+      - guild_id
+      - id
+    description: A soundboard sound in a guild.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      volume:
+        field_type: number
+        required: false
+    relations: {}
+
+  PublicGuildTemplate:
+    id_field: code
+    description: A server template looked up by code before the guild exists.
+    fields:
+      code:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      usage_count:
+        field_type: integer
+        required: false
+      creator_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      serialized_source_guild:
+        field_type: json
+        required: false
+        path: serialized_source_guild
+    relations: {}
+
+  GuildTemplate:
+    id_field: code
+    key_vars:
+      - guild_id
+      - code
+    description: A template snapshot and sync code for a guild.
+    fields:
+      code:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      usage_count:
+        field_type: integer
+        required: false
+      creator_id:
+        field_type: entity_ref
+        target: User
+        required: false
+    relations: {}
+
+  AutoModerationRule:
+    id_field: id
+    key_vars:
+      - guild_id
+      - id
+    description: An AutoMod rule in a guild.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      event_type:
+        field_type: integer
+        required: false
+      trigger_type:
+        field_type: integer
+        required: false
+      enabled:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  GuildIntegration:
+    id_field: id
+    key_vars:
+      - guild_id
+      - id
+    description: A third-party integration attached to a guild.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: true
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      enabled:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  WelcomeScreen:
+    id_field: id
+    implicit_request_identity: true
+    description: Welcome screen configuration for a guild (identity is the guild id from the request path).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations: {}
+
+  GuildWidget:
+    id_field: id
+    implicit_request_identity: true
+    description: Guild widget JSON (identity is the guild id from the request path).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      enabled:
+        field_type: boolean
+        required: false
+      channel_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+    relations: {}
+
+  Thread:
+    id_field: id
+    description: A message thread (forum, public, or private).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      parent_id:
+        field_type: entity_ref
+        target: Channel
+        required: false
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      owner_id:
+        field_type: entity_ref
+        target: User
+        required: false
+      type:
+        field_type: integer
+        required: false
+      message_count:
+        field_type: integer
+        required: false
+      member_count:
+        field_type: integer
+        required: false
+      archived:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  CustomEmoji:
+    id_field: id
+    description: Custom emoji for a guild or for an application (same wire shape; scope depends on the operation).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      application_id:
+        field_type: entity_ref
+        target: Application
+        required: false
+      guild_id:
+        field_type: entity_ref
+        target: Guild
+        required: false
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      animated:
+        field_type: boolean
+        required: false
+    relations: {}
+
+  AuditLog:
+    id_field: id
+    implicit_request_identity: true
+    description: Audit log payload for a guild (identity is the guild id from the request path).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      audit_log_entries:
+        field_type: json
+        required: false
+        path: audit_log_entries
+      users:
+        field_type: json
+        required: false
+        path: users
+    relations: {}
+
+  Gateway:
+    id_field: id
+    id_from: url
+    description: Gateway connection URL metadata.
+    fields:
+      url:
+        field_type: string
+        required: true
+        string_semantics: short
+      shards:
+        field_type: integer
+        required: false
+    relations: {}
+
+  GatewayBot:
+    id_field: id
+    id_from: url
+    description: Bot-specific gateway session limits.
+    fields:
+      url:
+        field_type: string
+        required: true
+        string_semantics: short
+      shards:
+        field_type: integer
+        required: false
+      session_start_limit:
+        field_type: json
+        required: false
+        path: session_start_limit
+    relations: {}
+
+  Interaction:
+    id_field: interaction_id
+    key_vars:
+      - interaction_id
+      - interaction_token
+    description: A gateway interaction (callback acknowledgement).
+    fields:
+      interaction_id:
+        field_type: string
+        required: true
+        string_semantics: short
+      interaction_token:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations: {}
+
+  SoundboardDefaultSound:
+    id_field: id
+    description: A default soundboard sound from Discord.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+capabilities:
+  # --- Guild ---
+  guild_get:
+    kind: get
+    entity: Guild
+  guild_create:
+    kind: create
+    entity: Guild
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_update:
+    kind: update
+    entity: Guild
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_delete:
+    kind: delete
+    entity: Guild
+  guild_preview_fetch:
+    kind: action
+    entity: Guild
+    description: Fetches public preview metadata for a discoverable guild.
+    provides:
+      - id
+      - name
+      - description
+      - icon
+      - splash
+
+  # --- Channel ---
+  channel_get:
+    kind: get
+    entity: Channel
+  channel_update:
+    kind: update
+    entity: Channel
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  channel_delete:
+    kind: delete
+    entity: Channel
+  channel_list_for_guild:
+    kind: query
+    entity: Channel
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  channel_dm_create:
+    kind: create
+    entity: Channel
+    description: Opens a DM channel with recipients described in the JSON body.
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+
+  # --- Message ---
+  message_in_channel:
+    kind: query
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+      - name: around
+        type: string
+        required: false
+        string_semantics: short
+      - name: before
+        type: string
+        required: false
+        string_semantics: short
+      - name: after
+        type: string
+        required: false
+        string_semantics: short
+      - name: limit
+        type: integer
+        required: false
+  message_get:
+    kind: get
+    entity: Message
+  message_create:
+    kind: create
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  message_update:
+    kind: update
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  message_delete:
+    kind: delete
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+  message_bulk_delete:
+    kind: action
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    output:
+      type: side_effect
+      description: Deletes up to many messages in bulk for the channel.
+  message_crosspost:
+    kind: action
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    provides:
+      - id
+      - channel_id
+      - content
+      - timestamp
+  message_reply:
+    description: Post a reply in the same channel with message_reference to the target. Runtime preflight runs message_get and merges parent_* (parent id/channel for the reference).
+    kind: action
+    entity: Message
+    invoke_preflight:
+      hydrate_capability: message_get
+      env_prefix: parent
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+      - name: content
+        type: string
+        required: true
+        description: Reply body text
+        string_semantics: markdown
+      - name: tts
+        type: boolean
+        required: false
+        description: Text-to-speech (omit unless true)
+    provides:
+      - id
+      - channel_id
+      - content
+      - timestamp
+    output:
+      type: side_effect
+      description: Creates a new Message row (the reply) via POST channels/{channel_id}/messages.
+  message_search_in_guild:
+    kind: search
+    entity: Message
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: content
+        type: string
+        required: false
+        role: search
+        string_semantics: short
+      - name: author_id
+        type: entity_ref
+        target: User
+        required: false
+      - name: limit
+        type: integer
+        required: false
+      - name: offset
+        type: integer
+        required: false
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: false
+      - name: mentions
+        type: string
+        required: false
+        string_semantics: short
+      - name: pinned
+        type: boolean
+        required: false
+  channel_typing:
+    kind: action
+    entity: Channel
+    output:
+      type: side_effect
+      description: Sends a typing indicator for the channel.
+
+  # --- User ---
+  user_get:
+    kind: get
+    entity: User
+  user_leave_guild:
+    kind: action
+    entity: User
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+    output:
+      type: side_effect
+      description: Leaves the guild for the current user token.
+
+  # --- Guild members & roles ---
+  guild_member_list:
+    kind: query
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: limit
+        type: integer
+        required: false
+      - name: after
+        type: string
+        required: false
+        string_semantics: short
+  guild_member_get:
+    kind: get
+    entity: GuildMember
+  guild_member_put:
+    kind: action
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    provides:
+      - guild_id
+      - user_id
+      - nick
+      - joined_at
+  guild_member_patch:
+    kind: update
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_member_remove:
+    kind: delete
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_member_role_add:
+    kind: action
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: role_id
+        type: entity_ref
+        target: Role
+        required: true
+    output:
+      type: side_effect
+      description: Assigns a role to a guild member.
+  guild_member_role_remove:
+    kind: delete
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: role_id
+        type: entity_ref
+        target: Role
+        required: true
+  guild_member_me_patch:
+    kind: update
+    entity: GuildMember
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+
+  guild_role_list:
+    kind: query
+    entity: Role
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  role_get:
+    kind: get
+    entity: Role
+  role_create:
+    kind: create
+    entity: Role
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  role_update:
+    kind: update
+    entity: Role
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  role_delete:
+    kind: delete
+    entity: Role
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_roles_positions_patch:
+    kind: action
+    entity: Role
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    output:
+      type: side_effect
+      description: Reorders roles in the guild using the provided role position array.
+
+  # --- Bans ---
+  ban_list:
+    kind: query
+    entity: Ban
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: limit
+        type: integer
+        required: false
+      - name: after
+        type: string
+        required: false
+        string_semantics: short
+  ban_get:
+    kind: get
+    entity: Ban
+  ban_put:
+    kind: action
+    entity: Ban
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    provides:
+      - guild_id
+      - user_id
+      - reason
+  ban_delete:
+    kind: delete
+    entity: Ban
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+
+  # --- Channel permission overwrites ---
+  channel_overwrite_get:
+    kind: get
+    entity: ChannelPermissionOverwrite
+  channel_overwrite_put:
+    kind: update
+    entity: ChannelPermissionOverwrite
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  channel_overwrite_delete:
+    kind: delete
+    entity: ChannelPermissionOverwrite
+
+  # --- Application & commands ---
+  application_me_retrieve:
+    kind: action
+    entity: Application
+    provides:
+      - id
+      - name
+      - description
+      - icon
+      - bot_public
+      - bot_require_code_grant
+  application_get:
+    kind: get
+    entity: Application
+  application_update:
+    kind: update
+    entity: Application
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  application_command_list:
+    kind: query
+    entity: ApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+      - name: with_localizations
+        type: boolean
+        required: false
+  application_command_get:
+    kind: get
+    entity: ApplicationCommand
+  application_command_create:
+    kind: create
+    entity: ApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  application_command_update:
+    kind: update
+    entity: ApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  application_command_delete:
+    kind: delete
+    entity: ApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+  application_command_bulk_put:
+    kind: action
+    entity: ApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    output:
+      type: side_effect
+      description: Replaces the full global command set for the application with the provided array.
+  guild_application_command_list:
+    kind: query
+    entity: GuildApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_application_command_get:
+    kind: get
+    entity: GuildApplicationCommand
+  guild_application_command_create:
+    kind: create
+    entity: GuildApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_application_command_update:
+    kind: update
+    entity: GuildApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_application_command_delete:
+    kind: delete
+    entity: GuildApplicationCommand
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+
+  # --- Entitlements ---
+  entitlement_list:
+    kind: query
+    entity: Entitlement
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+      - name: user_id
+        type: entity_ref
+        target: User
+        required: false
+      - name: sku_ids
+        type: string
+        required: false
+        string_semantics: short
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: false
+      - name: limit
+        type: integer
+        required: false
+      - name: after
+        type: string
+        required: false
+        string_semantics: short
+      - name: exclude_ended
+        type: boolean
+        required: false
+  entitlement_get:
+    kind: get
+    entity: Entitlement
+  entitlement_create:
+    kind: create
+    entity: Entitlement
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  entitlement_delete:
+    kind: delete
+    entity: Entitlement
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+  entitlement_consume:
+    kind: action
+    entity: Entitlement
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    output:
+      type: side_effect
+      description: Marks a consumable entitlement as consumed.
+
+  # --- Webhooks ---
+  guild_webhook_list:
+    kind: query
+    entity: Webhook
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  channel_webhook_list:
+    kind: query
+    entity: Webhook
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+  channel_webhook_create:
+    kind: create
+    entity: Webhook
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  webhook_get:
+    kind: get
+    entity: Webhook
+  webhook_update:
+    kind: update
+    entity: Webhook
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  webhook_delete:
+    kind: delete
+    entity: Webhook
+
+  # --- Invites ---
+  channel_invite_create:
+    kind: create
+    entity: Invite
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  channel_invite_list:
+    kind: query
+    entity: Invite
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+  guild_invite_list:
+    kind: query
+    entity: Invite
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  invite_get:
+    kind: get
+    entity: Invite
+  invite_delete:
+    kind: delete
+    entity: Invite
+
+  # --- Stage ---
+  stage_instance_get:
+    kind: get
+    entity: StageInstance
+  stage_instance_create:
+    kind: create
+    entity: StageInstance
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  stage_instance_delete:
+    kind: delete
+    entity: StageInstance
+
+  # --- Voice regions ---
+  voice_region_list:
+    kind: query
+    entity: VoiceRegion
+
+  # --- Stickers ---
+  sticker_get:
+    kind: get
+    entity: Sticker
+  sticker_pack_get:
+    kind: get
+    entity: StickerPack
+  sticker_pack_list:
+    kind: query
+    entity: StickerPack
+  soundboard_default_sound_list:
+    kind: query
+    entity: SoundboardDefaultSound
+
+  # --- Scheduled events ---
+  scheduled_event_list:
+    kind: query
+    entity: ScheduledEvent
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: with_user_count
+        type: boolean
+        required: false
+  scheduled_event_get:
+    kind: get
+    entity: ScheduledEvent
+  scheduled_event_create:
+    kind: create
+    entity: ScheduledEvent
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  scheduled_event_update:
+    kind: update
+    entity: ScheduledEvent
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  scheduled_event_delete:
+    kind: delete
+    entity: ScheduledEvent
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+
+  # --- Soundboard ---
+  soundboard_sound_list:
+    kind: query
+    entity: SoundboardSound
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  soundboard_sound_get:
+    kind: get
+    entity: SoundboardSound
+  soundboard_sound_create:
+    kind: create
+    entity: SoundboardSound
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  soundboard_sound_update:
+    kind: update
+    entity: SoundboardSound
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  soundboard_sound_delete:
+    kind: delete
+    entity: SoundboardSound
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  channel_send_soundboard_sound:
+    kind: action
+    entity: Channel
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    output:
+      type: side_effect
+      description: Plays a soundboard sound in the voice channel associated with this channel id.
+
+  # --- Templates ---
+  guild_template_list:
+    kind: query
+    entity: GuildTemplate
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_template_create:
+    kind: create
+    entity: GuildTemplate
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  template_fetch_by_code:
+    kind: action
+    entity: PublicGuildTemplate
+    parameters:
+      - name: code
+        type: string
+        required: true
+        string_semantics: short
+    provides:
+      - code
+      - name
+      - description
+      - usage_count
+      - creator_id
+      - serialized_source_guild
+  guild_template_get:
+    kind: get
+    entity: GuildTemplate
+  guild_template_sync:
+    kind: update
+    entity: GuildTemplate
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_from_template_create:
+    kind: create
+    entity: Guild
+    parameters:
+      - name: code
+        type: string
+        required: true
+        string_semantics: short
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+
+  # --- Auto moderation ---
+  auto_moderation_rule_list:
+    kind: query
+    entity: AutoModerationRule
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  auto_moderation_rule_get:
+    kind: get
+    entity: AutoModerationRule
+  auto_moderation_rule_create:
+    kind: create
+    entity: AutoModerationRule
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  auto_moderation_rule_update:
+    kind: update
+    entity: AutoModerationRule
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  auto_moderation_rule_delete:
+    kind: delete
+    entity: AutoModerationRule
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+
+  # --- Integrations ---
+  guild_integration_list:
+    kind: query
+    entity: GuildIntegration
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_integration_delete:
+    kind: delete
+    entity: GuildIntegration
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+
+  # --- Welcome & widget ---
+  guild_welcome_screen_get:
+    kind: get
+    entity: WelcomeScreen
+  guild_welcome_screen_patch:
+    kind: update
+    entity: WelcomeScreen
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_widget_get:
+    kind: get
+    entity: GuildWidget
+  guild_widget_patch:
+    kind: update
+    entity: GuildWidget
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+
+  # --- Threads ---
+  guild_active_thread_list:
+    kind: query
+    entity: Thread
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  channel_thread_create:
+    kind: create
+    entity: Thread
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  channel_thread_list_archived_public:
+    kind: query
+    entity: Thread
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+      - name: before
+        type: string
+        required: false
+        string_semantics: short
+      - name: limit
+        type: integer
+        required: false
+
+  # --- Emojis ---
+  guild_emoji_list:
+    kind: query
+    entity: CustomEmoji
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_emoji_get:
+    kind: get
+    entity: CustomEmoji
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_emoji_create:
+    kind: create
+    entity: CustomEmoji
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_emoji_update:
+    kind: update
+    entity: CustomEmoji
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_emoji_delete:
+    kind: delete
+    entity: CustomEmoji
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  application_emoji_list:
+    kind: query
+    entity: CustomEmoji
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+  application_emoji_get:
+    kind: get
+    entity: CustomEmoji
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+  application_emoji_create:
+    kind: create
+    entity: CustomEmoji
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  application_emoji_update:
+    kind: update
+    entity: CustomEmoji
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  application_emoji_delete:
+    kind: delete
+    entity: CustomEmoji
+    parameters:
+      - name: application_id
+        type: entity_ref
+        target: Application
+        required: true
+        role: scope
+
+  # --- Audit log ---
+  guild_audit_log_fetch:
+    kind: action
+    entity: AuditLog
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: user_id
+        type: entity_ref
+        target: User
+        required: false
+      - name: action_type
+        type: integer
+        required: false
+      - name: before
+        type: string
+        required: false
+        string_semantics: short
+      - name: limit
+        type: integer
+        required: false
+    provides:
+      - id
+      - audit_log_entries
+      - users
+
+  # --- Gateway ---
+  gateway_url_fetch:
+    kind: action
+    entity: Gateway
+    provides:
+      - url
+      - shards
+  gateway_bot_url_fetch:
+    kind: action
+    entity: GatewayBot
+    provides:
+      - url
+      - shards
+      - session_start_limit
+
+  # --- Interaction ---
+  interaction_callback:
+    kind: action
+    entity: Interaction
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    output:
+      type: side_effect
+      description: Acknowledges or responds to a gateway interaction via the interaction token.
+
+  # --- Stickers in guild list ---
+  guild_sticker_list:
+    kind: query
+    entity: Sticker
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_sticker_get:
+    kind: get
+    entity: Sticker
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+  guild_sticker_create:
+    kind: create
+    entity: Sticker
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_sticker_update:
+    kind: update
+    entity: Sticker
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+  guild_sticker_delete:
+    kind: delete
+    entity: Sticker
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+
+  # --- Prune ---
+  guild_prune_preview:
+    kind: action
+    entity: Guild
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: days
+        type: integer
+        required: false
+      - name: include_roles
+        type: string
+        required: false
+        string_semantics: short
+    provides:
+      - id
+      - pruned
+  guild_prune_execute:
+    kind: action
+    entity: Guild
+    description: Prunes inactive members from the guild according to the request body.
+    parameters:
+      - name: guild_id
+        type: entity_ref
+        target: Guild
+        required: true
+        role: scope
+      - name: days
+        type: integer
+        required: false
+        description: >-
+          Minimum number of days since last activity for a member to be pruned
+          (Discord rejects the request if omitted on the wire; supply a positive integer).
+      - name: compute_prune_count
+        type: boolean
+        required: false
+        description: When true, returns a prune count without removing members.
+    provides:
+      - id
+      - pruned
+
+  # --- Channel pins ---
+  channel_pin_add:
+    kind: action
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+      - name: message_id
+        type: entity_ref
+        target: Message
+        required: true
+    output:
+      type: side_effect
+      description: Pins a message in the channel.
+  channel_pin_remove:
+    kind: action
+    entity: Message
+    parameters:
+      - name: channel_id
+        type: entity_ref
+        target: Channel
+        required: true
+        role: scope
+      - name: message_id
+        type: entity_ref
+        target: Message
+        required: true
+    output:
+      type: side_effect
+      description: Unpins a message in the channel.
+
+auth:
+  scheme: api_key_header
+  header: Authorization
+  env: DISCORD_BOT_TOKEN

@@ -1,0 +1,17 @@
+{
+  "type": "and",
+  "args": [
+    {
+      "type": "comparison",
+      "field": "region",
+      "op": "=", 
+      "value": "EMEA"
+    },
+    {
+      "type": "comparison",
+      "field": "revenue",
+      "op": ">",
+      "value": 1000
+    }
+  ]
+}

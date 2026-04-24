@@ -1,0 +1,257 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: https://rickandmortyapi.com
+
+entities:
+  Character:
+    id_field: id
+    description: A character from the show (Rick, Morty, Beth, etc.).
+    fields:
+      id:
+        description: Unique integer identifier for the character.
+        field_type: integer
+        required: true
+      name:
+        description: Character's full name.
+        field_type: string
+        required: true
+        string_semantics: short
+      status:
+        description: 'Life status of the character: Alive, Dead, or unknown.'
+        field_type: select
+        required: false
+        allowed_values:
+        - Alive
+        - Dead
+        - unknown
+      species:
+        description: Species of the character (e.g. Human, Alien).
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        description: Sub-species or special type descriptor if any.
+        field_type: string
+        required: false
+        string_semantics: short
+      gender:
+        description: Gender identity of the character.
+        field_type: select
+        required: false
+        allowed_values:
+        - Female
+        - Male
+        - Genderless
+        - unknown
+      image:
+        description: URL to the character's portrait image.
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        description: API endpoint URL for this character record.
+        field_type: string
+        required: false
+        string_semantics: short
+      created:
+        description: ISO date when this record was first created.
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations:
+      origin:
+        description: The location where the character was born or originated.
+        target: Location
+        cardinality: one
+      location:
+        description: The character's last known location.
+        target: Location
+        cardinality: one
+  Location:
+    id_field: id
+    description: A planet, dimension, or place (Earth, Citadel of Ricks, etc.).
+    fields:
+      id:
+        description: Unique integer identifier for the location.
+        field_type: integer
+        required: true
+      name:
+        description: Name of the location (e.g. Earth, Citadel of Ricks).
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        description: Type of place (e.g. Planet, Space station, Microverse).
+        field_type: string
+        required: false
+        string_semantics: short
+      dimension:
+        description: Dimension the location exists in.
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        description: API endpoint URL for this location record.
+        field_type: string
+        required: false
+        string_semantics: short
+      created:
+        description: ISO date when this record was first created.
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations:
+      residents:
+        description: Characters currently residing at this location.
+        target: Character
+        cardinality: many
+  Episode:
+    id_field: id
+    description: A TV episode identified by a code like S01E01.
+    fields:
+      id:
+        description: Unique integer identifier for the episode.
+        field_type: integer
+        required: true
+      name:
+        description: Episode title.
+        field_type: string
+        required: true
+        string_semantics: short
+      air_date:
+        description: Original broadcast date of the episode.
+        field_type: string
+        required: false
+        string_semantics: short
+      episode:
+        description: Episode code (e.g. S01E01) indicating season and number.
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        description: API endpoint URL for this episode record.
+        field_type: string
+        required: false
+        string_semantics: short
+      created:
+        description: ISO date when this record was first created.
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations:
+      characters:
+        description: Characters appearing in this episode.
+        target: Character
+        cardinality: many
+capabilities:
+  character_query:
+    description: Filter characters by name, status, species, type, or gender.
+    kind: query
+    entity: Character
+    parameters:
+    - name: name
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: status
+      type: select
+      required: false
+      allowed_values:
+      - Alive
+      - Dead
+      - unknown
+      role: filter
+    - name: species
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: type
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: gender
+      type: select
+      required: false
+      allowed_values:
+      - Female
+      - Male
+      - Genderless
+      - unknown
+      role: filter
+  character_get:
+    description: Retrieve a single character by ID.
+    kind: get
+    entity: Character
+    provides:
+    - id
+    - name
+    - status
+    - species
+    - type
+    - gender
+    - image
+    - url
+    - created
+  location_query:
+    description: Filter locations by name, type, or dimension.
+    kind: query
+    entity: Location
+    parameters:
+    - name: name
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: type
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: dimension
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+  location_get:
+    description: Retrieve a single location by ID.
+    kind: get
+    entity: Location
+    provides:
+    - id
+    - name
+    - type
+    - dimension
+    - url
+    - created
+  episode_query:
+    description: Filter episodes by name or episode code.
+    kind: query
+    entity: Episode
+    parameters:
+    - name: name
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: episode
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+  episode_get:
+    description: Retrieve a single episode by ID.
+    kind: get
+    entity: Episode
+    provides:
+    - id
+    - name
+    - air_date
+    - episode
+    - url
+    - created

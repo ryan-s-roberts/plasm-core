@@ -1,0 +1,51 @@
+/target
+Cargo.lock
+
+# Local build artifacts (optional)
+.build/
+# docker buildx bake type=local cache (scripts/docker/bake-images.sh)
+docker/.buildx-cache/
+
+# Local runtime / cache (trace sink JSONL, Iceberg warehouse, etc.) — not for VCS
+var/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+# Local plasm-agent dev JWT (scripts/ensure-plasm-dev-jwt-secret.sh)
+.plasm/
+# Local Cursor + plasm-agent helper script artifacts (see scripts/cursor-plasm-mcp.sh)
+.cursor/plasm-agent.log
+.cursor/plasm-agent.pid
+.cursor/plasm-agent-goal.md
+baml_client
+eval-reports/
+# plasm-eval last-run artifacts next to cases.yaml ({model-slug}.latest.*)
+apis/**/eval/*.latest.human.txt
+apis/**/eval/*.latest.json
+fixtures/**/eval/*.latest.human.txt
+fixtures/**/eval/*.latest.json
+
+# Large GitHub REST OpenAPI bundle (curl from github/rest-api-description; see apis/github/README.md)
+fixtures/real_openapi_specs/github_api_github_com.json
+
+# Local app bundles / scratch downloads at repo root (never commit)
+/Contents-1/
+/Contents/
+/MapTool-*.zip
+/mcp-server-guide*.zip
+/episode-*.txt
+/vke-*.yaml
+
+# Local Infisical/K8s secret exports (may contain live material)
+/infisical-k8s-export-*/
+
+# Local installers (GitHub rejects >100MB; keep out of VCS)
+*.dmg
+# Local MCP keys at repo root
+plasm-mcp.*.pem

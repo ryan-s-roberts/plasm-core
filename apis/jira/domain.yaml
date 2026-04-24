@@ -1,0 +1,1629 @@
+version: 1
+
+http_backend: https://your-domain.atlassian.net
+
+entities:
+  Issue:
+    id_field: key
+    description: A Jira issue (bug, story, task, epic, etc.)
+    fields:
+      key:
+        field_type: string
+        required: true
+        string_semantics: short
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      summary:
+        field_type: string
+        required: false
+        path: fields.summary
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        path: fields.description
+        string_semantics: markdown
+      status:
+        field_type: string
+        required: false
+        path: fields.status.name
+        string_semantics: short
+      status_category:
+        field_type: string
+        required: false
+        path: fields.status.statusCategory.name
+        string_semantics: short
+      priority:
+        field_type: string
+        required: false
+        path: fields.priority.name
+        string_semantics: short
+      issuetype:
+        field_type: string
+        required: false
+        path: fields.issuetype.name
+        string_semantics: short
+      resolution:
+        field_type: string
+        required: false
+        path: fields.resolution.name
+        string_semantics: short
+      assignee_id:
+        field_type: entity_ref
+        target: User
+        required: false
+        path: fields.assignee.accountId
+      assignee_name:
+        field_type: string
+        required: false
+        path: fields.assignee.displayName
+        string_semantics: short
+      reporter_id:
+        field_type: entity_ref
+        target: User
+        required: false
+        path: fields.reporter.accountId
+      reporter_name:
+        field_type: string
+        required: false
+        path: fields.reporter.displayName
+        string_semantics: short
+      project_key:
+        field_type: entity_ref
+        target: Project
+        required: false
+        path: fields.project.key
+      project_name:
+        field_type: string
+        required: false
+        path: fields.project.name
+        string_semantics: short
+      parent_key:
+        field_type: entity_ref
+        target: Issue
+        required: false
+        path: fields.parent.key
+      labels:
+        field_type: array
+        required: false
+        path: fields.labels
+        items:
+          type: string
+      duedate:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: fields.duedate
+      created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: fields.created
+      updated:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: fields.updated
+      resolutiondate:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: fields.resolutiondate
+    relations:
+      comments:
+        target: Comment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: comment_query
+          param: issueIdOrKey
+      worklogs:
+        target: Worklog
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: worklog_query
+          param: issueIdOrKey
+      changelog:
+        target: Changelog
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: changelog_query
+          param: issueIdOrKey
+      remotelinks:
+        target: RemoteLink
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: remotelink_query
+          param: issueIdOrKey
+      transitions:
+        target: Transition
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: transition_query
+          param: issueIdOrKey
+      attachments:
+        description: Files uploaded to this issue (present when the issue payload includes attachment metadata).
+        target: Attachment
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: fields
+          - key: attachment
+          - wildcard: true
+  Project:
+    id_field: key
+    description: A Jira project
+    fields:
+      key:
+        field_type: string
+        required: true
+        string_semantics: short
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      projectTypeKey:
+        field_type: select
+        allowed_values:
+        - software
+        - service_desk
+        - business
+        required: false
+      archived:
+        field_type: boolean
+        required: false
+      isPrivate:
+        field_type: boolean
+        required: false
+      lead_account_id:
+        field_type: string
+        required: false
+        path: lead.accountId
+        string_semantics: short
+      lead_name:
+        field_type: string
+        required: false
+        path: lead.displayName
+        string_semantics: short
+    relations:
+      components:
+        target: Component
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: component_query
+          param: projectIdOrKey
+  User:
+    id_field: accountId
+    description: A Jira user account
+    fields:
+      accountId:
+        field_type: string
+        required: true
+        string_semantics: short
+      displayName:
+        field_type: string
+        required: false
+        string_semantics: short
+      emailAddress:
+        field_type: string
+        required: false
+        string_semantics: short
+      active:
+        field_type: boolean
+        required: false
+      timeZone:
+        field_type: string
+        required: false
+        string_semantics: short
+      accountType:
+        field_type: string
+        required: false
+        string_semantics: short
+  Comment:
+    id_field: id
+    description: A comment on a Jira issue
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      body:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      author_id:
+        field_type: entity_ref
+        target: User
+        required: false
+        path: author.accountId
+      author_name:
+        field_type: string
+        required: false
+        path: author.displayName
+        string_semantics: short
+      created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  Priority:
+    id_field: id
+    description: An issue priority level
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      isDefault:
+        field_type: boolean
+        required: false
+      statusColor:
+        field_type: string
+        required: false
+        string_semantics: short
+  Status:
+    id_field: id
+    description: An issue workflow status
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      statusCategory:
+        field_type: string
+        required: false
+        path: statusCategory.name
+        string_semantics: short
+  IssueType:
+    id_field: id
+    description: An issue type (Bug, Story, Task, Epic, etc.)
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      subtask:
+        field_type: boolean
+        required: false
+      hierarchyLevel:
+        field_type: integer
+        required: false
+  Worklog:
+    id_field: id
+    description: A time-tracking worklog entry on a Jira issue
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      issueId:
+        field_type: string
+        required: false
+        string_semantics: short
+      author_id:
+        field_type: entity_ref
+        target: User
+        required: false
+        path: author.accountId
+      author_name:
+        field_type: string
+        required: false
+        path: author.displayName
+        string_semantics: short
+      comment:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      started:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      timeSpent:
+        field_type: string
+        required: false
+        string_semantics: short
+      timeSpentSeconds:
+        field_type: integer
+        required: false
+      created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      updated:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  Changelog:
+    id_field: id
+    description: An audit-log entry recording field changes on a Jira issue
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      author_id:
+        field_type: entity_ref
+        target: User
+        required: false
+        path: author.accountId
+      author_name:
+        field_type: string
+        required: false
+        path: author.displayName
+        string_semantics: short
+      created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      items:
+        field_type: array
+        required: false
+        items:
+          type: string
+  RemoteLink:
+    id_field: id
+    description: A remote link attached to a Jira issue (external tracker, document, etc.)
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      globalId:
+        field_type: string
+        required: false
+        string_semantics: short
+      relationship:
+        field_type: string
+        required: false
+        string_semantics: short
+      object_title:
+        field_type: string
+        required: false
+        path: object.title
+        string_semantics: short
+      object_url:
+        field_type: string
+        required: false
+        path: object.url
+        string_semantics: short
+      object_summary:
+        field_type: string
+        required: false
+        path: object.summary
+        string_semantics: short
+      application_name:
+        field_type: string
+        required: false
+        path: application.name
+        string_semantics: short
+      application_type:
+        field_type: string
+        required: false
+        path: application.type
+        string_semantics: short
+  Transition:
+    id_field: id
+    description: An available workflow transition for a Jira issue
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      isAvailable:
+        field_type: boolean
+        required: false
+      isConditional:
+        field_type: boolean
+        required: false
+      isGlobal:
+        field_type: boolean
+        required: false
+      isInitial:
+        field_type: boolean
+        required: false
+  Component:
+    id_field: id
+    description: A project component grouping issues within a Jira project
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      assigneeType:
+        field_type: select
+        allowed_values:
+        - PROJECT_LEAD
+        - COMPONENT_LEAD
+        - UNASSIGNED
+        - PROJECT_DEFAULT
+        required: false
+      lead_id:
+        field_type: string
+        required: false
+        path: lead.accountId
+        string_semantics: short
+      lead_name:
+        field_type: string
+        required: false
+        path: lead.displayName
+        string_semantics: short
+      project:
+        field_type: string
+        required: false
+        string_semantics: short
+  Version:
+    id_field: id
+    description: A project version (fix version / affects version)
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      released:
+        field_type: boolean
+        required: false
+      archived:
+        field_type: boolean
+        required: false
+      releaseDate:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      startDate:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      project:
+        field_type: string
+        required: false
+        string_semantics: short
+      overdue:
+        field_type: boolean
+        required: false
+  Attachment:
+    id_field: id
+    description: A file attached to an issue (metadata and download links, not the binary upload itself).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      filename:
+        field_type: string
+        required: false
+        string_semantics: short
+      mimeType:
+        field_type: string
+        required: false
+        string_semantics: short
+      size:
+        field_type: integer
+        required: false
+      author_id:
+        field_type: entity_ref
+        target: User
+        required: false
+        path: author.accountId
+      created:
+        field_type: date
+        value_format: rfc3339
+        required: false
+  IssueVoteState:
+    id_field: issue_key
+    implicit_request_identity: true
+    description: How many users have voted on an issue and whether the current identity has voted.
+    domain_projection_examples: false
+    fields:
+      issue_key:
+        field_type: string
+        required: true
+        string_semantics: short
+      vote_count:
+        field_type: integer
+        required: false
+        path: votes
+      has_voted:
+        field_type: boolean
+        required: false
+        path: hasVoted
+  IssueEditMeta:
+    id_field: issue_key
+    implicit_request_identity: true
+    description: Field-level editability and allowed values for an issue before you change it.
+    domain_projection_examples: false
+    fields:
+      issue_key:
+        field_type: string
+        required: true
+        string_semantics: short
+      fields:
+        field_type: json
+        required: false
+        path: fields
+  IssueCreateMetaBundle:
+    id_field: id
+    implicit_request_identity: true
+    description: Creation-time field metadata for a project (issue types and field requirements for the create form).
+    domain_projection_examples: false
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      projects:
+        field_type: json
+        required: false
+        path: projects
+  Group:
+    id_field: name
+    description: A named group used for permissions and notifications.
+    fields:
+      groupId:
+        field_type: string
+        required: false
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      self:
+        field_type: string
+        required: false
+        string_semantics: short
+  MyPermissionSet:
+    id_field: id
+    implicit_request_identity: true
+    description: Effective permissions for the current user, optionally narrowed to a project or issue.
+    domain_projection_examples: false
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      permissions:
+        field_type: json
+        required: false
+        path: permissions
+  SavedFilter:
+    id_field: id
+    description: A saved JQL filter (stored search) a user can reuse or share.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+      jql:
+        field_type: string
+        required: false
+        string_semantics: short
+      favourite:
+        field_type: boolean
+        required: false
+  Dashboard:
+    id_field: id
+    description: A dashboard layout of gadgets for a team or personal view.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      description:
+        field_type: string
+        required: false
+        string_semantics: markdown
+  Board:
+    id_field: id
+    description: A Jira Software board (backlog or sprint view) for a project or filter.
+    domain_projection_examples: false
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: string
+        required: false
+        string_semantics: short
+      self:
+        field_type: string
+        required: false
+        string_semantics: short
+  Sprint:
+    id_field: id
+    description: A time-boxed iteration on a board used for planning and tracking work.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      state:
+        field_type: string
+        required: false
+        string_semantics: short
+      startDate:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      endDate:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      boardId:
+        field_type: integer
+        required: false
+        path: originBoardId
+  Webhook:
+    id_field: id
+    description: An outbound webhook subscription that delivers Jira events to your app URL.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      jql:
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        path: url
+        string_semantics: short
+      events:
+        field_type: array
+        required: false
+        items:
+          type: string
+capabilities:
+  issue_get:
+    kind: get
+    entity: Issue
+    description: Get a single issue by key or ID (e.g. PROJ-123)
+    provides:
+    - key
+    - id
+    - summary
+    - description
+    - status
+    - status_category
+    - priority
+    - issuetype
+    - resolution
+    - assignee_id
+    - assignee_name
+    - reporter_id
+    - reporter_name
+    - project_key
+    - project_name
+    - parent_key
+    - labels
+    - duedate
+    - created
+    - updated
+    - resolutiondate
+  issue_jql:
+    kind: search
+    entity: Issue
+    description: Search issues with JQL—filter, sort, and shape the result set; optional field and expansion hints narrow or enrich what comes back per issue.
+    parameters:
+    - name: jql
+      type: string
+      required: true
+      role: search
+      description: JQL expression (filters, ordering, and functions such as currentUser()).
+      string_semantics: short
+    - name: fields
+      type: array
+      required: false
+      role: response_control
+      items:
+        type: string
+      description: Issue field ids to include in each issue (e.g. summary, status, assignee). Omit for server defaults; repeat the flag for multiple values (--fields summary --fields status).
+    - name: expand
+      type: string
+      required: false
+      role: response_control
+      description: Names of optional expansions to include (Jira-specific; often comma-separated, e.g. renderedFields or names of entities to hydrate).
+      string_semantics: short
+  issue_create:
+    kind: create
+    entity: Issue
+    description: Create a new issue in a project with the given type and summary.
+    provides:
+    - key
+    - id
+    - summary
+    parameters:
+    - name: project_key
+      type: entity_ref
+      target: Project
+      required: true
+      description: Target project key (e.g. PROJ).
+    - name: issue_type
+      type: string
+      required: true
+      description: Issue type name as configured in the project (e.g. Task, Bug, Story).
+      string_semantics: short
+    - name: summary
+      type: string
+      required: true
+      description: One-line title for the new issue.
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+      description: Optional plain-text description; Jira Cloud may require Atlassian Document Format instead—if create fails, leave empty and edit in the UI or use issue update.
+  issue_update:
+    kind: update
+    entity: Issue
+    description: Edit fields on an existing issue (partial update). Pass at least one field flag.
+    provides:
+    - key
+    - id
+    - summary
+    - description
+    - status
+    - priority
+    - assignee_id
+    - assignee_name
+    - labels
+    parameters:
+    - name: summary
+      type: string
+      required: false
+      description: New summary/title text.
+      string_semantics: short
+    - name: description
+      type: string
+      required: false
+      string_semantics: markdown
+      description: Replacement description; on Cloud this may need to be valid ADF JSON for some sites.
+    - name: assignee_id
+      type: string
+      required: false
+      description: Account ID to assign; omit to leave assignee unchanged.
+      string_semantics: short
+    - name: priority_name
+      type: string
+      required: false
+      description: Priority name as defined in the project (e.g. High).
+      string_semantics: short
+    - name: labels
+      type: array
+      required: false
+      items:
+        type: string
+      description: Full replacement list of label strings (repeat --labels).
+  issue_delete:
+    kind: delete
+    entity: Issue
+    description: Permanently delete an issue (subject to permissions and workflow).
+  issue_transition:
+    kind: action
+    entity: Issue
+    description: Move an issue along its workflow using a transition id from transition query.
+    output:
+      type: side_effect
+      description: The issue leaves its current status and enters the status targeted by the chosen transition.
+    parameters:
+    - name: transition_id
+      type: string
+      required: true
+      description: Workflow transition id (numeric string from the transitions list for this issue).
+      string_semantics: short
+  project_get:
+    kind: get
+    entity: Project
+    description: Get a project by key or ID
+    provides:
+    - key
+    - id
+    - name
+    - description
+    - projectTypeKey
+    - archived
+    - isPrivate
+    - lead_account_id
+    - lead_name
+  project_query:
+    kind: query
+    entity: Project
+    description: List and search projects
+    parameters:
+    - name: query
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: typeKey
+      type: string
+      required: false
+      string_semantics: short
+    - name: status
+      type: multi_select
+      allowed_values:
+      - live
+      - archived
+      - deleted
+      required: false
+    - name: orderBy
+      type: select
+      allowed_values:
+      - key
+      - -key
+      - name
+      - -name
+      - category
+      - -category
+      required: false
+      role: sort
+  project_version_query:
+    kind: query
+    entity: Version
+    description: List versions for a project
+    parameters:
+    - name: projectIdOrKey
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: query
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: status
+      type: string
+      required: false
+      string_semantics: short
+    - name: orderBy
+      type: select
+      allowed_values:
+      - description
+      - -description
+      - name
+      - -name
+      - sequence
+      - -sequence
+      - releaseDate
+      - -releaseDate
+      - startDate
+      - -startDate
+      required: false
+      role: sort
+  user_get:
+    kind: get
+    entity: User
+    description: Resolve a user by their stable account id.
+    provides:
+    - accountId
+    - displayName
+    - emailAddress
+    - active
+    - timeZone
+    - accountType
+  user_myself:
+    kind: query
+    entity: User
+    description: Current authenticated user (who the credentials represent).
+    provides:
+    - accountId
+    - displayName
+    - emailAddress
+    - active
+    - timeZone
+    - accountType
+  user_search:
+    kind: search
+    entity: User
+    description: Search for users by display name or accountId
+    parameters:
+    - name: query
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: accountId
+      type: string
+      required: false
+      string_semantics: short
+    - name: property
+      type: string
+      required: false
+      string_semantics: short
+  comment_create:
+    kind: create
+    entity: Comment
+    description: Add a comment to an issue; body is sent as Atlassian Document Format wrapping plain text.
+    provides:
+    - id
+    - body
+    - author_id
+    - created
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+      description: Issue key or id to comment on.
+    - name: text
+      type: string
+      required: true
+      string_semantics: markdown
+      description: Plain comment text (wrapped to minimal ADF for the API).
+  comment_query:
+    kind: query
+    entity: Comment
+    description: List comments on an issue
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+    - name: orderBy
+      type: select
+      allowed_values:
+      - created
+      - -created
+      required: false
+      role: sort
+  priority_query:
+    kind: query
+    entity: Priority
+    description: List issue priorities
+    parameters:
+    - name: priorityName
+      type: string
+      required: false
+      string_semantics: short
+  priority_get:
+    kind: get
+    entity: Priority
+    description: Get a priority by ID
+    provides:
+    - id
+    - name
+    - description
+    - isDefault
+    - statusColor
+  status_query:
+    kind: query
+    entity: Status
+    description: List workflow statuses
+  status_get:
+    kind: get
+    entity: Status
+    description: Get a status by ID or name
+    provides:
+    - id
+    - name
+    - description
+    - statusCategory
+  issuetype_query:
+    kind: query
+    entity: IssueType
+    description: List issue types
+  issuetype_get:
+    kind: get
+    entity: IssueType
+    description: Get an issue type by ID
+    provides:
+    - id
+    - name
+    - description
+    - subtask
+    - hierarchyLevel
+  worklog_query:
+    kind: query
+    entity: Worklog
+    description: List worklogs (time-tracking entries) for an issue
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+    - name: startedAfter
+      type: integer
+      required: false
+    - name: startedBefore
+      type: integer
+      required: false
+  changelog_query:
+    kind: query
+    entity: Changelog
+    description: List changelog entries (field change history) for an issue
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+  remotelink_query:
+    kind: query
+    entity: RemoteLink
+    description: List remote links attached to an issue
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+  transition_query:
+    kind: query
+    entity: Transition
+    description: List available workflow transitions for an issue
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+  component_query:
+    kind: query
+    entity: Component
+    description: List components for a project
+    parameters:
+    - name: projectIdOrKey
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+    - name: query
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: orderBy
+      type: select
+      allowed_values:
+      - description
+      - -description
+      - issueCount
+      - -issueCount
+      - lead
+      - -lead
+      - name
+      - -name
+      required: false
+      role: sort
+  component_get:
+    kind: get
+    entity: Component
+    description: Get a component by ID
+    provides:
+    - id
+    - name
+    - description
+    - assigneeType
+    - lead_id
+    - lead_name
+    - project
+  attachment_get:
+    kind: get
+    entity: Attachment
+    description: Metadata for one attachment (name, size, author, timestamps).
+    provides:
+    - id
+    - filename
+    - mimeType
+    - size
+    - author_id
+    - created
+  attachment_delete:
+    kind: delete
+    entity: Attachment
+    description: Remove a file from its issue (subject to permissions).
+  issue_vote_get:
+    kind: get
+    entity: IssueVoteState
+    description: Voting tally for an issue and whether you have already voted.
+    provides:
+    - vote_count
+    - has_voted
+  issue_vote_add:
+    kind: action
+    entity: Issue
+    description: Register a vote on the issue for the current user.
+    output:
+      type: side_effect
+      description: Your vote is counted toward the issue’s vote total.
+  issue_vote_remove:
+    kind: action
+    entity: Issue
+    description: Withdraw your vote from the issue.
+    output:
+      type: side_effect
+      description: Your vote no longer counts toward the issue’s total.
+  issue_editmeta_get:
+    kind: get
+    entity: IssueEditMeta
+    description: Discover which fields can be edited and what values are allowed before editing.
+    provides:
+    - fields
+  issue_createmeta_get:
+    kind: get
+    entity: IssueCreateMetaBundle
+    description: Discover what must be supplied when creating an issue in a project (issue types and field metadata).
+    provides:
+    - projects
+  issue_bulk_fetch:
+    kind: query
+    entity: Issue
+    description: Load several issues by key or id in one round-trip for dashboards or migration tools.
+    parameters:
+    - name: issue_keys
+      type: array
+      required: true
+      items:
+        type: string
+      description: Issue keys or numeric ids to fetch (repeat flag).
+  issue_watcher_query:
+    kind: query
+    entity: User
+    description: Accounts watching this issue for notifications.
+    parameters:
+    - name: issueIdOrKey
+      type: entity_ref
+      target: Issue
+      required: true
+      role: scope
+  issue_watcher_add:
+    kind: action
+    entity: Issue
+    description: Add a watcher (defaults to yourself) so they receive notifications for this issue.
+    output:
+      type: side_effect
+      description: The chosen account is subscribed to issue notifications.
+    parameters:
+    - name: account_id
+      type: string
+      required: false
+      description: Account to add; omit to add the current user.
+      string_semantics: short
+  issue_watcher_remove:
+    kind: action
+    entity: Issue
+    description: Stop a user from receiving notifications for this issue.
+    output:
+      type: side_effect
+      description: The account is no longer watching the issue.
+    parameters:
+    - name: account_id
+      type: string
+      required: true
+      description: Account to remove from the watcher list.
+      string_semantics: short
+  group_query:
+    kind: query
+    entity: Group
+    description: Find groups by name for permission and membership tasks.
+    parameters:
+    - name: query
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+  group_get:
+    kind: get
+    entity: Group
+    description: Look up one group by id or name.
+    provides:
+    - groupId
+    - name
+  group_delete:
+    kind: delete
+    entity: Group
+    description: Delete a group (subject to admin permissions).
+  mypermissions_get:
+    kind: get
+    entity: MyPermissionSet
+    description: Whether the current identity has common project and issue permissions (broader or scoped checks may need a tailored permission list in tooling).
+    provides:
+    - permissions
+  filter_query:
+    kind: query
+    entity: SavedFilter
+    description: Search saved JQL filters you can use or share.
+    parameters:
+    - name: filterName
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+  filter_get:
+    kind: get
+    entity: SavedFilter
+    description: Load a saved filter by id.
+    provides:
+    - id
+    - name
+    - description
+    - jql
+    - favourite
+  dashboard_query:
+    kind: query
+    entity: Dashboard
+    description: Search dashboards available to you.
+    parameters:
+    - name: dashboardName
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+  dashboard_get:
+    kind: get
+    entity: Dashboard
+    description: Open a dashboard by id for gadget placement and sharing.
+    provides:
+    - id
+    - name
+    - description
+  board_query:
+    kind: query
+    entity: Board
+    description: Boards on the site, optionally narrowed to a project (Jira Software).
+    parameters:
+    - name: projectKeyOrId
+      type: entity_ref
+      target: Project
+      required: false
+      role: filter
+  board_get:
+    kind: get
+    entity: Board
+    description: Board details including configuration context.
+    provides:
+    - id
+    - name
+    - type
+  sprint_query:
+    kind: query
+    entity: Sprint
+    description: Sprints on a board (active, future, closed).
+    parameters:
+    - name: boardId
+      type: integer
+      required: true
+      role: scope
+  sprint_get:
+    kind: get
+    entity: Sprint
+    description: One sprint’s dates, state, and backlog scope.
+    provides:
+    - id
+    - name
+    - state
+    - startDate
+    - endDate
+  webhook_query:
+    kind: query
+    entity: Webhook
+    description: Webhooks registered for this app identity.
+  webhook_register:
+    kind: action
+    entity: Webhook
+    description: Register webhook subscriptions that post Jira events to your HTTPS endpoint (response lists created ids and any registration errors).
+    output:
+      type: side_effect
+      description: Jira records new webhook endpoints for this app; check the API response for created ids or validation errors.
+    parameters:
+    - name: url
+      type: string
+      required: true
+      description: HTTPS URL that receives Jira event payloads.
+      string_semantics: short
+    - name: jql_filter
+      type: string
+      required: false
+      description: Optional JQL limiting which issues trigger events.
+      string_semantics: short
+    - name: events
+      type: array
+      required: true
+      items:
+        type: string
+      description: Event types to deliver (repeat --events).
+  webhook_delete:
+    kind: delete
+    entity: Webhook
+    description: Remove a webhook subscription.
+oauth:
+  provider: atlassian_jira_cloud
+  scopes:
+    read:jira-user:
+      label: View user profiles (Jira classic scope)
+      notes: Jira permissions still apply; scopes do not override project access.
+      docs_url: https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps
+    read:jira-work:
+      label: Read Jira issue and project data (classic)
+      docs_url: https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps
+    write:jira-work:
+      label: Create and edit issues, comments, worklogs (classic)
+      docs_url: https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps
+    manage:jira-project:
+      label: Manage project settings (classic)
+      docs_url: https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps
+    manage:jira-configuration:
+      label: Manage global Jira configuration (classic)
+      docs_url: https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps
+    manage:jira-webhook:
+      label: Manage Jira webhooks (classic)
+      docs_url: https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps
+    read:board-scope:jira-software:
+      label: Read Jira Software boards (granular)
+      notes: Jira Software does not support classic scopes; use granular scopes for Software REST.
+      docs_url: https://developer.atlassian.com/cloud/jira/software/scopes-for-oauth-2-3LO-and-forge-apps
+    read:sprint:jira-software:
+      label: Read Jira Software sprints (granular)
+      docs_url: https://developer.atlassian.com/cloud/jira/software/scopes-for-oauth-2-3LO-and-forge-apps
+  requirements:
+    capabilities:
+      issue_get:
+        any_of:
+        - read:jira-work
+      issue_jql:
+        any_of:
+        - read:jira-work
+      issue_bulk_fetch:
+        any_of:
+        - read:jira-work
+      issue_create:
+        any_of:
+        - write:jira-work
+      issue_update:
+        any_of:
+        - write:jira-work
+      issue_delete:
+        any_of:
+        - write:jira-work
+      issue_transition:
+        any_of:
+        - write:jira-work
+      project_get:
+        any_of:
+        - read:jira-work
+      project_query:
+        any_of:
+        - read:jira-work
+      project_version_query:
+        any_of:
+        - read:jira-work
+      user_get:
+        any_of:
+        - read:jira-user
+      user_myself:
+        any_of:
+        - read:jira-user
+      user_search:
+        any_of:
+        - read:jira-user
+      comment_create:
+        any_of:
+        - write:jira-work
+      comment_query:
+        any_of:
+        - read:jira-work
+      priority_query:
+        any_of:
+        - read:jira-work
+      priority_get:
+        any_of:
+        - read:jira-work
+      status_query:
+        any_of:
+        - read:jira-work
+      status_get:
+        any_of:
+        - read:jira-work
+      issuetype_query:
+        any_of:
+        - read:jira-work
+      issuetype_get:
+        any_of:
+        - read:jira-work
+      worklog_query:
+        any_of:
+        - read:jira-work
+      changelog_query:
+        any_of:
+        - read:jira-work
+      remotelink_query:
+        any_of:
+        - read:jira-work
+      transition_query:
+        any_of:
+        - read:jira-work
+      component_query:
+        any_of:
+        - read:jira-work
+      component_get:
+        any_of:
+        - read:jira-work
+      attachment_get:
+        any_of:
+        - read:jira-work
+      attachment_delete:
+        any_of:
+        - write:jira-work
+      issue_vote_get:
+        any_of:
+        - read:jira-work
+      issue_vote_add:
+        any_of:
+        - write:jira-work
+      issue_vote_remove:
+        any_of:
+        - write:jira-work
+      issue_editmeta_get:
+        any_of:
+        - read:jira-work
+      issue_createmeta_get:
+        any_of:
+        - read:jira-work
+      issue_watcher_query:
+        any_of:
+        - read:jira-work
+      issue_watcher_add:
+        any_of:
+        - write:jira-work
+      issue_watcher_remove:
+        any_of:
+        - write:jira-work
+      group_query:
+        any_of:
+        - manage:jira-configuration
+      group_get:
+        any_of:
+        - manage:jira-configuration
+      group_delete:
+        any_of:
+        - manage:jira-configuration
+      mypermissions_get:
+        any_of:
+        - read:jira-work
+      filter_query:
+        any_of:
+        - read:jira-work
+      filter_get:
+        any_of:
+        - read:jira-work
+      dashboard_query:
+        any_of:
+        - read:jira-work
+      dashboard_get:
+        any_of:
+        - read:jira-work
+      board_query:
+        any_of:
+        - read:board-scope:jira-software
+      board_get:
+        any_of:
+        - read:board-scope:jira-software
+      sprint_query:
+        any_of:
+        - read:sprint:jira-software
+      sprint_get:
+        any_of:
+        - read:sprint:jira-software
+      webhook_query:
+        any_of:
+        - manage:jira-webhook
+      webhook_register:
+        any_of:
+        - manage:jira-webhook
+      webhook_delete:
+        any_of:
+        - manage:jira-webhook
+    relations:
+      Issue.comments:
+        any_of:
+        - read:jira-work
+      Issue.worklogs:
+        any_of:
+        - read:jira-work
+      Issue.changelog:
+        any_of:
+        - read:jira-work
+      Issue.remotelinks:
+        any_of:
+        - read:jira-work
+      Issue.transitions:
+        any_of:
+        - read:jira-work
+      Issue.attachments:
+        any_of:
+        - read:jira-work
+      Project.components:
+        any_of:
+        - read:jira-work
+auth:
+  scheme: api_key_header
+  header: Authorization
+  env: JIRA_AUTH

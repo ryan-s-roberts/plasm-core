@@ -1,0 +1,267 @@
+openapi: 3.0.3
+info:
+  title: Plasm discovery HTTP API
+  version: 0.1.0
+paths:
+  /v1/health:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/registry:
+    get:
+      summary: List catalog entries
+      responses:
+        "200":
+          description: Registry metadata list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistryListResponse"
+  /v1/registry/{entry_id}:
+    get:
+      summary: One catalog entry
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include_cgs
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistryEntryResponse"
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /v1/discover:
+    post:
+      summary: Deterministic capability discovery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapabilityQuery"
+      responses:
+        "200":
+          description: Discovery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryResult"
+        "400":
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+    CatalogEntryMeta:
+      type: object
+      additionalProperties: false
+      required: [entry_id, label]
+      properties:
+        entry_id:
+          type: string
+        label:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    RegistryListResponse:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogEntryMeta"
+    RegistryEntryResponse:
+      type: object
+      additionalProperties: false
+      required: [entry_id, label, tags]
+      properties:
+        entry_id:
+          type: string
+        label:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        cgs:
+          description: Present when include_cgs=true
+          type: object
+    CapabilityQuery:
+      type: object
+      additionalProperties: false
+      properties:
+        tokens:
+          type: array
+          items:
+            type: string
+        phrases:
+          type: array
+          items:
+            type: string
+        entity_hints:
+          type: array
+          items:
+            type: string
+        kinds:
+          type: array
+          items:
+            type: string
+            enum: [query, search, get, create, update, delete, action]
+        capability_names:
+          type: array
+          items:
+            type: string
+        entry_ids:
+          type: array
+          items:
+            type: string
+        pick_entry:
+          type: string
+        pick_capabilities:
+          type: array
+          items:
+            type: string
+        exclude_capabilities:
+          type: array
+          items:
+            type: string
+        expand_entities:
+          type: array
+          items:
+            type: string
+          description: >
+            Optional entity names merged into discovery seeds (per matching catalog CGS) before
+            computing schema_neighborhoods; unknown names are ignored.
+    Problem:
+      type: object
+      additionalProperties: true
+      required: [status, title, detail]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+    RankedCandidate:
+      type: object
+      additionalProperties: false
+      required: [entry_id, entity, capability_name, score]
+      properties:
+        entry_id:
+          type: string
+        entity:
+          type: string
+        capability_name:
+          type: string
+        score:
+          type: integer
+          format: int32
+        reason_codes:
+          type: array
+          items:
+            type: string
+          default: []
+        capability_description:
+          type: string
+          description: >
+            Trimmed CGS capability description (for LLM-facing summaries without parsing full `contexts`).
+    EntitySummary:
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name:
+          type: string
+          description: Canonical CGS entity key.
+        description:
+          type: string
+          description: Trimmed entity description from the CGS for that name.
+    DiscoveryResult:
+      type: object
+      additionalProperties: false
+      required: [contexts, candidates, applied_query_echo]
+      properties:
+        contexts:
+          type: array
+          items:
+            type: object
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/RankedCandidate"
+        ambiguities:
+          type: array
+          items:
+            type: object
+        applied_query_echo:
+          $ref: "#/components/schemas/CapabilityQuery"
+        closure_stats:
+          type: object
+        schema_neighborhoods:
+          type: array
+          description: >
+            Per catalog entry_id, the same focused entity set the REPL would use for `:schema` /
+            `RenderConfig::for_eval_seeds`: seeds from matching candidates plus relation / EntityRef
+            neighbours (union). Use `focused_entities` as `POST /execute` `entities` when opening a session.
+          items:
+            $ref: "#/components/schemas/DiscoverySchemaNeighborhood"
+        entity_summaries:
+          type: array
+          description: >
+            One row per distinct entity name appearing in `schema_neighborhoods[].focused_entities`
+            (deduped, sorted by name). Use with `focused_entities` to choose `POST /execute` seeds without
+            mining full CGS JSON.
+          items:
+            $ref: "#/components/schemas/EntitySummary"
+    DiscoverySchemaNeighborhood:
+      type: object
+      required: [entry_id, seed_entities, focused_entities]
+      properties:
+        entry_id:
+          type: string
+        seed_entities:
+          type: array
+          items:
+            type: string
+        focused_entities:
+          type: array
+          items:
+            type: string

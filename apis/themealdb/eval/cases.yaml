@@ -1,0 +1,41 @@
+# TheMealDB — recipes (`Meal`): search, filter query, and lookup by id.
+- id: tm-01
+  schema: themealdb
+  goal: "I'm meal-planning: find recipes whose names sound like 'carbonara'"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Meal]
+
+- id: tm-02
+  schema: themealdb
+  goal: "List Japanese recipes from the catalog for a themed dinner night"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Meal]
+
+- id: tm-03
+  schema: themealdb
+  goal: "Pull full ingredient list and instructions for meal id 52772"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Meal]
+
+- id: tm-04
+  schema: themealdb
+  goal: "For that recipe, only show me the title and thumbnail URL for a card UI"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Meal]
+    projection_contains: [strMeal, strMealThumb]
+
+- id: tm-05
+  schema: themealdb
+  goal: "Browse the meal index from the top — first page of the catalog for QA"
+  tags: [query, browse]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Meal]

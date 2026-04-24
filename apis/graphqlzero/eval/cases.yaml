@@ -1,0 +1,56 @@
+# GraphQLZero — NL→Plasm eval goals (schema: graphqlzero)
+- id: gz-01
+  schema: graphqlzero
+  goal: "List the first few users"
+  tags: [query]
+  covers: [projection]
+  expect:
+    entities_any: [User]
+
+- id: gz-02
+  schema: graphqlzero
+  goal: "Open user 1"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: gz-03
+  schema: graphqlzero
+  goal: "Show posts and then open post 1"
+  tags: [query, chain]
+  covers: [chain]
+  expect:
+    entities_any: [Post]
+
+- id: gz-04
+  schema: graphqlzero
+  goal: "List todos, albums, comments, and photos in one workflow"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Todo, Album, Comment, Photo]
+
+- id: gz-05
+  schema: graphqlzero
+  goal: "Create a post titled Hello with body Test body"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Post]
+
+- id: gz-06
+  schema: graphqlzero
+  goal: "Update post 1 title to Updated"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Post]
+
+- id: gz-07
+  schema: graphqlzero
+  goal: "Delete post 99"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Post]

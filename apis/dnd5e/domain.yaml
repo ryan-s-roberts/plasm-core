@@ -1,0 +1,1576 @@
+version: 3
+
+auth:
+  scheme: none
+
+http_backend: https://www.dnd5eapi.co
+
+entities:
+  AbilityScore:
+    id_field: index
+    description: One of the six ability scores (STR, DEX, CON, INT, WIS, CHA) used for checks and saves.
+    fields:
+      index:
+        description: Lowercase slug for the ability score.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Short label such as STR or DEX.
+        field_type: string
+        required: true
+        string_semantics: short
+      full_name:
+        description: Full name of the ability.
+        field_type: string
+        required: false
+        string_semantics: short
+      desc:
+        description: Rules text explaining the ability and typical checks.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+    relations:
+      skills:
+        description: Skills that use this ability as their key modifier.
+        target: Skill
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: skills
+            - wildcard: true
+            - key: index
+
+  Alignment:
+    id_field: index
+    description: A moral and ethical outlook label from the nine-alignment grid.
+    fields:
+      index:
+        description: Kebab-case slug for the alignment.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name of the alignment.
+        field_type: string
+        required: true
+        string_semantics: short
+      abbreviation:
+        description: Short abbreviation such as LG or CN.
+        field_type: string
+        required: false
+        string_semantics: short
+      desc:
+        description: Narrative summary of how creatures with this alignment behave.
+        field_type: string
+        required: false
+        string_semantics: markdown
+
+  DamageType:
+    id_field: index
+    description: A damage type such as slashing, fire, or psychic.
+    fields:
+      index:
+        description: Kebab-case slug for the damage type.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Rules text for this damage type.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  EquipmentCategory:
+    id_field: index
+    description: A grouping of equipment such as martial melee weapons or holy symbols.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name.
+        field_type: string
+        required: true
+        string_semantics: short
+
+  WeaponProperty:
+    id_field: index
+    description: A weapon tag such as finesse, reach, or two-handed.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Rules text for how the property works.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  Language:
+    id_field: index
+    description: A language creatures may speak or understand.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Typical speakers and script notes.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+      type:
+        description: Broad category such as standard or exotic.
+        field_type: string
+        required: false
+        string_semantics: short
+      typical_speakers:
+        description: Narrative list of who commonly speaks the language.
+        field_type: string
+        required: false
+        string_semantics: markdown
+
+  Proficiency:
+    id_field: index
+    description: A skill, saving throw, armor, weapon, or tool proficiency granted by class, race, or background.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Display name.
+        field_type: string
+        required: true
+        string_semantics: short
+      type:
+        description: Proficiency category when present on the wire.
+        field_type: string
+        required: false
+        string_semantics: short
+
+  Rule:
+    id_field: index
+    description: A top-level SRD rules chapter with subsections.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Chapter title.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Short chapter summary when present.
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      subsections:
+        description: Linked rule subsections under this chapter.
+        target: RuleSection
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: subsections
+            - wildcard: true
+            - key: index
+
+  RuleSection:
+    id_field: index
+    description: A subsection within a rules chapter.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Section title.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Body text for the subsection.
+        field_type: string
+        required: false
+        string_semantics: markdown
+
+  Feat:
+    id_field: index
+    description: An optional feat from the SRD when present.
+    fields:
+      index:
+        description: Kebab-case slug.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Feat name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Rules text paragraphs.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  ClassLevel:
+    id_field: index
+    description: Progression row for one class level (hit dice, proficiencies, class-specific knobs).
+    fields:
+      index:
+        description: Composite index such as barbarian-3.
+        field_type: string
+        required: true
+        string_semantics: short
+      level:
+        description: Character level represented by this row.
+        field_type: integer
+        required: false
+      ability_score_bonuses:
+        description: Total ASI-style bonuses accumulated up to this level.
+        field_type: number
+        required: false
+      prof_bonus:
+        description: Proficiency bonus at this level.
+        field_type: integer
+        required: false
+      url:
+        description: Canonical API URL for this resource row.
+        field_type: string
+        required: false
+        string_semantics: short
+      class_specific:
+        description: Class-specific progression payload (rage dice, slots, etc.).
+        field_type: json
+        required: false
+      spellcasting:
+        description: Spells known and slot counts when this class grants spellcasting.
+        field_type: json
+        required: false
+      updated_at:
+        description: Last update timestamp from the provider.
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      class:
+        description: Class this level row belongs to.
+        target: Class
+        cardinality: one
+      features:
+        description: Features gained at exactly this level.
+        target: Feature
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: features
+            - wildcard: true
+            - key: index
+
+  SubclassLevel:
+    id_field: index
+    description: Progression row for a subclass at a given character level.
+    fields:
+      index:
+        description: Composite index for the subclass level row.
+        field_type: string
+        required: true
+        string_semantics: short
+      level:
+        description: Character level for this row.
+        field_type: integer
+        required: false
+      prof_bonus:
+        description: Proficiency bonus at this level.
+        field_type: integer
+        required: false
+      url:
+        description: Canonical API URL.
+        field_type: string
+        required: false
+        string_semantics: short
+      subclass_specific:
+        description: Subclass-specific progression payload.
+        field_type: json
+        required: false
+      updated_at:
+        description: Last update timestamp from the provider.
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      subclass:
+        description: Subclass owning this progression row.
+        target: Subclass
+        cardinality: one
+      features:
+        description: Features granted at this subclass level.
+        target: Feature
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: features
+            - wildcard: true
+            - key: index
+
+  ClassSpellcasting:
+    id_field: index
+    implicit_request_identity: true
+    domain_projection_examples: false
+    description: Spellcasting progression and rules text for a class that casts spells.
+    fields:
+      index:
+        description: Class index this spellcasting block belongs to.
+        field_type: string
+        required: true
+        string_semantics: short
+      level:
+        description: Level at which the class begins spellcasting.
+        field_type: integer
+        required: false
+      info:
+        description: Structured spellcasting sections (cantrips, slots, ritual casting, etc.).
+        field_type: json
+        required: false
+    relations:
+      spellcasting_ability:
+        description: Ability score used for spell save DC and spell attacks.
+        target: AbilityScore
+        cardinality: one
+
+  ClassMulticlassing:
+    id_field: index
+    implicit_request_identity: true
+    domain_projection_examples: false
+    description: Multiclass prerequisites and proficiencies granted when dipping into a class.
+    fields:
+      index:
+        description: Class index this multiclassing block belongs to.
+        field_type: string
+        required: true
+        string_semantics: short
+      prerequisites:
+        description: Minimum ability scores required to multiclass into this class.
+        field_type: json
+        required: false
+      proficiencies:
+        description: Proficiencies granted when multiclassing into this class.
+        field_type: json
+        required: false
+      proficiency_choices:
+        description: Optional proficiency choices offered on multiclass entry.
+        field_type: json
+        required: false
+
+  MagicSchool:
+    id_field: index
+    description: One of the eight schools of magic (e.g. Evocation, Illusion).
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the magic school.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable magic school name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Description of the school's thematic focus.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  Class:
+    id_field: index
+    description: A character class (Fighter, Wizard, Rogue etc.) defining core abilities.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the class.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable class name.
+        field_type: string
+        required: true
+        string_semantics: short
+      hit_die:
+        description: Hit die size determining HP gained per level.
+        field_type: integer
+        required: false
+    relations:
+      subclasses:
+        description: Subclasses available for this class.
+        target: Subclass
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: class_subclasses
+          param: class_index
+      features:
+        description: All features granted by this class.
+        target: Feature
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: class_features
+          param: class_index
+      spells:
+        description: All spells available to this class.
+        target: Spell
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: class_spells
+          param: class_index
+
+  Subclass:
+    id_field: index
+    description: A specialisation of a Class (e.g. Evocation Wizard).
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the subclass.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable subclass name.
+        field_type: string
+        required: true
+        string_semantics: short
+      subclass_flavor:
+        description: Thematic description of the subclass identity.
+        field_type: string
+        required: false
+        string_semantics: short
+      desc:
+        description: Full text description of the subclass.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+    relations:
+      class:
+        description: Base class this subclass extends.
+        target: Class
+        cardinality: one
+
+  Spell:
+    id_field: index
+    description: A magical effect a caster can invoke; identified by kebab-case slug.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the spell (e.g. 'fireball').
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable spell name.
+        field_type: string
+        required: true
+        string_semantics: short
+      level:
+        description: Spell slot level required to cast (0 = cantrip).
+        field_type: integer
+        required: false
+      range:
+        description: Range of the spell effect (e.g. '60 feet').
+        field_type: string
+        required: false
+        string_semantics: short
+      casting_time:
+        description: Time required to cast (e.g. '1 action').
+        field_type: string
+        required: false
+        string_semantics: short
+      duration:
+        description: How long the spell effect lasts.
+        field_type: string
+        required: false
+        string_semantics: short
+      concentration:
+        description: Whether the caster must maintain concentration.
+        field_type: boolean
+        required: false
+      ritual:
+        description: Whether the spell can be cast as a ritual.
+        field_type: boolean
+        required: false
+      desc:
+        description: Full rules text paragraphs for the spell.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+      higher_level:
+        description: Additional effects when cast using a higher-level slot.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+      components:
+        description: Verbal, somatic, and material component letters (V, S, M).
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      material:
+        description: Material component description when the spell lists M.
+        field_type: string
+        required: false
+        string_semantics: markdown
+      attack_type:
+        description: Attack mode such as ranged or melee when applicable.
+        field_type: string
+        required: false
+        string_semantics: short
+      area_of_effect:
+        description: Area template metadata when the spell has a shaped area.
+        field_type: json
+        required: false
+      damage:
+        description: Damage dice by slot or character level when present.
+        field_type: json
+        required: false
+      dc:
+        description: Saving throw DC block when the spell allows a save.
+        field_type: json
+        required: false
+      url:
+        description: Canonical API URL for this spell.
+        field_type: string
+        required: false
+        string_semantics: short
+      updated_at:
+        description: Last update timestamp from the provider.
+        field_type: string
+        required: false
+        string_semantics: short
+    relations:
+      school:
+        description: The school of magic this spell belongs to.
+        target: MagicSchool
+        cardinality: one
+      classes:
+        description: Classes that can learn this spell.
+        target: Class
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: classes
+            - wildcard: true
+            - key: index
+      subclasses:
+        description: Subclasses that add this spell to their list.
+        target: Subclass
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: subclasses
+            - wildcard: true
+            - key: index
+
+  Monster:
+    id_field: index
+    description: A creature or NPC encountered in combat encounters.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the monster.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable monster name.
+        field_type: string
+        required: true
+        string_semantics: short
+      size:
+        description: Physical size category of the monster.
+        field_type: select
+        required: false
+        allowed_values:
+          - Tiny
+          - Small
+          - Medium
+          - Large
+          - Huge
+          - Gargantuan
+      type:
+        description: Creature type (e.g. humanoid, fiend, undead).
+        field_type: string
+        required: false
+        string_semantics: short
+      subtype:
+        description: Optional subtype line such as goblinoid.
+        field_type: string
+        required: false
+        string_semantics: short
+      alignment:
+        description: Typical moral alignment of the monster.
+        field_type: string
+        required: false
+        string_semantics: short
+      challenge_rating:
+        description: Difficulty rating used to determine XP reward.
+        field_type: number
+        required: false
+      hit_points:
+        description: Average number of hit points the monster has.
+        field_type: integer
+        required: false
+      hit_dice:
+        description: Hit dice expression such as 2d6.
+        field_type: string
+        required: false
+        string_semantics: short
+      hit_points_roll:
+        description: Rolled HP expression when different from hit_dice.
+        field_type: string
+        required: false
+        string_semantics: short
+      armor_class:
+        description: Armor class entries including armor pieces when present.
+        field_type: json
+        required: false
+      proficiency_bonus:
+        description: Proficiency bonus used for attacks and saves.
+        field_type: integer
+        required: false
+      strength:
+        description: Strength score.
+        field_type: integer
+        required: false
+      dexterity:
+        description: Dexterity score.
+        field_type: integer
+        required: false
+      constitution:
+        description: Constitution score.
+        field_type: integer
+        required: false
+      intelligence:
+        description: Intelligence score.
+        field_type: integer
+        required: false
+      wisdom:
+        description: Wisdom score.
+        field_type: integer
+        required: false
+      charisma:
+        description: Charisma score.
+        field_type: integer
+        required: false
+      xp:
+        description: Experience points awarded for defeating this monster.
+        field_type: integer
+        required: false
+      image:
+        description: Relative URL for creature artwork when available.
+        field_type: string
+        required: false
+        string_semantics: short
+      speed:
+        description: Movement modes and distances.
+        field_type: json
+        required: false
+      senses:
+        description: Passive perception and special senses.
+        field_type: json
+        required: false
+      languages:
+        description: Languages understood or spoken.
+        field_type: string
+        required: false
+        string_semantics: markdown
+      proficiencies:
+        description: Saving throws, skills, and gear proficiencies.
+        field_type: json
+        required: false
+      damage_vulnerabilities:
+        description: Damage types this creature is vulnerable to.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      damage_resistances:
+        description: Damage types this creature resists.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      damage_immunities:
+        description: Damage types this creature ignores.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      condition_immunities:
+        description: Conditions that do not apply to this creature.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: short
+      special_abilities:
+        description: Traits such as Nimble Escape or Magic Resistance.
+        field_type: json
+        required: false
+      actions:
+        description: Actions, attacks, and recharge abilities.
+        field_type: json
+        required: false
+      legendary_actions:
+        description: Legendary action block when present.
+        field_type: json
+        required: false
+      reactions:
+        description: Reaction entries when present.
+        field_type: json
+        required: false
+      url:
+        description: Canonical API URL.
+        field_type: string
+        required: false
+        string_semantics: short
+      updated_at:
+        description: Last update timestamp from the provider.
+        field_type: string
+        required: false
+        string_semantics: short
+
+  Race:
+    id_field: index
+    description: A playable species (Human, Elf, Dwarf etc.).
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the race.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable race name.
+        field_type: string
+        required: true
+        string_semantics: short
+      speed:
+        description: Movement speed in feet per turn.
+        field_type: integer
+        required: false
+      size:
+        description: Physical size category of the race.
+        field_type: select
+        required: false
+        allowed_values:
+          - Tiny
+          - Small
+          - Medium
+          - Large
+          - Huge
+          - Gargantuan
+      alignment:
+        description: Typical alignment tendency of the race.
+        field_type: string
+        required: false
+        string_semantics: short
+      age:
+        description: Description of typical lifespan and maturity.
+        field_type: string
+        required: false
+        string_semantics: markdown
+    relations:
+      traits:
+        description: Racial passive traits granted to characters of this race.
+        target: Trait
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: race_traits
+          param: race_index
+      subraces:
+        description: Subraces (variants) available for this race.
+        target: Subrace
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: race_subraces
+          param: race_index
+
+  Subrace:
+    id_field: index
+    description: A variant of a Race (e.g. High Elf vs Wood Elf).
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the subrace.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable subrace name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Description of the subrace and its distinguishing traits.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  Feature:
+    id_field: index
+    description: A class or race ability gained at a specific level.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the feature.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable feature name.
+        field_type: string
+        required: true
+        string_semantics: short
+      level:
+        description: Character level at which this feature is gained.
+        field_type: integer
+        required: false
+      desc:
+        description: Full text description of the feature's effect.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  Equipment:
+    id_field: index
+    description: A piece of gear including weapons, armour, and tools.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the equipment.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable equipment name.
+        field_type: string
+        required: true
+        string_semantics: short
+      weight:
+        description: Weight of the item in pounds.
+        field_type: number
+        required: false
+      desc:
+        description: Description of the equipment piece.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  MagicItem:
+    id_field: index
+    description: An enchanted item with special magical properties.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the magic item.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable magic item name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Description of the item's magical properties.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  Skill:
+    id_field: index
+    description: A proficiency such as Stealth or Persuasion.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the skill.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable skill name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Description of what the skill covers.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+    relations:
+      ability_score:
+        description: Ability score used for this skill's checks.
+        target: AbilityScore
+        cardinality: one
+
+  Condition:
+    id_field: index
+    description: A status effect such as Blinded or Paralyzed.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the condition.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable condition name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Description of the condition's effects on a creature.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+  Background:
+    id_field: index
+    description: A character backstory archetype (Soldier, Criminal etc.).
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the background.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable background name.
+        field_type: string
+        required: true
+        string_semantics: short
+
+  Trait:
+    id_field: index
+    description: A racial passive ability or characteristic.
+    fields:
+      index:
+        description: Kebab-case slug uniquely identifying the trait.
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        description: Human-readable trait name.
+        field_type: string
+        required: true
+        string_semantics: short
+      desc:
+        description: Description of the racial trait's passive effect.
+        field_type: array
+        required: false
+        items:
+          type: string
+          string_semantics: markdown
+
+capabilities:
+  ability_score_query:
+    description: List all ability scores.
+    kind: query
+    entity: AbilityScore
+  ability_score_get:
+    description: Retrieve one ability score by index.
+    kind: get
+    entity: AbilityScore
+    provides:
+      - index
+      - name
+      - full_name
+      - desc
+
+  alignment_query:
+    description: List all alignments.
+    kind: query
+    entity: Alignment
+  alignment_get:
+    description: Retrieve one alignment by index.
+    kind: get
+    entity: Alignment
+    provides:
+      - index
+      - name
+      - abbreviation
+      - desc
+
+  damage_type_query:
+    description: List all damage types.
+    kind: query
+    entity: DamageType
+  damage_type_get:
+    description: Retrieve one damage type by index.
+    kind: get
+    entity: DamageType
+    provides:
+      - index
+      - name
+      - desc
+
+  equipment_category_query:
+    description: List equipment categories.
+    kind: query
+    entity: EquipmentCategory
+  equipment_category_get:
+    description: Retrieve one equipment category by index.
+    kind: get
+    entity: EquipmentCategory
+    provides:
+      - index
+      - name
+
+  weapon_property_query:
+    description: List weapon properties such as finesse or reach.
+    kind: query
+    entity: WeaponProperty
+  weapon_property_get:
+    description: Retrieve one weapon property by index.
+    kind: get
+    entity: WeaponProperty
+    provides:
+      - index
+      - name
+      - desc
+
+  language_query:
+    description: List languages from the SRD.
+    kind: query
+    entity: Language
+  language_get:
+    description: Retrieve one language by index.
+    kind: get
+    entity: Language
+    provides:
+      - index
+      - name
+      - desc
+      - type
+      - typical_speakers
+
+  proficiency_query:
+    description: List all proficiencies.
+    kind: query
+    entity: Proficiency
+  proficiency_get:
+    description: Retrieve one proficiency by index.
+    kind: get
+    entity: Proficiency
+    provides:
+      - index
+      - name
+      - type
+
+  rule_query:
+    description: List top-level rules chapters.
+    kind: query
+    entity: Rule
+  rule_get:
+    description: Retrieve one rules chapter by index.
+    kind: get
+    entity: Rule
+    provides:
+      - index
+      - name
+      - desc
+
+  rule_section_query:
+    description: List rule subsections (flat index).
+    kind: query
+    entity: RuleSection
+  rule_section_get:
+    description: Retrieve one rule subsection by index.
+    kind: get
+    entity: RuleSection
+    provides:
+      - index
+      - name
+      - desc
+
+  feat_query:
+    description: List feats exposed by the SRD API.
+    kind: query
+    entity: Feat
+  feat_get:
+    description: Retrieve one feat by index.
+    kind: get
+    entity: Feat
+    provides:
+      - index
+      - name
+      - desc
+
+  class_level_query:
+    description: Level-by-level progression rows for a class.
+    kind: query
+    entity: ClassLevel
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+      - name: subclass
+        description: Optional subclass index to enrich the level list payload.
+        type: string
+        required: false
+        role: filter
+        string_semantics: short
+
+  class_level_features_query:
+    description: Features gained at a specific class level.
+    kind: query
+    entity: Feature
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+      - name: class_level
+        type: integer
+        required: true
+        role: scope
+
+  class_spells_by_slot_query:
+    description: Spells of a given spell level available to a class.
+    kind: query
+    entity: Spell
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+      - name: spell_level
+        type: integer
+        required: true
+        role: scope
+
+  class_spellcasting_get:
+    description: Spellcasting rules block for a class (404 when the class does not cast).
+    kind: get
+    entity: ClassSpellcasting
+    provides:
+      - index
+      - level
+      - info
+
+  class_multiclassing_get:
+    description: Multiclass prerequisites and proficiencies for a class.
+    kind: get
+    entity: ClassMulticlassing
+    provides:
+      - index
+      - prerequisites
+      - proficiencies
+      - proficiency_choices
+
+  class_proficiencies_query:
+    description: Starting proficiencies granted by the class.
+    kind: query
+    entity: Proficiency
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+
+  subclass_features_query:
+    description: Features listed for a subclass resource.
+    kind: query
+    entity: Feature
+    parameters:
+      - name: subclass_index
+        type: entity_ref
+        target: Subclass
+        required: true
+        role: scope
+
+  subclass_level_query:
+    description: Subclass progression rows by character level.
+    kind: query
+    entity: SubclassLevel
+    parameters:
+      - name: subclass_index
+        type: entity_ref
+        target: Subclass
+        required: true
+        role: scope
+
+  race_proficiencies_query:
+    description: Proficiencies granted by a race.
+    kind: query
+    entity: Proficiency
+    parameters:
+      - name: race_index
+        type: entity_ref
+        target: Race
+        required: true
+        role: scope
+
+  subrace_proficiencies_query:
+    description: Proficiencies granted by a subrace.
+    kind: query
+    entity: Proficiency
+    parameters:
+      - name: subrace_index
+        type: entity_ref
+        target: Subrace
+        required: true
+        role: scope
+
+  subrace_traits_query:
+    description: Traits specific to a subrace.
+    kind: query
+    entity: Trait
+    parameters:
+      - name: subrace_index
+        type: entity_ref
+        target: Subrace
+        required: true
+        role: scope
+
+  spell_query:
+    description: List and filter spells by level, school, concentration, or ritual.
+    kind: query
+    entity: Spell
+    parameters:
+      - name: level
+        type: integer
+        required: false
+        role: filter
+      - name: school
+        type: entity_ref
+        target: MagicSchool
+        required: false
+        role: filter
+      - name: concentration
+        type: boolean
+        required: false
+        role: filter
+      - name: ritual
+        type: boolean
+        required: false
+        role: filter
+  spell_get:
+    description: Retrieve a single spell by its kebab-case index slug.
+    kind: get
+    entity: Spell
+    provides:
+      - index
+      - name
+      - level
+      - range
+      - casting_time
+      - duration
+      - concentration
+      - ritual
+      - desc
+      - higher_level
+      - components
+      - material
+      - attack_type
+      - area_of_effect
+      - damage
+      - dc
+      - url
+      - updated_at
+
+  monster_query:
+    description: List and filter monsters by one or more challenge ratings.
+    kind: query
+    entity: Monster
+    parameters:
+      - name: challenge_rating
+        description: Challenge ratings to match; repeat the filter to pass several ratings.
+        type: array
+        required: false
+        role: filter
+        items:
+          type: number
+  monster_get:
+    description: Retrieve a single monster by its index slug.
+    kind: get
+    entity: Monster
+    provides:
+      - index
+      - name
+      - size
+      - type
+      - subtype
+      - alignment
+      - challenge_rating
+      - hit_points
+      - hit_dice
+      - hit_points_roll
+      - armor_class
+      - proficiency_bonus
+      - strength
+      - dexterity
+      - constitution
+      - intelligence
+      - wisdom
+      - charisma
+      - xp
+      - speed
+      - senses
+      - languages
+      - proficiencies
+      - damage_vulnerabilities
+      - damage_resistances
+      - damage_immunities
+      - condition_immunities
+      - special_abilities
+      - actions
+      - legendary_actions
+      - reactions
+      - url
+      - updated_at
+      - image
+
+  class_query:
+    description: List all character classes.
+    kind: query
+    entity: Class
+  class_get:
+    description: Retrieve a single character class by index slug.
+    kind: get
+    entity: Class
+    provides:
+      - index
+      - name
+      - hit_die
+  class_spells:
+    description: List all spells available to a specific class.
+    kind: query
+    entity: Spell
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+      - name: level
+        type: integer
+        required: false
+        role: filter
+  class_features:
+    description: List all features granted by a specific class.
+    kind: query
+    entity: Feature
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+  class_subclasses:
+    description: List all subclasses available for a specific class.
+    kind: query
+    entity: Subclass
+    parameters:
+      - name: class_index
+        type: entity_ref
+        target: Class
+        required: true
+        role: scope
+  race_query:
+    description: List all playable races.
+    kind: query
+    entity: Race
+  race_get:
+    description: Retrieve a single race by its index slug.
+    kind: get
+    entity: Race
+    provides:
+      - index
+      - name
+      - speed
+      - size
+      - alignment
+      - age
+  race_traits:
+    description: List all racial traits for a specific race.
+    kind: query
+    entity: Trait
+    parameters:
+      - name: race_index
+        type: entity_ref
+        target: Race
+        required: true
+        role: scope
+  race_subraces:
+    description: List all subraces available for a specific race.
+    kind: query
+    entity: Subrace
+    parameters:
+      - name: race_index
+        type: entity_ref
+        target: Race
+        required: true
+        role: scope
+  equipment_query:
+    description: List all equipment items.
+    kind: query
+    entity: Equipment
+  equipment_get:
+    description: Retrieve a single equipment item by index slug.
+    kind: get
+    entity: Equipment
+    provides:
+      - index
+      - name
+      - weight
+      - desc
+  magic_item_query:
+    description: List all magic items.
+    kind: query
+    entity: MagicItem
+  magic_item_get:
+    description: Retrieve a single magic item by index slug.
+    kind: get
+    entity: MagicItem
+    provides:
+      - index
+      - name
+      - desc
+  skill_query:
+    description: List all skills.
+    kind: query
+    entity: Skill
+  skill_get:
+    description: Retrieve a single skill by index slug.
+    kind: get
+    entity: Skill
+    provides:
+      - index
+      - name
+      - desc
+  condition_query:
+    description: List all conditions.
+    kind: query
+    entity: Condition
+  condition_get:
+    description: Retrieve a single condition by index slug.
+    kind: get
+    entity: Condition
+    provides:
+      - index
+      - name
+      - desc
+  background_query:
+    description: List all character backgrounds.
+    kind: query
+    entity: Background
+  background_get:
+    description: Retrieve a single background by index slug.
+    kind: get
+    entity: Background
+    provides:
+      - index
+      - name
+  trait_query:
+    description: List all racial traits.
+    kind: query
+    entity: Trait
+  trait_get:
+    description: Retrieve a single racial trait by index slug.
+    kind: get
+    entity: Trait
+    provides:
+      - index
+      - name
+      - desc
+  magic_school_query:
+    description: List all schools of magic.
+    kind: query
+    entity: MagicSchool
+  magic_school_get:
+    description: Retrieve a single magic school by index slug.
+    kind: get
+    entity: MagicSchool
+    provides:
+      - index
+      - name
+      - desc
+  subclass_query:
+    description: List all subclasses.
+    kind: query
+    entity: Subclass
+  subclass_get:
+    description: Retrieve a single subclass by index slug.
+    kind: get
+    entity: Subclass
+    provides:
+      - index
+      - name
+      - subclass_flavor
+      - desc

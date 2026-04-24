@@ -1,0 +1,78 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Rick and Morty API", "version": "3.0.0",
+    "description": "All things Rick and Morty. No auth required." },
+  "servers": [{ "url": "https://rickandmortyapi.com/api" }],
+  "paths": {
+    "/character": {
+      "get": {
+        "summary": "List / filter characters",
+        "parameters": [
+          { "name": "name",    "in": "query", "schema": { "type": "string" } },
+          { "name": "status",  "in": "query", "schema": { "type": "string", "enum": ["alive","dead","unknown"] } },
+          { "name": "species", "in": "query", "schema": { "type": "string" } },
+          { "name": "type",    "in": "query", "schema": { "type": "string" } },
+          { "name": "gender",  "in": "query", "schema": { "type": "string", "enum": ["female","male","genderless","unknown"] } },
+          { "name": "page",    "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Characters page", "content": { "application/json": { "schema": { "type": "object", "properties": { "info": { "type": "object" }, "results": { "type": "array", "items": { "$ref": "#/components/schemas/Character" } } } } } } } }
+      }
+    },
+    "/character/{id}": {
+      "get": {
+        "summary": "Get character by ID",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "responses": { "200": { "description": "Character", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Character" } } } } }
+      }
+    },
+    "/location": {
+      "get": {
+        "summary": "List / filter locations",
+        "parameters": [
+          { "name": "name",      "in": "query", "schema": { "type": "string" } },
+          { "name": "type",      "in": "query", "schema": { "type": "string" } },
+          { "name": "dimension", "in": "query", "schema": { "type": "string" } },
+          { "name": "page",      "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Locations page", "content": { "application/json": { "schema": { "type": "object", "properties": { "info": { "type": "object" }, "results": { "type": "array", "items": { "$ref": "#/components/schemas/Location" } } } } } } } }
+      }
+    },
+    "/episode": {
+      "get": {
+        "summary": "List / filter episodes",
+        "parameters": [
+          { "name": "name",    "in": "query", "schema": { "type": "string" } },
+          { "name": "episode", "in": "query", "schema": { "type": "string" } },
+          { "name": "page",    "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Episodes page", "content": { "application/json": { "schema": { "type": "object", "properties": { "info": { "type": "object" }, "results": { "type": "array", "items": { "$ref": "#/components/schemas/Episode" } } } } } } } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Character": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" }, "name": { "type": "string" },
+          "status": { "type": "string" }, "species": { "type": "string" },
+          "gender": { "type": "string" }, "image": { "type": "string" }
+        }
+      },
+      "Location": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" }, "name": { "type": "string" },
+          "type": { "type": "string" }, "dimension": { "type": "string" }
+        }
+      },
+      "Episode": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" }, "name": { "type": "string" },
+          "air_date": { "type": "string" }, "episode": { "type": "string" }
+        }
+      }
+    }
+  }
+}

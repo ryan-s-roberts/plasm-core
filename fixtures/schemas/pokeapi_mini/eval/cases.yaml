@@ -1,0 +1,18 @@
+# PokéAPI mini slice — berries list + pagination (Hermit / fast tests).
+# CGS: single `Berry` query; goals are Pokédex-style browsing, not REST path recitation.
+- id: pm-01
+  schema: pokeapi_mini
+  goal: "Browse the catalog of berries from the beginning of the list"
+  tags: [query, pagination]
+  covers: [projection]
+  expect:
+    entities_any: [Berry]
+
+- id: pm-02
+  schema: pokeapi_mini
+  goal: "List berries but only return their names and API URLs for a spreadsheet import"
+  tags: [query, projection]
+  covers: [projection]
+  expect:
+    entities_any: [Berry]
+    projection_contains: [name, url]

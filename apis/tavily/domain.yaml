@@ -1,0 +1,320 @@
+version: 1
+
+http_backend: https://api.tavily.com
+
+entities:
+  SearchResult:
+    id_field: url
+    description: A ranked web search result from Tavily Search
+    fields:
+      url:
+        field_type: string
+        required: true
+        description: URL of the source page
+        string_semantics: short
+      title:
+        field_type: string
+        required: false
+        description: Title of the source page
+        string_semantics: short
+      content:
+        field_type: string
+        required: false
+        description: Relevance snippet or chunked content from the page
+        string_semantics: markdown
+      score:
+        field_type: number
+        required: false
+        description: Relevance score (0–1)
+      raw_content:
+        field_type: string
+        required: false
+        description: Full cleaned page content (only when include_raw_content=true)
+        string_semantics: markdown
+      favicon:
+        field_type: string
+        required: false
+        description: Favicon URL for the result's domain
+        string_semantics: short
+  ExtractResult:
+    id_field: url
+    description: Extracted or crawled page content from Tavily Extract / Crawl
+    fields:
+      url:
+        field_type: string
+        required: true
+        description: URL of the extracted page
+        string_semantics: short
+      raw_content:
+        field_type: string
+        required: false
+        description: Full extracted page content (markdown or plain text)
+        string_semantics: markdown
+      favicon:
+        field_type: string
+        required: false
+        description: Favicon URL for the page's domain
+        string_semantics: short
+  ResearchTask:
+    id_field: request_id
+    description: An async Tavily Research task
+    fields:
+      request_id:
+        field_type: string
+        required: true
+        description: Unique identifier for the research task (use to poll status)
+        string_semantics: short
+      status:
+        field_type: select
+        allowed_values:
+        - pending
+        - running
+        - completed
+        - failed
+        required: false
+        description: Current execution status of the task
+      input:
+        field_type: string
+        required: false
+        description: The research question submitted
+        string_semantics: short
+      model:
+        field_type: select
+        allowed_values:
+        - mini
+        - pro
+        - auto
+        required: false
+        description: Research agent model used
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        description: Timestamp when the task was created
+      content:
+        field_type: string
+        required: false
+        description: Full research content/report (populated when status=completed)
+        string_semantics: markdown
+      response_time:
+        field_type: number
+        required: false
+        description: Time in seconds for the research task to complete
+      sources:
+        field_type: array
+        required: false
+        description: Cited sources (populated when status=completed)
+        items:
+          type: string
+capabilities:
+  web_search:
+    kind: search
+    entity: SearchResult
+    description: AI-powered web search. Returns ranked results with optional LLM answer.
+    parameters:
+    - name: query
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: search_depth
+      type: select
+      allowed_values:
+      - basic
+      - fast
+      - ultra-fast
+      - advanced
+      required: false
+      role: response_control
+    - name: chunks_per_source
+      type: integer
+      required: false
+      role: response_control
+    - name: max_results
+      type: integer
+      required: false
+      role: response_control
+    - name: topic
+      type: select
+      allowed_values:
+      - general
+      - news
+      - finance
+      required: false
+    - name: time_range
+      type: select
+      allowed_values:
+      - day
+      - week
+      - month
+      - year
+      - d
+      - w
+      - m
+      - y
+      required: false
+    - name: start_date
+      type: string
+      required: false
+      string_semantics: short
+    - name: end_date
+      type: string
+      required: false
+      string_semantics: short
+    - name: include_answer
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_raw_content
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_images
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_favicon
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_domains
+      type: array
+      required: false
+      items:
+        type: string
+    - name: exclude_domains
+      type: array
+      required: false
+      items:
+        type: string
+    - name: country
+      type: string
+      required: false
+      string_semantics: short
+    - name: auto_parameters
+      type: boolean
+      required: false
+      role: response_control
+    - name: exact_match
+      type: boolean
+      required: false
+  url_extract:
+    kind: query
+    entity: ExtractResult
+    description: Extract cleaned content from one or more URLs
+    parameters:
+    - name: urls
+      type: array
+      required: true
+      items:
+        type: string
+    - name: query
+      type: string
+      required: false
+      string_semantics: short
+    - name: extract_depth
+      type: select
+      allowed_values:
+      - basic
+      - advanced
+      required: false
+      role: response_control
+    - name: format
+      type: select
+      allowed_values:
+      - markdown
+      - text
+      required: false
+      role: response_control
+    - name: chunks_per_source
+      type: integer
+      required: false
+      role: response_control
+    - name: include_images
+      type: boolean
+      required: false
+      role: response_control
+    - name: include_favicon
+      type: boolean
+      required: false
+      role: response_control
+  site_crawl:
+    kind: query
+    entity: ExtractResult
+    description: Graph-based website traversal — crawl multiple pages in parallel
+    parameters:
+    - name: url
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+    - name: instructions
+      type: string
+      required: false
+      string_semantics: short
+    - name: max_depth
+      type: integer
+      required: false
+      role: response_control
+    - name: max_breadth
+      type: integer
+      required: false
+      role: response_control
+    - name: limit
+      type: integer
+      required: false
+      role: response_control
+    - name: chunks_per_source
+      type: integer
+      required: false
+      role: response_control
+    - name: include_images
+      type: boolean
+      required: false
+      role: response_control
+  research_create:
+    kind: create
+    entity: ResearchTask
+    description: Start an async deep research task (returns request_id for polling)
+    provides:
+    - request_id
+    - created_at
+    - status
+    - input
+    - model
+    parameters:
+    - name: input
+      type: string
+      required: true
+      string_semantics: short
+    - name: model
+      type: select
+      allowed_values:
+      - mini
+      - pro
+      - auto
+      required: false
+    - name: citation_format
+      type: select
+      allowed_values:
+      - numbered
+      - mla
+      - apa
+      - chicago
+      required: false
+  research_get:
+    kind: get
+    entity: ResearchTask
+    description: Poll the status and retrieve the report for a research task
+    provides:
+    - request_id
+    - status
+    - input
+    - model
+    - created_at
+    - content
+    - response_time
+    - sources
+auth:
+  scheme: bearer_token
+  env: TAVILY_API_TOKEN

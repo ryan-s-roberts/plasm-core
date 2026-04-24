@@ -1,0 +1,333 @@
+http_backend: https://api.notion.com
+
+entities:
+  Page:
+    id_field: id
+    description: 'A Notion page object. Covers both standalone document pages and database rows/records (Notion uses the same type for both; parent.type distinguishes them).
+
+      '
+    fields:
+      id:
+        field_type: string
+        required: true
+        description: UUIDv4 page identifier
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        description: Canonical Notion URL for this page
+        string_semantics: short
+      public_url:
+        field_type: string
+        required: false
+        description: Public web URL if the page is published, otherwise null
+        string_semantics: short
+      created_time:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      last_edited_time:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      in_trash:
+        field_type: boolean
+        required: false
+        description: True if this page has been trashed
+      archived:
+        field_type: boolean
+        required: false
+        description: Deprecated alias for in_trash
+      markdown:
+        field_type: string
+        string_semantics: markdown
+        agent_presentation: reference_only
+        required: false
+        description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
+      truncated:
+        field_type: boolean
+        required: false
+        description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
+    relations:
+      created_by:
+        target: User
+        cardinality: one
+      last_edited_by:
+        target: User
+        cardinality: one
+      comments:
+        target: Comment
+        cardinality: many
+        description: Comments on this page
+        materialize:
+          kind: query_scoped
+          capability: comment_query
+          param: block_id
+  Database:
+    id_field: id
+    description: A Notion database — a container with a property schema whose rows are Pages.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+      public_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      created_time:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      last_edited_time:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      in_trash:
+        field_type: boolean
+        required: false
+      is_inline:
+        field_type: boolean
+        required: false
+        description: True if the database is displayed inline in its parent page
+    relations:
+      created_by:
+        target: User
+        cardinality: one
+      last_edited_by:
+        target: User
+        cardinality: one
+      pages:
+        target: Page
+        cardinality: many
+        description: Pages (rows) within this database
+        materialize:
+          kind: query_scoped
+          capability: database_query
+          param: database_id
+  User:
+    id_field: id
+    description: A Notion workspace member (person) or integration (bot).
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+      type:
+        field_type: select
+        required: false
+        allowed_values:
+        - person
+        - bot
+      avatar_url:
+        field_type: string
+        required: false
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        description: Only available when integration has user email capabilities
+        string_semantics: short
+  Comment:
+    id_field: id
+    description: A comment on a Notion page or block, belonging to a discussion thread.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      discussion_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      created_time:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      last_edited_time:
+        field_type: date
+        value_format: rfc3339
+        required: false
+    relations:
+      created_by:
+        target: User
+        cardinality: one
+capabilities:
+  page_get:
+    description: Retrieve page metadata (id, url, timestamps, properties structure) by ID.
+    kind: get
+    entity: Page
+    provides:
+    - id
+    - url
+    - public_url
+    - created_time
+    - last_edited_time
+    - in_trash
+    - archived
+  page_create:
+    description: Create a new page as a child of an existing page or database.
+    kind: create
+    entity: Page
+  page_update:
+    description: Update page properties, icon, cover, or archive/trash status.
+    kind: update
+    entity: Page
+  page_trash:
+    description: 'Move a page to trash (in_trash: true). Use page_update to restore.'
+    kind: action
+    entity: Page
+    output:
+      type: side_effect
+      description: 'Move a page to trash (in_trash: true). Use page_update to restore.'
+  page_get_markdown:
+    description: 'Retrieve full page content as Enhanced Markdown in a single call. Populates the Page entity''s markdown and truncated fields via additive merge — the page''s structural metadata (url, timestamps, etc.) is preserved. Requires read content capability on the integration.
+
+      '
+    kind: action
+    entity: Page
+    provides:
+    - id
+    - markdown
+    - truncated
+  page_update_markdown:
+    description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated fields with the updated content. Requires update content capability on the integration.\n"
+    kind: action
+    entity: Page
+    output:
+      type: side_effect
+      description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated fields with the updated content. Requires update content capability on the integration."
+  database_get:
+    description: Retrieve a database object including its property schema.
+    kind: get
+    entity: Database
+    provides:
+    - id
+    - url
+    - public_url
+    - created_time
+    - last_edited_time
+    - in_trash
+    - is_inline
+  database_query:
+    description: Query a database and return matching rows as Page objects. Scoped to a specific database.
+    kind: query
+    entity: Page
+    parameters:
+    - name: database_id
+      type: string
+      required: true
+      role: scope
+      description: ID of the database to query
+      string_semantics: short
+    - name: page_size
+      type: integer
+      required: false
+      role: response_control
+      description: Number of results per page (max 100)
+  user_get:
+    description: Retrieve a Notion user by their ID.
+    kind: get
+    entity: User
+    provides:
+    - id
+    - name
+    - type
+    - avatar_url
+    - email
+  user_query:
+    description: List all users (members and bots) in the workspace.
+    kind: query
+    entity: User
+  comment_query:
+    description: List unresolved comments on a page, sorted by creation time.
+    kind: query
+    entity: Comment
+    parameters:
+    - name: block_id
+      type: string
+      required: true
+      role: scope
+      description: ID of the page whose comments to retrieve
+      string_semantics: short
+    - name: page_size
+      type: integer
+      required: false
+      role: response_control
+  comment_create:
+    description: Create a new comment on a page or within an existing discussion thread.
+    kind: create
+    entity: Comment
+  page_search:
+    description: Search Notion pages (and database rows) shared with this integration by title.
+    kind: search
+    entity: Page
+    provides:
+    - id
+    - url
+    - public_url
+    - created_time
+    - last_edited_time
+    - in_trash
+    - archived
+    parameters:
+    - name: query
+      type: string
+      required: false
+      role: search
+      description: Title text to search for. Omit to retrieve all accessible pages.
+      string_semantics: short
+    - name: sort_direction
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - ascending
+      - descending
+    - name: page_size
+      type: integer
+      required: false
+      role: response_control
+  database_search:
+    description: Search Notion databases shared with this integration by title.
+    kind: search
+    entity: Database
+    provides:
+    - id
+    - url
+    - public_url
+    - created_time
+    - last_edited_time
+    - in_trash
+    - is_inline
+    parameters:
+    - name: query
+      type: string
+      required: false
+      role: search
+      description: Title text to search for. Omit to retrieve all accessible databases.
+      string_semantics: short
+    - name: sort_direction
+      type: select
+      required: false
+      role: sort_direction
+      allowed_values:
+      - ascending
+      - descending
+    - name: page_size
+      type: integer
+      required: false
+      role: response_control
+version: 1
+
+auth:
+  scheme: bearer_token
+  env: NOTION_API_TOKEN

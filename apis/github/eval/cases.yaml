@@ -1,0 +1,499 @@
+# GitHub REST — repos, issues, PRs, users (search, query, get, chain across graph).
+#
+# Goals are outcome-oriented (triage, dashboards, onboarding), not REST transcriptions.
+# Light noise (“for the retro”, “while onboarding”) is intentional distractor text.
+# Coverage: `cargo run -p plasm-eval -- coverage --schema apis/github --cases apis/github/eval/cases.yaml`
+- id: gh-01
+  schema: github
+  goal: "Find trending Rust CLI repos matching 'wasm' for a tooling survey"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-02
+  schema: github
+  goal: "List open issues in plasm/plasm labeled bug, sorted recently updated"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Issue]
+
+- id: gh-03
+  schema: github
+  goal: "Fetch issue plasm/plasm#42 for the triage modal"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Issue]
+
+- id: gh-04
+  schema: github
+  goal: "From that issue, load the milestone metadata for the roadmap view"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Issue, Milestone]
+
+- id: gh-05
+  schema: github
+  goal: "Global search for issues mentioning 'regression' assigned to me"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Issue]
+
+- id: gh-06
+  schema: github
+  goal: "Enumerate pull requests in plasm/plasm that touch the runtime crate"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PullRequest]
+
+- id: gh-07
+  schema: github
+  goal: "Look up user eval-user-alpha, then list repos they own for the profile page"
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [User, Repository]
+
+- id: gh-08
+  schema: github
+  goal: "Get issue #1 but only title and state for the compact widget"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Issue]
+    projection_contains: [title, state]
+
+- id: gh-09
+  schema: github
+  goal: "Issue timeline comments on plasm/plasm#1 — the thread under the issue body, not inline PR diff notes"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Issue, IssueComment]
+
+- id: gh-10
+  schema: github
+  goal: "Who is the authenticated GitHub user for this token (profile header)"
+  tags: [invoke, singleton]
+  covers: [invoke]
+  expect:
+    entities_any: [User]
+
+- id: gh-11
+  schema: github
+  goal: "List repositories owned by user eval-user-alpha when reviewing their footprint"
+  tags: [query, reverse]
+  covers: [reverse]
+  expect:
+    entities_any: [Repository, User]
+
+- id: gh-12
+  schema: github
+  goal: "Show labels on issue plasm/plasm#1 for the triage board"
+  tags: [query, chain]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Issue, Label]
+
+- id: gh-13
+  schema: github
+  goal: "List releases in plasm/plasm for the changelog picker"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Repository, Release]
+
+- id: gh-14
+  schema: github
+  goal: "Fetch repository rust-lang/rust metadata for the repo header card"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-15
+  schema: github
+  goal: "List recent commits on torvalds/linux mainline for the activity feed"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Commit]
+
+- id: gh-16
+  schema: github
+  goal: "Inspect branch main on eval-user-alpha/Hello-World for default-branch deploy config"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Branch]
+
+- id: gh-17
+  schema: github
+  goal: "List reviews on PR plasm/plasm#12 before merge"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PullRequestReview]
+
+- id: gh-18
+  schema: github
+  goal: "Enumerate files changed in plasm/plasm#5 for the diff summary"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PullRequestFile]
+
+- id: gh-19
+  schema: github
+  goal: "Open public gist abc123def456 for the snippet viewer"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Gist]
+
+- id: gh-20
+  schema: github
+  goal: "Mark notification thread 42 as read after triage"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Notification]
+
+- id: gh-21
+  schema: github
+  goal: "Load organization rust-lang profile for the sponsors page"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Organization]
+
+- id: gh-22
+  schema: github
+  goal: "Show full commit rust-lang/rust@main on the blame drill-down"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Commit]
+
+# ── Capability-aligned extensions (missing entity domains + richer surfaces)
+
+- id: gh-23
+  schema: github
+  goal: "Commit leaderboard for rust-lang/rust — who ships the most, for the insights card (ignore bots for now)"
+  tags: [query, contributor]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Contributor]
+
+- id: gh-24
+  schema: github
+  goal: "Inline review comments on plasm/plasm#88 — diff threads only, not the PR timeline chatter"
+  tags: [query, review_comment]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PullRequestReviewComment]
+
+- id: gh-25
+  schema: github
+  goal: "Lightweight git tags on eval-user-alpha/Hello-World for the deploy tag picker — not the Releases page"
+  tags: [query, tags]
+  covers: [query_filtered]
+  expect:
+    entities_any: [RepositoryTag]
+
+- id: gh-26
+  schema: github
+  goal: "Recent Actions runs on plasm/plasm main before the retro — failures first if you can"
+  tags: [query, ci]
+  covers: [query_filtered]
+  expect:
+    entities_any: [WorkflowRun]
+
+- id: gh-27
+  schema: github
+  goal: "Repo-wide issue comment firehose for plasm/plasm while auditing cross-thread spam (not one issue only)"
+  tags: [query, comments]
+  covers: [query_filtered]
+  expect:
+    entities_any: [IssueComment]
+
+- id: gh-28
+  schema: github
+  goal: "What repos does rust-lang expose publicly — org portfolio view for onboarding week"
+  tags: [query, org]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Repository]
+    pred_fields_any: [org]
+
+- id: gh-29
+  schema: github
+  goal: "Roster check: who is in the rust-lang org, for the access review spreadsheet"
+  tags: [query, org]
+  covers: [query_filtered]
+  expect:
+    entities_any: [User]
+    pred_fields_any: [org]
+
+- id: gh-30
+  schema: github
+  goal: "Fork network of torvalds/linux — who cloned it, for the mirror survey"
+  tags: [query, forks]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-31
+  schema: github
+  goal: "Direct collaborators on plasm/plasm — not org-wide, just this repo’s access list"
+  tags: [query, access]
+  covers: [query_filtered]
+  expect:
+    entities_any: [User]
+
+- id: gh-32
+  schema: github
+  goal: "Global PR search for ‘graphql federation’ — hiring pipeline, not issues"
+  tags: [search, pr]
+  covers: [search_text]
+  expect:
+    entities_any: [PullRequest]
+
+- id: gh-33
+  schema: github
+  goal: "My recent gists before the talk — list what I’ve published, don’t open one by id yet"
+  tags: [query, gist]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Gist]
+
+- id: gh-34
+  schema: github
+  goal: "Unread inbox sweep — notification threads for this token before standup"
+  tags: [query, notifications]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Notification]
+
+- id: gh-35
+  schema: github
+  goal: "Hydrate notification thread 90123456 for the detail pane (read state, reason, etc.)"
+  tags: [get, notifications]
+  covers: [get]
+  expect:
+    entities_any: [Notification]
+
+- id: gh-36
+  schema: github
+  goal: "Fetch label bug on plasm/plasm by name for the label editor modal"
+  tags: [get, label]
+  covers: [get]
+  expect:
+    entities_any: [Label]
+
+- id: gh-37
+  schema: github
+  goal: "Open milestone v1.0 on plasm/plasm for the roadmap drill-down"
+  tags: [get, milestone]
+  covers: [get]
+  expect:
+    entities_any: [Milestone]
+
+- id: gh-38
+  schema: github
+  goal: "Get release id 98765432 in plasm/plasm for the assets panel"
+  tags: [get, release]
+  covers: [get]
+  expect:
+    entities_any: [Release]
+
+- id: gh-39
+  schema: github
+  goal: "Single workflow run 123456789 on plasm/plasm for the job log viewer"
+  tags: [get, ci]
+  covers: [get]
+  expect:
+    entities_any: [WorkflowRun]
+
+# ── Adversarial-but-reachable: distractor wording, near-miss surfaces, still one valid CGS path
+
+- id: gh-40
+  schema: github
+  goal: "Inline diff threads on plasm/plasm#50 — the per-line review remarks, not the issue timeline and not the approvals list"
+  tags: [adversarial, disambiguation]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PullRequestReviewComment]
+
+- id: gh-41
+  schema: github
+  goal: "Versioned drops we ship from plasm/plasm for the download page — the tagged GitHub Releases, not git pointer tags"
+  tags: [adversarial, disambiguation]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Release, Repository]
+
+- id: gh-42
+  schema: github
+  goal: "Who actually commits here — blame-weighted contributors on rust-lang/rust (legal wants names, ignore the bot noise in the wording)"
+  tags: [adversarial, contributor]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Contributor]
+
+- id: gh-43
+  schema: github
+  goal: "Hottest wasm tooling repos anywhere on GitHub — we don’t know owner or org yet, just the survey keyword"
+  tags: [adversarial, search]
+  covers: [search_text]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-44
+  schema: github
+  goal: "Resolve branch name release-1.2 on plasm/plasm for the deploy lockfile — head SHA and protection, not listing all branches"
+  tags: [adversarial, branch]
+  covers: [get]
+  expect:
+    entities_any: [Branch]
+
+- id: gh-45
+  schema: github
+  goal: "Public repos under the kubernetes org for the landscape map — org is known by login, enumerate what it exposes (one expression or two steps both OK)"
+  tags: [adversarial, multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-46
+  schema: github
+  goal: "Open PR #33 on plasm/plasm — the pull request object, not issue #33 and not the files list yet"
+  tags: [adversarial, get]
+  covers: [get]
+  expect:
+    entities_any: [PullRequest]
+
+- id: gh-47
+  schema: github
+  goal: "Formal reviews (approve/request-changes) on plasm/plasm#20 — not file diffs and not inline line comments"
+  tags: [adversarial, disambiguation]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PullRequestReview]
+
+- id: gh-48
+  schema: github
+  goal: "History where Cargo.toml moved on plasm/plasm — commits touching that path, default branch is fine"
+  tags: [adversarial, commit]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Commit]
+
+- id: gh-49
+  schema: github
+  goal: "Inbox backlog for this token — unread-adjacent threads, skip the mark-read action for now"
+  tags: [adversarial, notifications]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Notification]
+
+- id: gh-50
+  schema: github
+  goal: "Lightweight refs only — pointer names on plasm/plasm, not the Release assets (compliance asked for tags vs releases explicitly)"
+  tags: [adversarial, disambiguation]
+  covers: [query_filtered]
+  expect:
+    entities_any: [RepositoryTag]
+
+- id: gh-51
+  schema: github
+  goal: "Create a new triage label `bench-smoke` on plasm/plasm with color d4c5f9 for the MCPMark dry run"
+  tags: [create, write]
+  covers: [create]
+  expect:
+    entities_any: [Label]
+
+- id: gh-52
+  schema: github
+  goal: "Rename issue plasm/plasm#7 title to ‘Polish pass: tracking’ for the benchmark checklist (no other fields)"
+  tags: [update, write]
+  covers: [update]
+  expect:
+    entities_any: [Issue]
+
+- id: gh-53
+  schema: github
+  goal: >-
+    Replace issue plasm/plasm#2 body only with markdown: an H2 heading, a bullet list, and a fenced
+    ```rust code block
+  tags: [update, write, heredoc]
+  covers: [update]
+  reference_expr: |-
+    Issue(owner="plasm",repo="plasm",number=2).update(body=<<B
+    ## Rollout notes
+
+    - smoke
+    - canary
+
+    ```rust
+    fn main() {}
+    ```
+    B
+    )
+  expect:
+    entities_any: [Issue]
+    step_text_contains_any:
+    - "<<"
+
+- id: gh-55
+  schema: github
+  goal: "List public repositories for the authenticated GitHub user (this token) for the dashboard — visibility public only"
+  tags: [query, auth, repository]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-54
+  schema: github
+  goal: >-
+    Create a new comment on plasm/plasm issue 99 (do not edit an existing comment) whose body is
+    multiline markdown: a heading plus a short string / task list.
+  tags: [create, write, heredoc]
+  covers: [create]
+  reference_expr: |-
+    IssueComment.issue-comment-create(repository=Repository(owner="plasm",repo="plasm"),issue_number=99,body=<<C
+    ## Heads-up
+
+    - [ ] verify
+    - [ ] ship
+    C
+    )
+  expect:
+    entities_any: [IssueComment]
+    step_text_contains_any:
+    - "<<"
+
+- id: gh-56
+  schema: github
+  goal: >-
+    Authenticated repo inventory for this token: list repositories where I am owner or collaborator
+    (affiliation shaping), not relying on /user public_repos count
+  tags: [query, auth, repository]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-57
+  schema: github
+  goal: >-
+    Global issue search for label:bug — results must carry enough wire shape (repository_url) to anchor
+    full Issue(owner, repo, number) identity for follow-up gets
+  tags: [search, identity]
+  covers: [search_text]
+  expect:
+    entities_any: [Issue]

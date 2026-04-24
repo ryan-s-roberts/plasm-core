@@ -1,0 +1,2488 @@
+# Vultr public HTTP API v2 — CML. Auth: domain bearer token (Authorization: Bearer <key>).
+# List endpoints return { "<resource_key>": [...], "meta": { "total", "links": { "next", "prev" } } }.
+
+# ── Account plane ────────────────────────────────────────────────────────────
+account_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: account }
+  response:
+    single: true
+    items_path: [account]
+
+account_bgp_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: account }
+    - { type: literal, value: bgp }
+  response: single
+
+account_bandwidth_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: account }
+    - { type: literal, value: bandwidth }
+  response: single
+
+# ── Global catalogs (cursor + per_page) ─────────────────────────────────────
+region_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: regions }
+  response:
+    items: regions
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+plan_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: plans }
+  response:
+    items: plans
+  query:
+    type: object
+    fields:
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+      - - os
+        - type: if
+          condition: { type: exists, var: os }
+          then_expr: { type: var, name: os }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+bare_metal_plan_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: plans-metal }
+  response:
+    items: plans_metal
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+os_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: os }
+  response:
+    items: os
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+application_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: applications }
+  response:
+    items: applications
+  query:
+    type: object
+    fields:
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+# ── Billing ──────────────────────────────────────────────────────────────────
+billingline_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: billing }
+    - { type: literal, value: history }
+  response:
+    items: billing_history
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+invoice_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: billing }
+    - { type: literal, value: invoices }
+  response:
+    items: billing_invoices
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+invoice_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: billing }
+    - { type: literal, value: invoices }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [billing_invoice]
+
+# ── API keys (list has no server-side pagination metadata in some responses) ──
+apikey_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: apikeys }
+  response:
+    items: api_keys
+
+apikey_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: apikeys }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [api_key]
+
+apikey_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: apikeys }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [api_key]
+
+apikey_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: apikeys }
+    - { type: var, name: id }
+
+# ── Users (team) ─────────────────────────────────────────────────────────────
+user_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: users }
+  response:
+    items: users
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+user_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: users }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [user]
+
+user_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: users }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [user]
+
+user_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: users }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - email
+        - type: if
+          condition: { type: exists, var: email }
+          then_expr: { type: var, name: email }
+          else_expr: { type: const, value: null }
+      - - first_name
+        - type: if
+          condition: { type: exists, var: first_name }
+          then_expr: { type: var, name: first_name }
+          else_expr: { type: const, value: null }
+      - - last_name
+        - type: if
+          condition: { type: exists, var: last_name }
+          then_expr: { type: var, name: last_name }
+          else_expr: { type: const, value: null }
+      - - password
+        - type: if
+          condition: { type: exists, var: password }
+          then_expr: { type: var, name: password }
+          else_expr: { type: const, value: null }
+      - - api_enabled
+        - type: if
+          condition: { type: exists, var: api_enabled }
+          then_expr: { type: var, name: api_enabled }
+          else_expr: { type: const, value: null }
+      - - acls
+        - type: if
+          condition: { type: exists, var: acls }
+          then_expr: { type: var, name: acls }
+          else_expr: { type: const, value: null }
+
+user_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: users }
+    - { type: var, name: id }
+
+# ── SSH public keys ───────────────────────────────────────────────────────
+sshkey_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "ssh-keys" }
+  response:
+    items: ssh_keys
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+sshkey_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "ssh-keys" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [ssh_key]
+
+sshkey_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "ssh-keys" }
+  body:
+    type: object
+    fields:
+      - [name, { type: var, name: name }]
+      - - ssh_key
+        - { type: var, name: key_material }
+  response:
+    single: true
+    items_path: [ssh_key]
+
+sshkey_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "ssh-keys" }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - ssh_key
+        - type: if
+          condition: { type: exists, var: key_material }
+          then_expr: { type: var, name: key_material }
+          else_expr: { type: const, value: null }
+
+sshkey_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "ssh-keys" }
+    - { type: var, name: id }
+
+# ── IAM (pre-release; /v2/policies, /v2/roles, /v2/groups) ───────────────────
+iampolicy_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: policies }
+  response:
+    items: policies
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+iampolicy_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: policies }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [policy]
+
+iamrole_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: roles }
+  response:
+    items: roles
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+iamrole_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: roles }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [role]
+
+iamgroup_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: groups }
+  response:
+    items: groups
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+iamgroup_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: groups }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [group]
+
+# ── VPCs ───────────────────────────────────────────────────────────────────
+vpc_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: vpcs }
+  response:
+    items: vpcs
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+vpc_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: vpcs }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [vpc]
+
+vpc_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: vpcs }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [vpc]
+
+vpc_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: vpcs }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - description
+        - { type: var, name: description }
+
+vpc_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: vpcs }
+    - { type: var, name: id }
+
+# ── Firewall groups ────────────────────────────────────────────────────────
+firewallgroup_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+  response:
+    items: firewall_groups
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+firewallgroup_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [firewall_group]
+
+firewallgroup_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+  body:
+    type: object
+    fields:
+      - - description
+        - { type: var, name: description }
+  response:
+    single: true
+    items_path: [firewall_group]
+
+firewallgroup_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - description
+        - { type: var, name: description }
+
+firewallgroup_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: id }
+
+# ── Compute instances (list, lifecycle, and CRUD) ─────────────────────────
+instance_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+  response:
+    items: instances
+  query:
+    type: object
+    fields:
+      - - tag
+        - type: if
+          condition: { type: exists, var: tag }
+          then_expr: { type: var, name: tag }
+          else_expr: { type: const, value: null }
+      - - label
+        - type: if
+          condition: { type: exists, var: label }
+          then_expr: { type: var, name: label }
+          else_expr: { type: const, value: null }
+      - - main_ip
+        - type: if
+          condition: { type: exists, var: main_ip }
+          then_expr: { type: var, name: main_ip }
+          else_expr: { type: const, value: null }
+      - - region
+        - type: if
+          condition: { type: exists, var: region }
+          then_expr: { type: var, name: region }
+          else_expr: { type: const, value: null }
+      - - firewall_group_id
+        - type: if
+          condition: { type: exists, var: firewall_group_id }
+          then_expr: { type: var, name: firewall_group_id }
+          else_expr: { type: const, value: null }
+      - - hostname
+        - type: if
+          condition: { type: exists, var: hostname }
+          then_expr: { type: var, name: hostname }
+          else_expr: { type: const, value: null }
+      - - show_pending_charges
+        - type: if
+          condition: { type: exists, var: show_pending_charges }
+          then_expr: { type: var, name: show_pending_charges }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+instance_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [instance]
+
+instance_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [instance]
+
+instance_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - label
+        - type: if
+          condition: { type: exists, var: label }
+          then_expr: { type: var, name: label }
+          else_expr: { type: const, value: null }
+      - - hostname
+        - type: if
+          condition: { type: exists, var: hostname }
+          then_expr: { type: var, name: hostname }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [instance]
+
+instance_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [instance]
+
+instance_start:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+    - { type: var, name: id }
+    - { type: literal, value: start }
+  response: single
+
+instance_reboot:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+    - { type: var, name: id }
+    - { type: literal, value: reboot }
+  response: single
+
+instance_halt:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: instances }
+    - { type: var, name: id }
+    - { type: literal, value: halt }
+  response: single
+
+# ── Reserved (floating) IPs ────────────────────────────────────────────────
+reservedip_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "reserved-ips" }
+  response:
+    items: reserved_ips
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+reservedip_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "reserved-ips" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [reserved_ip]
+
+reservedip_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "reserved-ips" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [reserved_ip]
+
+reservedip_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "reserved-ips" }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - label
+        - { type: var, name: label }
+  response:
+    single: true
+    items_path: [reserved_ip]
+
+reservedip_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "reserved-ips" }
+    - { type: var, name: id }
+  response: single
+
+# ── Load balancers ─────────────────────────────────────────────────────────
+loadbalancer_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "load-balancers" }
+  response:
+    items: load_balancers
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+loadbalancer_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "load-balancers" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [load_balancer]
+
+loadbalancer_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "load-balancers" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [load_balancer]
+
+loadbalancer_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "load-balancers" }
+    - { type: var, name: id }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [load_balancer]
+
+loadbalancer_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "load-balancers" }
+    - { type: var, name: id }
+  response: single
+
+# ── Firewall rules (scoped under a firewall group; compound key on rule) ─
+firewallrule_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: firewall_group_id }
+    - { type: literal, value: rules }
+  response:
+    items: firewall_rules
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+firewallrule_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: firewall_group_id }
+    - { type: literal, value: rules }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [firewall_rule]
+
+firewallrule_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: firewall_group_id }
+    - { type: literal, value: rules }
+  body:
+    type: object
+    fields:
+      - - ip_type
+        - { type: var, name: ip_type }
+      - - protocol
+        - { type: var, name: protocol }
+      - - subnet
+        - { type: var, name: subnet }
+      - - subnet_size
+        - { type: var, name: subnet_size }
+      - - port
+        - type: if
+          condition: { type: exists, var: port }
+          then_expr: { type: var, name: port }
+          else_expr: { type: const, value: null }
+      - - source
+        - type: if
+          condition: { type: exists, var: source }
+          then_expr: { type: var, name: source }
+          else_expr: { type: const, value: null }
+      - - notes
+        - type: if
+          condition: { type: exists, var: notes }
+          then_expr: { type: var, name: notes }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [firewall_rule]
+
+firewallrule_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: firewalls }
+    - { type: var, name: firewall_group_id }
+    - { type: literal, value: rules }
+    - { type: var, name: id }
+  response: single
+
+# ── Instance snapshots and automatic backups ─────────────────────────────
+snapshot_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: snapshots }
+  response:
+    items: snapshots
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+snapshot_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: snapshots }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [snapshot]
+
+snapshot_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: snapshots }
+  body:
+    type: object
+    fields:
+      - - instance_id
+        - { type: var, name: instance_id }
+      - - description
+        - type: if
+          condition: { type: exists, var: description }
+          then_expr: { type: var, name: description }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [snapshot]
+
+snapshot_create_from_url:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: snapshots }
+    - { type: literal, value: "create-from-url" }
+  body:
+    type: object
+    fields:
+      - - url
+        - { type: var, name: url }
+      - - description
+        - type: if
+          condition: { type: exists, var: description }
+          then_expr: { type: var, name: description }
+          else_expr: { type: const, value: null }
+      - - uefi
+        - type: if
+          condition: { type: exists, var: uefi }
+          then_expr: { type: var, name: uefi }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [snapshot]
+
+snapshot_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: snapshots }
+    - { type: var, name: id }
+  response: single
+
+backup_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: backups }
+  response:
+    items: backups
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+backup_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: backups }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [backup]
+
+# ── Block storage volumes ────────────────────────────────────────────────
+block_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+  response:
+    items: blocks
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+block_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [block]
+
+block_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [block]
+
+block_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - label
+        - type: if
+          condition: { type: exists, var: label }
+          then_expr: { type: var, name: label }
+          else_expr: { type: const, value: null }
+      - - size_gb
+        - type: if
+          condition: { type: exists, var: size_gb }
+          then_expr: { type: var, name: size_gb }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [block]
+
+block_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+    - { type: var, name: id }
+  response: single
+
+block_attach:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+    - { type: var, name: id }
+    - { type: literal, value: attach }
+  body:
+    type: object
+    fields:
+      - - instance_id
+        - { type: var, name: instance_id }
+      - - live
+        - type: if
+          condition: { type: exists, var: live }
+          then_expr: { type: var, name: live }
+          else_expr: { type: const, value: null }
+  response: single
+
+block_detach:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: blocks }
+    - { type: var, name: id }
+    - { type: literal, value: detach }
+  body:
+    type: object
+    fields:
+      - - live
+        - type: if
+          condition: { type: exists, var: live }
+          then_expr: { type: var, name: live }
+          else_expr: { type: const, value: null }
+  response: single
+
+# ── Custom ISOs ──────────────────────────────────────────────────────────
+iso_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: iso }
+  response:
+    items: isos
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+iso_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: iso }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [iso]
+
+iso_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: iso }
+  body:
+    type: object
+    fields:
+      - [url, { type: var, name: url }]
+  response:
+    single: true
+    items_path: [iso]
+
+iso_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: iso }
+    - { type: var, name: id }
+  response: single
+
+# ── Startup scripts (cloud-init / iPXE payloads) ───────────────────────
+startupscript_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "startup-scripts" }
+  response:
+    items: startup_scripts
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+startupscript_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "startup-scripts" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [startup_script]
+
+startupscript_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "startup-scripts" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [startup_script]
+
+startupscript_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "startup-scripts" }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - script
+        - type: if
+          condition: { type: exists, var: script }
+          then_expr: { type: var, name: script }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [startup_script]
+
+startupscript_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "startup-scripts" }
+    - { type: var, name: id }
+  response: single
+
+# ── DNS: zones and per-zone records ──────────────────────────────────────
+dnsdomain_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+  response:
+    items: domains
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+dnsdomain_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [domain]
+
+dnsdomain_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [domain]
+
+dnsdomain_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: id }
+  response: single
+
+dnsrecord_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: domain }
+    - { type: literal, value: records }
+  response:
+    items: records
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+dnsrecord_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: domain }
+    - { type: literal, value: records }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [record]
+
+dnsrecord_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: domain }
+    - { type: literal, value: records }
+  body:
+    type: object
+    fields:
+      - - name
+        - { type: var, name: name }
+      - - type
+        - { type: var, name: type }
+      - - data
+        - { type: var, name: data }
+      - - ttl
+        - { type: var, name: ttl }
+      - - priority
+        - type: if
+          condition: { type: exists, var: priority }
+          then_expr: { type: var, name: priority }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [record]
+
+dnsrecord_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: domain }
+    - { type: literal, value: records }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - data
+        - type: if
+          condition: { type: exists, var: data }
+          then_expr: { type: var, name: data }
+          else_expr: { type: const, value: null }
+      - - ttl
+        - type: if
+          condition: { type: exists, var: ttl }
+          then_expr: { type: var, name: ttl }
+          else_expr: { type: const, value: null }
+      - - priority
+        - type: if
+          condition: { type: exists, var: priority }
+          then_expr: { type: var, name: priority }
+          else_expr: { type: const, value: null }
+  response: single
+
+dnsrecord_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: domains }
+    - { type: var, name: domain }
+    - { type: literal, value: records }
+    - { type: var, name: id }
+  response: single
+
+# ── S3-compatible object storage subscriptions ───────────────────────
+objectstorage_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "object-storage" }
+  response:
+    items: object_storages
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+objectstorage_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "object-storage" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [object_storage]
+
+objectstorage_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "object-storage" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [object_storage]
+
+objectstorage_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "object-storage" }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - [label, { type: var, name: label }]
+  response: single
+
+objectstorage_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "object-storage" }
+    - { type: var, name: id }
+  response: single
+
+# ── Managed databases (MySQL, PostgreSQL, Valkey, Kafka) ────────────────
+manageddatabase_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: databases }
+  response:
+    items: databases
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+manageddatabase_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: databases }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [database]
+
+manageddatabase_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: databases }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [database]
+
+manageddatabase_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: databases }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - plan
+        - type: if
+          condition: { type: exists, var: plan }
+          then_expr: { type: var, name: plan }
+          else_expr: { type: const, value: null }
+      - - label
+        - type: if
+          condition: { type: exists, var: label }
+          then_expr: { type: var, name: label }
+          else_expr: { type: const, value: null }
+      - - tag
+        - type: if
+          condition: { type: exists, var: tag }
+          then_expr: { type: var, name: tag }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [database]
+
+manageddatabase_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: databases }
+    - { type: var, name: id }
+  response: single
+
+# ── VKE (managed Kubernetes) ─────────────────────────────────────────────
+kubernetescluster_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+  response:
+    items: vke_clusters
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+kubernetescluster_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [vke_cluster]
+
+kubernetescluster_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [vke_cluster]
+
+kubernetescluster_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [vke_cluster]
+
+kubernetescluster_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+  response: single
+
+vkekubeconfig_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+    - { type: literal, value: config }
+  response:
+    single: true
+
+vkeresourceinventory_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+    - { type: literal, value: resources }
+  response:
+    single: true
+
+vkeavailableupgrade_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: available-upgrades }
+  response:
+    items: available_upgrades
+
+kubernetescluster_start_upgrade:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+    - { type: literal, value: upgrades }
+  body:
+    type: object
+    fields:
+      - - upgrade_version
+        - { type: var, name: upgrade_version }
+  response: single
+
+kubernetescluster_delete_with_linked_resources:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: id }
+    - { type: literal, value: delete-with-linked-resources }
+  response: single
+
+# ── Bare metal dedicated servers (not the plan catalog) ───────────────
+baremetal_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+  response:
+    items: bare_metals
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+baremetal_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [bare_metal]
+
+baremetal_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [bare_metal]
+
+baremetal_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+  body:
+    type: object
+    fields:
+      - - label
+        - type: if
+          condition: { type: exists, var: label }
+          then_expr: { type: var, name: label }
+          else_expr: { type: const, value: null }
+      - - tags
+        - type: if
+          condition: { type: exists, var: tags }
+          then_expr: { type: var, name: tags }
+          else_expr: { type: const, value: null }
+      - - user_data
+        - type: if
+          condition: { type: exists, var: user_data }
+          then_expr: { type: var, name: user_data }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [bare_metal]
+
+baremetal_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+  response: single
+
+baremetal_start:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: start }
+  response: single
+
+baremetal_reboot:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: reboot }
+  response: single
+
+baremetal_halt:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: halt }
+  response: single
+
+# ── Bare metal: bulk power, IP lists, reverse DNS, bandwidth, user data, upgrades, VPC listing (incl. VPC2) ─
+baremetals_bulk_halt:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: literal, value: halt }
+  body:
+    type: object
+    fields:
+      - - bare_metal_ids
+        - { type: var, name: bare_metal_ids }
+  response: single
+
+baremetals_bulk_reboot:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: literal, value: reboot }
+  body:
+    type: object
+    fields:
+      - - bare_metal_ids
+        - { type: var, name: bare_metal_ids }
+  response: single
+
+baremetals_bulk_start:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: literal, value: start }
+  body:
+    type: object
+    fields:
+      - - bare_metal_ids
+        - { type: var, name: bare_metal_ids }
+  response: single
+
+baremetalipv4_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: bare_metal_id }
+    - { type: literal, value: ipv4 }
+  response:
+    items: ipv4s
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+baremetalipv6_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: bare_metal_id }
+    - { type: literal, value: ipv6 }
+  response:
+    items: ipv6s
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+baremetal_set_ipv4_reverse:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: ipv4 }
+    - { type: literal, value: reverse }
+  body:
+    type: object
+    fields:
+      - - ip
+        - { type: var, name: ip }
+      - - reverse
+        - { type: var, name: reverse }
+  response: single
+
+baremetal_set_ipv6_reverse:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: ipv6 }
+    - { type: literal, value: reverse }
+  body:
+    type: object
+    fields:
+      - - ip
+        - { type: var, name: ip }
+      - - reverse
+        - { type: var, name: reverse }
+  response: single
+
+baremetal_set_ipv4_default_reverse:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: ipv4 }
+    - { type: literal, value: reverse }
+    - { type: literal, value: default }
+  body:
+    type: object
+    fields:
+      - - ip
+        - { type: var, name: ip }
+  response: single
+
+baremetal_delete_ipv6_reverse:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: ipv6 }
+    - { type: literal, value: reverse }
+    - { type: var, name: ip }
+  response: single
+
+baremetalbandwidth_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: bandwidth }
+  response:
+    single: true
+
+baremetaluserdata_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: "user-data" }
+  response:
+    single: true
+
+baremetalupgradecatalog_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: upgrades }
+  query:
+    type: object
+    fields:
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+
+baremetalvpc_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: bare_metal_id }
+    - { type: literal, value: vpcs }
+  response:
+    items: vpcs
+
+baremetalvpc2_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: bare_metal_id }
+    - { type: literal, value: vpc2 }
+  response:
+    items: vpcs
+
+baremetal_vpc2_attach:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: vpc2 }
+    - { type: literal, value: attach }
+  body:
+    type: object
+    fields:
+      - - vpc_id
+        - { type: var, name: vpc_id }
+      - - ip_address
+        - { type: var, name: ip_address }
+  response: single
+
+baremetal_vpc2_detach:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: vpc2 }
+    - { type: literal, value: detach }
+  body:
+    type: object
+    fields:
+      - - vpc_id
+        - { type: var, name: vpc_id }
+  response: single
+
+# ── CDN pull and push zones ─────────────────────────────────────────────
+cdnpullzone_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "pull-zones" }
+  response:
+    items: pull_zones
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+cdnpullzone_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "pull-zones" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [pull_zone]
+
+cdnpullzone_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "pull-zones" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [pull_zone]
+
+cdnpullzone_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "pull-zones" }
+    - { type: var, name: id }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [pull_zone]
+
+cdnpullzone_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "pull-zones" }
+    - { type: var, name: id }
+  response: single
+
+cdnpullzone_purge:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "pull-zones" }
+    - { type: var, name: id }
+    - { type: literal, value: purge }
+  response: single
+
+cdnpushzone_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+  response:
+    items: push_zones
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+cdnpushzone_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [push_zone]
+
+cdnpushzone_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [push_zone]
+
+cdnpushzone_update:
+  method: PUT
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: id }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [push_zone]
+
+cdnpushzone_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: id }
+  response: single
+
+# ── VKE: supported K8s versions, node pools, pool labels/taints, per-node actions ─
+kubernetesversion_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: versions }
+  response:
+    items: versions
+
+kubernetesnodepool_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+  response:
+    items: node_pools
+  pagination:
+    location: query
+    response_prefix: [meta, links]
+    stop_when:
+      field: next
+      eq: ""
+    params:
+      per_page: { fixed: 100 }
+      cursor: { from_response: next }
+
+kubernetesnodepool_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [node_pool]
+
+kubernetesnodepool_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [node_pool]
+
+kubernetesnodepool_update:
+  method: PATCH
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: id }
+  body:
+    type: var
+    name: input
+  response:
+    single: true
+    items_path: [node_pool]
+
+kubernetesnodepool_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: id }
+  response: single
+
+kubernetesnodepoollabel_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: labels }
+  response:
+    items: labels
+
+kubernetesnodepoollabel_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: labels }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [label]
+
+kubernetesnodepoollabel_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: labels }
+  body:
+    type: object
+    fields:
+      - - key
+        - { type: var, name: key }
+      - - value
+        - { type: var, name: value }
+  response:
+    single: true
+    items_path: [label]
+
+kubernetesnodepoollabel_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: labels }
+    - { type: var, name: id }
+  response: single
+
+kubernetesnodepooltaint_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: taints }
+  response:
+    items: taints
+
+kubernetesnodepooltaint_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: taints }
+    - { type: var, name: id }
+  response:
+    single: true
+    items_path: [taint]
+
+kubernetesnodepooltaint_create:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: taints }
+  body:
+    type: object
+    fields:
+      - - key
+        - { type: var, name: key }
+      - - value
+        - { type: var, name: value }
+      - - effect
+        - { type: var, name: effect }
+  response:
+    single: true
+    items_path: [taint]
+
+kubernetesnodepooltaint_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: taints }
+    - { type: var, name: id }
+  response: single
+
+kubernetesnodepoolnode_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: nodes }
+    - { type: var, name: id }
+  response: single
+
+kubernetesnodepoolnode_recycle:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: kubernetes }
+    - { type: literal, value: clusters }
+    - { type: var, name: vke_id }
+    - { type: literal, value: "node-pools" }
+    - { type: var, name: nodepool_id }
+    - { type: literal, value: nodes }
+    - { type: var, name: id }
+    - { type: literal, value: recycle }
+  response: single
+
+# ── CDN push zone per-file (list, presigned upload, get, delete) ─────────
+cdnpushzonefile_query:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: push_zone_id }
+    - { type: literal, value: files }
+  response:
+    items: files
+
+cdnpushzonefile_get:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: push_zone_id }
+    - { type: literal, value: files }
+    - { type: var, name: name }
+  response:
+    single: true
+    items_path: [file]
+
+cdnpushzonefile_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: push_zone_id }
+    - { type: literal, value: files }
+    - { type: var, name: name }
+  response: single
+
+cdnpushzonefile_request_upload:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: cdns }
+    - { type: literal, value: "push-zones" }
+    - { type: var, name: push_zone_id }
+    - { type: literal, value: files }
+  body:
+    type: object
+    fields:
+      - - name
+        - { type: var, name: name }
+      - - size
+        - { type: var, name: size }
+  response:
+    single: true
+    items_path: [upload_endpoint]
+
+# ── Bare metal: reinstall, noVNC URL, VPC attach/detach ───────────────────
+baremetal_reinstall:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: reinstall }
+  body:
+    type: object
+    fields:
+      - - hostname
+        - { type: var, name: hostname }
+  response:
+    single: true
+    items_path: [bare_metal]
+
+baremetal_vnc:
+  method: GET
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: vnc }
+  response:
+    single: true
+    items_path: [vnc]
+
+baremetal_vpc_attach:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: vpcs }
+    - { type: literal, value: attach }
+  body:
+    type: object
+    fields:
+      - - vpc_id
+        - { type: var, name: vpc_id }
+  response: single
+
+baremetal_vpc_detach:
+  method: POST
+  path:
+    - { type: literal, value: v2 }
+    - { type: literal, value: "bare-metals" }
+    - { type: var, name: id }
+    - { type: literal, value: vpcs }
+    - { type: literal, value: detach }
+  body:
+    type: object
+    fields:
+      - - vpc_id
+        - { type: var, name: vpc_id }
+  response: single

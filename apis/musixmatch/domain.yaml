@@ -1,0 +1,183 @@
+version: 1
+
+http_backend: https://api.musixmatch.com
+
+entities:
+  Artist:
+    id_field: artist_id
+    description: A musical artist in the Musixmatch catalog
+    fields:
+      artist_id:
+        description: Unique Musixmatch artist identifier
+        field_type: integer
+        required: true
+      artist_name:
+        description: Artist or band name
+        field_type: string
+        required: true
+        string_semantics: short
+      artist_rating:
+        description: Musixmatch popularity rating
+        field_type: integer
+        required: false
+      artist_country:
+        description: Country of origin for the artist
+        field_type: string
+        required: false
+        string_semantics: short
+  Track:
+    id_field: track_id
+    description: A music track with lyrics metadata
+    fields:
+      track_id:
+        description: Unique Musixmatch track identifier
+        field_type: integer
+        required: true
+      track_name:
+        description: Title of the track
+        field_type: string
+        required: true
+        string_semantics: short
+      artist_id:
+        description: Reference to the track's artist
+        field_type: entity_ref
+        target: Artist
+        required: false
+      track_rating:
+        description: Musixmatch popularity rating
+        field_type: integer
+        required: false
+      has_lyrics:
+        description: Whether lyrics are available (1=yes, 0=no)
+        field_type: integer
+        required: false
+    relations:
+      lyrics:
+        target: Lyrics
+        cardinality: one
+        description: Lyrics content for this track
+  Lyrics:
+    id_field: lyrics_id
+    description: 'Lyrics content for a Musixmatch track. Retrieved via GET /track.lyrics.get?track_id=<id>. This is a separate entity from Track (has its own lyrics_id), navigable via Track.lyrics relation.
+
+      '
+    fields:
+      lyrics_id:
+        field_type: integer
+        required: true
+        description: Unique Musixmatch lyrics identifier
+      lyrics_body:
+        field_type: string
+        required: false
+        description: The full lyrics text (may be truncated per Musixmatch licensing)
+        string_semantics: markdown
+      lyrics_copyright:
+        field_type: string
+        required: false
+        description: Copyright notice for the lyrics
+        string_semantics: short
+      lyrics_language:
+        field_type: string
+        required: false
+        description: BCP 47 language code of the lyrics (e.g. 'en', 'es')
+        string_semantics: short
+capabilities:
+  artist_search:
+    description: Search for artists by name
+    kind: search
+    entity: Artist
+    parameters:
+    - name: q_artist
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: f_artist_id
+      type: integer
+      required: false
+      role: filter
+  artist_get:
+    description: Retrieve a single artist by ID
+    kind: get
+    entity: Artist
+    provides:
+    - artist_id
+    - artist_name
+    - artist_rating
+    - artist_country
+  chart_artists:
+    description: Get top charting artists by country
+    kind: query
+    entity: Artist
+    parameters:
+    - name: country
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+  track_search:
+    description: Search tracks by title, artist, or lyrics
+    kind: search
+    entity: Track
+    parameters:
+    - name: q_track
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: q_artist
+      type: string
+      required: false
+      role: search
+      string_semantics: short
+    - name: f_artist_id
+      type: integer
+      required: false
+      role: filter
+    - name: f_music_genre_id
+      type: integer
+      required: false
+      role: filter
+    - name: f_has_lyrics
+      type: integer
+      required: false
+      role: filter
+  track_get:
+    description: Retrieve a single track by ID
+    kind: get
+    entity: Track
+    provides:
+    - track_id
+    - track_name
+    - artist_id
+    - track_rating
+    - has_lyrics
+  chart_tracks:
+    description: Get top charting tracks by country
+    kind: query
+    entity: Track
+    parameters:
+    - name: country
+      type: string
+      required: false
+      role: filter
+      string_semantics: short
+    - name: f_has_lyrics
+      type: integer
+      required: false
+      role: filter
+  track_lyrics_get:
+    description: 'Retrieve the lyrics for a track by its Musixmatch track_id. Returns a Lyrics object (lyrics_id, lyrics_body, lyrics_copyright, lyrics_language). Navigate via Track.lyrics relation: artist_search → Track → Lyrics.
+
+      '
+    kind: get
+    entity: Lyrics
+    provides:
+    - lyrics_id
+    - lyrics_body
+    - lyrics_copyright
+    - lyrics_language
+auth:
+  scheme: api_key_query
+  param: apikey
+  env: MUSIXMATCH_API_KEY

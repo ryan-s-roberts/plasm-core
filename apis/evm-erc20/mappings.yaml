@@ -1,0 +1,58 @@
+# ERC-20 capability mappings
+#
+# CONTRACT ADDRESS — change this to any ERC-20 token on the target chain.
+# Default: USDC on Ethereum mainnet (chain 1).
+# Override by editing the `value` field below, or fork this file per-token.
+#
+# BACKEND — pass your Ethereum JSON-RPC HTTPS endpoint as --backend (Infura, Alchemy, etc.):
+#   --backend <your-provider-mainnet-url-with-api-key>
+
+balance_get:
+  transport: evm_call
+  chain: 1
+  contract:
+    type: const
+    value: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+  function: "function balanceOf(address account) view returns (uint256 balance)"
+  args:
+    - type: var
+      name: id
+  decode:
+    account:
+      type: input
+      index: 0
+    balance:
+      type: output
+      index: 0
+
+transfer_query:
+  transport: evm_logs
+  chain: 1
+  contract:
+    type: const
+    value: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+  event: "event Transfer(address indexed from, address indexed to, uint256 value)"
+  pagination:
+    location: block_range
+    params:
+      range_size:
+        fixed: 1000
+  decode:
+    event_id:
+      type: log_meta
+      key: event_id
+    tx_hash:
+      type: log_meta
+      key: transaction_hash
+    log_index:
+      type: log_meta
+      key: log_index
+    from:
+      type: topic
+      index: 0
+    to:
+      type: topic
+      index: 1
+    value:
+      type: data
+      index: 0

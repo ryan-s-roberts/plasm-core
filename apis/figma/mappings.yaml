@@ -1,0 +1,108 @@
+# Figma REST API mappings.
+# Base URL: https://api.figma.com
+# Auth in this catalog assumes an OAuth bearer token via `FIGMA_ACCESS_TOKEN`.
+# Personal access tokens use `X-Figma-Token` and are intentionally not modeled as
+# the active transport auth here because the runtime supports one outbound auth
+# scheme per catalog.
+
+user_get_me:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: me }
+  response:
+    single: true
+
+team_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: teams }
+    - { type: var, name: id }
+    - { type: literal, value: projects }
+  response:
+    single: true
+
+project_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: teams }
+    - { type: var, name: team_id }
+    - { type: literal, value: projects }
+  response:
+    items_path: [projects]
+
+project_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: projects }
+    - { type: var, name: id }
+    - { type: literal, value: files }
+  response:
+    single: true
+
+file_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: projects }
+    - { type: var, name: project_id }
+    - { type: literal, value: files }
+  response:
+    items_path: [files]
+  query:
+    type: object
+    fields:
+      - [branch_data, { type: if, condition: { type: exists, var: branch_data },
+                        then_expr: { type: var, name: branch_data },
+                        else_expr: { type: const, value: null } }]
+
+file_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: files }
+    - { type: var, name: id }
+  response:
+    single: true
+
+file_metadata_get:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: files }
+    - { type: var, name: id }
+    - { type: literal, value: meta }
+  response:
+    single: true
+
+comment_query:
+  method: GET
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: files }
+    - { type: var, name: file_key }
+    - { type: literal, value: comments }
+  response:
+    items_path: [comments]
+  query:
+    type: object
+    fields:
+      - [as_md, { type: if, condition: { type: exists, var: as_md },
+                  then_expr: { type: var, name: as_md },
+                  else_expr: { type: const, value: null } }]
+
+comment_create:
+  method: POST
+  path:
+    - { type: literal, value: v1 }
+    - { type: literal, value: files }
+    - { type: var, name: file_key }
+    - { type: literal, value: comments }
+  body:
+    type: var
+    name: input
+  response:
+    single: true

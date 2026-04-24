@@ -1,0 +1,512 @@
+version: 1
+
+http_backend: https://api.figma.com
+
+entities:
+  User:
+    id_field: id
+    description: The authenticated Figma user profile.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      handle:
+        field_type: string
+        required: true
+        string_semantics: short
+      img_url:
+        field_type: string
+        required: true
+        string_semantics: short
+      email:
+        field_type: string
+        required: false
+        string_semantics: short
+
+  Team:
+    id_field: id
+    implicit_request_identity: true
+    description: A Figma team container identified by a known team id.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations:
+      projects:
+        target: Project
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: project_query
+          param: team_id
+
+  Project:
+    id_field: id
+    implicit_request_identity: true
+    description: A project within a Figma team.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+    relations:
+      files:
+        target: File
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: file_query
+          param: project_id
+
+  File:
+    id_field: key
+    description: A Figma design file or branch, including collaboration metadata and optional structured document payloads.
+    fields:
+      key:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      role:
+        field_type: string
+        required: false
+        string_semantics: short
+      editorType:
+        field_type: string
+        required: false
+        string_semantics: short
+      version:
+        field_type: string
+        required: false
+        string_semantics: short
+      lastModified:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      last_modified:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      linkAccess:
+        field_type: string
+        required: false
+        string_semantics: short
+      mainFileKey:
+        field_type: string
+        required: false
+        string_semantics: short
+      document:
+        field_type: json
+        required: false
+        description: Structured document tree for the file or requested slice.
+      components:
+        field_type: json
+        required: false
+        description: Component metadata keyed by node id.
+      componentSets:
+        field_type: json
+        required: false
+        description: Component set metadata keyed by node id.
+      styles:
+        field_type: json
+        required: false
+        description: Style metadata keyed by style id.
+      branches:
+        field_type: json
+        required: false
+        description: Branch metadata returned with the file document.
+    relations:
+      comments:
+        target: Comment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: comment_query
+          param: file_key
+
+  FileMetadata:
+    id_field: key
+    implicit_request_identity: true
+    description: Collaboration and ownership metadata for a known file key.
+    domain_projection_examples: false
+    fields:
+      key:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: true
+        string_semantics: short
+      folder_name:
+        field_type: string
+        required: false
+        string_semantics: short
+      last_touched_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      editorType:
+        field_type: string
+        required: false
+        string_semantics: short
+      role:
+        field_type: string
+        required: false
+        string_semantics: short
+      link_access:
+        field_type: string
+        required: false
+        string_semantics: short
+      url:
+        field_type: string
+        required: false
+        string_semantics: short
+      version:
+        field_type: string
+        required: false
+        string_semantics: short
+      creator_id:
+        field_type: string
+        required: false
+        path: creator.id
+        string_semantics: short
+      creator_handle:
+        field_type: string
+        required: false
+        path: creator.handle
+        string_semantics: short
+      creator_img_url:
+        field_type: string
+        required: false
+        path: creator.img_url
+        string_semantics: short
+      last_touched_by_id:
+        field_type: string
+        required: false
+        path: last_touched_by.id
+        string_semantics: short
+      last_touched_by_handle:
+        field_type: string
+        required: false
+        path: last_touched_by.handle
+        string_semantics: short
+      last_touched_by_img_url:
+        field_type: string
+        required: false
+        path: last_touched_by.img_url
+        string_semantics: short
+
+  Comment:
+    id_field: id
+    description: A comment or reply attached to a Figma file.
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      file_key:
+        field_type: entity_ref
+        target: File
+        required: true
+      parent_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      user_id:
+        field_type: string
+        required: false
+        path: user.id
+        string_semantics: short
+      user_handle:
+        field_type: string
+        required: false
+        path: user.handle
+        string_semantics: short
+      user_img_url:
+        field_type: string
+        required: false
+        path: user.img_url
+        string_semantics: short
+      created_at:
+        field_type: date
+        value_format: rfc3339
+        required: true
+      resolved_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+      message:
+        field_type: string
+        required: true
+        string_semantics: markdown
+      order_id:
+        field_type: string
+        required: false
+        string_semantics: short
+      reactions:
+        field_type: json
+        required: false
+        description: Reactions recorded on the comment.
+
+capabilities:
+  user_get_me:
+    kind: singleton
+    entity: User
+    description: Load the profile for the authenticated Figma user.
+    provides:
+    - id
+    - handle
+    - img_url
+    - email
+
+  team_get:
+    kind: get
+    entity: Team
+    description: Open a known Figma team by id so its projects can be traversed.
+    provides:
+    - id
+    - name
+
+  project_query:
+    kind: query
+    entity: Project
+    description: List projects visible within a specific team.
+    parameters:
+    - name: team_id
+      type: entity_ref
+      target: Team
+      required: true
+      role: scope
+      description: Team whose projects to list.
+    provides:
+    - id
+    - name
+
+  project_get:
+    kind: get
+    entity: Project
+    description: Open a known project by id so its files can be traversed.
+    provides:
+    - id
+    - name
+
+  file_query:
+    kind: query
+    entity: File
+    description: List files in a project.
+    parameters:
+    - name: project_id
+      type: entity_ref
+      target: Project
+      required: true
+      role: scope
+      description: Project whose files to list.
+    - name: branch_data
+      type: boolean
+      required: false
+      role: response_control
+      description: Include branch summaries for main files that have branches.
+    provides:
+    - key
+    - name
+    - last_modified
+
+  file_get:
+    kind: get
+    entity: File
+    description: Load a file document and its structured node tree for a known file key.
+    provides:
+    - key
+    - name
+    - role
+    - editorType
+    - version
+    - lastModified
+    - linkAccess
+    - mainFileKey
+    - document
+    - components
+    - componentSets
+    - styles
+    - branches
+
+  file_metadata_get:
+    kind: get
+    entity: FileMetadata
+    description: Load collaboration and ownership metadata for a known file key.
+    provides:
+    - key
+    - name
+    - folder_name
+    - last_touched_at
+    - creator_id
+    - creator_handle
+    - creator_img_url
+    - last_touched_by_id
+    - last_touched_by_handle
+    - last_touched_by_img_url
+    - editorType
+    - role
+    - link_access
+    - url
+    - version
+
+  comment_query:
+    kind: query
+    entity: Comment
+    description: List comments on a file.
+    parameters:
+    - name: file_key
+      type: entity_ref
+      target: File
+      required: true
+      role: scope
+      description: File whose comments to list.
+    - name: as_md
+      type: boolean
+      required: false
+      role: response_control
+      description: Return comment text in markdown form when available.
+    provides:
+    - id
+    - file_key
+    - parent_id
+    - user_id
+    - user_handle
+    - user_img_url
+    - created_at
+    - resolved_at
+    - message
+    - order_id
+    - reactions
+
+  comment_create:
+    kind: create
+    entity: Comment
+    description: Add a new comment or reply in a file.
+    parameters:
+    - name: file_key
+      type: entity_ref
+      target: File
+      required: true
+      role: scope
+      description: File where the comment should be created.
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+    provides:
+    - id
+    - file_key
+    - parent_id
+    - user_id
+    - user_handle
+    - user_img_url
+    - created_at
+    - resolved_at
+    - message
+    - order_id
+    - reactions
+
+oauth:
+  provider: figma
+  scopes:
+    current_user:read:
+      label: Read the authenticated user's profile.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+    projects:read:
+      label: List projects and files in projects.
+      notes: Required for team and project traversal in this catalog.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+    file_content:read:
+      label: Read file structure, nodes, and rendered exports.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+    file_metadata:read:
+      label: Read file ownership and sharing metadata.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+    file_comments:read:
+      label: Read comments on files.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+    file_comments:write:
+      label: Create and delete comments and reactions.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+    files:read:
+      label: Deprecated broad read scope
+      notes: Figma still documents this legacy scope, but granular scopes are preferred.
+      docs_url: https://developers.figma.com/docs/rest-api/scopes/
+  default_scope_sets:
+    figma_readonly_core:
+      description: Current user profile, team/project traversal, file content and metadata reads, and file comments reads.
+      scopes:
+      - current_user:read
+      - projects:read
+      - file_content:read
+      - file_metadata:read
+      - file_comments:read
+    figma_commenter_core:
+      description: Read-heavy design review automation that can also create comments.
+      scopes:
+      - current_user:read
+      - projects:read
+      - file_content:read
+      - file_metadata:read
+      - file_comments:read
+      - file_comments:write
+  requirements:
+    capabilities:
+      user_get_me:
+        any_of:
+        - current_user:read
+      team_get:
+        any_of:
+        - projects:read
+      project_query:
+        any_of:
+        - projects:read
+      project_get:
+        any_of:
+        - projects:read
+      file_query:
+        any_of:
+        - projects:read
+      file_get:
+        any_of:
+        - file_content:read
+      file_metadata_get:
+        any_of:
+        - file_metadata:read
+      comment_query:
+        any_of:
+        - file_comments:read
+      comment_create:
+        any_of:
+        - file_comments:write
+    relations:
+      Team.projects:
+        any_of:
+        - projects:read
+      Project.files:
+        any_of:
+        - projects:read
+      File.comments:
+        any_of:
+        - file_comments:read
+
+auth:
+  scheme: bearer_token
+  env: FIGMA_ACCESS_TOKEN

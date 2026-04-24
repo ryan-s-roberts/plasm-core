@@ -1,0 +1,98 @@
+# Outlook / Microsoft Graph mailbox wave 1 — NL eval cases.
+
+- id: out-01
+  schema: outlook
+  goal: "List the top-level folders in my mailbox so I can choose where to triage next."
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [MailFolder]
+
+- id: out-02
+  schema: outlook
+  goal: "Open folder id inbox-folder-001 so I can inspect its unread and total item counts."
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [MailFolder]
+
+- id: out-03
+  schema: outlook
+  goal: "Show the messages inside folder id inbox-folder-001 and only keep subject, sender, and received time in view."
+  tags: [query, projection, chain]
+  covers: [query_filtered, projection, chain, reverse]
+  expect:
+    entities_any: [MailFolder, Message]
+
+- id: out-04
+  schema: outlook
+  goal: "Fetch message id AAMkAGI2TAAA= for the reader pane with the full body."
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Message]
+
+- id: out-05
+  schema: outlook
+  goal: "Mark message id AAMkAGI2TAAA= as read and set its importance to high."
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Message]
+
+- id: out-06
+  schema: outlook
+  goal: "Move message id AAMkAGI2TAAA= into folder id archive-folder-009."
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Message, MailFolder]
+
+- id: out-07
+  schema: outlook
+  goal: "Send draft message id AAMkAGI2Draft= now."
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Message]
+
+- id: out-08
+  schema: outlook
+  goal: "Delete message id AAMkAGI2TAAA= from the mailbox."
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Message]
+
+- id: out-09
+  schema: outlook
+  goal: "List the attachments on message id AAMkAGI2TAAA= and then fetch attachment id AQMkAGFiZAAu for download."
+  tags: [multi_step, chain]
+  covers: [multi_step, chain]
+  expect:
+    entities_any: [Message, Attachment]
+
+- id: out-10
+  schema: outlook
+  goal: "Show every message in the mailbox so I can skim the recent subjects."
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [Message]
+
+- id: out-11
+  schema: outlook
+  goal: "Include hidden folders while listing the children under folder id inbox-folder-001."
+  tags: [adversarial, query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [MailFolder]
+
+- id: out-12
+  schema: outlook
+  goal: "Send a brand new email to finance@example.com with an invoice PDF attached."
+  tags: [adversarial]
+  covers: [invoke]
+  expect:
+    entities_any: [Message, Attachment]
+    # Adversarial: wave 1 does not model new-message composition or attachment upload.

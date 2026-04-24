@@ -1,0 +1,233 @@
+album_query:
+  method: GET
+  path:
+    - type: literal
+      value: albums
+  query:
+    type: object
+    fields:
+      - - ids
+        - type: var
+          name: ids
+      - - market
+        - type: var
+          name: market
+
+album_get:
+  method: GET
+  path:
+    - type: literal
+      value: albums
+    - type: var
+      name: id
+
+album_tracks:
+  method: GET
+  path:
+    - type: literal
+      value: albums
+    - type: var
+      name: id
+    - type: literal
+      value: tracks
+  query:
+    type: object
+    fields:
+      - - market
+        - type: var
+          name: market
+      - - limit
+        - type: var
+          name: limit
+      - - offset
+        - type: var
+          name: offset
+
+artist_query:
+  method: GET
+  path:
+    - type: literal
+      value: artists
+  query:
+    type: object
+    fields:
+      - - ids
+        - type: var
+          name: ids
+
+artist_get:
+  method: GET
+  path:
+    - type: literal
+      value: artists
+    - type: var
+      name: id
+
+artist_albums:
+  method: GET
+  path:
+    - type: literal
+      value: artists
+    - type: var
+      name: id
+    - type: literal
+      value: albums
+  query:
+    type: object
+    fields:
+      - - include_groups
+        - type: var
+          name: include_groups
+      - - market
+        - type: var
+          name: market
+      - - limit
+        - type: var
+          name: limit
+      - - offset
+        - type: var
+          name: offset
+
+artist_related:
+  method: GET
+  path:
+    - type: literal
+      value: artists
+    - type: var
+      name: id
+    - type: literal
+      value: related-artists
+
+artist_top_tracks:
+  method: GET
+  path:
+    - type: literal
+      value: artists
+    - type: var
+      name: id
+    - type: literal
+      value: top-tracks
+  query:
+    type: object
+    fields:
+      - - market
+        - type: var
+          name: market
+
+track_query:
+  method: GET
+  path:
+    - type: literal
+      value: tracks
+  query:
+    type: object
+    fields:
+      - - ids
+        - type: var
+          name: ids
+      - - market
+        - type: var
+          name: market
+
+track_get:
+  method: GET
+  path:
+    - type: literal
+      value: tracks
+    - type: var
+      name: id
+
+track_get_audio_features:
+  # GET /audio-features/{id} — returns Track's audio analysis projection.
+  # The response id is the Spotify track ID; additive merge adds danceability,
+  # energy, valence, tempo, key, mode, etc. to the existing Track cache entry.
+  method: GET
+  path:
+    - type: literal
+      value: audio-features
+    - type: var
+      name: id
+
+playlist_get:
+  method: GET
+  path:
+    - type: literal
+      value: playlists
+    - type: var
+      name: playlist_id
+
+playlist_tracks:
+  method: GET
+  path:
+    - type: literal
+      value: playlists
+    - type: var
+      name: playlist_id
+    - type: literal
+      value: tracks
+  query:
+    type: object
+    fields:
+      - - market
+        - type: var
+          name: market
+      - - limit
+        - type: var
+          name: limit
+      - - offset
+        - type: var
+          name: offset
+      - - fields
+        - type: var
+          name: fields
+
+playlist_update:
+  method: PUT
+  path:
+    - type: literal
+      value: playlists
+    - type: var
+      name: playlist_id
+  body:
+    type: var
+    name: input
+
+user_get:
+  method: GET
+  path:
+    - type: literal
+      value: users
+    - type: var
+      name: user_id
+
+user_playlists:
+  method: GET
+  path:
+    - type: literal
+      value: users
+    - type: var
+      name: user_id
+    - type: literal
+      value: playlists
+  query:
+    type: object
+    fields:
+      - - limit
+        - type: var
+          name: limit
+      - - offset
+        - type: var
+          name: offset
+
+user_create_playlist:
+  method: POST
+  path:
+    - type: literal
+      value: users
+    - type: var
+      name: user_id
+    - type: literal
+      value: playlists
+  body:
+    type: var
+    name: input

@@ -1,0 +1,828 @@
+# Linear GraphQL — `transport: graphql`, POST `/graphql`.
+# GraphQL connections: `first` / `after`, `pageInfo.hasNextPage` / `endCursor`; `response_prefix` + `body_merge_path: [variables]`.
+
+issue_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { issues(first: $first, after: $after) { nodes { id identifier title parent { id identifier title } } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, issues, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, issues, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+issue_by_team_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $team: ID!) { issues(first: $first, after: $after, filter: { team: { id: { eq: $team } } }) { nodes { id identifier title parent { id identifier title } } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - team
+              - type: var
+                name: team
+  response:
+    items_path: [data, issues, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, issues, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+issue_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ issue(id: $id) { id identifier title description parent { id identifier title description } children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } team { id name key } project { id name slugId } assignee { id name displayName email } state { id name type } cycle { id number startsAt endsAt team { id name key } } labels { nodes { id name color } } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, issue]
+
+team_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { teams(first: $first, after: $after) { nodes { id name key } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, teams, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, teams, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+team_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ team(id: $id) { id name key } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, team]
+
+project_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { projects(first: $first, after: $after) { nodes { id name slugId } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, projects, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, projects, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+project_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ project(id: $id) { id name slugId } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, project]
+
+user_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { users(first: $first, after: $after) { nodes { id name displayName email } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, users, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, users, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+user_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ user(id: $id) { id name displayName email } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, user]
+
+workflow_state_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $team: ID!) { workflowStates(first: $first, after: $after, filter: { team: { id: { eq: $team } } }) { nodes { id name type position } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - team
+              - type: var
+                name: team
+  response:
+    items_path: [data, workflowStates, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, workflowStates, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+workflow_state_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ workflowState(id: $id) { id name type position } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, workflowState]
+
+cycle_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $team: ID!) { team(id: $team) { cycles(first: $first, after: $after) { nodes { id number startsAt endsAt team { id name key } } pageInfo { hasNextPage endCursor } } } }'
+      - - variables
+        - type: object
+          fields:
+            - - team
+              - type: var
+                name: team
+  response:
+    items_path: [data, team, cycles, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, team, cycles, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+cycle_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ cycle(id: $id) { id number startsAt endsAt team { id name key } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, cycle]
+
+label_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { issueLabels(first: $first, after: $after) { nodes { id name color } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, issueLabels, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, issueLabels, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+label_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ issueLabel(id: $id) { id name color } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, issueLabel]
+
+comment_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { comments(first: $first, after: $after) { nodes { id body issue { id } } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, comments, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, comments, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+comment_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ comment(id: $id) { id body issue { id } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, comment]
+
+issue_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: IssueCreateInput!){ issueCreate(input: $input) { success issue { id identifier title description state { id name type } cycle { id number startsAt endsAt } parent { id identifier title description } children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - teamId
+                    - type: var
+                      name: team
+                  - - title
+                    - type: var
+                      name: title
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+                  - - projectId
+                    - type: if
+                      condition: { type: exists, var: project }
+                      then_expr: { type: var, name: project }
+                      else_expr: { type: const, value: null }
+                  - - assigneeId
+                    - type: if
+                      condition: { type: exists, var: assignee }
+                      then_expr: { type: var, name: assignee }
+                      else_expr: { type: const, value: null }
+                  - - stateId
+                    - type: if
+                      condition: { type: exists, var: state }
+                      then_expr: { type: var, name: state }
+                      else_expr: { type: const, value: null }
+                  - - parentId
+                    - type: if
+                      condition: { type: exists, var: parent }
+                      then_expr: { type: var, name: parent }
+                      else_expr: { type: const, value: null }
+                  - - cycleId
+                    - type: if
+                      condition: { type: exists, var: cycle }
+                      then_expr: { type: var, name: cycle }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, issueCreate, issue]
+
+issue_update:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier title description state { id name type } cycle { id number startsAt endsAt } parent { id identifier title description } children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - title
+                    - type: if
+                      condition: { type: exists, var: title }
+                      then_expr: { type: var, name: title }
+                      else_expr: { type: const, value: null }
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+                  - - projectId
+                    - type: if
+                      condition: { type: exists, var: project }
+                      then_expr: { type: var, name: project }
+                      else_expr: { type: const, value: null }
+                  - - assigneeId
+                    - type: if
+                      condition: { type: exists, var: assignee }
+                      then_expr: { type: var, name: assignee }
+                      else_expr: { type: const, value: null }
+                  - - stateId
+                    - type: if
+                      condition: { type: exists, var: state }
+                      then_expr: { type: var, name: state }
+                      else_expr: { type: const, value: null }
+                  - - parentId
+                    - type: if
+                      condition: { type: exists, var: parent }
+                      then_expr: { type: var, name: parent }
+                      else_expr: { type: const, value: null }
+                  - - cycleId
+                    - type: if
+                      condition: { type: exists, var: cycle }
+                      then_expr: { type: var, name: cycle }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, issueUpdate, issue]
+
+issue_delete:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!){ issueDelete(id: $id) { success entity { id } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, issueDelete]
+
+comment_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: CommentCreateInput!){ commentCreate(input: $input) { success comment { id body } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - issueId
+                    - type: var
+                      name: issue
+                  - - body
+                    - type: var
+                      name: body
+  response:
+    single: true
+    items_path: [data, commentCreate, comment]
+
+# ── Labels / projects / workflow (mutations) ─────────────────────────────────
+
+label_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: IssueLabelCreateInput!){ issueLabelCreate(input: $input) { success issueLabel { id name color } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - name
+                    - type: var
+                      name: name
+                  - - teamId
+                    - type: if
+                      condition: { type: exists, var: team }
+                      then_expr: { type: var, name: team }
+                      else_expr: { type: const, value: null }
+                  - - color
+                    - type: if
+                      condition: { type: exists, var: color }
+                      then_expr: { type: var, name: color }
+                      else_expr: { type: const, value: null }
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, issueLabelCreate, issueLabel]
+
+label_update:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: IssueLabelUpdateInput!){ issueLabelUpdate(id: $id, input: $input) { success issueLabel { id name color } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - name
+                    - type: if
+                      condition: { type: exists, var: name }
+                      then_expr: { type: var, name: name }
+                      else_expr: { type: const, value: null }
+                  - - color
+                    - type: if
+                      condition: { type: exists, var: color }
+                      then_expr: { type: var, name: color }
+                      else_expr: { type: const, value: null }
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, issueLabelUpdate, issueLabel]
+
+project_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: ProjectCreateInput!){ projectCreate(input: $input) { success project { id name slugId } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - name
+                    - type: var
+                      name: name
+                  - - teamIds
+                    - type: array
+                      elements:
+                        - type: var
+                          name: team
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, projectCreate, project]
+
+workflow_state_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: WorkflowStateCreateInput!){ workflowStateCreate(input: $input) { success workflowState { id name type } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - name
+                    - type: var
+                      name: name
+                  - - teamId
+                    - type: var
+                      name: team
+                  - - type
+                    - type: var
+                      name: state_type
+                  - - color
+                    - type: var
+                      name: color
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+                  - - position
+                    - type: if
+                      condition: { type: exists, var: position }
+                      then_expr: { type: var, name: position }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, workflowStateCreate, workflowState]
+
+issue_add_label:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - addedLabelIds
+                    - type: array
+                      elements:
+                        - type: var
+                          name: label
+  response:
+    single: true
+    items_path: [data, issueUpdate, issue]
+
+issue_remove_label:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - removedLabelIds
+                    - type: array
+                      elements:
+                        - type: var
+                          name: label
+  response:
+    single: true
+    items_path: [data, issueUpdate, issue]

@@ -1,0 +1,59 @@
+# This defines the valid Plasm expression surface for this prompt; you MUST only reply with valid Plasm expressions:
+#
+# The TSV rows below define the valid Plasm expression surface for this prompt.
+# `Expression` is the only executable Plasm syntax column; `Meaning` is documentation only — use it to read types and intent, but build your output only from `Expression` cells plus concrete values (never paste the `Meaning` cell into your output).
+# Each entity contributes any needed `p#` slot-definition rows first, then one identity row carrying projection/entity meaning, then the remaining expression rows.
+# Every symbol, field, relation, method, and query shape you use must be defined by this prompt itself.
+#
+#   - e#, m#, p# — opaque tokens from this prompt; use them exactly as shown.
+# - `p#` names a prompt-defined slot symbol. Reuse a `p#` only when the taught slot meaning is the same; if the meaning differs, use the different `p#` taught in that entity's rows.
+#   - e#(id) or e#(p#=v, p#=v) — get one entity by id or compound key (examples below use `v=$`, not concrete API values).
+#   - Use only expression shapes taught directly by the TSV `Expression` cells, substituting concrete values for placeholders.
+#   - For compound-key entity forms such as `e#(id) or e#(p#=v, p#=v)`, you MUST keep the keyed `p#=v` / `name=value` form. Never rewrite a keyed witness as positional arguments.
+#   - e#{p#=v, …} — list query; `e#` alone queries all.
+#   - e#(id).p# — relation. e#(id).m#() or e#(id).m#(p#=v,..) — method call.
+#   - Query/list goals use brace predicates `e#{p#=v, …}` from the entity's rows; do not answer a list goal with a dotted `e#(id).m#() or e#(id).m#(p#=v,..)` update unless the goal explicitly asks to mutate data.
+#   - e#.m#(args) — standalone create/action (no anchor id needed).
+#   - e#(id)[p#,…] — projection reads scalar fields. Any non-empty subset of allowed fields is valid. When projection is enabled, the entity definition carries one full `[p#,…]` listing exactly which slots are valid scalar projection fields for that entity. Do NOT use e#(id).p# for scalar fields; after `e#(id)`, dot is only for relations and `m#` methods that are explicitly taught for that entity.
+#   - To list one entity scoped by another (e.g. list X inside workspace Y): use the `X{p#=AnchorEntity(id)}` form from X's block — never start from `AnchorEntity(id).p#`.
+#   - `[v, …]` — array value inside method args, e.g. `p#=[e#($)]`.
+#   - Plain `str` values in predicates and method arguments MUST use `"…"` in this prompt. The parser may accept other quoted forms, but you MUST use double quotes here. In quoted strings only `\"` and `\\` are escapes.
+#   - `select` means choose exactly one listed allowed value from the `Meaning` column. `multiselect` means choose zero or more values using `[v, …]`, again from the listed allowed values.
+#   - When `Meaning` marks a slot used in an input value as `markdown`, `html`, `document`, `json_text`, or `blob`, use tagged heredoc only: `<<TAG` ... `TAG`.
+# - Example: `m#(..., p#=<<TXT` newline body newline `TXT` newline `)`.
+#   - e#~"text" — full-text search on entities whose teaching rows include a `~` example (same entities only).
+#   - `Meaning` is documentation only: use it to read returns, projection notes, allowed values, optional params, and descriptions, but never paste it into executable output.
+#   - A row whose `Expression` is only `p#` defines a slot before first use; its `Meaning` cell is descriptive metadata, not an executable API call.
+#   - `$` — appears only in prompt examples as a fill-in cue. Substitute a real value in your output (never send the character `$` to the API). The corresponding field definition before first use gives type and description; your value must match that type.
+# - `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.
+#   - TSV rows are teaching rows; only the `Expression` column is executable syntax.
+#
+
+Expression	Meaning
+p47	int · id
+p45	select · allowed: ui, ocr, audio, document
+p62	str · text_preview
+e1(p47=$, p45=$)	returns e1 · projection [p47,p45,p62] · One capture pipeline item.
+e1{p3=$, p1=$, p4=$, p2=$}	returns [e1] · optional params: p3, p1, p4, p2 · capture-item-query
+p48	str · id
+p57	bool · screen_capture_running
+e2.m3()	returns e2 · projection [p48,p57] · Capture running or paused. · capture-session-get
+e3{p11=$, p5=$, p10=$, p6=$, p8=$, p7=$, p9=$}	returns [e3] · A detected question with optional answers. · optional params: p11, p5, p10, p6, p8, p7, p9 · detected-question-query
+p50	str · meeting_uuid
+p49	int · meeting_id
+p60	select · allowed: active, ended, cancelled
+p61	markdown · summary
+e4($)	returns e4 · projection [p50,p49,p60,p61] · A detected meeting.
+e4{p15=$, p14=$, p12=$, p13=$}	returns [e4] · optional params: p15, p14, p12, p13 · query
+e5{p18=$, p19=$, p17=$, p16=$}	returns [e5] · One pipeline bus event. · optional params: p18, p19, p17, p16 · pipeline-event-query
+p65	str · workers
+e6.m8()	returns e6 · projection [p48,p65] · Pipeline health snapshot. · pipeline-snapshot-get
+p46	str · display_name
+p54	select · allowed: person, organisation, project
+e7($)	returns e7 · projection [p47,p46,p54] · A person, organisation, or project profile.
+e7{p21=$, p20=$}	returns [e7] · optional params: p21, p20 · query
+e7($).p66	returns [e9] · Content scoped to this profile.
+e8.m11(p26=$,..)	returns () · Action prompt execution result. · optional params: p24, p25, p23, p27, p22 · prompt-run-create
+e9($).profile_id	returns e7 · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
+e9{p30=e7(1), p31=$, p28=$, p29=$}	returns [e9] · optional params: p31, p28, p29 · Search content scoped to one profile.
+e9~$	returns [e9] · optional params: p33, p35, p38, p40, p34, p32, p41, p37, p36 · Search recorded OCR, transcripts, and UI text.

@@ -1,0 +1,212 @@
+# Linear API — excerpt for authoring (documentation only; not loaded by Plasm).
+# Refresh via introspection against the Linear GraphQL endpoint when the API changes.
+
+type Query {
+  issues(first: Int, after: String, filter: IssueFilter): IssueConnection!
+  issue(id: String!): Issue
+  teams(first: Int, after: String): TeamConnection!
+  team(id: String!): Team
+  projects(first: Int, after: String): ProjectConnection!
+  project(id: String!): Project
+  users(first: Int, after: String): UserConnection!
+  user(id: String!): User
+  workflowState(id: String!): WorkflowState
+  workflowStates(first: Int, after: String, filter: WorkflowStateFilter): WorkflowStateConnection!
+  issueLabels(first: Int, after: String): IssueLabelConnection!
+  issueLabel(id: String!): IssueLabel
+  comments(first: Int, after: String): CommentConnection!
+  comment(id: String!): Comment
+}
+
+type IssueConnection {
+  nodes: [Issue!]!
+  pageInfo: PageInfo!
+}
+
+type TeamConnection {
+  nodes: [Team!]!
+  pageInfo: PageInfo!
+}
+
+type ProjectConnection {
+  nodes: [Project!]!
+  pageInfo: PageInfo!
+}
+
+type UserConnection {
+  nodes: [User!]!
+  pageInfo: PageInfo!
+}
+
+type WorkflowStateConnection {
+  nodes: [WorkflowState!]!
+  pageInfo: PageInfo!
+}
+
+type IssueLabelConnection {
+  nodes: [IssueLabel!]!
+  pageInfo: PageInfo!
+}
+
+type CommentConnection {
+  nodes: [Comment!]!
+  pageInfo: PageInfo!
+}
+
+type PageInfo {
+  startCursor: String
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+}
+
+# Plasm issue_get query uses children(first: N, includeArchived: true) so sub-issues are listed.
+type Issue {
+  id: ID!
+  identifier: String!
+  title: String!
+  description: String
+  parent: Issue
+  children: IssueConnection!
+  team: Team
+  project: Project
+  assignee: User
+  state: WorkflowState
+  labels: IssueLabelConnection
+}
+
+type Team {
+  id: ID!
+  name: String
+  key: String
+}
+
+type Project {
+  id: ID!
+  name: String
+  slugId: String
+}
+
+type User {
+  id: ID!
+  name: String
+  displayName: String
+  email: String
+}
+
+type WorkflowState {
+  id: ID!
+  name: String
+  type: String
+  position: Float
+}
+
+type IssueLabel {
+  id: ID!
+  name: String
+  color: String
+}
+
+type Comment {
+  id: ID!
+  body: String
+  issue: Issue
+}
+
+# Mutations (representative — see Linear schema / SDK for full inputs)
+
+type Mutation {
+  issueCreate(input: IssueCreateInput!): IssuePayload!
+  issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload!
+  issueDelete(id: String!, permanentlyDelete: Boolean): IssueArchivePayload!
+  commentCreate(input: CommentCreateInput!): CommentPayload!
+  issueLabelCreate(input: IssueLabelCreateInput!): IssueLabelPayload!
+  issueLabelUpdate(id: String!, input: IssueLabelUpdateInput!): IssueLabelPayload!
+  projectCreate(input: ProjectCreateInput!): ProjectPayload!
+  workflowStateCreate(input: WorkflowStateCreateInput!): WorkflowStatePayload!
+}
+
+# issueCreate / issueUpdate payloads: request `issue { … state { id name type } }` to confirm column.
+type IssuePayload {
+  success: Boolean!
+  issue: Issue
+}
+
+type CommentPayload {
+  success: Boolean!
+  comment: Comment
+}
+
+type IssueArchivePayload {
+  success: Boolean!
+  entity: Issue
+}
+
+input IssueCreateInput {
+  teamId: String!
+  title: String
+  description: String
+  projectId: String
+  assigneeId: String
+  stateId: String
+  parentId: String
+}
+
+input IssueUpdateInput {
+  title: String
+  description: String
+  projectId: String
+  assigneeId: String
+  stateId: String
+  parentId: String
+  addedLabelIds: [String!]
+  removedLabelIds: [String!]
+}
+
+input CommentCreateInput {
+  issueId: String
+  body: String
+}
+
+type IssueLabelPayload {
+  success: Boolean!
+  issueLabel: IssueLabel
+}
+
+type ProjectPayload {
+  success: Boolean!
+  project: Project
+}
+
+type WorkflowStatePayload {
+  success: Boolean!
+  workflowState: WorkflowState
+}
+
+input IssueLabelCreateInput {
+  name: String!
+  teamId: String
+  color: String
+  description: String
+}
+
+input IssueLabelUpdateInput {
+  name: String
+  color: String
+  description: String
+}
+
+input ProjectCreateInput {
+  name: String!
+  teamIds: [String!]!
+  description: String
+}
+
+input WorkflowStateCreateInput {
+  name: String!
+  teamId: String!
+  type: String!
+  color: String!
+  description: String
+  position: Float
+}

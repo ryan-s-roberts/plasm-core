@@ -1,0 +1,163 @@
+[workspace]
+members = [
+    "crates/plasm-core",
+    "crates/plasm-cml",
+    "crates/plasm-compile",
+    "crates/plasm-runtime",
+    "crates/plasm-trace",
+    "crates/plasm-mock",
+    "crates/plasm-cli",
+    "crates/plasm-e2e",
+    "crates/plasm-agent-core",
+    "crates/plasm-agent",
+    "crates/plasm-repl",
+    "crates/plasm-eval",
+    "crates/plasm-sdk-transport",
+    "crates/plasm-plugin-abi",
+    "crates/plasm-plugin-host",
+    "crates/plasm-plugin-stub",
+    "crates/plasm-trace-sink",
+    "crates/plasm-otel",
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Core serialization and typing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+serde_urlencoded = "0.7"
+thiserror = "1.0"
+
+# Async runtime
+async-stream = "0.3"
+async-trait = "0.1"
+futures = "0.3"
+futures-util = { version = "0.3", default-features = false, features = [
+    "alloc",
+    "async-await",
+    "std",
+] }
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+http = "1"
+http-problem = "0.3.0"
+
+# Web server for mock backend (0.8 aligns with auth-framework axum-integration)
+axum = { version = "0.8", features = ["json"] }
+tower = { version = "0.5", features = ["util"] }
+
+# OpenAPI parsing
+openapiv3 = "2.0"
+
+# Cryptographic hashing for fingerprinting
+blake3 = "1.5"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+subtle = "2"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tracing-opentelemetry = "0.32"
+
+# OpenTelemetry
+opentelemetry = { version = "0.31", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.31", features = [
+    "trace",
+    "metrics",
+    "logs",
+    "rt-tokio",
+] }
+opentelemetry-otlp = { version = "0.31", features = [
+    "trace",
+    "metrics",
+    "logs",
+    "http-proto",
+    "grpc-tonic",
+    "gzip-http",
+    "reqwest-blocking-client",
+] }
+opentelemetry-appender-tracing = { version = "0.31", features = [
+    "tracing-opentelemetry",
+] }
+opentelemetry-http = { version = "0.31", default-features = false }
+
+# CLI framework
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1"
+dotenvy = "0.15"
+
+# Testing frameworks
+proptest = "1.4"
+insta = { version = "1.34" }
+serial_test = "3"
+beavuck-hermit = "1.4"
+
+# Auth / tokens / OAuth
+jsonwebtoken = "9"
+oauth2 = { version = "5", features = ["reqwest"] }
+auth-framework = { version = "0.5.0-rc1", default-features = false, features = [
+    "axum-integration",
+    "postgres-storage",
+] }
+
+# Database
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "postgres",
+    "runtime-tokio-rustls",
+] }
+
+# Dynamic loading (compile plugins)
+libloading = "0.8"
+ciborium = "0.2"
+
+# Utility crates
+arc-swap = "1.7"
+indexmap = { version = "2.0", features = ["serde"] }
+uuid = { version = "1.6", features = ["v4", "v5"] }
+url = "2.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tempfile = "3.0"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
+chrono-english = "0.1.8"
+toon = "0.1"
+rayon = "1.10"
+
+# LLM / REPL
+baml = "0.220"
+rust-mcp-sdk = { version = "0.9.0", default-features = false, features = [
+    "server",
+    "streamable-http",
+    "hyper-server",
+    "macros",
+    "auth",
+] }
+rustyline = "17.0.2"
+
+# Data / Iceberg (JanKaul iceberg-rust stack)
+datafusion = "53"
+datafusion_iceberg = { git = "https://github.com/JanKaul/iceberg-rust", package = "datafusion_iceberg" }
+iceberg-rust = { git = "https://github.com/JanKaul/iceberg-rust", package = "iceberg-rust" }
+iceberg-sql-catalog = { git = "https://github.com/JanKaul/iceberg-rust", package = "iceberg-sql-catalog", default-features = false, features = [
+    "runtime-tokio",
+] }
+object_store = { version = "0.13", features = ["aws", "gcp", "azure", "fs"] }
+
+# EVM / Alloy
+alloy = "1.8.2"
+alloy-chains = { version = "0.2.33", features = ["serde"] }
+alloy-primitives = { version = "1.5.7", features = ["serde"] }
+alloy-json-abi = { version = "1.5.7", features = ["serde_json"] }
+alloy-dyn-abi = "1.5.7"
+alloy-provider = { version = "1.8.2", features = ["anvil-api"] }
+alloy-rpc-client = "1.8.2"
+alloy-rpc-types = "1.8.2"
+alloy-transport-http = "1.8.2"
+alloy-network = "1.8.2"
+alloy-signer-local = "1.8.2"
+alloy-sol-types = "1.5.7"
+
+# Containers
+testcontainers-modules = "0.15.0"

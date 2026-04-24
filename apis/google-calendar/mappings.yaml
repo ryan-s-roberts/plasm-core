@@ -1,0 +1,142 @@
+# Google Calendar REST API v3 — CML mappings. Domain model in domain.yaml.
+#
+# Base URL: Google Calendar API v3 (set Google API HTTPS origin and path with --backend).
+# Auth: Bearer token (OAuth 2.0 access token in GCAL_TOKEN env var).
+#
+# Compound-key events: the CML env receives `calendarId` and `id` from the
+# compound Ref's key_vars. The event_get and event_list mappings reference
+# these by name in path and query segments respectively.
+#
+# path: annotations in domain.yaml extract nested fields:
+#   start_datetime → response["start"]["dateTime"]
+#   organizer_email → response["organizer"]["email"]
+# These are handled by the decoder automatically at schema load time.
+#
+# Pagination: cursor style via pageToken / nextPageToken.
+# PaginationParam::FromResponse stops automatically when nextPageToken is
+# absent or null in the response — no explicit stop_when needed.
+#
+# Note: the path literal "v3" would parse as an integer in YAML without
+# quotes. All numeric-looking path segments are quoted: "v3", etc.
+# The base path is /calendar/v3/ so paths begin at the resource level.
+
+# ── Calendar ─────────────────────────────────────────────────────────────────
+
+calendar_get:
+  # GET /users/me/calendarList/{calendarId}
+  # id = calendarId (e.g. "primary", "user@gmail.com", or a generated ID)
+  method: GET
+  path:
+    - { type: literal, value: users }
+    - { type: literal, value: me }
+    - { type: literal, value: calendarList }
+    - { type: var, name: id }
+  response: single
+
+calendar_list:
+  # GET /users/me/calendarList
+  # Cursor pagination: pageToken / nextPageToken. FromResponse stops on null.
+  method: GET
+  path:
+    - { type: literal, value: users }
+    - { type: literal, value: me }
+    - { type: literal, value: calendarList }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [showHidden,   { type: if, condition: { type: exists, var: showHidden },
+                         then_expr: { type: var, name: showHidden },
+                         else_expr: { type: const, value: null } }]
+      - [showDeleted,  { type: if, condition: { type: exists, var: showDeleted },
+                         then_expr: { type: var, name: showDeleted },
+                         else_expr: { type: const, value: null } }]
+      - [minAccessRole, { type: if, condition: { type: exists, var: minAccessRole },
+                          then_expr: { type: var, name: minAccessRole },
+                          else_expr: { type: const, value: null } }]
+  pagination:
+    params:
+      pageToken:  { from_response: nextPageToken }
+      maxResults: { fixed: 250 }
+
+# ── Event ─────────────────────────────────────────────────────────────────────
+
+event_get:
+  # GET /calendars/{calendarId}/events/{eventId}
+  # Both calendarId and id come from the compound Ref key_vars.
+  # The runtime injects them into the CML env via populate_cml_path_env_with_key_vars.
+  # The response decoder also pre-injects calendarId into the response JSON
+  # (since Google Calendar responses don't include calendarId in the event body).
+  method: GET
+  path:
+    - { type: literal, value: calendars }
+    - { type: var, name: calendarId }
+    - { type: literal, value: events }
+    - { type: var, name: id }
+  response: single
+
+event_list:
+  # GET /calendars/{calendarId}/events
+  # calendarId comes from the scope param (role: scope).
+  # Rich query filters: time range, full-text search, event type, recurrence handling.
+  # Cursor pagination: pageToken / nextPageToken (FromResponse stops on null).
+  method: GET
+  path:
+    - { type: literal, value: calendars }
+    - { type: var, name: calendarId }
+    - { type: literal, value: events }
+  response:
+    items: items
+  query:
+    type: object
+    fields:
+      - [q,           { type: if, condition: { type: exists, var: q },
+                        then_expr: { type: var, name: q },
+                        else_expr: { type: const, value: null } }]
+      - [timeMin,     { type: if, condition: { type: exists, var: timeMin },
+                        then_expr: { type: var, name: timeMin },
+                        else_expr: { type: const, value: null } }]
+      - [timeMax,     { type: if, condition: { type: exists, var: timeMax },
+                        then_expr: { type: var, name: timeMax },
+                        else_expr: { type: const, value: null } }]
+      - [timeZone,    { type: if, condition: { type: exists, var: timeZone },
+                        then_expr: { type: var, name: timeZone },
+                        else_expr: { type: const, value: null } }]
+      - [updatedMin,  { type: if, condition: { type: exists, var: updatedMin },
+                        then_expr: { type: var, name: updatedMin },
+                        else_expr: { type: const, value: null } }]
+      - [syncToken,   { type: if, condition: { type: exists, var: syncToken },
+                        then_expr: { type: var, name: syncToken },
+                        else_expr: { type: const, value: null } }]
+      - [iCalUID,     { type: if, condition: { type: exists, var: iCalUID },
+                        then_expr: { type: var, name: iCalUID },
+                        else_expr: { type: const, value: null } }]
+      - [maxAttendees, { type: if, condition: { type: exists, var: maxAttendees },
+                        then_expr: { type: var, name: maxAttendees },
+                        else_expr: { type: const, value: null } }]
+      - [showHiddenInvitations, { type: if, condition: { type: exists, var: showHiddenInvitations },
+                        then_expr: { type: var, name: showHiddenInvitations },
+                        else_expr: { type: const, value: null } }]
+      - [privateExtendedProperty, { type: if, condition: { type: exists, var: privateExtendedProperty },
+                        then_expr: { type: var, name: privateExtendedProperty },
+                        else_expr: { type: const, value: null } }]
+      - [sharedExtendedProperty, { type: if, condition: { type: exists, var: sharedExtendedProperty },
+                        then_expr: { type: var, name: sharedExtendedProperty },
+                        else_expr: { type: const, value: null } }]
+      - [orderBy,     { type: if, condition: { type: exists, var: orderBy },
+                        then_expr: { type: var, name: orderBy },
+                        else_expr: { type: const, value: null } }]
+      - [singleEvents, { type: if, condition: { type: exists, var: singleEvents },
+                         then_expr: { type: var, name: singleEvents },
+                         else_expr: { type: const, value: null } }]
+      - [showDeleted,  { type: if, condition: { type: exists, var: showDeleted },
+                         then_expr: { type: var, name: showDeleted },
+                         else_expr: { type: const, value: null } }]
+      - [eventTypes,   { type: if, condition: { type: exists, var: eventTypes },
+                         then_expr: { type: var, name: eventTypes },
+                         else_expr: { type: const, value: null } }]
+  pagination:
+    params:
+      pageToken:  { from_response: nextPageToken }
+      maxResults: { fixed: 250 }

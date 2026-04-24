@@ -1,0 +1,71 @@
+[package]
+name = "plasm-agent-core"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+[features]
+default = []
+# Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
+local_env_bootstrap_secrets = []
+# Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
+evm = ["plasm-compile/evm"]
+
+[lib]
+name = "plasm_agent_core"
+path = "src/lib.rs"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile" }
+plasm-runtime = { path = "../plasm-runtime" }
+plasm-trace = { path = "../plasm-trace" }
+plasm-plugin-host = { path = "../plasm-plugin-host" }
+plasm-trace-sink = { path = "../plasm-trace-sink" }
+plasm-otel = { path = "../plasm-otel" }
+arc-swap = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+http = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+indexmap = { workspace = true }
+http-problem = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+object_store = { workspace = true }
+url = { workspace = true }
+toon = { workspace = true }
+rust-mcp-sdk = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+jsonwebtoken = { workspace = true }
+subtle = { workspace = true }
+# Upstream QuickStart references `.postgres()` without `cfg(feature)`; compile needs `postgres-storage`
+# even when we only use `InMemoryStorage` at runtime (see auth_framework::storage::memory).
+auth-framework = { workspace = true }
+sqlx = { workspace = true, features = ["migrate", "chrono", "uuid"] }
+opentelemetry = { workspace = true }
+
+
+[dev-dependencies]
+tempfile = { workspace = true }
+insta = { workspace = true, features = ["json"] }
+jsonwebtoken = { workspace = true }
+proptest = { workspace = true }
+serde = { workspace = true }
+serde_urlencoded = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["postgres"] }
+tower = { workspace = true }

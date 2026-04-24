@@ -1,0 +1,140 @@
+# Petstore — soft expectations for NL→Plasm eval (schema: petstore)
+- id: ps-01
+  schema: petstore
+  goal: "Pets that are still available for adoption"
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Pet]
+    pred_fields_any: [status]
+    pred_values_any: [available]
+
+- id: ps-02
+  schema: petstore
+  goal: "Show me pending pets"
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Pet]
+    pred_fields_any: [status]
+    pred_values_any: [pending]
+
+- id: ps-03
+  schema: petstore
+  goal: "List pets with sold status"
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Pet]
+    pred_fields_any: [status]
+    pred_values_any: [sold]
+
+- id: ps-04
+  schema: petstore
+  goal: "Get order number 1"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Order]
+
+- id: ps-05
+  schema: petstore
+  goal: "All orders that are still placed"
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Order]
+    pred_fields_any: [status]
+    pred_values_any: [placed]
+
+- id: ps-06
+  schema: petstore
+  goal: "Orders that are complete"
+  tags: [query, bool]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Order]
+    pred_fields_any: [complete]
+
+- id: ps-07
+  schema: petstore
+  goal: "Pet with id 3 and only its name and status"
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Pet]
+    projection_contains: [name, status]
+
+- id: ps-08
+  schema: petstore
+  goal: "Category for pet 5"
+  tags: [chain]
+  covers: [chain, multi_step]
+  expect:
+    entities_any: [Pet]
+    chain_selectors_any: [category]
+
+- id: ps-09
+  schema: petstore
+  goal: "Tags on pet 10"
+  tags: [query, relation]
+  covers: [chain, query_filtered, multi_step]
+  expect:
+    entities_any: [Tag, Pet]
+
+- id: ps-10
+  schema: petstore
+  goal: "Pets tagged with both fluffy and cute"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Pet]
+    pred_fields_any: [tags]
+
+- id: ps-11
+  schema: petstore
+  goal: "Register a new user account for qa-bot before we run load tests"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [User]
+
+- id: ps-12
+  schema: petstore
+  goal: "Rename pet 4 to Rover in the inventory"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Pet]
+
+- id: ps-13
+  schema: petstore
+  goal: "Remove pet 99 from the store catalog"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Pet]
+
+- id: ps-14
+  schema: petstore
+  goal: "Sign in as user Bob to place an order"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [User]
+
+- id: ps-15
+  schema: petstore
+  goal: "List product categories so we can tag new inventory"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Category]
+
+- id: ps-16
+  schema: petstore
+  goal: "What is the API inventory response schema for our OpenAPI docs"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [ApiResponse]

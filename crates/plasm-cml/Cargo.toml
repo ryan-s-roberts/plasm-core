@@ -1,0 +1,34 @@
+[package]
+name = "plasm-cml"
+version = "0.1.0"
+edition = "2021"
+description = "CML template AST, parsing, and HTTP/EVM transport compilation for Plasm"
+readme = "README.md"
+
+[features]
+default = []
+evm = [
+    "dep:alloy-chains",
+    "dep:alloy-primitives",
+    "dep:alloy-json-abi",
+    "dep:alloy-dyn-abi",
+    "dep:alloy-rpc-types",
+]
+
+[dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true, default-features = false, features = ["clock"] }
+plasm-core = { path = "../plasm-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+indexmap = { workspace = true }
+tracing = { workspace = true }
+alloy-chains = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+alloy-json-abi = { workspace = true, optional = true }
+alloy-dyn-abi = { workspace = true, optional = true }
+alloy-rpc-types = { workspace = true, optional = true }
+
+[dev-dependencies]
+ciborium = { workspace = true }

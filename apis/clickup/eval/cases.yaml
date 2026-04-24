@@ -1,0 +1,462 @@
+# ClickUp — Plasm eval (schema key must match directory name: `clickup`)
+#
+# Run:
+#   plasm-eval --schema apis/clickup --cases apis/clickup/eval/cases.yaml --attempts 2
+# Default: last run → ./{model-slug}.latest.human.txt + ./{model-slug}.latest.json (same directory as this file).
+# Optional: --report-dir eval-reports for timestamped copies under eval-reports/clickup/.
+#
+# Tune correction vs semantic blend:
+#   expect:
+#     correction:
+#       weight: 0.25
+#
+# Authoring:
+# - **Goal-seeking (preferred for open eval):** write what the user or agent is trying to
+#   accomplish—planning, audit, triage, onboarding—not a prose rewrite of a REST query.
+#   Tool use is outcome-driven; the harness still scores soft entity/predicate hints.
+# - **Scoped grammar checks** (cu-01..cu-12): tighter prompts for regression; cu-13+ are
+#   mostly open goals. Where `List(...).tasks` or `Space(...).folders` is as valid as a
+#   scoped `Task` / `Folder` query, expectations omit `pred_fields_any` so both paths score.
+
+- id: cu-01
+  schema: clickup
+  goal: "List every ClickUp workspace (team) I have access to"
+  tags: [query, team, unscoped]
+  covers: [query_all]
+  expect:
+    entities_any: [Team]
+
+- id: cu-02
+  schema: clickup
+  goal: "Show profile information for the currently authenticated user"
+  tags: [singleton, user]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: cu-03
+  schema: clickup
+  goal: "List all spaces in workspace team_id 123456789"
+  tags: [query, space, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Space]
+    pred_fields_any: [team_id]
+
+- id: cu-04
+  schema: clickup
+  goal: "Query tasks across workspace 90120434512, including closed tasks"
+  tags: [query, task, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Task]
+    pred_fields_any: [team_id]
+
+- id: cu-05
+  schema: clickup
+  goal: "List members belonging to workspace team 555555555"
+  tags: [query, member, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Member]
+    pred_fields_any: [team_id]
+
+- id: cu-06
+  schema: clickup
+  goal: "List goals in workspace with team id 999888777"
+  tags: [query, goal, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Goal]
+    pred_fields_any: [team_id]
+
+- id: cu-07
+  schema: clickup
+  goal: "List webhooks registered for workspace team_id 42424242"
+  tags: [query, webhook, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Webhook]
+    pred_fields_any: [team_id]
+
+- id: cu-08
+  schema: clickup
+  goal: "Fetch workspace team 11111 by id, then navigate to its spaces"
+  tags: [chain, relation]
+  covers: [chain, multi_step]
+  expect:
+    entities_any: [Team, Space]
+    chain_selectors_any: [spaces]
+    max_steps: 4
+
+- id: cu-09
+  schema: clickup
+  goal: "List tags defined in space space_id 888777666"
+  tags: [query, tag, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Tag]
+    pred_fields_any: [space_id]
+
+- id: cu-10
+  schema: clickup
+  goal: "List custom fields available in workspace 777666555"
+  tags: [query, custom_field, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [CustomField]
+    pred_fields_any: [team_id]
+
+- id: cu-11
+  schema: clickup
+  goal: "List tasks inside list id 123456789012345678"
+  tags: [query, task, list_scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Task]
+
+- id: cu-12
+  schema: clickup
+  goal: "List folders in space space_id 444333222"
+  tags: [query, folder, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Folder]
+
+# --- Open / goal-seeking cases (outcome language; soft expectations) ---
+
+- id: cu-13
+  schema: clickup
+  goal: |
+    Stand-up prep: pull everything still on the backlog list 123456789012345678 so we
+    can point at blockers—include whatever the schema needs to scope to that list.
+  tags: [open, goal_seeking, task]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Task]
+
+- id: cu-14
+  schema: clickup
+  goal: |
+    We are reorganizing a client space: map the folder tree under space 444333222 before
+    we move lists—need the folder inventory, not a generic space dump.
+  tags: [open, goal_seeking, folder]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Folder]
+
+- id: cu-15
+  schema: clickup
+  goal: |
+    Security review: enumerate every outbound webhook registered against workspace
+    42424242 so we can verify URLs and rotate secrets—treat this as an audit trail pull.
+  tags: [open, goal_seeking, webhook, audit]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Webhook]
+    pred_fields_any: [team_id]
+
+- id: cu-16
+  schema: clickup
+  goal: |
+    Exec readout next week: surface all workspace goals for team 999888777 with enough
+    context to discuss timeline risk—not just “goals exist.”
+  tags: [open, goal_seeking, goal]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Goal]
+    pred_fields_any: [team_id]
+
+- id: cu-17
+  schema: clickup
+  goal: |
+    New hire onboarding: show me every ClickUp workspace (team) I can access so I know
+    where to file my first tasks.
+  tags: [open, goal_seeking, team, onboarding]
+  covers: [query_all]
+  expect:
+    entities_any: [Team]
+
+- id: cu-18
+  schema: clickup
+  goal: |
+    SSO incident: confirm who the authenticated user is in ClickUp before we compare
+    directory UIDs—need the profile, not a team listing.
+  tags: [open, goal_seeking, user, incident]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: cu-19
+  schema: clickup
+  goal: |
+    Capacity planning: list everyone in workspace 555555555 so we can assign sprint
+    roles without guessing seat count.
+  tags: [open, goal_seeking, member]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Member]
+    pred_fields_any: [team_id]
+
+- id: cu-20
+  schema: clickup
+  goal: |
+    Migration dry run: enumerate all spaces under workspace 123456789 before we bulk-move
+    lists—need the space IDs for the script.
+  tags: [open, goal_seeking, space, migration]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Space]
+    pred_fields_any: [team_id]
+
+- id: cu-21
+  schema: clickup
+  goal: |
+    Support tooling: list tags defined in space 888777666 so our macro labels match what
+    agents see in the UI.
+  tags: [open, goal_seeking, tag]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Tag]
+    pred_fields_any: [space_id]
+
+- id: cu-22
+  schema: clickup
+  goal: |
+    Intake form project: discover which custom fields exist workspace-wide (team
+    777666555) before we duplicate a template—avoid inventing field names in the form builder.
+  tags: [open, goal_seeking, custom_field]
+  covers: [query_filtered]
+  expect:
+    entities_any: [CustomField]
+    pred_fields_any: [team_id]
+
+- id: cu-23
+  schema: clickup
+  goal: |
+    PM asked for a quick drill-down: start from workspace team 11111, then open its
+    spaces—navigation-style is fine as long as we end up looking at spaces for that team.
+  tags: [open, goal_seeking, chain, relation]
+  covers: [chain, multi_step]
+  expect:
+    entities_any: [Team, Space]
+    chain_selectors_any: [spaces]
+    max_steps: 5
+
+- id: cu-24
+  schema: clickup
+  goal: |
+    Program office wants a single view of “where work lives” across our org: enumerate
+    teams I can reach first; we will pick one for a pilot next.
+  tags: [open, goal_seeking, team, portfolio]
+  covers: [query_all]
+  expect:
+    entities_any: [Team]
+
+- id: cu-25
+  schema: clickup
+  goal: |
+    Release hygiene: before we delete old webhooks, list everything registered for team
+    42424242 so nothing business-critical loses its callback.
+  tags: [open, goal_seeking, webhook]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Webhook]
+    pred_fields_any: [team_id]
+
+- id: cu-26
+  schema: clickup
+  goal: |
+    Quarterly OKR review: pull goals scoped to workspace 999888777 for leadership—same
+    data as a goals report, but framed as a meeting prep step.
+  tags: [open, goal_seeking, goal]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Goal]
+    pred_fields_any: [team_id]
+
+- id: cu-27
+  schema: clickup
+  goal: |
+    Contractor access audit: who is a member of workspace 555555555—need the roster for
+    compliance sign-off, not a task search.
+  tags: [open, goal_seeking, member, compliance]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Member]
+    pred_fields_any: [team_id]
+
+- id: cu-28
+  schema: clickup
+  goal: |
+    Design system rollout: list tags available in space 888777666 so component labels in
+    Figma line up with ClickUp—avoid mismatched taxonomy.
+  tags: [open, goal_seeking, tag]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Tag]
+    pred_fields_any: [space_id]
+
+- id: cu-29
+  schema: clickup
+  goal: |
+    Automation setup: inventory custom fields for team 777666555 before we wire Zapier—
+    we need real field identities, not guesses from a sample task.
+  tags: [open, goal_seeking, custom_field, automation]
+  covers: [query_filtered]
+  expect:
+    entities_any: [CustomField]
+    pred_fields_any: [team_id]
+
+- id: cu-30
+  schema: clickup
+  goal: |
+    War room: show tasks in backlog list 123456789012345678 so we can burn down P0s—
+    scope to that list however the expression model prefers.
+  tags: [open, goal_seeking, task, incident]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Task]
+
+- id: cu-31
+  schema: clickup
+  goal: |
+    Client handoff: document folder structure under space 444333222 for the successor PM—
+    need folders under that space, not unrelated lists.
+  tags: [open, goal_seeking, folder, handoff]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Folder]
+
+- id: cu-32
+  schema: clickup
+  goal: |
+    Workspace discovery: list spaces in team 123456789 before we attach a new integration
+    to the wrong container.
+  tags: [open, goal_seeking, space]
+  covers: [query_filtered]
+  expect:
+    # Either Space{team_id=Team(123456789)} or Team(123456789).spaces satisfies the goal.
+    entities_any: [Team, Space]
+
+- id: cu-33
+  schema: clickup
+  goal: "Create a new space called Sprint Sandbox under workspace team 11111 for the pilot"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Space, Team]
+
+- id: cu-34
+  schema: clickup
+  goal: "Rename task 9abcdef012345678 to Blocker — customer escalation"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Task]
+
+- id: cu-35
+  schema: clickup
+  goal: "Delete obsolete task 8badcafe00000001 after the duplicate was merged"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Task]
+
+- id: cu-36
+  schema: clickup
+  goal: "Check paid seat usage for workspace 42424242 before we add another editor"
+  tags: [invoke, action]
+  covers: [invoke]
+  expect:
+    entities_any: [Team]
+
+- id: cu-37
+  schema: clickup
+  goal: "Fetch task 1234509876543210987 but only title and status for the sidebar chip"
+  tags: [get, projection]
+  covers: [projection]
+  expect:
+    entities_any: [Task]
+    projection_contains: [name, status]
+
+- id: cu-38
+  schema: clickup
+  goal: "List tasks in list 8765432109876543210 scoped from that list for burndown"
+  tags: [reverse, query]
+  covers: [reverse]
+  expect:
+    entities_any: [Task, List]
+
+# Remaining capability domains (entity coverage).
+- id: cu-39
+  schema: clickup
+  goal: "Comments on task 424242 for the audit trail export"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Comment]
+
+- id: cu-40
+  schema: clickup
+  goal: "Custom task types configured for space 111 for the template picker"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [CustomTaskType]
+
+- id: cu-41
+  schema: clickup
+  goal: "Workspace member groups for team 222 before we add a guest"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Group]
+
+- id: cu-42
+  schema: clickup
+  goal: "Key results under goal 333 for the OKR dashboard"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [KeyResult]
+
+- id: cu-43
+  schema: clickup
+  goal: "Custom roles in workspace 444 for permissions review"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Role]
+
+- id: cu-44
+  schema: clickup
+  goal: "Task templates available in space 555 for sprint planning"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Template]
+
+- id: cu-45
+  schema: clickup
+  goal: "Time entries for task 666 for the weekly timesheet"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [TimeEntry]
+
+- id: cu-46
+  schema: clickup
+  goal: "Tracked time intervals for user 777 in the payroll sync"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [TimeInterval]
+
+- id: cu-47
+  schema: clickup
+  goal: "Board views in list 888 for the layout switcher"
+  tags: [query, coverage]
+  covers: [query_filtered]
+  expect:
+    entities_any: [View]

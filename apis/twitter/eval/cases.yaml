@@ -1,0 +1,37 @@
+# NL eval cases for X API v2 (twitter) CGS — goals reference the DOMAIN surface.
+# Coverage: `cargo run -p plasm-eval -- coverage --schema apis/twitter --cases apis/twitter/eval/cases.yaml`
+
+- id: twitter-read-search-chain
+  schema: twitter
+  goal: >-
+    Look up user @XDevelopers, fetch their recent posts timeline, then run a recent search
+    for posts matching "api" and show id and text for the first result.
+  covers:
+    - chain
+    - get
+    - projection
+    - query_filtered
+    - reverse
+    - search_text
+    - multi_step
+  tags: [read, timeline, search]
+  expect:
+    entities_any: [User, Tweet]
+
+- id: twitter-write-invoke
+  schema: twitter
+  goal: >-
+    Post a short status update, then delete that post if the write succeeded.
+  covers: [create, invoke]
+  tags: [write]
+  expect:
+    entities_any: [Tweet]
+
+- id: twitter-list-surface
+  schema: twitter
+  goal: >-
+    Fetch list metadata by id, then list posts from that list's timeline.
+  covers: [get, query_filtered, reverse]
+  tags: [lists]
+  expect:
+    entities_any: [List, Tweet]

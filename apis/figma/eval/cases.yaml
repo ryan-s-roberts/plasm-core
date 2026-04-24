@@ -1,0 +1,107 @@
+# Figma REST API — eval goals for the wave-1 catalog.
+
+- id: fg-01
+  schema: figma
+  goal: "Show my Figma profile so I can confirm which account this token belongs to"
+  tags: [singleton]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: fg-02
+  schema: figma
+  goal: "List the projects in team 123456789"
+  tags: [query, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Project]
+    pred_fields_any: [team_id]
+
+- id: fg-03
+  schema: figma
+  goal: "Open project 987654321 and list its files"
+  tags: [get, chain]
+  covers: [get, chain, multi_step]
+  expect:
+    entities_any: [Project, File]
+
+- id: fg-04
+  schema: figma
+  goal: "Load file AbCdEfGh123 and inspect its document JSON for automation"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [File]
+
+- id: fg-05
+  schema: figma
+  goal: "Open file AbCdEfGh123 directly for a focused handoff check"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [File]
+
+- id: fg-06
+  schema: figma
+  goal: "Load file AbCdEfGh123 metadata and tell me who last touched it"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [FileMetadata]
+
+- id: fg-07
+  schema: figma
+  goal: "List comments on file AbCdEfGh123 as markdown for the review summary"
+  tags: [query]
+  covers: [query_filtered, reverse]
+  expect:
+    entities_any: [Comment]
+    pred_fields_any: [file_key]
+
+- id: fg-08
+  schema: figma
+  goal: "Reply in file AbCdEfGh123 that the engineering handoff is ready"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Comment]
+
+- id: fg-09
+  schema: figma
+  goal: "From team 123456789, drill into the onboarding project, then the mobile app file, then read its comments"
+  tags: [chain, multi_step]
+  covers: [chain, multi_step]
+  expect:
+    entities_any: [Team, Project, File, Comment]
+
+- id: fg-10
+  schema: figma
+  goal: "After locating the file, open its metadata to confirm who last touched it"
+  tags: [get, multi_step]
+  covers: [get, multi_step]
+  expect:
+    entities_any: [FileMetadata]
+
+- id: fg-11
+  schema: figma
+  goal: "I need the file structure for the design spec, not just the file list"
+  tags: [adversarial]
+  covers: [get, multi_step]
+  expect:
+    entities_any: [File]
+
+- id: fg-12
+  schema: figma
+  goal: "Don't browse every project; just use file AbCdEfGh123 directly"
+  tags: [adversarial]
+  covers: [get]
+  expect:
+    entities_any: [File]
+
+- id: fg-13
+  schema: figma
+  goal: "List files in project 987654321 but only return each file's key and name"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [File]

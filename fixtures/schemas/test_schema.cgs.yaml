@@ -1,0 +1,124 @@
+---
+http_backend: http://localhost:1080
+entities:
+  Account:
+    name: Account
+    id_field: id
+    fields:
+      id:
+        name: id
+        field_type: string
+        allowed_values: 
+        required: true
+      name:
+        name: name
+        field_type: string
+        allowed_values: 
+        required: true
+      revenue:
+        name: revenue
+        field_type: number
+        allowed_values: 
+        required: false
+      region:
+        name: region
+        field_type: select
+        allowed_values:
+        - EMEA
+        - APAC
+        - AMER
+        required: false
+    relations:
+      contacts:
+        name: contacts
+        target_resource: Contact
+        cardinality: many
+  Contact:
+    name: Contact
+    abstract: true
+    id_field: id
+    fields:
+      id:
+        name: id
+        field_type: string
+        allowed_values: 
+        required: true
+      name:
+        name: name
+        field_type: string
+        allowed_values: 
+        required: true
+      role:
+        name: role
+        field_type: select
+        allowed_values:
+        - Manager
+        - Employee
+        - Contractor
+        required: false
+    relations: {}
+  BlobAsset:
+    name: BlobAsset
+    id_field: id
+    description: Fixture entity for interchange tests — opaque blob field with MIME + media hints.
+    fields:
+      id:
+        name: id
+        field_type: string
+        allowed_values: 
+        required: true
+      payload:
+        name: payload
+        field_type: blob
+        allowed_values: 
+        required: false
+        mime_type_hint: application/octet-stream
+        attachment_media: generic
+      icon_png:
+        name: icon_png
+        field_type: blob
+        allowed_values: 
+        required: false
+        mime_type_hint: image/png
+        attachment_media: image
+    relations: {}
+capabilities:
+  query_accounts:
+    name: query_accounts
+    kind: query
+    domain: Account
+    mapping:
+      template:
+        method: POST
+        path:
+        - type: literal
+          value: query
+        - type: literal
+          value: Account
+        body:
+          type: if
+          condition:
+            type: exists
+            var: filter
+          then_expr:
+            type: object
+            fields:
+            - - filter
+              - type: var
+                name: filter
+          else_expr:
+            type: object
+            fields: []
+  blob_asset_get:
+    name: blob_asset_get
+    kind: get
+    domain: BlobAsset
+    mapping:
+      template:
+        response: single
+        method: GET
+        path:
+        - type: literal
+          value: blob-asset
+        - name: id
+          type: var

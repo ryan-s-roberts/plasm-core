@@ -1,0 +1,48 @@
+# Open Brewery DB — `Brewery`: list, search, get, random action.
+- id: ob-01
+  schema: openbrewerydb
+  goal: "Planning a Portland trip: list microbreweries in Oregon"
+  tags: [query, filter]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Brewery]
+
+- id: ob-02
+  schema: openbrewerydb
+  goal: "Find breweries whose name or address matches 'breakside' for autocomplete"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Brewery]
+
+- id: ob-03
+  schema: openbrewerydb
+  goal: "Open the canonical record for brewery UUID 5128df48-79c2-4df0-9850-ea1853ea0c62"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Brewery]
+
+- id: ob-04
+  schema: openbrewerydb
+  goal: "Surprise me with three random breweries for the discovery feed"
+  tags: [action]
+  covers: [invoke]
+  expect:
+    entities_any: [Brewery]
+
+- id: ob-05
+  schema: openbrewerydb
+  goal: "List Colorado breweries but only return name, city, and website for export"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Brewery]
+
+- id: ob-06
+  schema: openbrewerydb
+  goal: "Open dataset browse: first page of every brewery in the public catalog"
+  tags: [query, browse]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Brewery]

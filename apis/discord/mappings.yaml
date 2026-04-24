@@ -1,0 +1,1855 @@
+application_command_bulk_put:
+  body:
+    name: input
+    type: var
+  method: PUT
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: commands
+application_command_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: commands
+application_command_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: commands
+  - name: id
+    type: var
+application_command_get:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: commands
+  - name: id
+    type: var
+application_command_list:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: commands
+  query:
+    fields:
+    - - with_localizations
+      - condition:
+          type: exists
+          var: with_localizations
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: with_localizations
+          type: var
+        type: if
+    type: object
+application_command_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: commands
+  - name: id
+    type: var
+application_emoji_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: emojis
+application_emoji_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: emojis
+  - name: id
+    type: var
+application_emoji_get:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: emojis
+  - name: id
+    type: var
+application_emoji_list:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: emojis
+application_emoji_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: emojis
+  - name: id
+    type: var
+application_get:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: id
+    type: var
+application_me_retrieve:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - type: literal
+    value: '@me'
+application_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: applications
+  - name: id
+    type: var
+auto_moderation_rule_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: auto-moderation
+  - type: literal
+    value: rules
+auto_moderation_rule_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: auto-moderation
+  - type: literal
+    value: rules
+  - name: id
+    type: var
+auto_moderation_rule_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: auto-moderation
+  - type: literal
+    value: rules
+  - name: id
+    type: var
+auto_moderation_rule_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: auto-moderation
+  - type: literal
+    value: rules
+auto_moderation_rule_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: auto-moderation
+  - type: literal
+    value: rules
+  - name: id
+    type: var
+ban_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: bans
+  - name: user_id
+    type: var
+ban_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: bans
+  - name: user_id
+    type: var
+ban_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: bans
+  query:
+    fields:
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    - - after
+      - condition:
+          type: exists
+          var: after
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: after
+          type: var
+        type: if
+    type: object
+ban_put:
+  body:
+    name: input
+    type: var
+  method: PUT
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: bans
+  - name: user_id
+    type: var
+channel_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: channels
+  - name: id
+    type: var
+channel_dm_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: users
+  - type: literal
+    value: '@me'
+  - type: literal
+    value: channels
+channel_get:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: id
+    type: var
+channel_invite_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: invites
+channel_invite_list:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: invites
+channel_list_for_guild:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: channels
+channel_overwrite_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: permissions
+  - name: id
+    type: var
+channel_overwrite_get:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: permissions
+  - name: id
+    type: var
+channel_overwrite_put:
+  body:
+    name: input
+    type: var
+  method: PUT
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: permissions
+  - name: id
+    type: var
+channel_pin_add:
+  method: PUT
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: pins
+  - name: message_id
+    type: var
+channel_pin_remove:
+  method: DELETE
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: pins
+  - name: message_id
+    type: var
+channel_send_soundboard_sound:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: id
+    type: var
+  - type: literal
+    value: send-soundboard-sound
+channel_thread_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: threads
+channel_thread_list_archived_public:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: threads
+  - type: literal
+    value: archived
+  - type: literal
+    value: public
+  query:
+    fields:
+    - - before
+      - condition:
+          type: exists
+          var: before
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: before
+          type: var
+        type: if
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    type: object
+channel_typing:
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: id
+    type: var
+  - type: literal
+    value: typing
+channel_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: channels
+  - name: id
+    type: var
+channel_webhook_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: webhooks
+channel_webhook_list:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: webhooks
+entitlement_consume:
+  method: POST
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: entitlements
+  - name: id
+    type: var
+  - type: literal
+    value: consume
+entitlement_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: entitlements
+entitlement_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: entitlements
+  - name: id
+    type: var
+entitlement_get:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: entitlements
+  - name: id
+    type: var
+entitlement_list:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: entitlements
+  query:
+    fields:
+    - - user_id
+      - condition:
+          type: exists
+          var: user_id
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: user_id
+          type: var
+        type: if
+    - - sku_ids
+      - condition:
+          type: exists
+          var: sku_ids
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: sku_ids
+          type: var
+        type: if
+    - - guild_id
+      - condition:
+          type: exists
+          var: guild_id
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: guild_id
+          type: var
+        type: if
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    - - after
+      - condition:
+          type: exists
+          var: after
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: after
+          type: var
+        type: if
+    - - exclude_ended
+      - condition:
+          type: exists
+          var: exclude_ended
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: exclude_ended
+          type: var
+        type: if
+    type: object
+gateway_bot_url_fetch:
+  method: GET
+  path:
+  - type: literal
+    value: gateway
+  - type: literal
+    value: bot
+gateway_url_fetch:
+  method: GET
+  path:
+  - type: literal
+    value: gateway
+guild_active_thread_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: threads
+  - type: literal
+    value: active
+guild_application_command_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: commands
+guild_application_command_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: commands
+  - name: id
+    type: var
+guild_application_command_get:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: commands
+  - name: id
+    type: var
+guild_application_command_list:
+  method: GET
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: commands
+guild_application_command_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: applications
+  - name: application_id
+    type: var
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: commands
+  - name: id
+    type: var
+guild_audit_log_fetch:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: audit-logs
+  query:
+    fields:
+    - - user_id
+      - condition:
+          type: exists
+          var: user_id
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: user_id
+          type: var
+        type: if
+    - - action_type
+      - condition:
+          type: exists
+          var: action_type
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: action_type
+          type: var
+        type: if
+    - - before
+      - condition:
+          type: exists
+          var: before
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: before
+          type: var
+        type: if
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    type: object
+guild_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+guild_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+guild_emoji_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: emojis
+guild_emoji_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: emojis
+  - name: id
+    type: var
+guild_emoji_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: emojis
+  - name: id
+    type: var
+guild_emoji_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: emojis
+guild_emoji_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: emojis
+  - name: id
+    type: var
+guild_from_template_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - type: literal
+    value: templates
+  - name: code
+    type: var
+guild_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+guild_integration_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: integrations
+  - name: id
+    type: var
+guild_integration_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: integrations
+guild_invite_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: invites
+guild_member_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - name: user_id
+    type: var
+guild_member_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  query:
+    fields:
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    - - after
+      - condition:
+          type: exists
+          var: after
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: after
+          type: var
+        type: if
+    type: object
+guild_member_me_patch:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - type: literal
+    value: '@me'
+guild_member_patch:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - name: user_id
+    type: var
+guild_member_put:
+  body:
+    name: input
+    type: var
+  method: PUT
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - name: user_id
+    type: var
+guild_member_remove:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - name: user_id
+    type: var
+guild_member_role_add:
+  method: PUT
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - name: user_id
+    type: var
+  - type: literal
+    value: roles
+  - name: role_id
+    type: var
+guild_member_role_remove:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: members
+  - name: user_id
+    type: var
+  - type: literal
+    value: roles
+  - name: role_id
+    type: var
+guild_preview_fetch:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+  - type: literal
+    value: preview
+guild_prune_execute:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: prune
+guild_prune_preview:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: prune
+  query:
+    fields:
+    - - days
+      - condition:
+          type: exists
+          var: days
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: days
+          type: var
+        type: if
+    - - include_roles
+      - condition:
+          type: exists
+          var: include_roles
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: include_roles
+          type: var
+        type: if
+    type: object
+guild_role_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: roles
+guild_roles_positions_patch:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: roles
+guild_sticker_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: stickers
+guild_sticker_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: stickers
+  - name: id
+    type: var
+guild_sticker_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: stickers
+  - name: id
+    type: var
+guild_sticker_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: stickers
+guild_sticker_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: stickers
+  - name: id
+    type: var
+guild_template_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: templates
+guild_template_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: templates
+  - name: code
+    type: var
+guild_template_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: templates
+guild_template_sync:
+  body:
+    name: input
+    type: var
+  method: PUT
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: templates
+  - name: code
+    type: var
+guild_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+guild_webhook_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: webhooks
+guild_welcome_screen_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+  - type: literal
+    value: welcome-screen
+guild_welcome_screen_patch:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+  - type: literal
+    value: welcome-screen
+guild_widget_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+  - type: literal
+    value: widget
+guild_widget_patch:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: id
+    type: var
+  - type: literal
+    value: widget
+interaction_callback:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: interactions
+  - name: interaction_id
+    type: var
+  - name: interaction_token
+    type: var
+  - type: literal
+    value: callback
+invite_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: invites
+  - name: id
+    type: var
+invite_get:
+  method: GET
+  path:
+  - type: literal
+    value: invites
+  - name: id
+    type: var
+message_bulk_delete:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  - type: literal
+    value: bulk-delete
+message_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+message_crosspost:
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  - name: id
+    type: var
+  - type: literal
+    value: crosspost
+message_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  - name: id
+    type: var
+message_get:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  - name: id
+    type: var
+# Preflight merges message_get row as parent_*; body builds message_reference for Discord reply semantics.
+message_reply:
+  method: POST
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  body:
+    type: object
+    fields:
+    - - content
+      - type: var
+        name: content
+    - - message_reference
+      - type: object
+        fields:
+        - - message_id
+          - type: var
+            name: parent_id
+        - - channel_id
+          - type: var
+            name: parent_channel_id
+        - - fail_if_not_exists
+          - type: const
+            value: false
+    - - tts
+      - type: if
+        condition:
+          type: exists
+          var: tts
+        then_expr:
+          type: var
+          name: tts
+        else_expr:
+          type: const
+          value: null
+message_in_channel:
+  method: GET
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  query:
+    fields:
+    - - around
+      - condition:
+          type: exists
+          var: around
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: around
+          type: var
+        type: if
+    - - before
+      - condition:
+          type: exists
+          var: before
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: before
+          type: var
+        type: if
+    - - after
+      - condition:
+          type: exists
+          var: after
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: after
+          type: var
+        type: if
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    type: object
+message_search_in_guild:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: messages
+  - type: literal
+    value: search
+  query:
+    fields:
+    - - content
+      - condition:
+          type: exists
+          var: content
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: content
+          type: var
+        type: if
+    - - author_id
+      - condition:
+          type: exists
+          var: author_id
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: author_id
+          type: var
+        type: if
+    - - limit
+      - condition:
+          type: exists
+          var: limit
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: limit
+          type: var
+        type: if
+    - - offset
+      - condition:
+          type: exists
+          var: offset
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: offset
+          type: var
+        type: if
+    - - channel_id
+      - condition:
+          type: exists
+          var: channel_id
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: channel_id
+          type: var
+        type: if
+    - - mentions
+      - condition:
+          type: exists
+          var: mentions
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: mentions
+          type: var
+        type: if
+    - - pinned
+      - condition:
+          type: exists
+          var: pinned
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: pinned
+          type: var
+        type: if
+    type: object
+message_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: channels
+  - name: channel_id
+    type: var
+  - type: literal
+    value: messages
+  - name: id
+    type: var
+role_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: roles
+role_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: roles
+  - name: id
+    type: var
+role_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: roles
+  - name: id
+    type: var
+role_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: roles
+  - name: id
+    type: var
+scheduled_event_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: scheduled-events
+scheduled_event_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: scheduled-events
+  - name: id
+    type: var
+scheduled_event_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: scheduled-events
+  - name: id
+    type: var
+scheduled_event_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: scheduled-events
+  query:
+    fields:
+    - - with_user_count
+      - condition:
+          type: exists
+          var: with_user_count
+        else_expr:
+          type: const
+          value: null
+        then_expr:
+          name: with_user_count
+          type: var
+        type: if
+    type: object
+scheduled_event_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: scheduled-events
+  - name: id
+    type: var
+soundboard_default_sound_list:
+  method: GET
+  path:
+  - type: literal
+    value: soundboard-default-sounds
+soundboard_sound_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: soundboard-sounds
+soundboard_sound_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: soundboard-sounds
+  - name: id
+    type: var
+soundboard_sound_get:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: soundboard-sounds
+  - name: id
+    type: var
+soundboard_sound_list:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: soundboard-sounds
+soundboard_sound_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+  - type: literal
+    value: soundboard-sounds
+  - name: id
+    type: var
+stage_instance_create:
+  body:
+    name: input
+    type: var
+  method: POST
+  path:
+  - type: literal
+    value: stage-instances
+stage_instance_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: stage-instances
+  - name: id
+    type: var
+stage_instance_get:
+  method: GET
+  path:
+  - type: literal
+    value: stage-instances
+  - name: id
+    type: var
+sticker_get:
+  method: GET
+  path:
+  - type: literal
+    value: stickers
+  - name: id
+    type: var
+sticker_pack_get:
+  method: GET
+  path:
+  - type: literal
+    value: sticker-packs
+  - name: id
+    type: var
+sticker_pack_list:
+  method: GET
+  path:
+  - type: literal
+    value: sticker-packs
+template_fetch_by_code:
+  method: GET
+  path:
+  - type: literal
+    value: guilds
+  - type: literal
+    value: templates
+  - name: code
+    type: var
+user_get:
+  method: GET
+  path:
+  - type: literal
+    value: users
+  - name: id
+    type: var
+user_leave_guild:
+  method: DELETE
+  path:
+  - type: literal
+    value: users
+  - type: literal
+    value: '@me'
+  - type: literal
+    value: guilds
+  - name: guild_id
+    type: var
+voice_region_list:
+  method: GET
+  path:
+  - type: literal
+    value: voice
+  - type: literal
+    value: regions
+webhook_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: webhooks
+  - name: id
+    type: var
+webhook_get:
+  method: GET
+  path:
+  - type: literal
+    value: webhooks
+  - name: id
+    type: var
+webhook_update:
+  body:
+    name: input
+    type: var
+  method: PATCH
+  path:
+  - type: literal
+    value: webhooks
+  - name: id
+    type: var

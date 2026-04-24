@@ -1,0 +1,83 @@
+auth:
+  scheme: none
+
+version: 1
+
+http_backend: https://xkcd.com
+
+entities:
+  Comic:
+    id_field: num
+    description: An XKCD webcomic strip
+    fields:
+      num:
+        description: Sequential comic number used as its ID
+        field_type: integer
+        required: true
+      title:
+        description: Published title of the comic
+        field_type: string
+        required: true
+        string_semantics: short
+      safe_title:
+        description: URL-safe version of the title
+        field_type: string
+        required: false
+        string_semantics: markdown
+      alt:
+        description: Hover-text (alt text) displayed on mouseover
+        field_type: string
+        required: false
+        string_semantics: markdown
+      img:
+        description: Direct URL to the comic image file
+        field_type: string
+        required: false
+        string_semantics: short
+      transcript:
+        description: Text transcript of the comic content
+        field_type: string
+        required: false
+        string_semantics: markdown
+      year:
+        description: Year the comic was published
+        field_type: string
+        required: false
+        string_semantics: short
+      month:
+        description: Month the comic was published
+        field_type: string
+        required: false
+        string_semantics: short
+      day:
+        description: Day of the month the comic was published
+        field_type: string
+        required: false
+        string_semantics: short
+      news:
+        description: Associated news or blog text, if any
+        field_type: string
+        required: false
+        string_semantics: short
+      link:
+        description: External link related to the comic
+        field_type: string
+        required: false
+        string_semantics: short
+capabilities:
+  comic_get:
+    description: Retrieve a single XKCD comic by its number
+    kind: get
+    entity: Comic
+    provides:
+    - num
+    - title
+    - safe_title
+    - alt
+    - img
+    - transcript
+    - year
+    - month
+    - day
+    - news
+    - link

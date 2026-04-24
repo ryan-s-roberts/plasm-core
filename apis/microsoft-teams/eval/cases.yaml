@@ -1,0 +1,45 @@
+# Microsoft Teams (Graph) — NL eval cases (schema: microsoft-teams)
+#
+# Buckets: query_all, get, projection (see plasm-eval coverage).
+
+- id: mst-01
+  schema: microsoft-teams
+  goal: >-
+    List every Microsoft Team I am a member of so I can pick one to open later;
+    I only care about the display name and whether it looks archived.
+  tags: [query, projection]
+  covers: [query_all, projection]
+  expect:
+    entities_any: [Team]
+    projection_contains: [displayName, isArchived]
+
+- id: mst-02
+  schema: microsoft-teams
+  goal: >-
+    Fetch the full Team record for team id 00000000-0000-0000-0000-000000000001
+    because I already have that GUID from a link.
+  tags: [get]
+  covers: [get, projection]
+  expect:
+    entities_any: [Team]
+
+- id: mst-03
+  schema: microsoft-teams
+  goal: >-
+    Show me only archived teams in my tenant with names containing “Contoso”.
+  tags: [adversarial, query]
+  covers: [query_all]
+  expect:
+    entities_any: [Team]
+    # Adversarial: wave-1 CGS has no name filter or archive filter on team_query —
+    # a good agent should query_all then explain client-side limits, not invent params.
+
+- id: mst-04
+  schema: microsoft-teams
+  goal: >-
+    Get the team whose display name is exactly “Engineering” without looking up an id first.
+  tags: [adversarial, get]
+  covers: [get]
+  expect:
+    entities_any: [Team]
+    # Adversarial: Get is keyed by opaque id; displayName is not a stable primary key in this CGS.

@@ -1,0 +1,19 @@
+[package]
+name = "plasm-mock"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+indexmap = { workspace = true }

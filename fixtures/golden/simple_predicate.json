@@ -1,0 +1,27 @@
+{
+  "type": "and",
+  "args": [
+    {
+      "type": "comparison",
+      "field": "region",
+      "op": "=",
+      "value": "EMEA"
+    },
+    {
+      "type": "comparison", 
+      "field": "revenue",
+      "op": ">",
+      "value": 1000
+    },
+    {
+      "type": "exists_relation",
+      "relation": "contacts",
+      "predicate": {
+        "type": "comparison",
+        "field": "role", 
+        "op": "=",
+        "value": "Manager"
+      }
+    }
+  ]
+}

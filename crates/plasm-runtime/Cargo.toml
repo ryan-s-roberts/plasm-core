@@ -1,0 +1,39 @@
+[package]
+name = "plasm-runtime"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile", features = ["evm"] }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+blake3 = { workspace = true }
+tracing = { workspace = true }
+indexmap = { workspace = true }
+uuid = { workspace = true }
+alloy-chains = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-json-abi = { workspace = true }
+alloy-dyn-abi = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-rpc-types = { workspace = true }
+alloy-transport-http = { workspace = true }
+hex = { workspace = true }
+futures-util = { workspace = true }
+async-stream = { workspace = true }
+async-trait = { workspace = true }
+oauth2 = { workspace = true }
+url = { workspace = true }
+opentelemetry = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }
+tempfile = { workspace = true }

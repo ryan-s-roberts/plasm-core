@@ -1,0 +1,278 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "LinkedIn REST API (curated consumer subset)",
+    "description": "Curated OpenAPI description for the Plasm CGS under apis/linkedin. LinkedIn’s wire API is Rest.li (not OpenAPI-native); paths and schemas are aligned with Microsoft Learn documentation for OAuth 2.0, Profile, UGC Posts, and asset registration. For the full platform surface, see the official guides.",
+    "version": "2.0.0"
+  },
+  "servers": [{ "url": "https://api.linkedin.com" }],
+  "components": {
+    "securitySchemes": {
+      "oauth2AccessToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "OAuth 2.0 access token"
+      }
+    },
+    "schemas": {
+      "OpenIdUserInfo": {
+        "type": "object",
+        "properties": {
+          "sub": { "type": "string" },
+          "name": { "type": "string" },
+          "given_name": { "type": "string" },
+          "family_name": { "type": "string" },
+          "picture": { "type": "string" },
+          "locale": { "type": "string" },
+          "email": { "type": "string" },
+          "email_verified": { "type": "boolean" }
+        }
+      },
+      "LiteProfile": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "localizedFirstName": { "type": "string" },
+          "localizedLastName": { "type": "string" },
+          "localizedHeadline": { "type": "string" },
+          "vanityName": { "type": "string" }
+        }
+      },
+      "UgcPost": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "author": { "type": "string" },
+          "lifecycleState": { "type": "string" },
+          "specificContent": { "type": "object" },
+          "visibility": { "type": "object" },
+          "created": { "type": "object" },
+          "lastModified": { "type": "object" }
+        }
+      },
+      "UgcPostFinderResponse": {
+        "type": "object",
+        "properties": {
+          "elements": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/UgcPost" }
+          },
+          "paging": {
+            "type": "object",
+            "properties": {
+              "start": { "type": "integer" },
+              "count": { "type": "integer" },
+              "total": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "RegisterUploadRequest": {
+        "type": "object",
+        "required": ["registerUploadRequest"],
+        "properties": {
+          "registerUploadRequest": {
+            "type": "object",
+            "properties": {
+              "recipes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "owner": { "type": "string" },
+              "serviceRelationships": {
+                "type": "array",
+                "items": { "type": "object" }
+              }
+            }
+          }
+        }
+      },
+      "RegisterUploadValue": {
+        "type": "object",
+        "properties": {
+          "uploadMechanism": { "type": "object" },
+          "asset": { "type": "string" },
+          "mediaArtifact": { "type": "string" }
+        }
+      }
+    }
+  },
+  "security": [{ "oauth2AccessToken": [] }],
+  "paths": {
+    "/v2/userinfo": {
+      "get": {
+        "operationId": "openidUserinfo",
+        "summary": "OpenID Connect userinfo",
+        "responses": {
+          "200": {
+            "description": "Claims for the authorized member",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OpenIdUserInfo" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/me": {
+      "get": {
+        "operationId": "memberMe",
+        "summary": "Current member lite profile",
+        "responses": {
+          "200": {
+            "description": "Lite profile fields for the authenticated member",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LiteProfile" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/ugcPosts": {
+      "get": {
+        "operationId": "ugcPostsFinder",
+        "summary": "Finder or batch get for UGC posts",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "authors",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Rest.li List(...) syntax (protocol 2.0)"
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["LAST_MODIFIED", "CREATED"] }
+          },
+          {
+            "name": "viewContext",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["AUTHOR", "READER"] }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Finder results or batch payload",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UgcPostFinderResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "ugcPostsCreate",
+        "summary": "Create a UGC post (share)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UgcPost" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/ugcPosts/{encodedUrn}": {
+      "get": {
+        "operationId": "ugcPostGet",
+        "summary": "Get one UGC post by encoded URN",
+        "parameters": [
+          {
+            "name": "encodedUrn",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "viewContext",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["AUTHOR", "READER"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UGC post",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UgcPost" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/assets": {
+      "post": {
+        "operationId": "assetsRegisterUpload",
+        "summary": "Register an image or video upload for feed sharing",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["registerUpload"] }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterUploadRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Registration envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "value": { "$ref": "#/components/schemas/RegisterUploadValue" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

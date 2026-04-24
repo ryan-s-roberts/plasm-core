@@ -1,0 +1,19 @@
+# NL eval cases for the Reddit OAuth slice (oauth.reddit.com).
+
+- id: reddit-read-surface
+  schema: reddit
+  goal: >-
+    Show who I am on Reddit, load the about page for the golang community, list its hot posts with
+    titles only, then search all of Reddit for “Plasm agent” and list matching subreddit names.
+  covers:
+    - chain
+    - get
+    - invoke
+    - multi_step
+    - projection
+    - query_filtered
+    - reverse
+    - search_text
+  tags: [reddit, read]
+  expect:
+    entities_any: [Account, Subreddit, Post, Comment]

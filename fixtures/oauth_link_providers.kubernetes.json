@@ -1,0 +1,11 @@
+{
+  "providers": {
+    "github": {
+      "authorization_endpoint": "https://github.com/login/oauth/authorize",
+      "token_endpoint": "https://github.com/login/oauth/access_token",
+      "default_scopes": ["read:user"],
+      "client_id_env": "PLASM_OAUTH_LINK_GITHUB_CLIENT_ID",
+      "client_secret_env": "PLASM_OAUTH_LINK_GITHUB_CLIENT_SECRET"
+    }
+  }
+}
