@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  BAML_CLI_VERSION: "0.220.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workspace:
+    name: Workspace checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - name: Cache Cargo artefacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check locked dependency metadata
+        run: cargo metadata --format-version 1 --no-deps --locked
+
+      - name: Check workspace
+        run: cargo check --workspace --locked
+
+  llm-feature:
+    name: LLM feature checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Cache Cargo artefacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-cargo-llm-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-llm-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache BAML CLI
+        id: cache-baml-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/baml-cli
+          key: ${{ runner.os }}-baml-cli-${{ env.BAML_CLI_VERSION }}
+
+      - name: Install BAML CLI
+        if: steps.cache-baml-cli.outputs.cache-hit != 'true'
+        run: cargo install baml-cli --version "$BAML_CLI_VERSION" --locked
+
+      - name: Generate BAML clients
+        run: baml-cli generate
+
+      - name: Check LLM eval feature
+        run: cargo check -p plasm-eval --features llm --locked
+
+      - name: Check LLM REPL feature
+        run: cargo check -p plasm-repl --features llm --locked

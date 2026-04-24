@@ -17,6 +17,9 @@ cargo test --workspace --locked
 cargo fmt --all -- --check
 ```
 
+CI runs the default formatting, locked metadata, and locked workspace checks on pull requests and
+pushes to `main`. It also generates BAML clients and checks the LLM eval/REPL feature path.
+
 The default workspace build does not require generated BAML sources. To use LLM eval or REPL mode,
 install `protoc`, run `baml-cli generate` from the repository root, then build the relevant crate with
 the `llm` feature.
