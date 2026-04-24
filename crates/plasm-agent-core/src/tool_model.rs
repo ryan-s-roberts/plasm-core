@@ -1396,6 +1396,7 @@ fn relation_scope_meta(
 mod tests {
     use super::*;
     use plasm_core::loader::load_schema;
+    use plasm_core::loader::load_schema_dir;
     use std::path::Path;
 
     #[test]
@@ -1407,12 +1408,12 @@ mod tests {
     }
 
     #[test]
-    fn petstore_tool_model_all_smoke() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/petstore");
-        let cgs = load_schema(&dir).expect("petstore");
+    fn fixture_tool_model_all_smoke() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let meta = CatalogEntryMeta {
-            entry_id: "petstore".into(),
-            label: "Petstore".into(),
+            entry_id: "overshow".into(),
+            label: "Overshow".into(),
             tags: vec![],
         };
         let q = ToolModelQuery {
@@ -1462,12 +1463,12 @@ mod tests {
     }
 
     #[test]
-    fn petstore_projection_carries_field_descriptions() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/petstore");
-        let cgs = load_schema(&dir).expect("petstore");
+    fn fixture_projection_carries_field_descriptions() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/pokeapi_mini");
+        let cgs = load_schema_dir(&dir).expect("pokeapi_mini");
         let meta = CatalogEntryMeta {
-            entry_id: "petstore".into(),
-            label: "Petstore".into(),
+            entry_id: "pokeapi_mini".into(),
+            label: "PokeAPI Mini".into(),
             tags: vec![],
         };
         let q = ToolModelQuery {
@@ -1475,18 +1476,18 @@ mod tests {
             entity: vec![],
         };
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
-        let pet = m
+        let berry = m
             .entities
             .iter()
-            .find(|e| e.name == "Pet")
-            .expect("Pet entity");
-        let id = pet
+            .find(|e| e.name == "Berry")
+            .expect("Berry entity");
+        let name = berry
             .projection
             .iter()
-            .find(|p| p.name == "id")
-            .expect("id field");
+            .find(|p| p.name == "name")
+            .expect("name field");
         assert!(
-            !id.description.is_empty(),
+            !name.description.is_empty(),
             "CGS `description:` on entity fields must flow into tool-model projection"
         );
     }

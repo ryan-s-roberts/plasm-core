@@ -3336,7 +3336,7 @@ mod tests {
     use axum::http::Request;
     use axum::Router;
     use plasm_core::discovery::InMemoryCgsRegistry;
-    use plasm_core::loader::load_schema;
+    use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
     use std::path::Path;
     use tower::util::ServiceExt;
@@ -3358,11 +3358,11 @@ mod tests {
     }
 
     fn test_state_with_registry() -> PlasmHostState {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/petstore");
-        let cgs = Arc::new(load_schema(&dir).expect("petstore"));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
-            "petstore".into(),
-            "Petstore".into(),
+            "overshow".into(),
+            "Overshow".into(),
             vec!["demo".into()],
             cgs.clone(),
         )]);
@@ -3455,7 +3455,7 @@ mod tests {
             .uri("/execute")
             .header("content-type", "application/json")
             .body(Body::from(
-                serde_json::json!({ "entry_id": "petstore", "entities": ["Pet"] }).to_string(),
+                serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
             ))
             .unwrap();
         let res = app.clone().oneshot(create).await.unwrap();
@@ -3478,12 +3478,12 @@ mod tests {
         );
 
         let created = get_execute_session_json(&app, loc.as_str()).await;
-        assert_eq!(created.entities, vec!["Pet"]);
+        assert_eq!(created.entities, vec!["Profile"]);
         let expected_hash = PromptHashHex::from_prompt_sha256(&created.prompt);
         assert_eq!(created.prompt_hash, expected_hash.to_string());
 
         let run_uri = format!("/execute/{}/{}", created.prompt_hash, created.session);
-        // Parse/type errors return problem+json without hitting the backend (Pet{} would need HTTP).
+        // Parse/type errors return problem+json without hitting the backend (Profile{} would need HTTP).
         let run = Request::builder()
             .method("POST")
             .uri(&run_uri)
@@ -3551,7 +3551,7 @@ mod tests {
             .uri("/execute")
             .header("content-type", "application/json")
             .body(Body::from(
-                serde_json::json!({ "entry_id": "petstore", "entities": ["Pet"] }).to_string(),
+                serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
             ))
             .unwrap();
         let res = app.clone().oneshot(create).await.unwrap();
@@ -3568,7 +3568,7 @@ mod tests {
             .method("POST")
             .uri(&run_uri)
             .header("accept", "application/json")
-            .body(Body::from("@@@\nPet{}"))
+            .body(Body::from("@@@\nProfile{}"))
             .unwrap();
         let res2 = app.oneshot(run).await.unwrap();
         assert_eq!(res2.status(), StatusCode::BAD_REQUEST);
@@ -3594,7 +3594,7 @@ mod tests {
                 .uri("/execute")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::json!({ "entry_id": "petstore", "entities": ["Pet"] }).to_string(),
+                    serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
                 ))
                 .unwrap();
             let res = app.clone().oneshot(create).await.unwrap();
@@ -3621,8 +3621,8 @@ mod tests {
     async fn execute_session_create_marks_reused_on_second_open() {
         let st = test_state_with_registry();
         let body = CreateExecuteSessionBody {
-            entry_id: "petstore".into(),
-            entities: vec!["Pet".into()],
+            entry_id: "overshow".into(),
+            entities: vec!["Profile".into()],
             principal: None,
             logical_session_id: None,
         };
@@ -3645,15 +3645,15 @@ mod tests {
             &st,
             None,
             CreateExecuteSessionBody {
-                entry_id: "petstore".into(),
-                entities: vec!["Pet".into()],
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
                 principal: None,
                 logical_session_id: None,
             },
         )
         .await
         .expect("open");
-        assert_eq!(created.entities, vec!["Pet"]);
+        assert_eq!(created.entities, vec!["Profile"]);
 
         let first_wave = expand_execute_domain_session(
             &st,
@@ -3661,14 +3661,14 @@ mod tests {
             &created.prompt_hash,
             &created.session,
             vec![CapabilitySeed {
-                entry_id: "petstore".into(),
-                entity: "Order".into(),
+                entry_id: "overshow".into(),
+                entity: "RecordedContent".into(),
             }],
         )
         .await
         .expect("expand");
         assert!(
-            first_wave.contains("Added capabilities from petstore: Order"),
+            first_wave.contains("Added capabilities from overshow: RecordedContent"),
             "expected add line: {first_wave}"
         );
         assert!(
@@ -3687,7 +3687,7 @@ mod tests {
             .expect("session");
         assert_eq!(
             sess.entities,
-            vec!["Pet".to_string(), "Order".to_string()],
+            vec!["Profile".to_string(), "RecordedContent".to_string()],
             "GET /execute and logs use cumulative exposed entities after expand"
         );
 
@@ -3697,8 +3697,8 @@ mod tests {
             &created.prompt_hash,
             &created.session,
             vec![CapabilitySeed {
-                entry_id: "petstore".into(),
-                entity: "Order".into(),
+                entry_id: "overshow".into(),
+                entity: "RecordedContent".into(),
             }],
         )
         .await
@@ -3713,7 +3713,10 @@ mod tests {
             .get_by_strs(created.prompt_hash.as_str(), created.session.as_str())
             .await
             .expect("session");
-        assert_eq!(sess2.entities, vec!["Pet".to_string(), "Order".to_string()]);
+        assert_eq!(
+            sess2.entities,
+            vec!["Profile".to_string(), "RecordedContent".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -3723,8 +3726,8 @@ mod tests {
             &st,
             None,
             CreateExecuteSessionBody {
-                entry_id: "petstore".into(),
-                entities: vec!["Pet".into()],
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
                 principal: None,
                 logical_session_id: None,
             },
