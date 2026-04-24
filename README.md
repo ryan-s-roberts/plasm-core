@@ -496,4 +496,4 @@ Use the same URL in Claude Desktop, Cursor, or any client that supports Streamab
 ## License
 
 Plasm is licensed under the [Business Source License 1.1](LICENSE). The Change
-License is GPLv3-or-later on the Change Date stated in the license.
+License is Apache License 2.0 on the Change Date stated in the license.
