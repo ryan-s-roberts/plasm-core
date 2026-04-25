@@ -1461,9 +1461,21 @@ async fn run_validated_plan_phased(
                     idx as i64,
                 )
                 .await?;
+                if let Some(sink) = sink.as_ref() {
+                    trace_record_code_mode_plasm_line(
+                        sink,
+                        idx,
+                        &relation.relation.expr,
+                        &parsed,
+                        &result,
+                        es,
+                    )
+                    .await;
+                }
                 MaterializedNode {
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
+                    all_entities: result.entities.clone(),
                     result,
                     artifact,
                 }
@@ -2455,6 +2467,10 @@ nodes: 3 total, 1 read, 0 write/side-effect, 2 staged
 execution: staged
 roots: products
 approvals: none
+
+warnings:
+- products is an unbounded read root; first evaluate small plans with Plan.limit(...) when cost or latency is uncertain
+- summary computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed
 
 dag:
 01. products -> query acme.Product <= Product [read; list]
