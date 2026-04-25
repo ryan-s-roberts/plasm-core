@@ -26,14 +26,20 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return "__anon_" + __plasmAnonSeq;
         }
 
+        function __isPlanEffect(v) {
+            return v && typeof v === "object" && v.kind && v.effect_class;
+        }
+
         function __isSpecial(v) {
-            return v && typeof v === "object" && (v.__plasmExpr || v.__planValue || v.__bindingPath || v.__planNodeId || v.__toPlanHandle);
+            return v && typeof v === "object" && (v.__plasmExpr || v.__planValue || v.__bindingPath || v.__planNodeId || v.__toPlanHandle || __isPlanEffect(v));
         }
 
         function __valueMeta(v) {
             if (v && v.__planValue) return v.__planValue;
             if (v && v.__bindingPath) return { kind: "binding_symbol", binding: v.__bindingName || String(v.__bindingPath).split(".")[0], path: v.__bindingFieldPath || [] };
             if (v && v.__planNodeId) return { kind: "symbol", path: v.__planNodeId };
+            if (__isPlanEffect(v) && typeof v.expr === "string" && v.expr.includes("${")) return { kind: "template", template: v.expr, input_bindings: [] };
+            if (__isPlanEffect(v) && typeof v.expr === "string") return { kind: "literal", value: v.expr };
             if (Array.isArray(v)) return { kind: "array", items: v.map(__valueMeta) };
             if (v && typeof v === "object" && !__isSpecial(v)) {
                 const fields = {};
@@ -52,6 +58,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return "{" + Object.keys(v).map(k => k + "=" + __quote(v[k])).join(", ") + "}";
             }
             return JSON.stringify(String(v));
+        }
+
+        function __symbolString(path) {
+            return "${" + path + "}";
         }
 
         function __displayPlanValue(v) {
@@ -156,6 +166,32 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             }
         }
 
+        function __sourcePlan(source, childId) {
+            const nodes = [];
+            if (source && source.__planNodeId) {
+                __collectNodes(source, nodes);
+                return { sourceId: __normalizeReturn(source), nodes };
+            }
+            if (__isPlanEffect(source)) {
+                const sourceId = source.id || String(childId) + "_source";
+                nodes.push(Object.assign({}, source, { id: sourceId }));
+                return { sourceId, nodes };
+            }
+            if (source && typeof source.yield === "function") {
+                const sourceId = String(childId) + "_source";
+                nodes.push(Object.assign({}, source.yield(), { id: sourceId }));
+                return { sourceId, nodes };
+            }
+            if (source && source.__toPlanHandle) {
+                const sourceId = String(childId) + "_source";
+                const handle = source.__toPlanHandle(sourceId);
+                __collectNodes(handle, nodes);
+                return { sourceId: handle && handle.__planNodeId ? handle.__planNodeId : sourceId, nodes };
+            }
+            __collectNodes(source, nodes);
+            return { sourceId: __normalizeReturn(source), nodes };
+        }
+
         function __nodeHandle(id, node) {
             const nid = id || __anonId();
             const h = { __planNodeId: nid };
@@ -187,6 +223,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return new Proxy({ __bindingPath: path, __bindingName: binding, __bindingFieldPath: parts, __plasmExpr: "${" + path + "}" }, {
                 get(target, prop) {
                     if (prop in target) return target[prop];
+                    if (prop === Symbol.toPrimitive) return function() { return __symbolString(path); };
+                    if (prop === "toString") return function() { return __symbolString(path); };
                     if (typeof prop === "symbol") return target[prop];
                     if (prop === "__planValue" || prop === "__planNodeId" || prop === "__toPlanHandle" || prop === "__planNodes") return undefined;
                     if (["map", "filter", "join", "reduce", "flatMap", "forEach"].includes(String(prop))) return __unsupportedProjectionMethod(String(prop));
@@ -225,6 +263,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return new Proxy(ref, {
                 get(target, prop) {
                     if (prop in target) return target[prop];
+                    if (prop === Symbol.toPrimitive) return function() { return target.__plasmExpr; };
+                    if (prop === "toString") return function() { return target.__plasmExpr; };
                     if (typeof prop === "symbol") return target[prop];
                     if (prop === "__bindingPath" || prop === "__bindingName" || prop === "__bindingFieldPath" || prop === "__planNodeId" || prop === "__toPlanHandle") return undefined;
                     return __nodeRef(handle, node, parts.concat(String(prop)).join("."), cardinality || "auto");
@@ -312,7 +352,6 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return __planSingleton(source);
             }
             static _map(source, fn) {
-                const sourceId = __normalizeReturn(source);
                 let binding = "item";
                 if (typeof fn === "string") {
                     binding = fn;
@@ -324,8 +363,9 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 const inputs = __nodeInputsFromValueMeta(valueMeta);
                 return {
                     __toPlanHandle(id) {
-                        const nodes = [];
-                        __collectNodes(source, nodes);
+                        const sourcePlan = __sourcePlan(source, id);
+                        const sourceId = sourcePlan.sourceId;
+                        const nodes = sourcePlan.nodes.slice();
                         __collectNodes(value, nodes);
                         nodes.push({
                             id,
@@ -351,7 +391,6 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 };
             }
             static project(source, spec) {
-                const sourceId = __normalizeReturn(source);
                 const binding = "item";
                 const item = __symbol(binding);
                 const fields = {};
@@ -373,15 +412,12 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return Plan._compute(source, { kind: "project", fields }, __schemaFromFields("PlanProject", Object.keys(fields), sourcePaths));
             }
             static filter(source, ...predicates) {
-                const sourceId = __normalizeReturn(source);
                 return Plan._compute(source, { kind: "filter", predicates: predicates.flat() }, { entity: "PlanFilter", fields: [{ name: "value", value_kind: "unknown" }] });
             }
             static aggregate(source, aggregates) {
-                const sourceId = __normalizeReturn(source);
                 return Plan._compute(source, { kind: "aggregate", aggregates: aggregates || [] }, __schemaFromFields("PlanAggregate", (aggregates || []).map(a => a.name), []));
             }
             static groupBy(source, keyFn) {
-                const sourceId = __normalizeReturn(source);
                 const binding = "item";
                 const item = __symbol(binding);
                 const key = __pathFromSymbol(keyFn(item), binding);
@@ -402,26 +438,23 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 };
             }
             static sort(source, keyFn, direction) {
-                const sourceId = __normalizeReturn(source);
                 const binding = "item";
                 const key = __pathFromSymbol(keyFn(__symbol(binding)), binding);
                 return Plan._compute(source, { kind: "sort", key, descending: direction === "desc" }, { entity: "PlanSort", fields: [{ name: "value", value_kind: "unknown" }] });
             }
             static limit(source, count) {
-                const sourceId = __normalizeReturn(source);
                 return Plan._compute(source, { kind: "limit", count: Number(count) }, { entity: "PlanLimit", fields: [{ name: "value", value_kind: "unknown" }] });
             }
             static table(source, spec) {
-                const sourceId = __normalizeReturn(source);
                 const columns = (spec && spec.columns) || [];
                 return Plan._compute(source, { kind: "table_from_matrix", columns, has_header: !!(spec && spec.hasHeader) }, __schemaFromFields("PlanTable", columns, []));
             }
             static _compute(source, op, schema) {
-                const sourceId = __normalizeReturn(source);
                 return {
                     __toPlanHandle(id) {
-                        const nodes = [];
-                        __collectNodes(source, nodes);
+                        const sourcePlan = __sourcePlan(source, id);
+                        const sourceId = sourcePlan.sourceId;
+                        const nodes = sourcePlan.nodes.slice();
                         nodes.push({
                             id,
                             kind: "compute",
@@ -647,16 +680,9 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return this.as(id);
                 },
                 as(id) {
-                    const nodes = [];
-                    __collectNodes(source, nodes);
-                    let sourceId = source && source.__planNodeId ? __normalizeReturn(source) : null;
-                    if (!sourceId && source && source.kind && source.effect_class) {
-                        sourceId = source.id || (String(id) + "_source");
-                        nodes.push(Object.assign({}, source, { id: sourceId }));
-                    } else if (!sourceId && source && typeof source.yield === "function") {
-                        sourceId = String(id) + "_source";
-                        nodes.push(Object.assign({}, source.yield(), { id: sourceId }));
-                    }
+                    const sourcePlan = __sourcePlan(source, id);
+                    const sourceId = sourcePlan.sourceId;
+                    const nodes = sourcePlan.nodes.slice();
                     const sourceNode = nodes[nodes.length - 1];
                     if (!sourceNode || !sourceNode.expr) {
                         throw new Error("Relation traversal requires a source node with a Plasm expression");
@@ -756,7 +782,6 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         export function forEach(source, fn) {
-            const sourceId = __normalizeReturn(source);
             let binding = "item";
             if (typeof fn === "string") {
                 binding = fn;
@@ -769,6 +794,9 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return this.as(id);
                 },
                 as(id) {
+                    const sourcePlan = __sourcePlan(source, id);
+                    const sourceId = sourcePlan.sourceId;
+                    const nodes = sourcePlan.nodes.slice();
                     const node = {
                         id,
                         kind: "for_each",
@@ -788,7 +816,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         depends_on: [sourceId],
                         uses_result: [{ node: sourceId, as: binding }],
                     };
-                    return __nodeHandle(id, node);
+                    nodes.push(node);
+                    const handle = __nodeHandle(id, node);
+                    handle.__planNodes = nodes;
+                    return handle;
                 }
             };
         }
@@ -1005,6 +1036,147 @@ mod tests {
             assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][1], "0");
             assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][2], "type");
             assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][3], "name");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_limit_materializes_unbound_query_source() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Pokemon = makeEntity('acme', 'Pokemon'); \
+                 const limited = __plasmBind(Plan.limit(Pokemon.query({}), 3), 'p'); \
+                 Plan.return(limited)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["id"], "p_source");
+            assert_eq!(v["nodes"][0]["kind"], "query");
+            assert_eq!(v["nodes"][1]["compute"]["source"], "p_source");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["kind"], "limit");
+            assert_eq!(v["nodes"][1]["depends_on"][0], "p_source");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_project_materializes_unbound_search_source() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Pokemon = makeEntity('acme', 'Pokemon'); \
+                 const projected = __plasmBind(Plan.project(Pokemon.search({ q: 'pikachu' }), { name: row => row.name }), 'p'); \
+                 Plan.return(projected)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["id"], "p_source");
+            assert_eq!(v["nodes"][0]["kind"], "search");
+            assert_eq!(v["nodes"][1]["compute"]["source"], "p_source");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["kind"], "project");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name"][0], "name");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_map_preserves_symbolic_string_get_template() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Pokemon = makeEntity('acme', 'Pokemon'); \
+                 const Item = makeEntity('acme', 'Item'); \
+                 const src = __plasmBind(Pokemon.query({}), 'src'); \
+                 const mapped = __plasmBind(Plan.map(src, row => Item.get(String(row.id))), 'm'); \
+                 Plan.return(mapped)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            let template = v["nodes"][1]["derive_template"]["value"]["template"]
+                .as_str()
+                .expect("template");
+            assert!(template.contains("${item.id}"), "{template}");
+            assert!(!template.contains("[object Object]"), "{template}");
+            assert_eq!(
+                v["nodes"][1]["derive_template"]["value"]["kind"],
+                "template"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn for_each_materializes_unbound_query_source() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Pokemon = makeEntity('acme', 'Pokemon'); \
+                 const Item = makeEntity('acme', 'Item'); \
+                 const fx = __plasmBind(forEach(Pokemon.query({}), row => Item.ref(String(row.id)).action('sync', { name: row.name })), 'fx'); \
+                 Plan.return(fx)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["id"], "fx_source");
+            assert_eq!(v["nodes"][0]["kind"], "query");
+            assert_eq!(v["nodes"][1]["source"], "fx_source");
+            assert_eq!(v["nodes"][1]["depends_on"][0], "fx_source");
+            let template = v["nodes"][1]["effect_template"]["expr_template"]
+                .as_str()
+                .expect("template");
+            assert!(template.contains("${item.id}"), "{template}");
+            assert!(!template.contains("[object Object]"), "{template}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn relation_materializes_unbound_builder_source() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Product = makeEntity('acme', 'Product', [{ name: 'category', entry_id: 'acme', target: 'Category', cardinality: 'one' }]); \
+                 const category = __plasmBind(Product.query({}).category(), 'cat'); \
+                 Plan.return(category)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["id"], "cat_source");
+            assert_eq!(v["nodes"][0]["kind"], "query");
+            assert_eq!(v["nodes"][1]["kind"], "relation");
+            assert_eq!(v["nodes"][1]["relation"]["source"], "cat_source");
+            assert_eq!(v["nodes"][1]["depends_on"][0], "cat_source");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

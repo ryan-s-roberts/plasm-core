@@ -4,15 +4,15 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
-use plasm_core::CGS;
+use plasm_core::schema::CapabilityKind;
+use plasm_core::value::FieldType;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
 use plasm_core::FieldSchema;
 use plasm_core::InputFieldSchema;
 use plasm_core::InputType;
 use plasm_core::OutputType;
-use plasm_core::schema::CapabilityKind;
-use plasm_core::value::FieldType;
+use plasm_core::CGS;
 use serde::Serialize;
 use std::sync::Arc;
 
