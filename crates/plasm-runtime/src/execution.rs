@@ -4197,21 +4197,19 @@ fn apply_response_preprocess(
                 return response;
             }
             let mut out = response;
-            if let Some(cur) = get_mut_value_at_path(&mut out, path) {
-                if let serde_json::Value::Array(a) = cur {
-                    let fk = field.clone();
-                    let mapped: Vec<serde_json::Value> = a
-                        .iter()
-                        .filter_map(|v| {
-                            v.as_str().map(|s| {
-                                let mut o = serde_json::Map::new();
-                                o.insert(fk.clone(), serde_json::Value::String(s.to_string()));
-                                serde_json::Value::Object(o)
-                            })
+            if let Some(serde_json::Value::Array(a)) = get_mut_value_at_path(&mut out, path) {
+                let fk = field.clone();
+                let mapped: Vec<serde_json::Value> = a
+                    .iter()
+                    .filter_map(|v| {
+                        v.as_str().map(|s| {
+                            let mut o = serde_json::Map::new();
+                            o.insert(fk.clone(), serde_json::Value::String(s.to_string()));
+                            serde_json::Value::Object(o)
                         })
-                        .collect();
-                    *a = mapped;
-                }
+                    })
+                    .collect();
+                *a = mapped;
             }
             out
         }
