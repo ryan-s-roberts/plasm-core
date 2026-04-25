@@ -1,10 +1,12 @@
 //! Pre-execution intent and post-execution outcome lines shared by REPL, CLI, and plan executor.
 
+use crate::cgs_federation::FederationDispatch;
 use crate::resolve_query_capability;
 use crate::schema::CGS;
 use crate::step_semantics::{OutcomeContext, StepSummary};
 use crate::value::CompOp;
-use crate::{Expr, Predicate, Value};
+use crate::{ChainStep, Expr, Predicate, Value};
+use serde_json::json;
 
 /// Human-readable description of what the expression will do (before I/O).
 pub fn render_intent(expr: &Expr, cgs: &CGS) -> String {
@@ -26,6 +28,31 @@ pub fn render_intent_with_projection(
     s
 }
 
+fn query_intent_line(q: &crate::QueryExpr, cgs: &CGS) -> String {
+    let cap = resolve_query_capability(q, cgs).ok();
+    let cap_note = cap
+        .map(|c| format!(" via `{}`", c.name))
+        .unwrap_or_default();
+    let pred = q
+        .predicate
+        .as_ref()
+        .map(|p| format!(" where {}", format_predicate_short(p)))
+        .unwrap_or_default();
+    let search = if cap
+        .map(|c| c.kind == crate::CapabilityKind::Search)
+        .unwrap_or(false)
+    {
+        "Search"
+    } else {
+        "Query"
+    };
+    let mut s = format!("{search} {}{cap_note}{pred}", q.entity);
+    if q.hydrate == Some(false) {
+        s.push_str(" (summary rows, no per-row hydrate)");
+    }
+    s
+}
+
 fn intent_inner(expr: &Expr, cgs: &CGS) -> String {
     match expr {
         Expr::Get(g) => {
@@ -35,30 +62,7 @@ fn intent_inner(expr: &Expr, cgs: &CGS) -> String {
                 g.reference.primary_slot_str()
             )
         }
-        Expr::Query(q) => {
-            let cap = resolve_query_capability(q, cgs).ok();
-            let cap_note = cap
-                .map(|c| format!(" via `{}`", c.name))
-                .unwrap_or_default();
-            let pred = q
-                .predicate
-                .as_ref()
-                .map(|p| format!(" where {}", format_predicate_short(p)))
-                .unwrap_or_default();
-            let search = if cap
-                .map(|c| c.kind == crate::CapabilityKind::Search)
-                .unwrap_or(false)
-            {
-                "Search"
-            } else {
-                "Query"
-            };
-            let mut s = format!("{search} {}{cap_note}{pred}", q.entity);
-            if q.hydrate == Some(false) {
-                s.push_str(" (summary rows, no per-row hydrate)");
-            }
-            s
-        }
+        Expr::Query(q) => query_intent_line(q, cgs),
         Expr::Chain(c) => {
             let src = intent_inner(&c.source, cgs);
             format!("{src}, then follow relation `{}`", c.selector)
@@ -83,6 +87,140 @@ fn intent_inner(expr: &Expr, cgs: &CGS) -> String {
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
+    }
+}
+
+/// [`intent_inner`], but resolves per-entity [`CGS` via [`FederationDispatch`]] for query intent (capability / Search vs Query).
+fn intent_inner_federated(expr: &Expr, fed: &FederationDispatch, fallback: &CGS) -> String {
+    match expr {
+        Expr::Get(g) => {
+            format!(
+                "Get {} by key `{}`",
+                g.reference.entity_type,
+                g.reference.primary_slot_str()
+            )
+        }
+        Expr::Query(q) => {
+            let cgs = fed.resolve_cgs(q.entity.as_str(), fallback);
+            query_intent_line(q, cgs)
+        }
+        Expr::Chain(c) => {
+            let src = intent_inner_federated(&c.source, fed, fallback);
+            format!("{src}, then follow relation `{}`", c.selector)
+        }
+        Expr::Create(c) => {
+            format!("Create {} using capability `{}`", c.entity, c.capability)
+        }
+        Expr::Delete(d) => format!(
+            "Delete {} `{}` via `{}`",
+            d.target.entity_type,
+            d.target.primary_slot_str(),
+            d.capability
+        ),
+        Expr::Invoke(i) => format!(
+            "Invoke `{}` on {} `{}`",
+            i.capability,
+            i.target.entity_type,
+            i.target.primary_slot_str()
+        ),
+        Expr::Page(p) => format!(
+            "Continue paginated list (`{}`){}",
+            p.handle,
+            p.limit
+                .map(|l| format!(" with per-request limit {l}"))
+                .unwrap_or_default()
+        ),
+    }
+}
+
+/// Pre-execution intent for federated execute sessions: picks the right catalog’s CGS for query capability resolution.
+pub fn render_intent_federated(expr: &Expr, fed: &FederationDispatch, fallback: &CGS) -> String {
+    render_intent_with_projection_federated(expr, None, fed, fallback)
+}
+
+/// Like [`render_intent_federated`], with optional top-level field projection.
+pub fn render_intent_with_projection_federated(
+    expr: &Expr,
+    projection: Option<&[String]>,
+    fed: &FederationDispatch,
+    fallback: &CGS,
+) -> String {
+    let mut s = intent_inner_federated(expr, fed, fallback);
+    if let Some(proj) = projection {
+        if !proj.is_empty() {
+            s.push_str(&format!(" projecting [{}]", proj.join(", ")));
+        }
+    }
+    s
+}
+
+/// Structured “bound” surfaces for a parsed [`Expr`]: ref keys, path var maps, query predicate/projection, invoke/create inputs, and nested chain sources. Safe for JSON; does not require HTTP.
+pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
+    match expr {
+        Expr::Get(g) => {
+            json!({
+                "op": "get",
+                "ref": { "entity": g.reference.entity_type, "key": g.reference.key },
+                "path_vars": g.path_vars
+            })
+        }
+        Expr::Query(q) => {
+            json!({
+                "op": "query",
+                "entity": q.entity,
+                "capability_name": q.capability_name,
+                "predicate": q.predicate,
+                "pagination": q.pagination,
+                "projection": q.projection,
+                "hydrate": q.hydrate
+            })
+        }
+        Expr::Create(c) => {
+            json!({
+                "op": "create",
+                "entity": c.entity,
+                "capability": c.capability,
+                "input": c.input
+            })
+        }
+        Expr::Delete(d) => {
+            json!({
+                "op": "delete",
+                "capability": d.capability,
+                "target": { "entity": d.target.entity_type, "key": d.target.key },
+                "path_vars": d.path_vars
+            })
+        }
+        Expr::Invoke(i) => {
+            json!({
+                "op": "invoke",
+                "capability": i.capability,
+                "target": { "entity": i.target.entity_type, "key": i.target.key },
+                "input": i.input,
+                "path_vars": i.path_vars
+            })
+        }
+        Expr::Page(p) => {
+            json!({
+                "op": "page",
+                "handle": p.handle,
+                "limit": p.limit
+            })
+        }
+        Expr::Chain(c) => {
+            let step = match &c.step {
+                ChainStep::AutoGet => json!("auto_get"),
+                ChainStep::Explicit { expr } => {
+                    json!({ "expr": expr_simulation_bindings(expr) })
+                }
+            };
+            json!({
+                "op": "chain",
+                "selector": c.selector,
+                "source": expr_simulation_bindings(&c.source),
+                "step": step
+            })
+        }
     }
 }
 

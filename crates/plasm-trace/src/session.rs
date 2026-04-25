@@ -36,6 +36,16 @@ pub struct SessionTraceData {
     pub aggregate_cache_misses: u64,
     #[serde(default)]
     pub aggregate_http_trace_entry_count: u64,
+    #[serde(default)]
+    pub code_plans_evaluated: u64,
+    #[serde(default)]
+    pub code_plans_executed: u64,
+    #[serde(default)]
+    pub code_plan_code_chars: u64,
+    #[serde(default)]
+    pub code_plan_nodes: u64,
+    #[serde(default)]
+    pub code_plan_derived_runs: u64,
     /// Max events kept in [`Self::records`]; older events are dropped after totals are updated.
     #[serde(default = "default_timeline_cap")]
     pub timeline_max_events: usize,
@@ -64,6 +74,16 @@ pub struct SessionTraceCountersSnapshot {
     pub aggregate_cache_hits: u64,
     pub aggregate_cache_misses: u64,
     pub aggregate_http_trace_entry_count: u64,
+    #[serde(default)]
+    pub code_plans_evaluated: u64,
+    #[serde(default)]
+    pub code_plans_executed: u64,
+    #[serde(default)]
+    pub code_plan_code_chars: u64,
+    #[serde(default)]
+    pub code_plan_nodes: u64,
+    #[serde(default)]
+    pub code_plan_derived_runs: u64,
 }
 
 impl From<&SessionTraceData> for SessionTraceCountersSnapshot {
@@ -82,6 +102,11 @@ impl From<&SessionTraceData> for SessionTraceCountersSnapshot {
             aggregate_cache_hits: d.aggregate_cache_hits,
             aggregate_cache_misses: d.aggregate_cache_misses,
             aggregate_http_trace_entry_count: d.aggregate_http_trace_entry_count,
+            code_plans_evaluated: d.code_plans_evaluated,
+            code_plans_executed: d.code_plans_executed,
+            code_plan_code_chars: d.code_plan_code_chars,
+            code_plan_nodes: d.code_plan_nodes,
+            code_plan_derived_runs: d.code_plan_derived_runs,
         }
     }
 }
@@ -104,6 +129,11 @@ impl SessionTraceCountersSnapshot {
             aggregate_cache_hits: self.aggregate_cache_hits,
             aggregate_cache_misses: self.aggregate_cache_misses,
             aggregate_http_trace_entry_count: self.aggregate_http_trace_entry_count,
+            code_plans_evaluated: self.code_plans_evaluated,
+            code_plans_executed: self.code_plans_executed,
+            code_plan_code_chars: self.code_plan_code_chars,
+            code_plan_nodes: self.code_plan_nodes,
+            code_plan_derived_runs: self.code_plan_derived_runs,
             timeline_max_events: DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
             records: VecDeque::new(),
         }
@@ -127,6 +157,11 @@ impl Default for SessionTraceData {
             aggregate_cache_hits: 0,
             aggregate_cache_misses: 0,
             aggregate_http_trace_entry_count: 0,
+            code_plans_evaluated: 0,
+            code_plans_executed: 0,
+            code_plan_code_chars: 0,
+            code_plan_nodes: 0,
+            code_plan_derived_runs: 0,
             timeline_max_events: DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
             records: VecDeque::new(),
         }
@@ -215,6 +250,29 @@ impl SessionTraceData {
                 self.aggregate_http_trace_entry_count = self
                     .aggregate_http_trace_entry_count
                     .saturating_add(http_calls.len() as u64);
+            }
+            TraceSegment::CodePlanEvaluate {
+                node_count,
+                code_chars,
+                ..
+            } => {
+                self.code_plans_evaluated = self.code_plans_evaluated.saturating_add(1);
+                self.code_plan_code_chars = self.code_plan_code_chars.saturating_add(*code_chars);
+                self.code_plan_nodes = self.code_plan_nodes.saturating_add(*node_count as u64);
+            }
+            TraceSegment::CodePlanExecute {
+                node_count,
+                code_chars,
+                run_ids,
+                run_artifacts,
+                ..
+            } => {
+                self.code_plans_executed = self.code_plans_executed.saturating_add(1);
+                self.code_plan_code_chars = self.code_plan_code_chars.saturating_add(*code_chars);
+                self.code_plan_nodes = self.code_plan_nodes.saturating_add(*node_count as u64);
+                self.code_plan_derived_runs = self
+                    .code_plan_derived_runs
+                    .saturating_add(run_artifacts.len().max(run_ids.len()) as u64);
             }
             TraceSegment::PlasmError { .. } => {}
         }

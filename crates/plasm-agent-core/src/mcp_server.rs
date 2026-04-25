@@ -40,15 +40,17 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
 use plasm_core::CgsDiscovery;
+use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
+#[cfg(feature = "code_mode")]
+use plasm_facade_gen::{FacadeGenRequest, build_code_facade, quickjs_runtime_from_facade_delta};
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
-use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -57,26 +59,39 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::McpServer;
+use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
+#[cfg(feature = "code_mode")]
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::http_execute::{
-    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
-    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
+    execute_session_run_markdown, normalize_capability_seeds,
 };
-use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
+#[cfg(feature = "code_mode")]
+use crate::mcp_plasm_code::{
+    CodeModePlasmRunHooks, CodePlanDryRunTextMeta, evaluate_code_mode_plan_dry,
+    render_code_mode_plan_dry_text, run_code_mode_plan,
+};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::run_artifacts::{
-    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri, ArtifactPayload,
-    LogicalSessionUriSegment,
+    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_plan_uri,
+    parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
+    parse_plasm_session_short_resource_uri,
+};
+#[cfg(feature = "code_mode")]
+use crate::run_artifacts::{
+    CodePlanArchiveDocument, code_plan_http_path, parse_code_plan_handle,
+    plasm_session_short_plan_uri,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
-use plasm_trace::RunArtifactArchiveRef;
+use plasm_trace::{CodePlanRunArtifactRef, RunArtifactArchiveRef};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -87,18 +102,17 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
 
 /// Model-facing `plasm` tool description: run expressions (session setup is in [`MCP_SERVER_INITIALIZE_INSTRUCTIONS`]).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str =
-    "**Run** Plasm lines (`expressions` required; **`logical_session_ref`** from **`plasm_session_init`**). Full setup, paging, and output shape: MCP **`initialize` `instructions`**. \
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** Plasm lines (`expressions` required; **`logical_session_ref`** from **`plasm_session_init`**). Full setup, paging, and output shape: MCP **`initialize` `instructions`**. \
      Optional **`tsv_static_frontmatter`**: the `#`-comment Plasm language contract (cache from **`add_capabilities`** `_meta.plasm.tsv_static_frontmatter` on first TSV open); not executed, counts toward session invocation tokens. \
      **Steady state:** same **`logical_session_ref`**, **`plasm` only** for follow-ups -- do **not** re-run **`plasm_session_init`** or **`add_capabilities`** every turn once capabilities are loaded.";
 
 /// MCP `initialize` `instructions` field: tool flow (LLM-facing; transport auth is host-owned).
-pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str =
-    "**Call `plasm_session_init` first** on each MCP connection (before `discover_capabilities`, `add_capabilities`, or `plasm`): pass **`client_session_key`** -- **the host’s stable agent-context id** (same value for the same window, subagent, or other isolation boundary the host defines); use **one key per context you want to share one Plasm logical session**, not a new random id every message. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). **Idempotent:** same transport + same `client_session_key` + tenant => **reuse** the same logical session and ref. \
+pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_session_init` first** on each MCP connection (before `discover_capabilities`, `add_capabilities`, or `plasm`): pass **`client_session_key`** -- **the host’s stable agent-context id** (same value for the same window, subagent, or other isolation boundary the host defines); use **one key per context you want to share one Plasm logical session**, not a new random id every message. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). **Idempotent:** same transport + same `client_session_key` + tenant => **reuse** the same logical session and ref. \
      **Session reuse (required default):** After the first successful **`add_capabilities`** open for that ref, **most subsequent user requests should be `plasm` only** with the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`** or repeat **`add_capabilities`** with the same catalog just to \"re-initialize\" -- that wastes tokens and breaks continuity. Call **`add_capabilities`** again **only** when you must **append** new **`api` / `entity`** seeds (another API, more entities) you have **not** already added. \
      Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
-     **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session.";
+     **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
+     **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
 
 fn parse_tool_seeds(
     tool: &str,
@@ -140,6 +154,154 @@ fn parse_optional_principal(v: &serde_json::Value) -> Option<String> {
     v.get("principal")
         .and_then(|x| x.as_str())
         .map(|s| s.to_string())
+}
+
+#[cfg(feature = "code_mode")]
+fn parse_required_string_arg(
+    tool: &str,
+    v: &serde_json::Value,
+    key: &str,
+) -> Result<String, CallToolError> {
+    let s = v
+        .get(key)
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            CallToolError::invalid_arguments(tool, Some(format!("missing `{key}` string")))
+        })?;
+    Ok(s.to_string())
+}
+
+#[cfg(feature = "code_mode")]
+fn code_plan_session_mismatch(
+    doc: &CodePlanArchiveDocument,
+    prompt_hash: &str,
+    session_id: &str,
+    catalog_cgs_hash: &str,
+    domain_revision: u32,
+) -> Option<&'static str> {
+    if doc.prompt_hash != prompt_hash || doc.session_id != session_id {
+        return Some("execute_session");
+    }
+    if doc.catalog_cgs_hash != catalog_cgs_hash {
+        return Some("catalog_cgs_hash");
+    }
+    if doc.domain_revision > domain_revision {
+        return Some("domain_revision");
+    }
+    None
+}
+
+#[cfg(feature = "code_mode")]
+fn code_plan_run_artifacts_from_meta(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> (Vec<String>, Vec<CodePlanRunArtifactRef>) {
+    fn dict_string<'a>(
+        index_delta: Option<&'a serde_json::Value>,
+        dict_name: &str,
+        id: Option<u64>,
+    ) -> Option<String> {
+        let key = id?.to_string();
+        index_delta?
+            .get(dict_name)?
+            .get(key)?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    fn dict_string_vec(
+        index_delta: Option<&serde_json::Value>,
+        dict_name: &str,
+        id: Option<u64>,
+    ) -> Vec<String> {
+        let Some(key) = id.map(|n| n.to_string()) else {
+            return Vec::new();
+        };
+        index_delta
+            .and_then(|v| v.get(dict_name))
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
+    let plasm = meta.and_then(|m| m.get("plasm"));
+    let index_delta = plasm.and_then(|v| v.get("index_delta"));
+    let Some(steps) = meta
+        .and_then(|_| plasm)
+        .and_then(|v| v.get("steps"))
+        .and_then(|v| v.as_array())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let mut run_ids = Vec::new();
+    let mut refs = Vec::new();
+    for step in steps {
+        let Some(run_id) = step.get("run_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        run_ids.push(run_id.to_string());
+        let request_fingerprints = step
+            .get("request_fingerprints")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .or_else(|| {
+                let fp_id = step
+                    .get("dict_ref")
+                    .and_then(|v| v.get("fp"))
+                    .and_then(|v| v.as_u64());
+                Some(dict_string_vec(index_delta, "fp", fp_id))
+            })
+            .unwrap_or_default();
+        let artifact_path = step
+            .get("artifact_path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                let path_id = step
+                    .get("dict_ref")
+                    .and_then(|v| v.get("artifact_path"))
+                    .and_then(|v| v.as_u64());
+                dict_string(index_delta, "artifact_path", path_id)
+            });
+        refs.push(CodePlanRunArtifactRef {
+            run_id: run_id.to_string(),
+            artifact_uri: step
+                .get("artifact_uri")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            canonical_artifact_uri: step
+                .get("canonical_artifact_uri")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            artifact_path,
+            batch_step: step
+                .get("batch_step")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| usize::try_from(n).ok()),
+            node_id: step
+                .get("node_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            display: step
+                .get("display")
+                .or_else(|| step.get("expr_preview"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            request_fingerprints,
+        });
+    }
+    (run_ids, refs)
 }
 
 fn parse_logical_session_ref_arg(
@@ -188,11 +350,25 @@ pub(crate) struct McpSessionPlasmStats {
     plasm_call_count: u64,
 }
 
+/// Incremental state for `add_code_capabilities` TypeScript / facade clients.
+#[cfg(feature = "code_mode")]
+#[derive(Default, Clone)]
+struct CodeModeMcpState {
+    /// `(entry_id, entity)` already taught to the client in prior waves.
+    emitted: plasm_facade_gen::ExposedSet,
+    /// Whether the shared `Plasm` prelude from [`plasm_facade_gen::build_code_facade`] was sent.
+    prelude_issued: bool,
+    /// Last execute `(prompt_hash, session_id)` used for `facade_delta` generation.
+    last_binding: Option<(String, String)>,
+}
+
 #[derive(Default)]
 struct McpLogicalSessionState {
     binding: Option<PlasmExecBinding>,
     stats: McpSessionPlasmStats,
     meta_index: PlasmMetaIndex,
+    #[cfg(feature = "code_mode")]
+    code_mode: CodeModeMcpState,
 }
 
 #[derive(Default)]
@@ -540,7 +716,7 @@ impl PlasmMcpHandler {
             ),
         );
 
-        vec![
+        let mut tools = vec![
             Tool {
                 name: "plasm_session_init".into(),
                 title: Some("Open Plasm logical session".into()),
@@ -598,7 +774,7 @@ impl PlasmMcpHandler {
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
-                    Some(add_props),
+                    Some(add_props.clone()),
                     None,
                 ),
                 annotations: Some(ToolAnnotations {
@@ -613,13 +789,44 @@ impl PlasmMcpHandler {
                 meta: None,
                 output_schema: None,
             },
-            Tool {
-                name: "plasm".into(),
+        ];
+        #[cfg(feature = "code_mode")]
+        {
+            let mut eval_props = BTreeMap::new();
+            eval_props.insert(
+                "logical_session_ref".into(),
+                json_schema_string_type(
+                    "From `plasm_session_init` (e.g. `s0`); the execute session must be open via `add_code_capabilities` for the entities the TypeScript facade uses.",
+                ),
+            );
+            eval_props.insert(
+                "name".into(),
+                json_schema_string_type("Stable human-readable name for the archived plan; use a short task-oriented name so the `pN` handle is auditable."),
+            );
+            eval_props.insert(
+                "code".into(),
+                json_schema_string_type(
+                    "TypeScript Code Mode program for multiple coordinated operations, transformations, or compute. Prefer `plasm` for simple one-shot calls. Keep code narrow: use `.select(...)` / `Plan.project` for needed fields and `Plan.return(...)` only for final answer nodes.",
+                ),
+            );
+            let mut execute_plan_props = BTreeMap::new();
+            execute_plan_props.insert(
+                "logical_session_ref".into(),
+                json_schema_string_type("Same logical session used to evaluate the plan; stale symbol spaces must re-evaluate before execution."),
+            );
+            execute_plan_props.insert(
+                "plan_handle".into(),
+                json_schema_string_type("Monotonic handle from `evaluate_code_plan`, e.g. `p1`; execute by handle instead of resending TypeScript."),
+            );
+            tools.push(Tool {
+                name: "add_code_capabilities".into(),
                 title: None,
-                description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
+                description: Some(
+                    "Open capabilities for Code Mode authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Use only for multiple coordinated operations, transformations, compute, approval review, or reuse; prefer **`plasm`** for simple one-shot calls. Keep output small with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only.".into(),
+                ),
                 input_schema: ToolInputSchema::new(
-                    vec!["logical_session_ref".into(), "expressions".into()],
-                    Some(run_props),
+                    vec!["logical_session_ref".into(), "seeds".into()],
+                    Some(add_props.clone()),
                     None,
                 ),
                 annotations: Some(ToolAnnotations {
@@ -633,8 +840,76 @@ impl PlasmMcpHandler {
                 icons: vec![],
                 meta: None,
                 output_schema: None,
-            },
-        ]
+            });
+            tools.push(Tool {
+                name: "evaluate_code_plan".into(),
+                title: None,
+                description: Some(
+                    "Evaluate a named TypeScript Code Mode program, archive the validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run DAG. Use this before **`execute_code_plan`**. Do not send TypeScript again once a handle exists unless changing the plan or symbol space. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
+                ),
+                input_schema: ToolInputSchema::new(
+                    vec!["logical_session_ref".into(), "name".into(), "code".into()],
+                    Some(eval_props),
+                    None,
+                ),
+                annotations: Some(ToolAnnotations {
+                    read_only_hint: Some(false),
+                    open_world_hint: Some(true),
+                    ..Default::default()
+                }),
+                execution: Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
+                }),
+                icons: vec![],
+                meta: None,
+                output_schema: None,
+            });
+            tools.push(Tool {
+                name: "execute_code_plan".into(),
+                title: None,
+                description: Some(
+                    "Execute a previously archived Code Mode Plan by **`plan_handle`** (for example `p1`). The response publishes only nodes named by **`Plan.return(...)`** and uses the same Markdown, **`_meta.plasm.steps`**, resource links, and paging conventions as **`plasm`**. Use artifact/resource links for full snapshots instead of returning wide intermediates.".into(),
+                ),
+                input_schema: ToolInputSchema::new(
+                    vec!["logical_session_ref".into(), "plan_handle".into()],
+                    Some(execute_plan_props),
+                    None,
+                ),
+                annotations: Some(ToolAnnotations {
+                    read_only_hint: Some(false),
+                    open_world_hint: Some(true),
+                    ..Default::default()
+                }),
+                execution: Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
+                }),
+                icons: vec![],
+                meta: None,
+                output_schema: None,
+            });
+        }
+        tools.push(Tool {
+            name: "plasm".into(),
+            title: None,
+            description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
+            input_schema: ToolInputSchema::new(
+                vec!["logical_session_ref".into(), "expressions".into()],
+                Some(run_props),
+                None,
+            ),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: Some(false),
+                open_world_hint: Some(true),
+                ..Default::default()
+            }),
+            execution: Some(ToolExecution {
+                task_support: Some(ToolExecutionTaskSupport::Forbidden),
+            }),
+            icons: vec![],
+            meta: None,
+            output_schema: None,
+        });
+        tools
     }
 }
 
@@ -901,6 +1176,7 @@ fn read_resource_result_for_payload(
 }
 
 impl PlasmMcpHandler {
+    #[allow(clippy::too_many_arguments)]
     async fn emit_mcp_resource_read_trace(
         &self,
         logical_session_trace_key: Option<&str>,
@@ -993,6 +1269,32 @@ impl ServerHandler for PlasmMcpHandler {
                     title: Some("Plasm execute run artifact (short index)".into()),
                     uri_template: "plasm://session/{logical_session_ref}/r/{n}".into(),
                 },
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Permanent archived Code Mode plan. `plan_id` is returned by `evaluate_code_plan` metadata."
+                            .into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some("application/json".into()),
+                    name: "plasm_code_plan".into(),
+                    title: Some("Plasm Code Mode plan archive (canonical)".into()),
+                    uri_template: "plasm://execute/{prompt_hash}/{session_id}/plan/{plan_id}".into(),
+                },
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Short alias for an archived Code Mode plan. `logical_session_ref` is the slot from `plasm_session_init`; `n` is the monotonic plan handle number."
+                            .into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some("application/json".into()),
+                    name: "plasm_code_plan_short".into(),
+                    title: Some("Plasm Code Mode plan archive (short index)".into()),
+                    uri_template: "plasm://session/{logical_session_ref}/p/{n}".into(),
+                },
             ],
             meta: None,
             next_cursor: None,
@@ -1011,6 +1313,96 @@ impl ServerHandler for PlasmMcpHandler {
     ) -> Result<ReadResourceResult, RpcError> {
         let started = Instant::now();
         let uri = params.uri.trim();
+        if let Some((segment, plan_index)) = parse_plasm_session_short_plan_uri(uri) {
+            let Some(transport_key) = runtime.session_id() else {
+                crate::metrics::record_mcp_resource_read(
+                    "code_plan_short",
+                    "error",
+                    "session_not_ready",
+                    started.elapsed(),
+                );
+                return Err(RpcError::invalid_params().with_message(
+                    "MCP session not ready: complete the initialize handshake before resources/read.",
+                ));
+            };
+            let logical_uuid = match segment {
+                LogicalSessionUriSegment::Uuid(u) => u,
+                LogicalSessionUriSegment::Slot(s) => {
+                    let transport = self.session_state(&transport_key).await;
+                    let g = transport.lock().await;
+                    let Some(u) = g.ref_to_uuid.get(&s).copied() else {
+                        crate::metrics::record_mcp_resource_read(
+                            "code_plan_short",
+                            "error",
+                            "unknown_session_ref",
+                            started.elapsed(),
+                        );
+                        return Err(RpcError::invalid_params()
+                            .with_message("unknown logical session slot in Code Mode plan URI"));
+                    };
+                    u
+                }
+            };
+            let ls_key = logical_uuid.to_string();
+            let binding = {
+                let map = self.plasm.logical_execute_bindings.read().await;
+                map.get(&logical_uuid).map(|(ph, sid)| PlasmExecBinding {
+                    prompt_hash: ph.clone(),
+                    session_id: sid.clone(),
+                })
+            };
+            let Some(b) = binding else {
+                crate::metrics::record_mcp_resource_read(
+                    "code_plan_short",
+                    "error",
+                    "no_binding",
+                    started.elapsed(),
+                );
+                return Err(RpcError::invalid_params().with_message(
+                    "no execute session for this logical session: call add_code_capabilities with seeds first",
+                ));
+            };
+            let payload = self
+                .plasm
+                .run_artifacts
+                .get_code_plan_payload_result_by_index(
+                    b.prompt_hash.as_str(),
+                    b.session_id.as_str(),
+                    plan_index,
+                )
+                .await
+                .map_err(|e| {
+                    RpcError::internal_error().with_message(format!("code plan decode failed: {e}"))
+                })?;
+            let Some(payload) = payload else {
+                crate::metrics::record_mcp_resource_read(
+                    "code_plan_short",
+                    "error",
+                    "unknown_plan",
+                    started.elapsed(),
+                );
+                return Err(RpcError::invalid_params().with_message(format!(
+                    "unknown Code Mode plan index {plan_index} for this session"
+                )));
+            };
+            crate::metrics::record_mcp_resource_read(
+                "code_plan_short",
+                "success",
+                "none",
+                started.elapsed(),
+            );
+            self.emit_mcp_resource_read_trace(
+                Some(&ls_key),
+                None,
+                uri,
+                Some(&payload),
+                started,
+                "success",
+                None,
+            )
+            .await;
+            return read_resource_result_for_payload(uri, payload);
+        }
         if let Some((segment, resource_index)) = parse_plasm_session_short_resource_uri(uri) {
             let Some(transport_key) = runtime.session_id() else {
                 crate::metrics::record_mcp_resource_read(
@@ -1205,6 +1597,35 @@ impl ServerHandler for PlasmMcpHandler {
                 None,
             )
             .await;
+            return read_resource_result_for_payload(uri, payload);
+        }
+
+        if let Some((prompt_hash, session_id, plan_id)) = parse_plasm_execute_plan_uri(uri) {
+            let payload = self
+                .plasm
+                .run_artifacts
+                .get_code_plan_payload_result(&prompt_hash, &session_id, plan_id)
+                .await
+                .map_err(|e| {
+                    RpcError::internal_error().with_message(format!("code plan decode failed: {e}"))
+                })?;
+            let Some(payload) = payload else {
+                crate::metrics::record_mcp_resource_read(
+                    "code_plan_canonical",
+                    "error",
+                    "unknown_plan",
+                    started.elapsed(),
+                );
+                return Err(RpcError::invalid_params().with_message(
+                    "unknown Code Mode plan (wrong plan_id or not yet stored for this session)",
+                ));
+            };
+            crate::metrics::record_mcp_resource_read(
+                "code_plan_canonical",
+                "success",
+                "none",
+                started.elapsed(),
+            );
             return read_resource_result_for_payload(uri, payload);
         }
 
@@ -1462,13 +1883,27 @@ impl ServerHandler for PlasmMcpHandler {
                 }
                 res
             }
-            "add_capabilities" => {
+            "add_capabilities" | "add_code_capabilities" => {
                 let started = Instant::now();
+                let is_add_code = params.name == "add_code_capabilities";
+                let tname: &str = if is_add_code {
+                    "add_code_capabilities"
+                } else {
+                    "add_capabilities"
+                };
                 let res: Result<CallToolResult, CallToolError> = async {
+                    if is_add_code {
+                        #[cfg(not(feature = "code_mode"))]
+                        {
+                            return Err(CallToolError::from_message(
+                                "this build does not include Plasm Code Mode: use `add_capabilities`, or build with the `plasm-agent-core` `code_mode` feature",
+                            ));
+                        }
+                    }
                     let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
-                    let session_ref = parse_logical_session_ref_arg("add_capabilities", &v)?;
+                    let session_ref = parse_logical_session_ref_arg(tname, &v)?;
                     let logical_uuid = self
-                        .resolve_logical_session_ref_to_uuid("add_capabilities", &key, &session_ref)
+                        .resolve_logical_session_ref_to_uuid(tname, &key, &session_ref)
                         .await?;
                     let scope = tenant_scope(principal_incoming.as_ref());
                     if !self
@@ -1482,7 +1917,16 @@ impl ServerHandler for PlasmMcpHandler {
                         ));
                     }
                     let ls_key = logical_uuid.to_string();
-                    let seeds = parse_tool_seeds("add_capabilities", &v)?;
+                    let seeds = parse_tool_seeds(tname, &v)?;
+                    #[cfg(feature = "code_mode")]
+                    let seed_pairs_for_facade: Vec<(String, String)> = if is_add_code {
+                        seeds
+                            .iter()
+                            .map(|s| (s.entry_id.clone(), s.entity.clone()))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
                     let principal = parse_optional_principal(&v);
                     let distinct_entries: Vec<String> = {
                         let mut seen = std::collections::HashSet::new();
@@ -1509,7 +1953,7 @@ impl ServerHandler for PlasmMcpHandler {
                         .await;
                     tracing::debug!(
                         target: "plasm_agent::mcp",
-                        tool = "add_capabilities",
+                        tool = tname,
                         logical_session_ref = %session_ref,
                         logical_session_id = %ls_key,
                         mcp_execute_binding_present = binding.is_some(),
@@ -1641,6 +2085,75 @@ impl ServerHandler for PlasmMcpHandler {
                         );
                     }
                     plasm.insert("continuity".to_string(), serde_json::Value::Object(continuity));
+                    if is_add_code {
+                        #[cfg(feature = "code_mode")]
+                        {
+                            let es = self
+                            .plasm
+                            .sessions
+                            .get_by_strs(&out.prompt_hash, &out.session_id)
+                            .await
+                            .ok_or_else(|| {
+                                CallToolError::from_message(
+                                    "add_code_capabilities invariant failed: execute session is unavailable for generated code facade",
+                                )
+                            })?;
+                        let de = es.domain_exposure.as_ref().ok_or_else(|| {
+                            CallToolError::from_message(
+                                "add_code_capabilities invariant failed: execute session has no domain exposure for generated code facade",
+                            )
+                        })?;
+                        let ls = self.logical_mutex(&key, &ls_key).await;
+                        {
+                            let mut g = ls.lock().await;
+                            if out.new_symbol_space || out.stale_execute_binding_recovered {
+                                g.code_mode = CodeModeMcpState::default();
+                            }
+                            g.code_mode.last_binding =
+                                Some((out.prompt_hash.clone(), out.session_id.clone()));
+                        }
+                        let (already, emit_prelude) = {
+                            let g = ls.lock().await;
+                            let already = g.code_mode.emitted.clone();
+                            let emit = !g.code_mode.prelude_issued || out.new_symbol_space;
+                            (already, emit)
+                        };
+                        let gen_req = FacadeGenRequest {
+                            new_symbol_space: out.new_symbol_space,
+                            seed_pairs: seed_pairs_for_facade.clone(),
+                            already_emitted: already,
+                            emit_prelude,
+                        };
+                        let (fac, ts) = build_code_facade(&gen_req, de, &es.contexts_by_entry);
+                        {
+                            let mut g = ls.lock().await;
+                            for (entry_id, entity) in &seed_pairs_for_facade {
+                                g.code_mode
+                                    .emitted
+                                    .insert((entry_id.clone(), entity.clone()));
+                            }
+                            if !ts.agent_prelude.is_empty() {
+                                g.code_mode.prelude_issued = true;
+                            }
+                        }
+                        plasm.insert(
+                            "facade_delta".to_string(),
+                            serde_json::to_value(&fac).unwrap_or_else(|_| json!({})),
+                        );
+                        plasm.insert(
+                            "typescript".to_string(),
+                            json!({
+                                "prelude_ref": "code-mode-agent-prelude-v2",
+                                "runtime_bootstrap_ref": ts.runtime_bootstrap_ref,
+                                "prelude": ts.agent_prelude,
+                                "namespace_delta": ts.agent_namespace_body,
+                                "loaded_apis_delta": ts.agent_loaded_apis,
+                                "declarations_unchanged": ts.declarations_unchanged,
+                                "added_catalog_aliases": ts.added_catalog_aliases
+                            }),
+                        );
+                        }
+                    }
                     if !plasm.is_empty() {
                         let mut meta = serde_json::Map::new();
                         meta.insert("plasm".to_string(), serde_json::Value::Object(plasm));
@@ -1651,15 +2164,505 @@ impl ServerHandler for PlasmMcpHandler {
                 .await;
                 let elapsed = started.elapsed();
                 match &res {
+                    Ok(_) => {
+                        crate::metrics::record_mcp_tool(tname, None, "success", "none", elapsed)
+                    }
+                    Err(e) => crate::metrics::record_mcp_tool(
+                        tname,
+                        None,
+                        "error",
+                        mcp_call_tool_error_class(e),
+                        elapsed,
+                    ),
+                }
+                res
+            }
+            #[cfg(feature = "code_mode")]
+            "evaluate_code_plan" => {
+                let started = Instant::now();
+                let res: Result<CallToolResult, CallToolError> = async {
+                    let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
+                    let session_ref = parse_logical_session_ref_arg("evaluate_code_plan", &v)?;
+                    let logical_uuid = self
+                        .resolve_logical_session_ref_to_uuid(
+                            "evaluate_code_plan",
+                            &key,
+                            &session_ref,
+                        )
+                        .await?;
+                    let scope = tenant_scope(principal_incoming.as_ref());
+                    if !self
+                        .plasm
+                        .logical_sessions
+                        .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+                        .await
+                    {
+                        return Err(CallToolError::from_message(
+                            "logical_session_ref is unknown or does not belong to this tenant scope",
+                        ));
+                    }
+                    let name = parse_required_string_arg("evaluate_code_plan", &v, "name")?;
+                    let code = parse_required_string_arg("evaluate_code_plan", &v, "code")?;
+                    let ls_key = logical_uuid.to_string();
+                    let state = self.logical_mutex(&key, &ls_key).await;
+                    let needs_binding_hydrate = {
+                        let g = state.lock().await;
+                        g.binding.is_none()
+                    };
+                    if needs_binding_hydrate {
+                        if let Some(b) = self.resolve_binding_for_logical(&key, logical_uuid).await
+                        {
+                            let mut g = state.lock().await;
+                            g.binding = Some(b);
+                        }
+                    }
+                    let binding = {
+                        let g = state.lock().await;
+                        g.binding.clone()
+                    };
+                    let Some(b) = binding else {
+                        return Err(CallToolError::from_message(
+                            "no execute session: call add_code_capabilities with seeds first",
+                        ));
+                    };
+                    let es = self
+                        .plasm
+                        .sessions
+                        .get_by_strs(b.prompt_hash.as_str(), b.session_id.as_str())
+                        .await
+                        .ok_or_else(|| {
+                            CallToolError::from_message(
+                                "execute session is missing; call add_code_capabilities to refresh",
+                            )
+                        })?;
+                    let de = es.domain_exposure.as_ref().ok_or_else(|| {
+                        CallToolError::from_message(
+                            "execute session has no domain exposure; call add_code_capabilities to refresh",
+                        )
+                    })?;
+                    let seed_pairs: Vec<(String, String)> = de
+                        .entity_catalog_entry_ids
+                        .iter()
+                        .cloned()
+                        .zip(de.entities.iter().cloned())
+                        .collect();
+                    let gen_req = FacadeGenRequest {
+                        new_symbol_space: true,
+                        seed_pairs,
+                        already_emitted: Default::default(),
+                        emit_prelude: true,
+                    };
+                    let (facade_delta, _) = build_code_facade(&gen_req, de, &es.contexts_by_entry);
+                    let quickjs_runtime = quickjs_runtime_from_facade_delta(&facade_delta);
+                    let plan_value = crate::code_mode::CodeModeSandbox::new()
+                        .and_then(|s| {
+                            s.eval_typescript_to_json_value(
+                                &format!("{}.ts", name.replace('/', "_")),
+                                &code,
+                                Some(&quickjs_runtime),
+                            )
+                        })
+                        .map_err(CallToolError::from_message)?;
+                    let dry = evaluate_code_mode_plan_dry(&es, &plan_value)
+                        .map_err(CallToolError::from_message)?;
+                    let plan_bytes = serde_json::to_vec(&plan_value)
+                        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                    let mut hasher = Sha256::new();
+                    hasher.update(name.as_bytes());
+                    hasher.update(b"\n");
+                    hasher.update(code.as_bytes());
+                    hasher.update(b"\n");
+                    hasher.update(&plan_bytes);
+                    let plan_hash = hex::encode(hasher.finalize());
+                    let plan_index = es.mint_code_plan_index();
+                    let plan_handle = crate::run_artifacts::code_plan_handle(plan_index);
+                    let plan_id = Uuid::new_v4();
+                    let doc = CodePlanArchiveDocument {
+                        kind: "code_plan".into(),
+                        plan_id: plan_id.to_string(),
+                        prompt_hash: b.prompt_hash.clone(),
+                        session_id: b.session_id.clone(),
+                        entry_id: es.entry_id.clone(),
+                        plan_index,
+                        plan_handle: plan_handle.clone(),
+                        name: name.clone(),
+                        code,
+                        plan_hash: plan_hash.clone(),
+                        plan: plan_value,
+                        catalog_cgs_hash: es.catalog_cgs_hash.clone(),
+                        domain_revision: es.domain_revision,
+                        entities: es.entities.clone(),
+                        principal: es.principal.clone(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                    };
+                    let stored = self
+                        .plasm
+                        .run_artifacts
+                        .insert_code_plan(
+                            b.prompt_hash.as_str(),
+                            b.session_id.as_str(),
+                            plan_id,
+                            plan_index,
+                            &doc,
+                        )
+                        .await
+                        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                    let short_uri = plasm_session_short_plan_uri(&session_ref, plan_index);
+                    let trace_meta = self.trace_session_meta(&key, &runtime).await;
+                    self.plasm
+                        .trace_hub
+                        .ensure_logical_session(&ls_key, Some(&key), trace_meta)
+                        .await;
+                    self.plasm
+                        .trace_hub
+                        .trace_record_code_plan_evaluate(
+                            &ls_key,
+                            crate::trace_hub::CodePlanTrace {
+                                plan_handle: plan_handle.clone(),
+                                plan_id: plan_id.to_string(),
+                                plan_name: name.clone(),
+                                plan_hash: plan_hash.clone(),
+                                plan_uri: short_uri.clone(),
+                                canonical_plan_uri: stored.canonical_plasm_uri.clone(),
+                                plan_http_path: stored.http_path.clone(),
+                                prompt_hash: b.prompt_hash.clone(),
+                                session_id: b.session_id.clone(),
+                                node_count: dry.node_results.len(),
+                                code_chars: doc.code.chars().count() as u64,
+                                run_ids: Vec::new(),
+                                run_artifacts: Vec::new(),
+                            },
+                        )
+                        .await;
+                    let body = render_code_mode_plan_dry_text(
+                        &dry,
+                        Some(CodePlanDryRunTextMeta {
+                            plan_name: Some(name.as_str()),
+                            plan_handle: plan_handle.as_str(),
+                            plan_uri: short_uri.as_str(),
+                            canonical_plan_uri: stored.canonical_plasm_uri.as_str(),
+                            plan_hash: plan_hash.as_str(),
+                        }),
+                    );
+                    let root_value = serde_json::json!({
+                        "ok": true,
+                        "plan_handle": plan_handle,
+                        "plan_uri": short_uri,
+                        "canonical_plan_uri": stored.canonical_plasm_uri,
+                        "plan_http_path": stored.http_path,
+                        "plan_id": plan_id.to_string(),
+                        "plan_name": name,
+                        "plan_hash": plan_hash,
+                        "dry_run": {
+                            "version": dry.version,
+                            "name": dry.name,
+                            "node_results": dry.node_results,
+                            "graph_summary": dry.graph_summary,
+                            "can_batch_run": dry.can_batch_run,
+                            "execution_unsupported": dry.execution_unsupported
+                        }
+                    });
+                    let mut res = CallToolResult::text_content(vec![TextContent::new(
+                        format!("```text\n{body}```\n"),
+                        None,
+                        None,
+                    )]);
+                    let mut meta = serde_json::Map::new();
+                    meta.insert(
+                        "plasm".into(),
+                        json!({
+                            "code_plan": {
+                                "plan_handle": root_value["plan_handle"],
+                                "plan_uri": root_value["plan_uri"],
+                                "canonical_plan_uri": root_value["canonical_plan_uri"],
+                                "plan_http_path": root_value["plan_http_path"],
+                                "plan_id": root_value["plan_id"],
+                                "plan_hash": root_value["plan_hash"],
+                                "dry_run": {
+                                    "graph_summary": root_value["dry_run"]["graph_summary"],
+                                    "can_batch_run": root_value["dry_run"]["can_batch_run"],
+                                    "execution_unsupported": root_value["dry_run"]["execution_unsupported"],
+                                }
+                            }
+                        }),
+                    );
+                    res = res.with_meta(Some(meta));
+                    Ok(res)
+                }
+                .await;
+                let elapsed = started.elapsed();
+                match &res {
+                    Ok(_) => {
+                        crate::metrics::record_mcp_tool(
+                            "evaluate_code_plan",
+                            None,
+                            "success",
+                            "none",
+                            elapsed,
+                        );
+                    }
+                    Err(e) => {
+                        crate::metrics::record_mcp_tool(
+                            "evaluate_code_plan",
+                            None,
+                            "error",
+                            mcp_call_tool_error_class(e),
+                            elapsed,
+                        );
+                    }
+                }
+                res
+            }
+            #[cfg(feature = "code_mode")]
+            "execute_code_plan" => {
+                let started = Instant::now();
+                let res: Result<CallToolResult, CallToolError> = async {
+                    let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
+                    let session_ref = parse_logical_session_ref_arg("execute_code_plan", &v)?;
+                    let logical_uuid = self
+                        .resolve_logical_session_ref_to_uuid("execute_code_plan", &key, &session_ref)
+                        .await?;
+                    let scope = tenant_scope(principal_incoming.as_ref());
+                    if !self
+                        .plasm
+                        .logical_sessions
+                        .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+                        .await
+                    {
+                        return Err(CallToolError::from_message(
+                            "logical_session_ref is unknown or does not belong to this tenant scope",
+                        ));
+                    }
+                    let plan_handle =
+                        parse_required_string_arg("execute_code_plan", &v, "plan_handle")?;
+                    let Some(plan_index) = parse_code_plan_handle(&plan_handle) else {
+                        return Err(CallToolError::invalid_arguments(
+                            "execute_code_plan",
+                            Some("plan_handle must look like `p1`".into()),
+                        ));
+                    };
+                    let ls_key = logical_uuid.to_string();
+                    let state = self.logical_mutex(&key, &ls_key).await;
+                    if state.lock().await.binding.is_none() {
+                        if let Some(b) = self.resolve_binding_for_logical(&key, logical_uuid).await
+                        {
+                            state.lock().await.binding = Some(b);
+                        }
+                    }
+                    let Some(b) = state.lock().await.binding.clone() else {
+                        return Err(CallToolError::from_message(
+                            "no execute session: call add_code_capabilities with seeds first",
+                        ));
+                    };
+                    let es = self
+                        .plasm
+                        .sessions
+                        .get_by_strs(b.prompt_hash.as_str(), b.session_id.as_str())
+                        .await
+                        .ok_or_else(|| {
+                            CallToolError::from_message(
+                                "execute session is missing; call add_code_capabilities to refresh",
+                            )
+                        })?;
+                    let payload = self
+                        .plasm
+                        .run_artifacts
+                        .get_code_plan_payload_result_by_index(
+                            b.prompt_hash.as_str(),
+                            b.session_id.as_str(),
+                            plan_index,
+                        )
+                        .await
+                        .map_err(|e| CallToolError::from_message(e.to_string()))?
+                        .ok_or_else(|| {
+                            CallToolError::from_message(format!(
+                                "unknown Code Mode plan handle `{plan_handle}`"
+                            ))
+                        })?;
+                    let doc: CodePlanArchiveDocument =
+                        serde_json::from_slice(payload.bytes.as_ref())
+                            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                    if code_plan_session_mismatch(
+                        &doc,
+                        b.prompt_hash.as_str(),
+                        b.session_id.as_str(),
+                        es.catalog_cgs_hash.as_str(),
+                        es.domain_revision,
+                    )
+                    .is_some()
+                    {
+                        return Err(CallToolError::from_message(
+                            "archived Code Mode plan does not match the current execute session; re-evaluate it in this symbol space",
+                        ));
+                    }
+                    let dry = evaluate_code_mode_plan_dry(&es, &doc.plan)
+                        .map_err(CallToolError::from_message)?;
+                    let batch_count = dry.node_results.len();
+                    let state2 = self.logical_mutex(&key, &ls_key).await;
+                    let (this_invocation_chars, mut idx, call_count) = {
+                        let mut g = state2.lock().await;
+                        let this_invocation_chars = plan_handle.chars().count() as u64;
+                        g.stats.plasm_invocation_chars = g
+                            .stats
+                            .plasm_invocation_chars
+                            .saturating_add(this_invocation_chars);
+                        g.stats.plasm_call_count = g.stats.plasm_call_count.saturating_add(1);
+                        let call_count = g.stats.plasm_call_count;
+                        let idx = std::mem::take(&mut g.meta_index);
+                        (this_invocation_chars, idx, call_count)
+                    };
+                    let trace_meta = self.trace_session_meta(&key, &runtime).await;
+                    let trace_id = self
+                        .plasm
+                        .trace_hub
+                        .ensure_logical_session(&ls_key, Some(&key), trace_meta)
+                        .await;
+                    let call_index = self
+                        .plasm
+                        .trace_hub
+                        .trace_record_plasm_invocation(
+                            &ls_key,
+                            batch_count > 1,
+                            batch_count,
+                            None,
+                            this_invocation_chars,
+                            Some(format!("execute_code_plan {plan_handle}")),
+                        )
+                        .await;
+                    let mcp_trace = PlasmTraceContext {
+                        trace_id,
+                        call_index: Some(call_count as i64),
+                        mcp_session_id: Some(key.clone()),
+                        logical_session_id: Some(ls_key.clone()),
+                        logical_session_ref: Some(session_ref.clone()),
+                    };
+                    let sink = McpPlasmTraceSink {
+                        hub: Arc::clone(&self.plasm.trace_hub),
+                        mcp_key: ls_key.clone(),
+                        call_index,
+                    };
+                    let hooks = CodeModePlasmRunHooks {
+                        meta_index: &mut idx,
+                        trace: mcp_trace,
+                        sink,
+                    };
+                    let run_result = run_code_mode_plan(
+                        &es,
+                        self.plasm.as_ref(),
+                        principal_incoming.as_ref(),
+                        b.prompt_hash.as_str(),
+                        b.session_id.as_str(),
+                        &doc.plan,
+                        true,
+                        Some(hooks),
+                    )
+                    .instrument(crate::spans::mcp_tool_plasm(
+                        batch_count > 1,
+                        batch_count as u64,
+                        session_ref.as_str(),
+                    ))
+                    .await
+                    .map_err(CallToolError::from_message)?;
+                    {
+                        let mut g = state2.lock().await;
+                        g.meta_index = idx;
+                    }
+                    let markdown = run_result.run_markdown.unwrap_or_else(|| {
+                        "Code Mode plan executed, but no result Markdown was produced.".to_string()
+                    });
+                    let response_chars = markdown.chars().count() as u64;
+                    if response_chars > 0 {
+                        {
+                            let mut g = state2.lock().await;
+                            g.stats.plasm_response_chars =
+                                g.stats.plasm_response_chars.saturating_add(response_chars);
+                        }
+                        self.plasm
+                            .trace_hub
+                            .trace_note_plasm_response_chars(
+                                &ls_key,
+                                response_chars,
+                                "execute_code_plan",
+                                call_index,
+                                batch_count > 1,
+                                batch_count,
+                            )
+                            .await;
+                    }
+                    let (run_ids, run_artifacts) =
+                        code_plan_run_artifacts_from_meta(run_result.run_plasm_meta.as_ref());
+                    let plan_uuid = Uuid::parse_str(&doc.plan_id).map_err(|_| {
+                        CallToolError::from_message(
+                            "archived Code Mode plan has invalid plan_id; re-evaluate it",
+                        )
+                    })?;
+                    let plan_uri = plasm_session_short_plan_uri(&session_ref, doc.plan_index);
+                    let canonical_plan_uri =
+                        crate::run_artifacts::plasm_code_plan_resource_uri(
+                            &doc.prompt_hash,
+                            &doc.session_id,
+                            &plan_uuid,
+                        );
+                    let plan_http_path =
+                        code_plan_http_path(&doc.prompt_hash, &doc.session_id, &plan_uuid);
+                    self.plasm
+                        .trace_hub
+                        .trace_record_code_plan_execute(
+                            &ls_key,
+                            crate::trace_hub::CodePlanTrace {
+                                plan_handle: doc.plan_handle.clone(),
+                                plan_id: doc.plan_id.clone(),
+                                plan_name: doc.name.clone(),
+                                plan_hash: doc.plan_hash.clone(),
+                                plan_uri: plan_uri.clone(),
+                                canonical_plan_uri: canonical_plan_uri.clone(),
+                                plan_http_path: plan_http_path.clone(),
+                                prompt_hash: doc.prompt_hash.clone(),
+                                session_id: doc.session_id.clone(),
+                                node_count: dry.node_results.len(),
+                                code_chars: doc.code.chars().count() as u64,
+                                run_ids,
+                                run_artifacts,
+                            },
+                        )
+                        .await;
+                    let blocks = vec![ContentBlock::TextContent(TextContent::new(
+                        markdown, None, None,
+                    ))];
+                    let mut res = CallToolResult::from_content(blocks);
+                    let mut meta = run_result.run_plasm_meta.unwrap_or_default();
+                    let plasm = meta
+                        .entry("plasm".to_string())
+                        .or_insert_with(|| json!({}));
+                    if let Some(obj) = plasm.as_object_mut() {
+                        obj.insert(
+                            "code_plan".into(),
+                            json!({
+                                "plan_handle": doc.plan_handle,
+                                "plan_id": doc.plan_id,
+                                "plan_name": doc.name,
+                                "plan_hash": doc.plan_hash,
+                                "plan_uri": plan_uri,
+                                "canonical_plan_uri": canonical_plan_uri,
+                                "plan_http_path": plan_http_path,
+                            }),
+                        );
+                    }
+                    res = res.with_meta(Some(meta));
+                    Ok(res)
+                }
+                .await;
+                let elapsed = started.elapsed();
+                match &res {
                     Ok(_) => crate::metrics::record_mcp_tool(
-                        "add_capabilities",
+                        "execute_code_plan",
                         None,
                         "success",
                         "none",
                         elapsed,
                     ),
                     Err(e) => crate::metrics::record_mcp_tool(
-                        "add_capabilities",
+                        "execute_code_plan",
                         None,
                         "error",
                         mcp_call_tool_error_class(e),
@@ -1767,8 +2770,7 @@ impl ServerHandler for PlasmMcpHandler {
                                 "plasm",
                                 Some(format!(
                                     "`tsv_static_frontmatter` exceeds max length ({} Unicode scalars, max {})",
-                                    n,
-                                    MAX_TSV_STATIC_FRONTMATTER_SCALARS
+                                    n, MAX_TSV_STATIC_FRONTMATTER_SCALARS
                                 )),
                             ),
                         ));
@@ -2119,9 +3121,14 @@ pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -
     let handler_struct = PlasmMcpHandler::new(Arc::clone(&plasm));
     let session_states = Arc::clone(&handler_struct.session_states);
     let handler = handler_struct.to_mcp_server_handler();
-    let auth_provider: Arc<dyn rust_mcp_sdk::auth::AuthProvider> = Arc::new(
-        crate::mcp_stream_auth::PlasmMcpApiKeyAuthProvider::new(Arc::clone(&plasm)),
-    );
+    let auth_provider: Option<Arc<dyn rust_mcp_sdk::auth::AuthProvider>> =
+        if plasm.mcp_config_repository().is_some() || plasm.incoming_auth.is_some() {
+            Some(Arc::new(
+                crate::mcp_stream_auth::PlasmMcpApiKeyAuthProvider::new(Arc::clone(&plasm)),
+            ))
+        } else {
+            None
+        };
     let server = hyper_server::create_server(
         mcp_initialize_result(),
         handler,
@@ -2131,7 +3138,7 @@ pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -
             event_store: Some(Arc::new(InMemoryEventStore::default())),
             health_endpoint: Some("/health".into()),
             sse_support: false,
-            auth: Some(auth_provider),
+            auth: auth_provider,
             ..Default::default()
         },
     );
@@ -2204,7 +3211,125 @@ mod tests {
         assert!(names.iter().any(|n| n == "plasm_session_init"));
         assert!(names.iter().any(|n| n == "discover_capabilities"));
         assert!(names.iter().any(|n| n == "add_capabilities"));
+        #[cfg(feature = "code_mode")]
+        {
+            assert!(names.iter().any(|n| n == "add_code_capabilities"));
+            assert!(names.iter().any(|n| n == "evaluate_code_plan"));
+            assert!(names.iter().any(|n| n == "execute_code_plan"));
+            assert!(!names.iter().any(|n| n == "execute"));
+        }
+        #[cfg(not(feature = "code_mode"))]
+        {
+            assert!(!names.iter().any(|n| n == "add_code_capabilities"));
+            assert!(!names.iter().any(|n| n == "evaluate_code_plan"));
+            assert!(!names.iter().any(|n| n == "execute_code_plan"));
+            assert!(!names.iter().any(|n| n == "execute"));
+        }
         assert!(names.iter().any(|n| n == "plasm"));
+    }
+
+    /// Code-mode plan tools document the archive handle flow.
+    #[cfg(feature = "code_mode")]
+    #[test]
+    fn mcp_code_plan_tools_document_when_how_and_small_outputs() {
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let add = tools
+            .iter()
+            .find(|t| t.name == "add_code_capabilities")
+            .expect("add_code_capabilities tool");
+        let eval = tools
+            .iter()
+            .find(|t| t.name == "evaluate_code_plan")
+            .expect("evaluate_code_plan tool");
+        let run = tools
+            .iter()
+            .find(|t| t.name == "execute_code_plan")
+            .expect("execute_code_plan tool");
+        let d = format!(
+            "{}\n{}\n{}",
+            add.description.as_deref().unwrap(),
+            eval.description.as_deref().unwrap(),
+            run.description.as_deref().unwrap()
+        );
+        assert!(
+            d.contains("plan_handle")
+                && d.contains("archived")
+                && d.contains("_meta.plasm.steps")
+                && d.contains("prefer **`plasm`**")
+                && d.contains("multiple coordinated operations")
+                && d.contains("transformations")
+                && d.contains("compute")
+                && d.contains("Plan.project")
+                && d.contains(".select(...)")
+                && d.contains("Plan.return(...)")
+                && d.contains("final answer nodes")
+                && d.contains("wide intermediates"),
+            "code plan tool descriptions: {d}"
+        );
+    }
+
+    #[cfg(feature = "code_mode")]
+    #[test]
+    fn initialize_instructions_document_code_mode_decision_and_flow() {
+        let d = super::MCP_SERVER_INITIALIZE_INSTRUCTIONS;
+        for expected in [
+            "prefer **`plasm`** for one-shot reads/writes",
+            "multiple operations needing coordination",
+            "transformation",
+            "compute",
+            "add_code_capabilities",
+            "evaluate_code_plan(name, code)",
+            "execute_code_plan(plan_handle)",
+            "Reuse the **`plan_handle`**",
+            "Plan.project",
+            ".select(...)",
+            "Plan.return(...)",
+            "not intermediates",
+        ] {
+            assert!(
+                d.contains(expected),
+                "initialize instructions missing {expected:?}: {d}"
+            );
+        }
+    }
+
+    #[cfg(feature = "code_mode")]
+    #[test]
+    fn code_plan_session_mismatch_rejects_stale_symbol_space() {
+        let doc = crate::run_artifacts::CodePlanArchiveDocument {
+            kind: "code_plan".into(),
+            plan_id: uuid::Uuid::nil().to_string(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            entry_id: "demo".into(),
+            plan_index: 1,
+            plan_handle: "p1".into(),
+            name: "demo".into(),
+            code: "JSON.stringify({version:1,nodes:[]})".into(),
+            plan_hash: "h".repeat(64),
+            plan: serde_json::json!({"version": 1, "nodes": []}),
+            catalog_cgs_hash: "c".repeat(64),
+            domain_revision: 2,
+            entities: vec!["Widget".into()],
+            principal: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+        assert_eq!(
+            super::code_plan_session_mismatch(&doc, &"p".repeat(64), "s1", &"c".repeat(64), 2),
+            None
+        );
+        assert_eq!(
+            super::code_plan_session_mismatch(&doc, &"x".repeat(64), "s1", &"c".repeat(64), 2),
+            Some("execute_session")
+        );
+        assert_eq!(
+            super::code_plan_session_mismatch(&doc, &"p".repeat(64), "s1", &"x".repeat(64), 2),
+            Some("catalog_cgs_hash")
+        );
+        assert_eq!(
+            super::code_plan_session_mismatch(&doc, &"p".repeat(64), "s1", &"c".repeat(64), 1),
+            Some("domain_revision")
+        );
     }
 
     #[test]

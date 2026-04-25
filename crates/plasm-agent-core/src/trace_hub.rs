@@ -45,8 +45,8 @@ use plasm_runtime::ExecutionResult;
 #[cfg(test)]
 use plasm_runtime::{ExecutionSource, ExecutionStats};
 pub use plasm_trace::{
-    totals_from_session_data, PlasmLineTraceMeta, RunArtifactArchiveRef, SessionTraceData,
-    TraceEvent, TraceSegment, TraceTotals,
+    totals_from_session_data, CodePlanRunArtifactRef, PlasmLineTraceMeta, RunArtifactArchiveRef,
+    SessionTraceData, TraceEvent, TraceSegment, TraceTotals,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -454,6 +454,23 @@ pub struct AddCapabilitiesTrace {
     pub seeds: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CodePlanTrace {
+    pub plan_handle: String,
+    pub plan_id: String,
+    pub plan_name: String,
+    pub plan_hash: String,
+    pub plan_uri: String,
+    pub canonical_plan_uri: String,
+    pub plan_http_path: String,
+    pub prompt_hash: String,
+    pub session_id: String,
+    pub node_count: usize,
+    pub code_chars: u64,
+    pub run_ids: Vec<String>,
+    pub run_artifacts: Vec<CodePlanRunArtifactRef>,
+}
+
 /// In-memory trace registry + live SSE fan-out.
 pub struct TraceHub {
     inner: RwLock<TraceHubInner>,
@@ -473,8 +490,7 @@ impl Default for TraceHub {
 
 impl TraceHub {
     pub fn new(trace_ingest: Option<Arc<dyn TraceIngestClient>>) -> Self {
-        TraceHubBuilder::default()
-            .build(trace_ingest, None)
+        TraceHubBuilder::default().build(trace_ingest, None)
     }
 
     fn from_parts(
@@ -1021,7 +1037,8 @@ impl TraceHub {
             );
             (trace_id, seq, ended_ms, detail_for_archive)
         };
-        if let (Some(arch), Some(detail)) = (self.local_trace_archive.as_ref(), detail_for_archive) {
+        if let (Some(arch), Some(detail)) = (self.local_trace_archive.as_ref(), detail_for_archive)
+        {
             let arch = arch.clone();
             tokio::spawn(async move {
                 if let Err(e) = arch.persist_trace(&detail).await {
@@ -1085,6 +1102,48 @@ impl TraceHub {
                 entry_id,
                 entities,
                 seeds,
+            },
+        )
+        .await;
+    }
+
+    pub async fn trace_record_code_plan_evaluate(&self, mcp_key: &str, trace: CodePlanTrace) {
+        self.bump_and_emit(
+            mcp_key,
+            TraceSegment::CodePlanEvaluate {
+                plan_handle: trace.plan_handle,
+                plan_id: trace.plan_id,
+                plan_name: trace.plan_name,
+                plan_hash: trace.plan_hash,
+                plan_uri: trace.plan_uri,
+                canonical_plan_uri: trace.canonical_plan_uri,
+                plan_http_path: trace.plan_http_path,
+                prompt_hash: trace.prompt_hash,
+                session_id: trace.session_id,
+                node_count: trace.node_count,
+                code_chars: trace.code_chars,
+            },
+        )
+        .await;
+    }
+
+    pub async fn trace_record_code_plan_execute(&self, mcp_key: &str, trace: CodePlanTrace) {
+        self.bump_and_emit(
+            mcp_key,
+            TraceSegment::CodePlanExecute {
+                plan_handle: trace.plan_handle,
+                plan_id: trace.plan_id,
+                plan_name: trace.plan_name,
+                plan_hash: trace.plan_hash,
+                plan_uri: trace.plan_uri,
+                canonical_plan_uri: trace.canonical_plan_uri,
+                plan_http_path: trace.plan_http_path,
+                prompt_hash: trace.prompt_hash,
+                session_id: trace.session_id,
+                node_count: trace.node_count,
+                code_chars: trace.code_chars,
+                run_ids: trace.run_ids,
+                run_artifacts: trace.run_artifacts,
             },
         )
         .await;
@@ -1177,6 +1236,7 @@ impl TraceHub {
     }
 
     /// MCP `resources/read` timeline row (payload size + archive ref for future web deep-links).
+    #[allow(clippy::too_many_arguments)]
     pub async fn trace_record_mcp_resource_read(
         &self,
         mcp_key: &str,

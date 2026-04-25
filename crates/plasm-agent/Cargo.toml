@@ -6,11 +6,14 @@ description = "Open-source `plasm-mcp` / `plasm-cgs` / `plasm-pack-plugins` and 
 readme = "README.md"
 
 [features]
-default = []
+# Code Mode (Oxc + QuickJS) — forwarded from `plasm-agent-core`; opt out with `default-features = false`.
+default = ["code_mode"]
 # Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
 local_env_bootstrap_secrets = ["plasm-agent-core/local_env_bootstrap_secrets"]
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-agent-core/evm"]
+# Plasm Code Mode: Oxc + QuickJS (TypeScript plan synthesis, `plasm_agent::code_mode`).
+code_mode = ["plasm-agent-core/code_mode"]
 
 [lib]
 name = "plasm_agent"
@@ -29,7 +32,7 @@ name = "plasm-pack-plugins"
 path = "src/bin/plasm_pack_plugins.rs"
 
 [dependencies]
-plasm-agent-core = { path = "../plasm-agent-core" }
+plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
 plasm-core = { path = "../plasm-core" }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }

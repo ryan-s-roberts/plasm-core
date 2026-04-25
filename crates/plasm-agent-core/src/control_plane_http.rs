@@ -31,10 +31,7 @@ pub(crate) fn control_plane_secret_from_env_strict() -> Option<String> {
     (secret.len() >= 16).then_some(secret)
 }
 
-pub fn control_plane_headers_authorized(
-    headers: &HeaderMap,
-    too_short_log: &'static str,
-) -> bool {
+pub fn control_plane_headers_authorized(headers: &HeaderMap, too_short_log: &'static str) -> bool {
     let Some(expected) = control_plane_secret_for_internal_http(too_short_log) else {
         return false;
     };

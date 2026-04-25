@@ -114,6 +114,16 @@ sqlx = { version = "0.8.6", default-features = false, features = [
 libloading = "0.8"
 ciborium = "0.2"
 
+# Oxc: TypeScript/JS transform (dev / test support; see https://oxc.rs/docs/guide/usage/transformer)
+oxc = { version = "0.127.0", default-features = false, features = [
+    "codegen",
+    "regular_expression",
+    "semantic",
+    "transformer",
+] }
+genco = "0.17.9"
+rquickjs = { version = "0.6", default-features = true }
+
 # Utility crates
 arc-swap = "1.7"
 indexmap = { version = "2.0", features = ["serde"] }

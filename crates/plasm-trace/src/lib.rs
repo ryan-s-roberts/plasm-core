@@ -8,9 +8,9 @@ mod totals;
 
 pub use event::TraceEvent;
 pub use plasm_observability_contracts::RunArtifactArchiveRef;
-pub use segment::{PlasmLineTraceMeta, TraceSegment};
+pub use segment::{CodePlanRunArtifactRef, PlasmLineTraceMeta, TraceSegment};
 pub use session::{
-    session_data_from_events, session_data_from_ordered_events, SessionTraceCountersSnapshot,
-    SessionTraceData, DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
+    DEFAULT_TRACE_TIMELINE_MAX_EVENTS, SessionTraceCountersSnapshot, SessionTraceData,
+    session_data_from_events, session_data_from_ordered_events,
 };
-pub use totals::{totals_from_session_data, TraceTotals};
+pub use totals::{TraceTotals, totals_from_session_data};

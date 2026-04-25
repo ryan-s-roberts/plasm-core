@@ -14,24 +14,24 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::future::join_all;
-use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
-use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
+use plasm_core::error_render::{FeedbackStyle, render_parse_error_with_feedback};
 use plasm_core::{
+    AuthScheme, CGS, CgsContext, PagingHandle, PromptRenderMode, SymbolMap,
     entity_slices_for_render,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     split_tsv_domain_contract_and_table, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog,
     symbol_tuning::FocusSpec,
-    AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
 use plasm_runtime::{
-    auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, GraphCache,
-    QueryPaginationResumeData, RuntimeError, StreamConsumeOpts,
+    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
+    ExecutionResult, ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData,
+    RuntimeError, StreamConsumeOpts, auth_resolution_mode_from_env, validate_principal_for_mode,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,13 +41,13 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::run_artifacts::{
+    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
     artifact_http_path, document_from_run, plasm_run_resource_uri,
     plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
 };
 use crate::trace_hub::{
-    trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
-    TraceSegment,
+    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent, TraceSegment,
+    trace_id_for_http_execute_session,
 };
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
 
@@ -134,24 +134,24 @@ where
     }
 }
 
-use crate::batch_scheduler::{build_batch_stages, line_may_share_parallel_query_stage, BatchStage};
+use crate::batch_scheduler::{BatchStage, build_batch_stages, line_may_share_parallel_query_stage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
-    incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
+    IncomingPrincipal, incoming_auth_problem, session_allows_principal, tenant_scope,
 };
-use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
+use crate::mcp_plasm_meta::{PlasmMetaIndex, PlasmPagingStepMeta, plasm_paging_json_value};
 use crate::mcp_run_markdown::{
-    execute_expression_preview, mcp_compact_markdown_batch, mcp_compact_markdown_single,
-    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
-    mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
-    merge_snapshot_column_hints, OmittedReferenceOnlyFields,
+    OmittedReferenceOnlyFields, execute_expression_preview, mcp_compact_markdown_batch,
+    mcp_compact_markdown_single, mcp_format_execute_result_table_or_tsv,
+    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
+    mcp_preview_markdown_needed, merge_snapshot_column_hints,
 };
 use crate::output::{
-    apply_projection, format_result_with_cgs, http_execute_results_value,
-    reference_only_omitted_field_names, InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
+    InBandSummaryReport, LossySummaryFieldNames, OutputFormat, apply_projection,
+    format_result_with_cgs, http_execute_results_value, reference_only_omitted_field_names,
 };
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
@@ -165,6 +165,15 @@ pub struct ExecuteRunToolOutput {
     pub markdown: String,
     /// `CallToolResult.meta` map (includes `plasm` with `steps` for truncated steps only).
     pub tool_meta: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[cfg(feature = "code_mode")]
+#[derive(Debug, Clone)]
+pub struct PublishedResultStep {
+    pub display: String,
+    pub projection: Option<Vec<String>>,
+    pub result: ExecutionResult,
+    pub artifact: Option<RunArtifactHandle>,
 }
 
 fn plasm_meta_object(
@@ -183,6 +192,7 @@ fn plasm_meta_object(
                 let mut step = serde_json::json!({
                     "run_id": h.run_id.to_string(),
                     "artifact_uri": h.plasm_uri,
+                    "canonical_artifact_uri": h.canonical_plasm_uri,
                     "artifact_path": h.http_path,
                     "request_fingerprints": h.request_fingerprints,
                 });
@@ -537,7 +547,9 @@ pub(crate) struct CapabilityExposurePlan {
     pub process_order: Vec<String>,
 }
 
-pub(crate) fn build_capability_exposure_plan(seeds: &[CapabilitySeed]) -> Option<CapabilityExposurePlan> {
+pub(crate) fn build_capability_exposure_plan(
+    seeds: &[CapabilitySeed],
+) -> Option<CapabilityExposurePlan> {
     let seeds_by_entry = group_seed_entities_by_entry(seeds);
     if seeds_by_entry.is_empty() {
         return None;
@@ -1833,6 +1845,201 @@ pub async fn execute_session_run_markdown(
     }
 }
 
+#[cfg(feature = "code_mode")]
+fn run_line_error_string(e: RunLineError) -> String {
+    match e {
+        RunLineError::Parse(d) | RunLineError::Normalize(d) | RunLineError::Projection(d) => d,
+        RunLineError::Runtime(e, src) => format!("{e}\nsource expression: {src}"),
+        RunLineError::ArtifactSerialization(e) => format!("artifact serialization failed: {e}"),
+        RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
+    }
+}
+
+#[cfg(feature = "code_mode")]
+pub async fn execute_code_mode_plasm_line(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    session_id: &str,
+    line: &str,
+    trace: Option<&PlasmTraceContext>,
+    line_index: i64,
+) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
+    let parsed = parse_plasm_line(line, sess, st).map_err(run_line_error_string)?;
+    let mut cache = sess.graph_cache.lock().await;
+    run_parsed_plasm_line(
+        line, sess, st, &mut cache, session_id, parsed, trace, line_index,
+    )
+    .await
+    .map_err(run_line_error_string)
+}
+
+#[cfg(feature = "code_mode")]
+pub async fn archive_code_mode_result_snapshot(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    session_id: &str,
+    expressions: Vec<String>,
+    result: &ExecutionResult,
+    trace: Option<&PlasmTraceContext>,
+) -> Result<RunArtifactHandle, String> {
+    let run_id = Uuid::new_v4();
+    let resource_index = sess.mint_run_resource_index();
+    let doc = document_from_run(DocumentFromRun {
+        run_id,
+        prompt_hash: sess.prompt_hash.as_str(),
+        session_id,
+        entry_id: sess.entry_id.as_str(),
+        principal: sess.principal.clone(),
+        expressions,
+        result,
+        resource_index: Some(resource_index),
+    });
+    let payload_bytes =
+        serde_json::to_vec(&doc).map_err(|e| format!("artifact serialization failed: {e}"))?;
+    let payload_len = payload_bytes.len();
+    let payload = ArtifactPayload {
+        metadata: ArtifactPayloadMetadata::json_default(),
+        bytes: Bytes::from(payload_bytes),
+    };
+    st.run_artifacts
+        .insert_payload(
+            sess.prompt_hash.as_str(),
+            session_id,
+            run_id,
+            Some(resource_index),
+            &payload,
+        )
+        .await
+        .map_err(|e| format!("run artifact persist failed: {e}"))?;
+    crate::metrics::record_run_artifact_archive_put_ok();
+    let epoch = {
+        let cache = sess.graph_cache.lock().await;
+        GraphEpoch(cache.stats().version)
+    };
+    let appended = sess
+        .core
+        .append_run_artifact(run_id, epoch, resource_index, payload)
+        .await;
+    if let Some(persistence) = &st.session_graph_persistence {
+        if let Err(e) = persistence
+            .append_delta(
+                sess.prompt_hash.as_str(),
+                session_id,
+                appended.seq.0,
+                &appended.payload,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "session graph delta append failed");
+        }
+    }
+    let canonical_plasm_uri =
+        plasm_run_resource_uri(sess.prompt_hash.as_str(), session_id, &run_id);
+    let plasm_uri = trace
+        .and_then(|c| {
+            c.logical_session_ref
+                .as_deref()
+                .map(|seg| plasm_session_short_resource_uri(seg, resource_index))
+        })
+        .unwrap_or_else(|| plasm_short_resource_uri(resource_index));
+    Ok(RunArtifactHandle {
+        run_id,
+        plasm_uri,
+        canonical_plasm_uri,
+        http_path: artifact_http_path(sess.prompt_hash.as_str(), session_id, &run_id),
+        payload_len,
+        request_fingerprints: result.request_fingerprints.clone(),
+    })
+}
+
+#[cfg(feature = "code_mode")]
+pub fn publish_code_mode_result_steps(
+    cgs: Option<&CGS>,
+    meta_index: Option<&mut PlasmMetaIndex>,
+    steps: &[PublishedResultStep],
+) -> ExecuteRunToolOutput {
+    let total = steps.len();
+    let mut markdown = if total <= 1 {
+        String::from("## Result\n\n")
+    } else {
+        String::from("# Plan run\n\n")
+    };
+    let mut handles = Vec::new();
+    let mut omitted_union: BTreeSet<String> = BTreeSet::new();
+    let mut lossy = Vec::new();
+    let mut expr_previews = Vec::new();
+    let mut batch_steps = Vec::new();
+    let mut paging = Vec::new();
+    for (i, step) in steps.iter().enumerate() {
+        if total > 1 {
+            markdown.push_str(&format!("## Step {} of {}\n\n", i + 1, total));
+        }
+        markdown.push_str("→ ");
+        markdown.push_str(&step.display);
+        markdown.push('\n');
+        if let Some(proj) = &step.projection {
+            markdown.push_str("  projection: [");
+            markdown.push_str(&proj.join(", "));
+            markdown.push_str("]\n");
+        }
+        markdown.push('\n');
+        let formatted = mcp_format_execute_result_table_or_tsv(&step.result, cgs);
+        omitted_union.extend(formatted.reference_only_omitted.as_ref().iter().cloned());
+        markdown.push_str(&formatted.block.into_mcp_result_markdown());
+        if let Some(handle) = &step.artifact {
+            handles.push(handle.clone());
+            expr_previews.push(step.display.clone());
+            batch_steps.push(i + 1);
+            lossy.push(merge_snapshot_column_hints(
+                &formatted.lossy_summary_fields,
+                &formatted.in_band_report,
+            ));
+            if !formatted.reference_only_omitted.is_empty()
+                || !formatted.lossy_summary_fields.is_empty()
+                || formatted.in_band_report.any_loss()
+            {
+                markdown.push_str(&mcp_inline_run_snapshot_line(handle));
+            }
+        }
+        if let Some(handle) = &step.result.paging_handle {
+            paging.push(PlasmPagingStepMeta::Next {
+                batch_step: i + 1,
+                returned_count: step.result.count,
+                next_page_handle: handle.clone(),
+            });
+            markdown.push_str(&format!(
+                "\n\nmore pages available - use `page({})` for the next batch.",
+                handle.as_str()
+            ));
+        }
+        if i + 1 < total {
+            markdown.push_str("\n\n");
+        }
+    }
+    let omitted_batch: OmittedReferenceOnlyFields = omitted_union.into();
+    let markdown = mcp_prepend_artifact_followup_markdown(
+        markdown,
+        meta_index.is_some(),
+        &handles,
+        &omitted_batch,
+    );
+    let paging_for_meta = (!paging.is_empty()).then_some(paging.as_slice());
+    let batch_steps_for_meta = (!batch_steps.is_empty()).then_some(batch_steps.as_slice());
+    let tool_meta = build_mcp_tool_meta(
+        meta_index,
+        &handles,
+        &omitted_batch,
+        lossy.as_slice(),
+        &expr_previews,
+        batch_steps_for_meta,
+        paging_for_meta,
+    );
+    ExecuteRunToolOutput {
+        markdown,
+        tool_meta,
+    }
+}
+
 fn split_expression_lines(raw: &str) -> Vec<String> {
     raw.lines()
         .map(str::trim)
@@ -2151,6 +2358,45 @@ fn parse_plasm_line(
     Ok(parsed)
 }
 
+fn synthetic_page_result(
+    sess: &ExecuteSession,
+    handle: &PagingHandle,
+    mut cursor: crate::execute_session::SyntheticPageCursor,
+    trace: Option<&PlasmTraceContext>,
+) -> ExecutionResult {
+    let start = cursor.offset.min(cursor.rows.len());
+    let end = start
+        .saturating_add(cursor.page_size)
+        .min(cursor.rows.len());
+    let entities = cursor.rows[start..end].to_vec();
+    cursor.offset = end;
+    let has_more = cursor.offset < cursor.rows.len();
+    let request_fingerprints = cursor.request_fingerprints.clone();
+    let paging_handle = if has_more {
+        sess.upsert_synthetic_paging_resume(handle, cursor);
+        Some(handle.clone())
+    } else {
+        sess.remove_paging_resume(handle);
+        None
+    };
+    let _ = trace;
+    ExecutionResult {
+        count: entities.len(),
+        entities,
+        has_more,
+        pagination_resume: None,
+        paging_handle,
+        source: ExecutionSource::Cache,
+        stats: ExecutionStats {
+            duration_ms: 0,
+            network_requests: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+        },
+        request_fingerprints,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_parsed_plasm_line(
     line: &str,
@@ -2189,6 +2435,80 @@ async fn run_parsed_plasm_line(
     } else {
         None
     };
+    if let Some(ref key) = page_storage_key {
+        if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
+            let result = synthetic_page_result(sess, key, cursor, trace);
+            let run_id = Uuid::new_v4();
+            let resource_index = sess.mint_run_resource_index();
+            let doc = document_from_run(DocumentFromRun {
+                run_id,
+                prompt_hash: sess.prompt_hash.as_str(),
+                session_id,
+                entry_id: sess.entry_id.as_str(),
+                principal: sess.principal.clone(),
+                expressions: vec![line.to_string()],
+                result: &result,
+                resource_index: Some(resource_index),
+            });
+            let payload_bytes =
+                serde_json::to_vec(&doc).map_err(RunLineError::ArtifactSerialization)?;
+            let payload_len = payload_bytes.len();
+            let payload = ArtifactPayload {
+                metadata: ArtifactPayloadMetadata::json_default(),
+                bytes: Bytes::from(payload_bytes),
+            };
+            st.run_artifacts
+                .insert_payload(
+                    sess.prompt_hash.as_str(),
+                    session_id,
+                    run_id,
+                    Some(resource_index),
+                    &payload,
+                )
+                .await
+                .map_err(|e| RunLineError::ArtifactPersist(e.to_string()))?;
+            let appended = sess
+                .core
+                .append_run_artifact(
+                    run_id,
+                    GraphEpoch(cache.stats().version),
+                    resource_index,
+                    payload,
+                )
+                .await;
+            if let Some(persistence) = &st.session_graph_persistence {
+                if let Err(e) = persistence
+                    .append_delta(
+                        sess.prompt_hash.as_str(),
+                        session_id,
+                        appended.seq.0,
+                        &appended.payload,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %e, "session graph delta append failed");
+                }
+            }
+            let canonical_plasm_uri =
+                plasm_run_resource_uri(sess.prompt_hash.as_str(), session_id, &run_id);
+            let plasm_uri = trace
+                .and_then(|c| {
+                    c.logical_session_ref
+                        .as_deref()
+                        .map(|seg| plasm_session_short_resource_uri(seg, resource_index))
+                })
+                .unwrap_or_else(|| plasm_short_resource_uri(resource_index));
+            let artifact = Some(RunArtifactHandle {
+                run_id,
+                plasm_uri,
+                canonical_plasm_uri,
+                http_path: artifact_http_path(sess.prompt_hash.as_str(), session_id, &run_id),
+                payload_len,
+                request_fingerprints: result.request_fingerprints.clone(),
+            });
+            return Ok((parsed, result, artifact));
+        }
+    }
     let mut page_resume_owned: Option<QueryPaginationResumeData> = if let Some(ref key) =
         page_storage_key
     {
@@ -2944,6 +3264,14 @@ pub fn execute_routes() -> Router {
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
             get(get_execute_run_artifact),
         )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/plans/by-index/{plan_index}",
+            get(get_execute_code_plan_by_index),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/plans/{plan_id}",
+            get(get_execute_code_plan),
+        )
 }
 
 async fn post_create_execute_session(
@@ -3160,6 +3488,155 @@ async fn get_execute_run_artifact(
         );
     });
 
+    let content_type = payload.metadata.content_type;
+    let header = axum::http::HeaderValue::from_str(content_type.as_str())
+        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
+    crate::metrics::record_execute_artifact_serve("success", "none", started.elapsed());
+    (StatusCode::OK, [(CONTENT_TYPE, header)], payload.bytes).into_response()
+}
+
+async fn get_execute_code_plan(
+    Extension(st): Extension<PlasmHostState>,
+    Path((ph, sid, pid)): Path<(String, String, String)>,
+) -> Response {
+    let started = Instant::now();
+    let prompt_hash = match ph.parse::<PromptHashHex>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `prompt_hash` path segment: {msg}"),
+            );
+        }
+    };
+    let session_id = match sid.parse::<ExecuteSessionId>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `session_id` path segment: {msg}"),
+            );
+        }
+    };
+    let plan_id = match Uuid::parse_str(pid.trim()) {
+        Ok(u) => u,
+        Err(_) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                "invalid `plan_id` path segment: expected UUID",
+            );
+        }
+    };
+
+    serve_execute_code_plan_payload(st, prompt_hash, session_id, plan_id, started).await
+}
+
+async fn get_execute_code_plan_by_index(
+    Extension(st): Extension<PlasmHostState>,
+    Path((ph, sid, raw_idx)): Path<(String, String, String)>,
+) -> Response {
+    let started = Instant::now();
+    let prompt_hash = match ph.parse::<PromptHashHex>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `prompt_hash` path segment: {msg}"),
+            );
+        }
+    };
+    let session_id = match sid.parse::<ExecuteSessionId>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `session_id` path segment: {msg}"),
+            );
+        }
+    };
+    let plan_index = match raw_idx.trim().parse::<u64>() {
+        Ok(v) => v,
+        Err(_) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                "invalid `plan_index` path segment: expected unsigned integer",
+            );
+        }
+    };
+    let Some(plan_id) = st
+        .run_artifacts
+        .resolve_code_plan_id_for_index(prompt_hash.as_str(), session_id.as_str(), plan_index)
+        .await
+    else {
+        crate::metrics::record_execute_artifact_serve("error", "not_found", started.elapsed());
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown Code Mode plan index for this session"),
+        );
+    };
+    serve_execute_code_plan_payload(st, prompt_hash, session_id, plan_id, started).await
+}
+
+async fn serve_execute_code_plan_payload(
+    st: PlasmHostState,
+    prompt_hash: PromptHashHex,
+    session_id: ExecuteSessionId,
+    plan_id: Uuid,
+    started: Instant,
+) -> Response {
+    let payload = match st
+        .run_artifacts
+        .get_code_plan_payload_result(prompt_hash.as_str(), session_id.as_str(), plan_id)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            crate::metrics::record_execute_artifact_serve(
+                "error",
+                "decode_failed",
+                started.elapsed(),
+            );
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                )
+                .with_title("Internal Server Error")
+                .with_detail(format!("code plan decode failed: {e}")),
+            );
+        }
+    };
+    let Some(payload) = payload else {
+        crate::metrics::record_execute_artifact_serve("error", "not_found", started.elapsed());
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown Code Mode plan for this session"),
+        );
+    };
+    crate::spans::execute_artifact_serve().in_scope(|| {
+        tracing::info!(
+            target: "plasm_agent::http_execute",
+            prompt_hash = %prompt_hash.as_str(),
+            session_id = %session_id.as_str(),
+            plan_id = %plan_id,
+            bytes = payload.bytes.len(),
+            "GET execute Code Mode plan"
+        );
+    });
     let content_type = payload.metadata.content_type;
     let header = axum::http::HeaderValue::from_str(content_type.as_str())
         .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
@@ -3401,10 +3878,10 @@ mod tests {
     use super::*;
     use crate::http;
     use crate::incoming_auth::IncomingPrincipal;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
     use axum::http::Request;
-    use axum::Router;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -3449,15 +3926,21 @@ mod tests {
                 entity: "A".into(),
             },
         ];
-        let a = build_capability_exposure_plan(&normalize_capability_seeds(seeds_a)).expect("plan a");
-        let b = build_capability_exposure_plan(&normalize_capability_seeds(seeds_b)).expect("plan b");
+        let a =
+            build_capability_exposure_plan(&normalize_capability_seeds(seeds_a)).expect("plan a");
+        let b =
+            build_capability_exposure_plan(&normalize_capability_seeds(seeds_b)).expect("plan b");
         assert_eq!(a, b);
         assert_eq!(a.primary_entry_id, "alpha");
-        assert_eq!(a.process_order, vec!["alpha".to_string(), "zeta".to_string()]);
+        assert_eq!(
+            a.process_order,
+            vec!["alpha".to_string(), "zeta".to_string()]
+        );
     }
 
     fn test_state_with_registry() -> PlasmHostState {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
             "overshow".into(),
@@ -3693,7 +4176,8 @@ mod tests {
                 .uri("/execute")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
+                    serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] })
+                        .to_string(),
                 ))
                 .unwrap();
             let res = app.clone().oneshot(create).await.unwrap();

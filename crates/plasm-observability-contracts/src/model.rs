@@ -76,6 +76,16 @@ pub struct TraceTotals {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub http_trace_entry_count: u64,
+    #[serde(default)]
+    pub code_plans_evaluated: u64,
+    #[serde(default)]
+    pub code_plans_executed: u64,
+    #[serde(default)]
+    pub code_plan_code_chars: u64,
+    #[serde(default)]
+    pub code_plan_nodes: u64,
+    #[serde(default)]
+    pub code_plan_derived_runs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

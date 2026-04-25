@@ -1,0 +1,14 @@
+note_create:
+  response: single
+  method: POST
+  path:
+    - type: literal
+      value: v1
+    - type: literal
+      value: notes
+  body:
+    type: object
+    fields:
+      - - title
+        - type: var
+          name: title

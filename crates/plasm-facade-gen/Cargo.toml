@@ -1,0 +1,16 @@
+[package]
+name = "plasm-facade-gen"
+version = "0.1.0"
+edition = "2021"
+description = "CGS / exposure → Code Mode facade metadata and TypeScript declaration generation"
+
+[dependencies]
+genco = { workspace = true }
+indexmap = { version = "2.0", features = ["serde"] }
+plasm-core = { path = "../plasm-core" }
+rquickjs = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+
+[dev-dependencies]
+insta = { version = "1.40", features = ["json"] }

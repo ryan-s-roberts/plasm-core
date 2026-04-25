@@ -1178,15 +1178,14 @@ fn domain_expression_tool_count_resolved(
     let mut line_valid_cache = HashMap::new();
     for &ename in &full_entities {
         let mut seen_expr: HashSet<String> = HashSet::new();
-        let block =
-            collect_entity_domain_block(
-                cgs,
-                ename,
-                map.as_deref(),
-                None,
-                false,
-                &mut line_valid_cache,
-            );
+        let block = collect_entity_domain_block(
+            cgs,
+            ename,
+            map.as_deref(),
+            None,
+            false,
+            &mut line_valid_cache,
+        );
         for line in &block.lines {
             if seen_expr.insert(line.clone()) {
                 n += 1;
@@ -2410,8 +2409,8 @@ fn collect_entity_domain_block(
             .or_else(|| search_caps.first().copied());
         let sg =
             scap.and_then(|cap| crate::result_gloss::result_gloss_for_capability(cap, cgs, map));
-        let cap_leg = scap
-            .and_then(|cap| capability_legend_for_domain(map, cap, ename, ident_meta));
+        let cap_leg =
+            scap.and_then(|cap| capability_legend_for_domain(map, cap, ename, ident_meta));
         try_push_domain_example(
             &mut lines,
             &mut line_metas,
@@ -2997,7 +2996,10 @@ fn emit_field_def_lines_before_example(
                     defined.remove(&sym);
                     continue;
                 }
-                if matches!(m.role, crate::symbol_tuning::IdentRole::CapabilityParam { .. }) {
+                if matches!(
+                    m.role,
+                    crate::symbol_tuning::IdentRole::CapabilityParam { .. }
+                ) {
                     if let Some(sup) =
                         crate::symbol_tuning::args_line_suppressible_capability_syms(line)
                     {
@@ -3068,15 +3070,14 @@ fn render_domain_table_resolved<'b, F>(
         let cgs = resolve(ename);
         let mut seen_expr: HashSet<String> = HashSet::new();
         let collect_meta = fill_model;
-        let block =
-            collect_entity_domain_block(
-                cgs,
-                ename,
-                map,
-                ident_meta.as_ref(),
-                collect_meta,
-                &mut line_valid_cache,
-            );
+        let block = collect_entity_domain_block(
+            cgs,
+            ename,
+            map,
+            ident_meta.as_ref(),
+            collect_meta,
+            &mut line_valid_cache,
+        );
         if block.lines.is_empty() {
             debug_assert!(
                 false,
@@ -3908,18 +3909,17 @@ mod tests {
             "markdown contract should forbid copying DOMAIN ;; tails into model output"
         );
         assert!(
-            tsv.contains("never paste `Meaning`")
-                && tsv.contains("optional params:"),
+            tsv.contains("never paste `Meaning`") && tsv.contains("optional params:"),
             "TSV contract should forbid pasting Meaning and document params/args"
         );
         assert!(
-            markdown.contains("Where needed, compact `args:")
-                && markdown.contains("gloss rows"),
+            markdown.contains("Where needed, compact `args:") && markdown.contains("gloss rows"),
             "markdown preamble should describe args hints and p# gloss rows"
         );
         assert!(
-            tsv.contains("A row whose `Expression` is only `p#` (when present) is a pre-declared slot")
-                || tsv.contains("pre-declared slot"),
+            tsv.contains(
+                "A row whose `Expression` is only `p#` (when present) is a pre-declared slot"
+            ) || tsv.contains("pre-declared slot"),
             "TSV frontmatter should explain p# slot-definition rows when present"
         );
         assert!(
@@ -3934,7 +3934,6 @@ mod tests {
             "TSV frontmatter should stay format-local and avoid DOMAIN/;; language"
         );
     }
-
 
     #[test]
     fn preamble_includes_rich_string_guidance_when_slice_has_structured_string_semantics() {
@@ -4643,10 +4642,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        let body = tsv
-            .split("Expression\tMeaning\n")
-            .nth(1)
-            .expect("tsv body");
+        let body = tsv.split("Expression\tMeaning\n").nth(1).expect("tsv body");
         assert!(
             body.contains("args:"),
             "TSV `Meaning` should carry the same `args:` fragment as compact DOMAIN"

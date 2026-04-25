@@ -8,9 +8,9 @@
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
 //! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON expressions (one or newline-separated / `expressions` array); `Accept`: json | ndjson | table | toon (**default** when omitted: **toon**, entity rows only; no duration/cache metadata)
 
+use axum::Router;
 use axum::extract::Extension;
 use axum::routing::get;
-use axum::Router;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 use std::sync::Arc;
@@ -22,13 +22,13 @@ use crate::http_discovery::{discovery_routes_protected, get_auth_status, health_
 use crate::http_execute::execute_routes;
 use crate::http_incoming_context::incoming_context_routes;
 use crate::http_traces::trace_routes;
-use crate::incoming_auth::incoming_auth_http_middleware;
 use crate::incoming_auth::IncomingAuthVerifier;
+use crate::incoming_auth::incoming_auth_http_middleware;
+use crate::local_trace_archive::LocalTraceArchive;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState, PlasmOssHostState};
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::session_identity::LogicalSessionRegistry;
-use crate::local_trace_archive::LocalTraceArchive;
 use crate::trace_hub::{TraceHubBuilder, TraceHubConfig};
 use crate::trace_sink_emit::{EnvTraceIngestClient, TraceIngestClient};
 use plasm_otel::tower_http_trace_parent_span;
@@ -78,10 +78,10 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         }
     };
     let trace_hub_requested = TraceHubConfig::from_env();
-    let trace_hub = Arc::new(TraceHubBuilder::from_config(trace_hub_requested).build(
-        Some(trace_ingest.clone()),
-        local_trace_archive.clone(),
-    ));
+    let trace_hub = Arc::new(
+        TraceHubBuilder::from_config(trace_hub_requested)
+            .build(Some(trace_ingest.clone()), local_trace_archive.clone()),
+    );
     let trace_hub_config = TraceHubConfig {
         bounds: trace_hub.bounds(),
     };
@@ -173,10 +173,21 @@ pub async fn serve_http_listener(
     eprintln!(
         "  GET  /v1/health   GET /v1/auth/status   GET /v1/registry   GET /v1/registry/:entry_id   GET /v1/registry/:entry_id/tool-model   GET /v1/incoming-auth/context   POST /v1/discover"
     );
-    eprintln!("  (OSS `serve_http_listener` has no /internal/* — use the hosted plasm-saas app for those routes.)");
-    eprintln!("  POST /execute — {{ entry_id, entities }} → 303 Location only → GET that URL for session JSON + DOMAIN prompt");
-    eprintln!("  POST /execute/:prompt_hash/:session — text/plain or JSON batch; default Accept: text/toon (results only); also json | x-ndjson | text/plain");
-    eprintln!("  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)");
+    eprintln!(
+        "  (OSS `serve_http_listener` has no /internal/* — use the hosted plasm-saas app for those routes.)"
+    );
+    eprintln!(
+        "  POST /execute — {{ entry_id, entities }} → 303 Location only → GET that URL for session JSON + DOMAIN prompt"
+    );
+    eprintln!(
+        "  POST /execute/:prompt_hash/:session — text/plain or JSON batch; default Accept: text/toon (results only); also json | x-ndjson | text/plain"
+    );
+    eprintln!(
+        "  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)"
+    );
+    eprintln!(
+        "  GET  /execute/:prompt_hash/:session/plans/:plan_id — archived Code Mode plan JSON (or /plans/by-index/:n)"
+    );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

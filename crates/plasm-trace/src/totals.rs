@@ -20,6 +20,16 @@ pub struct TraceTotals {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub http_trace_entry_count: u64,
+    #[serde(default)]
+    pub code_plans_evaluated: u64,
+    #[serde(default)]
+    pub code_plans_executed: u64,
+    #[serde(default)]
+    pub code_plan_code_chars: u64,
+    #[serde(default)]
+    pub code_plan_nodes: u64,
+    #[serde(default)]
+    pub code_plan_derived_runs: u64,
 }
 
 pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
@@ -39,6 +49,11 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
             cache_hits: data.aggregate_cache_hits,
             cache_misses: data.aggregate_cache_misses,
             http_trace_entry_count: data.aggregate_http_trace_entry_count,
+            code_plans_evaluated: data.code_plans_evaluated,
+            code_plans_executed: data.code_plans_executed,
+            code_plan_code_chars: data.code_plan_code_chars,
+            code_plan_nodes: data.code_plan_nodes,
+            code_plan_derived_runs: data.code_plan_derived_runs,
         };
     }
 
@@ -49,6 +64,11 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
         plasm_invocation_chars: data.plasm_invocation_chars,
         plasm_response_chars: data.plasm_response_chars,
         mcp_resource_read_chars: data.mcp_resource_read_chars,
+        code_plans_evaluated: data.code_plans_evaluated,
+        code_plans_executed: data.code_plans_executed,
+        code_plan_code_chars: data.code_plan_code_chars,
+        code_plan_nodes: data.code_plan_nodes,
+        code_plan_derived_runs: data.code_plan_derived_runs,
         ..Default::default()
     };
     for ev in data.records.iter() {
@@ -83,6 +103,29 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
             TraceSegment::McpResourceRead { chars_added, .. } => {
                 t.mcp_resource_read_chars = t.mcp_resource_read_chars.saturating_add(*chars_added);
             }
+            TraceSegment::CodePlanEvaluate {
+                node_count,
+                code_chars,
+                ..
+            } => {
+                t.code_plans_evaluated = t.code_plans_evaluated.saturating_add(1);
+                t.code_plan_code_chars = t.code_plan_code_chars.saturating_add(*code_chars);
+                t.code_plan_nodes = t.code_plan_nodes.saturating_add(*node_count as u64);
+            }
+            TraceSegment::CodePlanExecute {
+                node_count,
+                code_chars,
+                run_ids,
+                run_artifacts,
+                ..
+            } => {
+                t.code_plans_executed = t.code_plans_executed.saturating_add(1);
+                t.code_plan_code_chars = t.code_plan_code_chars.saturating_add(*code_chars);
+                t.code_plan_nodes = t.code_plan_nodes.saturating_add(*node_count as u64);
+                t.code_plan_derived_runs = t
+                    .code_plan_derived_runs
+                    .saturating_add(run_artifacts.len().max(run_ids.len()) as u64);
+            }
             _ => {}
         }
     }
@@ -105,6 +148,11 @@ impl From<TraceTotals> for plasm_observability_contracts::TraceTotals {
             cache_hits: t.cache_hits,
             cache_misses: t.cache_misses,
             http_trace_entry_count: t.http_trace_entry_count,
+            code_plans_evaluated: t.code_plans_evaluated,
+            code_plans_executed: t.code_plans_executed,
+            code_plan_code_chars: t.code_plan_code_chars,
+            code_plan_nodes: t.code_plan_nodes,
+            code_plan_derived_runs: t.code_plan_derived_runs,
         }
     }
 }

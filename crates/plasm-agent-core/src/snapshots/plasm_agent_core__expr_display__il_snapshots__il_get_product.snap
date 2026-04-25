@@ -1,0 +1,5 @@
+---
+source: crates/plasm-agent-core/src/expr_display.rs
+expression: "expr_display_resolved(&pe.expr, &cgs)"
+---
+Get(Product:p1)

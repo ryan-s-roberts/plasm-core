@@ -638,7 +638,8 @@ mod tests {
 
     #[test]
     fn discover_fixture_by_token() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
             "overshow".into(),
@@ -689,7 +690,8 @@ mod tests {
     /// No capability rows match, but `pick_entry` + `expand_entities` still yields neighbourhoods + summaries.
     #[test]
     fn discover_fallback_schema_neighborhood_when_candidates_empty() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
             "overshow".into(),

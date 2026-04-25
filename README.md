@@ -118,6 +118,76 @@ This gives agents a few useful properties:
 
 The important constraint is that federation does **not** magically join unrelated APIs by shared field names. Cross-API workflows are composed by the agent and runtime over typed refs and returned values; each API catalog remains independently authored, validated, and executed.
 
+## Code Mode: declarative DAGs on the same runtime
+
+Plasm expressions are the compact execution language: the model emits `Issue{...}`, `Pokemon("pikachu")`, or `e5.m13(...)`, the parser type-checks it against CGS, and the runtime compiles it through CML into deterministic transport calls. **Code Mode** keeps that same security boundary and execution machinery, but gives the agent a TypeScript planning surface when the task is more naturally expressed as a small dataflow program.
+
+The important part is that Code Mode is not a second tool system. A TypeScript plan still resolves to the same Plasm path expressions, capability graph, dispatcher, graph cache, archive, and trace hub as expression-based evaluation. The code surface is just a higher-level way to synthesize a **declarative DAG**:
+
+```ts
+const pikachu = plasm.default.Pokemon.get("pikachu");
+const thunderbolt = plasm.default.Move.get("thunderbolt");
+const electric = plasm.default.Type.get("electric");
+
+const profile = Plan.project(pikachu, {
+  pokemon: (p) => p.name,
+  pokedex: (p) => p.id,
+});
+
+const moveFacts = Plan.project(thunderbolt, {
+  move: (m) => m.name,
+  power: (m) => m.power,
+});
+
+const battleCard = Plan.map(profile, (p) => ({
+  title: template`${p.pokemon} battle card`,
+  body: template`${p.pokemon} uses ${moveFacts.move} (${moveFacts.power} power) as an ${electric.name} type`,
+}));
+
+Plan.return({ profile, moveFacts, battleCard });
+```
+
+The host evaluates this in a sandboxed QuickJS isolate after an Oxc TypeScript transform. The TypeScript AST pass derives node identities and authorizes cross-node field references before execution; Rust validation then turns the serialized plan into a checked Plan artifact. The model does not get to smuggle arbitrary handles or raw backend payloads into the runtime.
+
+The MCP flow is intentionally two-step:
+
+```text
+evaluate_code_plan(name, code)
+  -> archives the validated Plan permanently
+  -> returns pN plus a compact dry-run DAG
+
+execute_code_plan(plan_handle = pN)
+  -> runs the archived Plan through the same Plasm runtime
+  -> returns normal Markdown tables, run artifacts, and _meta.plasm provenance
+```
+
+A dry run is operationally useful because it is a plan, not a stat dump:
+
+```text
+code-plan dry-run
+name: pokemon-cross-node-dataflow
+handle: p1 (plasm://session/s0/p/1)
+nodes: 9 total, 3 read, 0 write/side-effect, 6 staged
+execution: staged
+roots: pikachu, thunderbolt, electric
+approvals: none
+
+dag:
+07. battleCard <- profile, moveFacts, typeFacts
+    -> map profile as p with moveFacts as moveFacts auto, typeFacts as typeFacts auto
+    uses: profile as p, moveFacts as moveFacts, typeFacts as typeFacts
+```
+
+That gives the business-facing properties agent platforms usually have to bolt on later:
+
+- **Dry runs:** review exactly which reads, transforms, fan-outs, aggregates, and writes will occur before side effects happen.
+- **Approval gates:** mutating nodes and `forEach` side-effect stages can be blocked until policy receipts exist; read-only transforms can still be inspected and archived.
+- **Provenance:** evaluated plans are stored under stable `pN` handles and canonical `plasm://execute/.../plan/...` URIs; executions emit run artifacts and trace records tying results back to the plan hash.
+- **Security:** Code Mode uses the same CGS/CML capability boundary as ordinary Plasm expressions. The model authors a plan, but backend authority still comes from loaded catalogs, tenant policy, auth, and typed runtime dispatch.
+- **Reliability:** deterministic validation, graph cache behavior, paging, resource archives, replay, and result normalization are shared with expression-based `plasm` calls instead of reimplemented as bespoke JSON tools.
+
+So Code Mode is best understood as a planner surface over Plasm, not a scripting escape hatch: TypeScript describes the DAG; Plasm remains the language of authority and execution.
+
 ## Normalized results
 
 APIs do not agree on result shape. One endpoint returns a bare array, another wraps rows under `items`, another hides the next page in a cursor URL, and writes may return a resource, a status body, or nothing useful. Plasm normalizes those differences into a small monadic return value the agent can reason about: one expression in, one typed value out, with *projections*, refs, paging, and side effects represented consistently.

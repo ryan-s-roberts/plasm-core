@@ -604,7 +604,9 @@ pub(crate) fn build_compact_arg_slot_gloss(
 }
 
 /// Joins compact slot glosses for `  ;;  … args: …` (DOMAIN) and TSV `Meaning`.
-pub(crate) fn join_compact_invocation_arg_fragments(fragments: Vec<CompactArgSlotGloss>) -> Option<String> {
+pub(crate) fn join_compact_invocation_arg_fragments(
+    fragments: Vec<CompactArgSlotGloss>,
+) -> Option<String> {
     if fragments.is_empty() {
         return None;
     }
