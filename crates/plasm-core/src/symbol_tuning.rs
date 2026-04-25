@@ -619,7 +619,8 @@ pub(crate) fn join_compact_invocation_arg_fragments(
     if fragments.is_empty() {
         return None;
     }
-    let mut indexed: Vec<(usize, CompactArgSlotGloss)> = fragments.into_iter().enumerate().collect();
+    let mut indexed: Vec<(usize, CompactArgSlotGloss)> =
+        fragments.into_iter().enumerate().collect();
     indexed.sort_by_key(|(i, f)| {
         // Required slots first; preserve original field order within each group.
         (!f.required, *i)
@@ -1074,11 +1075,7 @@ impl SymbolMap {
                 let es = self.entity_sym(target.as_str());
                 scope_parts.push(format!("{ps}→{es}"));
             } else {
-                scope_parts.push(self.ident_sym_cap_param(
-                    domain,
-                    cap_name,
-                    f.name.as_str(),
-                ));
+                scope_parts.push(self.ident_sym_cap_param(domain, cap_name, f.name.as_str()));
             }
         }
         if scope_parts.is_empty() {
@@ -1120,7 +1117,11 @@ impl SymbolMap {
             if !scope_s.is_empty() {
                 scope_s.push(' ');
             }
-            let _ = write!(&mut scope_s, "optional params: {}", optional_parts.join(", "));
+            let _ = write!(
+                &mut scope_s,
+                "optional params: {}",
+                optional_parts.join(", ")
+            );
         }
         if scope_s.is_empty() {
             return scope_s;

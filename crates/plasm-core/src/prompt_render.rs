@@ -695,7 +695,8 @@ fn render_prompt_tsv_from_bundle(
         let mut proj = heading.projection.clone();
         if proj.is_empty() {
             if let Some(i) = identity_idx {
-                if let Some(s) = parse_trailing_projection_bracket(&parsed_expr_rows[i].expression) {
+                if let Some(s) = parse_trailing_projection_bracket(&parsed_expr_rows[i].expression)
+                {
                     proj = s;
                 }
             }
@@ -2160,13 +2161,14 @@ fn collect_entity_domain_block(
     };
     let es = ent_sym(map, ename);
 
-    let primary_get_projection_bracket: Option<String> = cgs.domain_projection_heading_fields(ename, ent).map(|f| {
-        let syms: Vec<String> = f
-            .iter()
-            .map(|k| id_sym_entity(map, ename, k.as_str()))
-            .collect();
-        format!("[{}]", syms.join(","))
-    });
+    let primary_get_projection_bracket: Option<String> =
+        cgs.domain_projection_heading_fields(ename, ent).map(|f| {
+            let syms: Vec<String> = f
+                .iter()
+                .map(|k| id_sym_entity(map, ename, k.as_str()))
+                .collect();
+            format!("[{}]", syms.join(","))
+        });
     let mut inline_bracket_onto_primary_get = false;
 
     let get_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Get);
@@ -3831,9 +3833,7 @@ mod tests {
             .lines()
             .find(|l| {
                 let cols: Vec<&str> = l.split('\t').collect();
-                cols.len() == 2
-                    && cols[0].starts_with("e5(")
-                    && cols[1].contains("GitHub issue")
+                cols.len() == 2 && cols[0].starts_with("e5(") && cols[1].contains("GitHub issue")
             })
             .expect("Issue identity row");
         let cols: Vec<&str> = issue_identity.split('\t').collect();

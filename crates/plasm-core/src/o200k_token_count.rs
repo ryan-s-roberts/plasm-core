@@ -21,9 +21,7 @@ static BPE: OnceLock<CoreBPE> = OnceLock::new();
 /// Token count of `text` with `o200k_base` ordinary encoding (no special tokens), suitable for
 /// rough comparison with API billing on recent OpenAI models.
 pub fn o200k_token_count(text: &str) -> usize {
-    bpe()
-        .encode_ordinary(text)
-        .len()
+    bpe().encode_ordinary(text).len()
 }
 
 fn bpe() -> &'static CoreBPE {
@@ -67,6 +65,9 @@ mod tests {
     fn short_text_reasonable() {
         let t = "Hello, world! Token check.";
         let n = o200k_token_count(t);
-        assert!((3..=16).contains(&n), "unexpected o200k count {n} for {t:?}");
+        assert!(
+            (3..=16).contains(&n),
+            "unexpected o200k count {n} for {t:?}"
+        );
     }
 }

@@ -14,24 +14,26 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::future::join_all;
-use http_problem::Problem;
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
+use http_problem::Problem;
 use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
-use plasm_core::error_render::{FeedbackStyle, render_parse_error_with_feedback};
+use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
-    AuthScheme, CGS, CgsContext, PagingHandle, PromptRenderMode, SymbolMap,
     entity_slices_for_render,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     split_tsv_domain_contract_and_table, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog,
     symbol_tuning::FocusSpec,
+    AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
+#[cfg(feature = "code_mode")]
+use plasm_facade_gen::TypeScriptCodeArtifacts;
 use plasm_runtime::{
-    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
-    ExecutionResult, ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData,
-    RuntimeError, StreamConsumeOpts, auth_resolution_mode_from_env, validate_principal_for_mode,
+    auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
+    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, ExecutionSource,
+    ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,13 +43,13 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::run_artifacts::{
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
     artifact_http_path, document_from_run, plasm_run_resource_uri,
     plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
+    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
 };
 use crate::trace_hub::{
-    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent, TraceSegment,
-    trace_id_for_http_execute_session,
+    trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
+    TraceSegment,
 };
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
 
@@ -134,24 +136,24 @@ where
     }
 }
 
-use crate::batch_scheduler::{BatchStage, build_batch_stages, line_may_share_parallel_query_stage};
+use crate::batch_scheduler::{build_batch_stages, line_may_share_parallel_query_stage, BatchStage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
-    IncomingPrincipal, incoming_auth_problem, session_allows_principal, tenant_scope,
+    incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
 };
-use crate::mcp_plasm_meta::{PlasmMetaIndex, PlasmPagingStepMeta, plasm_paging_json_value};
+use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
 use crate::mcp_run_markdown::{
-    OmittedReferenceOnlyFields, execute_expression_preview, mcp_compact_markdown_batch,
-    mcp_compact_markdown_single, mcp_format_execute_result_table_or_tsv,
-    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
-    mcp_preview_markdown_needed, merge_snapshot_column_hints,
+    execute_expression_preview, mcp_compact_markdown_batch, mcp_compact_markdown_single,
+    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
+    mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
+    merge_snapshot_column_hints, OmittedReferenceOnlyFields,
 };
 use crate::output::{
-    InBandSummaryReport, LossySummaryFieldNames, OutputFormat, apply_projection,
-    format_result_with_cgs, http_execute_results_value, reference_only_omitted_field_names,
+    apply_projection, format_result_with_cgs, http_execute_results_value,
+    reference_only_omitted_field_names, InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
 };
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
@@ -605,15 +607,17 @@ pub(crate) fn format_add_capabilities_wave_line(entry_id: &str, entities: &[Stri
     format!("Added capabilities from {entry_id}: {}", v.join(", "))
 }
 
-/// MCP `add_code_capabilities` text body: wave summaries + pointers to `TypeScriptCodeArtifacts` /
-/// `facade_delta` in `_meta.plasm` (from `plasm_facade_gen::build_code_facade` in the MCP host), **not**
-/// the Plasm DOMAIN / `e#` teaching table (that is `add_capabilities` / `plasm`).
+/// MCP `add_code_capabilities` text body: wave summaries plus the actual incremental TypeScript
+/// declaration fragments from `plasm_facade_gen::build_code_facade`.
 #[cfg(feature = "code_mode")]
-pub(crate) fn mcp_add_code_capabilities_markdown(out: &ApplyCapabilitySeedsOutcome) -> String {
+pub(crate) fn mcp_add_code_capabilities_markdown(
+    out: &ApplyCapabilitySeedsOutcome,
+    ts: &TypeScriptCodeArtifacts,
+) -> String {
     let mut s = String::new();
     if out.stale_execute_binding_recovered {
         s.push_str(
-            "**Prior execute session was missing or expired.** A new `(prompt_hash, session)` was opened—discard any cached **Code Mode** `typescript` / `facade_delta` from earlier turns. Use `_meta.plasm.typescript` and `facade_delta` from this response only.\n\n",
+            "**Prior Code Mode session was missing or expired.** A new `(prompt_hash, session)` was opened; replace cached TypeScript declarations with the fragments below.\n\n",
         );
     }
     for wave in &out.waves {
@@ -623,9 +627,7 @@ pub(crate) fn mcp_add_code_capabilities_markdown(out: &ApplyCapabilitySeedsOutco
                     && !out.stale_execute_binding_recovered
                     && !wave.reused_session
                 {
-                    s.push_str(
-                        "_New Code Mode session: the Plan/Code surface is in `_meta.plasm.typescript` and `facade_delta` (this message is not a Plasm path-expression table)._\n\n",
-                    );
+                    s.push_str("_New Code Mode session: load the TypeScript fragments below._\n\n");
                 }
                 s.push_str(&format_add_capabilities_wave_line(
                     &wave.entry_id,
@@ -633,14 +635,13 @@ pub(crate) fn mcp_add_code_capabilities_markdown(out: &ApplyCapabilitySeedsOutco
                 ));
                 if wave.reused_session {
                     s.push_str("\n\n_Session unchanged._\n");
-                } else {
-                    s.push_str(
-                        "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta` (not the Plasm `e#` / `m#` / `p#` table)._\n",
-                    );
                 }
             }
             "federate" => {
-                if wave.markdown_delta.contains("No new entities in this federated wave") {
+                if wave
+                    .markdown_delta
+                    .contains("No new entities in this federated wave")
+                {
                     s.push_str(&wave.markdown_delta);
                     s.push('\n');
                 } else {
@@ -648,24 +649,16 @@ pub(crate) fn mcp_add_code_capabilities_markdown(out: &ApplyCapabilitySeedsOutco
                         &wave.entry_id,
                         &wave.entities,
                     ));
-                    s.push_str(
-                        "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta`._\n",
-                    );
                 }
             }
             "expand" => {
                 if wave.markdown_delta.contains("No new entities in this wave") {
-                    s.push_str(
-                        "_No new entities in this wave (already exposed)._\n\n_If there are updates, they appear in `_meta.plasm.typescript` and `facade_delta`._\n",
-                    );
+                    s.push_str("_No new entities in this wave (already exposed)._\n");
                 } else {
                     s.push_str(&format_add_capabilities_wave_line(
                         &wave.entry_id,
                         &wave.entities,
                     ));
-                    s.push_str(
-                        "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta`._\n",
-                    );
                 }
             }
             _ => {
@@ -673,13 +666,42 @@ pub(crate) fn mcp_add_code_capabilities_markdown(out: &ApplyCapabilitySeedsOutco
                     &wave.entry_id,
                     &wave.entities,
                 ));
-                s.push_str(
-                    "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta`._\n",
-                );
             }
         }
+        if !s.ends_with("\n\n") {
+            s.push_str("\n\n");
+        }
+    }
+    append_code_mode_typescript_fragment(&mut s, "Code Mode prelude", &ts.agent_prelude);
+    append_code_mode_typescript_fragment(
+        &mut s,
+        "Code Mode namespace delta",
+        &ts.agent_namespace_body,
+    );
+    append_code_mode_typescript_fragment(
+        &mut s,
+        "Code Mode loaded API delta",
+        &ts.agent_loaded_apis,
+    );
+    if ts.declarations_unchanged {
+        s.push_str("_TypeScript declarations unchanged for this wave._\n");
+    }
+    if let Some(runtime) = ts.runtime_bootstrap_ref.as_deref() {
+        s.push_str(&format!("Runtime bootstrap: `{runtime}`\n"));
     }
     s
+}
+
+#[cfg(feature = "code_mode")]
+fn append_code_mode_typescript_fragment(out: &mut String, title: &str, body: &str) {
+    let body = body.trim();
+    if body.is_empty() {
+        return;
+    }
+    out.push_str(title);
+    out.push_str(":\n\n```typescript\n");
+    out.push_str(body);
+    out.push_str("\n```\n\n");
 }
 
 /// Wrap DOMAIN / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
@@ -3955,10 +3977,10 @@ mod tests {
     use super::*;
     use crate::http;
     use crate::incoming_auth::IncomingPrincipal;
-    use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
     use axum::http::Request;
+    use axum::Router;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -4470,9 +4492,23 @@ mod mcp_add_code_capabilities_markdown_tests {
             stale_execute_binding_recovered: false,
             stale_binding_previous: None,
         };
-        let md = mcp_add_code_capabilities_markdown(&out);
+        let ts = TypeScriptCodeArtifacts {
+            agent_prelude: "declare namespace Plasm { type Node = unknown; }".to_string(),
+            agent_namespace_body:
+                "declare namespace Hackernews { interface ItemRow { id: number; } }".to_string(),
+            agent_loaded_apis: "interface LoadedApis { hackernews: Hackernews.Api; }".to_string(),
+            runtime_bootstrap_ref: Some("code-mode-quickjs-runtime-v1".to_string()),
+            declarations_unchanged: false,
+            added_catalog_aliases: vec!["hackernews".to_string()],
+        };
+        let md = mcp_add_code_capabilities_markdown(&out, &ts);
         assert!(!md.contains("Expression"), "md:\n{md}");
         assert!(!md.contains("e1("), "md:\n{md}");
-        assert!(md.contains("hackernews") && md.contains("Item"), "md:\n{md}");
+        assert!(
+            md.contains("hackernews") && md.contains("Item"),
+            "md:\n{md}"
+        );
+        assert!(md.contains("```typescript"), "md:\n{md}");
+        assert!(md.contains("interface ItemRow"), "md:\n{md}");
     }
 }
