@@ -665,7 +665,6 @@ fn render_prompt_tsv_from_bundle(
     let blocks = collect_domain_blocks(&prompt_lines);
     for (idx, (heading, block_lines)) in blocks.into_iter().enumerate() {
         let canonical_entity = full_entities.get(idx).copied().unwrap_or_default();
-        let projection_symbols = parse_projection_symbols(&heading.projection);
         let field_gloss_rows =
             parse_field_gloss_rows(&block_lines, canonical_entity, symbol_map, ident_meta);
         let mut field_gloss_by_symbol: HashMap<String, ParsedFieldGloss> = HashMap::new();
@@ -693,6 +692,15 @@ fn render_prompt_tsv_from_bundle(
             // `e#{…}`): merge heading prose via [`TsvRow::identity`]. Skip when multiple rows and no GET,
             // so we do not pick an arbitrary line as "identity".
             .or_else(|| (parsed_expr_rows.len() == 1).then_some(0));
+        let mut proj = heading.projection.clone();
+        if proj.is_empty() {
+            if let Some(i) = identity_idx {
+                if let Some(s) = parse_trailing_projection_bracket(&parsed_expr_rows[i].expression) {
+                    proj = s;
+                }
+            }
+        }
+        let projection_symbols = parse_projection_symbols(&proj);
         for sym in &projection_symbols {
             if let Some(gloss) = field_gloss_by_symbol.get(sym.as_str()) {
                 write_tsv_row(&mut out, TsvRow::field_gloss(gloss));
@@ -891,6 +899,17 @@ fn parse_projection_symbols(projection: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Suffix on a get expression, e.g. `e#(p#=$,…)[p1,p2,…]`, for projection teaching on the same line
+/// as the primary Get (avoids a duplicate list on the entity heading).
+fn parse_trailing_projection_bracket(expr: &str) -> Option<String> {
+    let t = expr.trim();
+    if t.len() < 3 || !t.ends_with(']') {
+        return None;
+    }
+    let open = t.rfind('[')?;
+    (open + 1 < t.len()).then_some(t[open..].to_string())
 }
 
 fn parse_field_gloss_rows(
@@ -1099,11 +1118,15 @@ fn parse_expression_rows(lines: &[&str]) -> Vec<ParsedExprLine> {
 
 /// Character and rough token counts plus prompt surface metrics for a rendered prompt.
 ///
-/// Token count is `prompt.chars().count() / 4` (heuristic, not a provider tokenizer).
+/// `token_estimate` is a legacy `chars/4` rough figure. Prefer [`Self::prompt_tokens_o200k`]
+/// (local `o200k_base` BPE via riptoken) for budgeting closer to OpenAI-style API usage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PromptSurfaceStats {
     pub prompt_chars: usize,
+    /// Legacy: `prompt.chars().count() / 4`. Prefer [`Self::prompt_tokens_o200k`].
     pub token_estimate: usize,
+    /// `o200k_base` ordinary token count (local, no network).
+    pub prompt_tokens_o200k: usize,
     /// Capabilities whose [`CapabilitySchema::domain`](crate::schema::CapabilitySchema::domain) lies in
     /// the same **full** entity slice as DOMAIN (see [`json_tool_surface_counts`] for slice rules).
     pub capability_tools: usize,
@@ -1116,15 +1139,16 @@ pub struct PromptSurfaceStats {
 }
 
 impl PromptSurfaceStats {
-    /// Shared human-readable metrics for CLI stderr: chars, heuristic tokens, DOMAIN tool count.
+    /// Shared human-readable metrics for CLI stderr: chars, o200k tokens, DOMAIN tool count.
     pub fn summary_line_body(&self) -> String {
         format!(
-            "{} chars | ~{} tok (heuristic) | ~{} tools (DOMAIN) | {} caps + {} nav (schema)",
+            "{} chars | ~{} tok (o200k) | ~{} tools (DOMAIN) | {} caps + {} nav (schema); ~{} tok (chars/4)",
             self.prompt_chars,
-            self.token_estimate,
+            self.prompt_tokens_o200k,
             self.json_tool_estimate,
             self.capability_tools,
             self.navigation_tools,
+            self.token_estimate,
         )
     }
 }
@@ -1214,9 +1238,12 @@ pub fn prompt_surface_stats(
         config.uses_symbols(),
     );
     let prompt_chars = prompt.chars().count();
+    let token_estimate = prompt_chars / 4;
+    let prompt_tokens_o200k = crate::o200k_token_count::o200k_token_count(prompt);
     PromptSurfaceStats {
         prompt_chars,
-        token_estimate: prompt_chars / 4,
+        token_estimate,
+        prompt_tokens_o200k,
         capability_tools,
         navigation_tools,
         json_tool_estimate,
@@ -1752,7 +1779,9 @@ fn collect_capability_compact_arg_glosses(
     out
 }
 
-/// DOMAIN `;;` suffix: `[scope …]` / `optional params:`, optional `args:` compact type rows, ` — ` + description.
+/// DOMAIN `;;` suffix: `[scope …]` and, when present, compact `args: p# … req|opt; …` (required slots
+/// before optional). Omits the separate `optional params: p#,…` list whenever `args:` is emitted.
+/// Falls back to `[scope …] optional params: …` only when compact `args:` is unavailable. Then ` — ` + description.
 fn format_capability_legend_line(
     map: &SymbolMap,
     cap: &crate::CapabilitySchema,
@@ -1767,20 +1796,21 @@ fn format_capability_legend_line(
     } else {
         truncate_inline_desc(raw, MAX_DESC)
     };
-    let base_sig = map.capability_input_signature_gloss(cap);
     let sig = if let Some(im) = ident_meta {
         let frags = collect_capability_compact_arg_glosses(anchor_entity, cap, map, im);
         if let Some(args_s) = crate::symbol_tuning::join_compact_invocation_arg_fragments(frags) {
-            if base_sig.is_empty() {
+            // `args:` already tags each slot req/opt — omit the redundant `optional params: p#,…` list.
+            let scope_only = map.capability_scope_legend_gloss(cap);
+            if scope_only.is_empty() {
                 format!("args: {args_s}")
             } else {
-                format!("{base_sig} · args: {args_s}")
+                format!("{scope_only} · args: {args_s}")
             }
         } else {
-            base_sig
+            map.capability_input_signature_gloss(cap)
         }
     } else {
-        base_sig
+        map.capability_input_signature_gloss(cap)
     };
     if sig.is_empty() {
         gloss
@@ -2130,6 +2160,15 @@ fn collect_entity_domain_block(
     };
     let es = ent_sym(map, ename);
 
+    let primary_get_projection_bracket: Option<String> = cgs.domain_projection_heading_fields(ename, ent).map(|f| {
+        let syms: Vec<String> = f
+            .iter()
+            .map(|k| id_sym_entity(map, ename, k.as_str()))
+            .collect();
+        format!("[{}]", syms.join(","))
+    });
+    let mut inline_bracket_onto_primary_get = false;
+
     let get_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Get);
     let only_singleton_gets = !get_caps.is_empty()
         && get_caps
@@ -2172,39 +2211,99 @@ fn collect_entity_domain_block(
     let primary_get_cap = cgs.resolved_primary_get_for_projection(ename, ent);
     if primary_get_cap.is_some() && !only_singleton_gets {
         let primary_name = primary_get_cap.map(|c| &c.name);
+        let br_suffix: Option<&str> = primary_get_projection_bracket
+            .as_deref()
+            .filter(|b| !b.is_empty());
         let mut emitted_primary_get = false;
         if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map) {
-            if try_push_domain_example(
-                &mut lines,
-                &mut line_metas,
-                collect_meta,
-                cgs,
-                map,
-                &cmp,
-                get_gloss.clone(),
-                None,
-                None,
-                primary_name,
-                line_valid_cache,
-            ) {
+            if let Some(b) = br_suffix {
+                let with_br = format!("{cmp}{b}");
+                if try_push_domain_example(
+                    &mut lines,
+                    &mut line_metas,
+                    collect_meta,
+                    cgs,
+                    map,
+                    &with_br,
+                    get_gloss.clone(),
+                    None,
+                    None,
+                    primary_name,
+                    line_valid_cache,
+                ) {
+                    emitted_primary_get = true;
+                    inline_bracket_onto_primary_get = true;
+                }
+            }
+            if !emitted_primary_get
+                && try_push_domain_example(
+                    &mut lines,
+                    &mut line_metas,
+                    collect_meta,
+                    cgs,
+                    map,
+                    &cmp,
+                    get_gloss.clone(),
+                    None,
+                    None,
+                    primary_name,
+                    line_valid_cache,
+                )
+            {
                 emitted_primary_get = true;
             }
         }
         if !emitted_primary_get {
-            let line_g = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
-            try_push_domain_example(
-                &mut lines,
-                &mut line_metas,
-                collect_meta,
-                cgs,
-                map,
-                &line_g,
-                get_gloss.clone(),
-                None,
-                None,
-                primary_name,
-                line_valid_cache,
-            );
+            let line_base = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+            let mut line_g = line_base.clone();
+            if let Some(b) = br_suffix {
+                line_g.push_str(b);
+            }
+            if br_suffix.is_some() && line_g != line_base {
+                if try_push_domain_example(
+                    &mut lines,
+                    &mut line_metas,
+                    collect_meta,
+                    cgs,
+                    map,
+                    &line_g,
+                    get_gloss.clone(),
+                    None,
+                    None,
+                    primary_name,
+                    line_valid_cache,
+                ) {
+                    inline_bracket_onto_primary_get = true;
+                } else if try_push_domain_example(
+                    &mut lines,
+                    &mut line_metas,
+                    collect_meta,
+                    cgs,
+                    map,
+                    &line_base,
+                    get_gloss.clone(),
+                    None,
+                    None,
+                    primary_name,
+                    line_valid_cache,
+                ) {
+                    // bracket stays on heading
+                }
+            } else {
+                let _ = try_push_domain_example(
+                    &mut lines,
+                    &mut line_metas,
+                    collect_meta,
+                    cgs,
+                    map,
+                    &line_g,
+                    get_gloss.clone(),
+                    None,
+                    None,
+                    primary_name,
+                    line_valid_cache,
+                );
+            }
         }
     }
 
@@ -2499,13 +2598,11 @@ fn collect_entity_domain_block(
         );
     }
 
-    let heading_projection_bracket = cgs.domain_projection_heading_fields(ename, ent).map(|f| {
-        let syms: Vec<String> = f
-            .iter()
-            .map(|k| id_sym_entity(map, ename, k.as_str()))
-            .collect();
-        format!("[{}]", syms.join(","))
-    });
+    let heading_projection_bracket = if inline_bracket_onto_primary_get {
+        None
+    } else {
+        primary_get_projection_bracket
+    };
 
     EntityDomainBlock {
         entity_sym: es,
@@ -2541,6 +2638,28 @@ fn domain_heading_projection_bracket(
     let mut line_valid_cache = HashMap::new();
     collect_entity_domain_block(cgs, ename, map, None, false, &mut line_valid_cache)
         .heading_projection_bracket
+}
+
+/// Full scalar projection list `[p#,…]` (heading or **primary get** line); test-only helper.
+#[cfg(test)]
+fn domain_projection_bracket_exemplar(
+    cgs: &CGS,
+    ename: &str,
+    map: Option<&SymbolMap>,
+) -> Option<String> {
+    if let Some(b) = domain_heading_projection_bracket(cgs, ename, map) {
+        return Some(b);
+    }
+    for line in domain_example_lines(cgs, ename, map) {
+        let head = line
+            .split_once(CAP_LEGEND_SEP)
+            .map(|(a, _)| a.trim())
+            .unwrap_or(line.trim());
+        if let Some(b) = parse_trailing_projection_bracket(head) {
+            return Some(b);
+        }
+    }
+    None
 }
 
 /// Turn a DOMAIN scope variant into the **same shape as a path expression**: bare `e#` when unscoped,
@@ -2750,21 +2869,20 @@ fn render_prompt_contract(spec: PromptContractSpec, format: PromptContractFormat
     };
     let structure_lines = match format {
         PromptContractFormat::DomainMarkdown => format!(
-            "DOMAIN blocks are organized around one heading line ({entity_label}, optional `;;`, optional full `{projection}` projection list, optional description).\n\
-Where needed, compact `args: p# wire type …` in an expression row’s `;;` hint replaces **extra** per-arg `{field}` lines (you still get gloss rows for projection, relations, long enums, or lossy `+` type markers when needed).\n\
-The expression lines in and around each DOMAIN block are the **only** valid Plasm path expression forms for this prompt (this schema slice).\n\
-Every symbol, field, relation, method, and query shape you use must be defined by this prompt itself.\n\n"
+            "DOMAIN: one heading line per block ({entity_label}, optional `;;`, description); expression lines in each block are the only valid Plasm path forms for this schema slice (each must be defined here).\n\
+If projection: full `{projection}` once on the **identity** get (`{projection_form}`; not the heading); use a **minimal** subset. Same field set for all {projection_form} gets and for `{entity}` / `[{entity}]` returns.\n\
+Where needed, compact `args: …` in `;;` on a line can replace extra `{field}` gloss lines when the compact form is enough; you may still get gloss rows for projection, relations, long enums, or lossy `+` types. All path shapes you use are defined in this prompt.\n\n"
         ),
         PromptContractFormat::TsvComment => format!(
-            "The TSV rows below define the valid Plasm expression surface for this prompt.\n\
-`Expression` is the only executable Plasm syntax column; `Meaning` is documentation only (returns, `args:`, `optional params:`, and descriptions) — use it to pick methods and arg slots, but build output from `Expression` + values only (never paste `Meaning`).\n\
-Each entity may emit a few leading `{field}` slot-definition rows when a compact `args:` on the method line is not enough (projection, long enums, relation targets).\n\
-Every symbol, field, relation, method, and query shape you use must be defined by this prompt itself.\n\n"
+            "Only the `Expression` column is executable syntax. `Meaning` is documentation only — never paste `Meaning`. Use it to pick methods/args; output is `Expression` + values only.\n\
+If projection: full `{projection}` once on the **identity** row; **minimal** in practice. Same for all {projection_form} gets and `{entity}` / `[{entity}]` returns.\n\
+You may have leading `{field}` rows when `args:` on a method line is not enough. All path shapes you use are defined in this prompt.\n\n"
         ),
     };
     let hint_line = match format {
         PromptContractFormat::DomainMarkdown => "  - `;;` — on DOMAIN teaching rows, everything after the first `;;` is a hint only (`Type` / `=> result`, optional-parameter constraints, then the capability description). It is not Plasm syntax and must not appear in your output: emit only the expression characters before `;;` (no `;;`, no `=> …`, no trailing description).\n".to_string(),
-        PromptContractFormat::TsvComment => "  - `Meaning` is documentation only: use it for `returns`, `args:` (slot/label/type), `optional params:`, allowed values, and descriptions, but never paste it into executable output.\n".to_string(),
+        // Tsv: `structure_lines` already states Meaning is non-executable; omit duplicate bullet.
+        PromptContractFormat::TsvComment => String::new(),
     };
     let field_hint_line = match format {
         PromptContractFormat::DomainMarkdown => format!(
@@ -2821,7 +2939,7 @@ Every symbol, field, relation, method, and query shape you use must be defined b
     );
     let _ = writeln!(
         s,
-        "  - {projection_form} — projection reads scalar fields. Any non-empty subset of allowed fields is valid. When projection is enabled, the entity definition carries one full `{projection}` listing exactly which slots are valid scalar projection fields for that entity. Do NOT use {nav_form} for scalar fields; after `{entity}(id)`, dot is only for relations and `{method}` methods that are explicitly taught for that entity."
+        "  - {projection_form} — any non-empty scalar subset. Full `{projection}` once on the **identity** get; same field set for all {projection_form} and for `{entity}` / `[{entity}]` returns. No {nav_form} for scalars; after `{entity}(id)` dot = relations and taught `{method}` only."
     );
     let _ = writeln!(
         s,
@@ -3383,8 +3501,9 @@ mod tests {
         );
     }
 
-    /// Regression: Issue DOMAIN teaches projection with **one** full bracket on the **entity heading**
-    /// (all `provides` fields), not a prefix ladder or a duplicate indented exemplar line.
+    /// Regression: Issue DOMAIN teaches **one** full scalar projection list (all `provides` fields),
+    /// on the **identity** primary get or on the heading when the get is singleton-only — not a
+    /// prefix ladder or a duplicate extra exemplar line.
     #[test]
     fn github_issue_domain_emits_single_full_projection_exemplar() {
         let dir = std::path::Path::new("../../apis/github");
@@ -3408,11 +3527,11 @@ mod tests {
             "Issue primary get should expose many response fields for teaching; got {}",
             prefixes[0].len()
         );
-        let br = domain_heading_projection_bracket(&cgs, "Issue", map.as_ref())
-            .expect("Issue heading should carry projection bracket");
+        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
+            .expect("Issue should carry a full projection bracket (heading or primary get)");
         assert!(
             br.starts_with('[') && br.contains('p'),
-            "unexpected heading bracket: {br}"
+            "unexpected projection bracket: {br}"
         );
         let lines = domain_example_lines(&cgs, "Issue", map.as_ref());
         let bracket_lines = lines
@@ -3420,8 +3539,8 @@ mod tests {
             .filter(|l| l.contains("[p") && l.contains(']'))
             .count();
         assert_eq!(
-            bracket_lines, 0,
-            "projection should not repeat as a separate indented DOMAIN line (bracket_lines={})",
+            bracket_lines, 1,
+            "expect exactly one DOMAIN example line with a full scalar projection list (bracket_lines={})",
             bracket_lines,
         );
         let out = render_prompt_with_config(
@@ -3430,16 +3549,17 @@ mod tests {
         );
         assert!(
             out.contains(br.as_str()),
-            "full prompt should include heading projection bracket `{br}`"
+            "full prompt should include the full projection list `{br}` (heading or primary get)"
         );
         assert!(
             out.contains("gloss rows for projection, relations, long enums")
-                || out.contains("gloss") && out.contains("heading"),
-            "preamble should explain pre-heading gloss/projection/args teaching (prompt len {})",
+                || (out.contains("gloss")
+                    && (out.contains("identity") || out.contains("primary get"))),
+            "preamble should explain gloss/projection/args teaching (prompt len {})",
             out.len()
         );
         assert!(
-            out.contains("Any non-empty subset of allowed fields is valid"),
+            out.contains("any non-empty scalar subset"),
             "preamble should teach projection subsets (prompt len {})",
             out.len()
         );
@@ -3460,11 +3580,11 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
-        let br = domain_heading_projection_bracket(&cgs, "Issue", map.as_ref())
-            .expect("Linear Issue heading should carry projection bracket");
+        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
+            .expect("Linear Issue should carry a full projection bracket (heading or primary get)");
         assert!(
             br.starts_with('[') && br.contains('p'),
-            "unexpected heading bracket: {br}"
+            "unexpected projection bracket: {br}"
         );
         let lines = domain_example_lines(&cgs, "Issue", map.as_ref());
         let bracket_lines = lines
@@ -3472,8 +3592,9 @@ mod tests {
             .filter(|l| l.contains("[p") && l.contains(']'))
             .count();
         assert_eq!(
-            bracket_lines, 0,
-            "projection should not repeat as a separate indented DOMAIN line"
+            bracket_lines, 1,
+            "expect exactly one DOMAIN example line with a full scalar projection list (bracket_lines={})",
+            bracket_lines,
         );
         let out = render_prompt_with_config(
             &cgs,
@@ -3481,7 +3602,7 @@ mod tests {
         );
         assert!(
             out.contains(br.as_str()),
-            "full prompt should include heading projection bracket `{br}`"
+            "full prompt should include the full projection list `{br}` (heading or primary get)"
         );
     }
 
@@ -3492,30 +3613,30 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
+        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
+            .expect("Issue should carry a projection list");
         let out = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
         let lines: Vec<&str> = out.lines().collect();
-        let heading_idx = lines
+        let use_idx = lines
             .iter()
-            .position(|l| {
-                l.starts_with("  e5  ;;  [") && l.contains("A GitHub issue in a repository")
-            })
-            .expect("Issue heading line should exist in symbol-tuned prompt");
-        let heading = lines[heading_idx].trim();
-        let (projection_inner, _rest) = heading
-            .split_once('[')
-            .and_then(|(_, tail)| tail.split_once(']'))
-            .expect("Issue heading should carry projection bracket");
-        let symbols: Vec<&str> = projection_inner
+            .position(|l| l.contains(br.as_str()))
+            .expect("full projection list should appear on heading or primary get line");
+        let inner = br
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .expect("bracket");
+        let symbols: Vec<&str> = inner
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .collect();
         assert!(
             !symbols.is_empty(),
-            "Issue heading projection should include at least one p# symbol"
+            "Issue projection should include at least one p# symbol"
         );
         for sym in symbols {
             let def = format!("    {sym}  ;;");
@@ -3524,8 +3645,8 @@ mod tests {
                 .position(|l| l.starts_with(&def))
                 .unwrap_or_else(|| panic!("missing gloss definition line for `{sym}`"));
             assert!(
-                def_idx < heading_idx,
-                "projection symbol `{sym}` must be declared before heading use (def_idx={def_idx}, heading_idx={heading_idx})"
+                def_idx < use_idx,
+                "projection symbol `{sym}` must be declared before the line that uses the list (def_idx={def_idx}, use_idx={use_idx})"
             );
         }
     }
@@ -3712,7 +3833,6 @@ mod tests {
                 let cols: Vec<&str> = l.split('\t').collect();
                 cols.len() == 2
                     && cols[0].starts_with("e5(")
-                    && cols[1].contains("projection [")
                     && cols[1].contains("GitHub issue")
             })
             .expect("Issue identity row");
@@ -3720,9 +3840,16 @@ mod tests {
         assert_eq!(cols.len(), 2, "identity row should have 2 columns");
         assert!(cols[0].starts_with("e5("));
         assert!(
-            cols[1].contains("projection [") && cols[1].contains("p"),
-            "identity row should carry projection note"
+            (cols[0].contains('[') && cols[0].contains(']'))
+                || (cols[1].contains("projection [") && cols[1].contains('p')),
+            "identity row should teach full projection on the Expression get line, or in Meaning if the list is not on the expression: row={issue_identity:?}"
         );
+        if cols[0].contains('[') {
+            assert!(
+                !cols[1].contains("projection ["),
+                "do not repeat full projection in Meaning when Expression already carries the list"
+            );
+        }
         assert!(
             cols[1].contains("GitHub issue"),
             "identity row description should carry entity prose"
@@ -3779,8 +3906,10 @@ mod tests {
         let contrib = tsv
             .lines()
             .find(|l| {
-                l.to_lowercase().contains("repository contributors")
-                    && l.to_lowercase().contains("commit count")
+                let m = l.to_lowercase();
+                m.contains("contributors")
+                    && m.contains("commit count")
+                    && (m.contains("repo") || m.contains("repository"))
             })
             .expect("Contributor list DOMAIN row");
         assert!(
@@ -3788,13 +3917,8 @@ mod tests {
             "contributor query row should be a brace-query exemplar: {contrib:?}"
         );
         assert!(
-            contrib.contains("optional params: p")
-                && contrib
-                    .split("optional params: p")
-                    .nth(1)
-                    .and_then(|s| s.chars().next())
-                    .is_some_and(|c| c.is_ascii_digit()),
-            "contributor query Meaning should still carry optional legend: {contrib:?}"
+            contrib.contains("args:") && contrib.contains(" opt"),
+            "contributor query Meaning should carry compact args (req/opt), not a duplicate optional list: {contrib:?}"
         );
     }
 
@@ -3865,7 +3989,7 @@ mod tests {
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         for needle in [
             DOMAIN_VALID_EXPR_MARKER,
-            "Every symbol, field, relation, method, and query shape you use must be defined by this prompt itself.",
+            "All path shapes you use are defined in this prompt.",
             "standalone create/action",
             "full-text search",
             "choose exactly one",
@@ -4374,17 +4498,20 @@ mod tests {
         // Book: one query line; Shelf: one. Many `shelf` relation is Unmaterialized → no nav line in DOMAIN.
         assert_eq!(domain_tools, 2);
 
-        let prompt = "αβγδε"; // 5 chars → token est 1
+        let prompt = "αβγδε"; // 5 chars → legacy est 1; o200k is model-based
         let st = prompt_surface_stats(&cgs, cfg, prompt);
         assert_eq!(st.prompt_chars, 5);
         assert_eq!(st.token_estimate, 1);
+        assert_eq!(
+            st.prompt_tokens_o200k,
+            crate::o200k_token_count::o200k_token_count(prompt)
+        );
         assert_eq!(st.capability_tools, 2);
         assert_eq!(st.navigation_tools, 1);
         assert_eq!(st.json_tool_estimate, domain_tools);
-        assert_eq!(
-            st.summary_line_body(),
-            "5 chars | ~1 tok (heuristic) | ~2 tools (DOMAIN) | 2 caps + 1 nav (schema)"
-        );
+        let sum = st.summary_line_body();
+        assert!(sum.contains("tok (o200k)"));
+        assert!(sum.contains("chars/4)"));
     }
 
     fn string_id_field(description: &str) -> FieldSchema {

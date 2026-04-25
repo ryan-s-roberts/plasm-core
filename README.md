@@ -70,7 +70,7 @@ Pick one: Member{team_id=Team(id)} | Member{list_id=List(id)} | Member{task_id=T
 ```text
 cargo build -q -p plasm-core --bin dump_prompt
 ./target/debug/dump_prompt ./apis/github >/dev/null
-# dump_prompt: prompt built — 24797 chars | ~6199 tok (heuristic) | ~118 tools (DOMAIN) | 91 caps + 28 nav (schema); writing stdout …
+# dump_prompt: prompt built — 24202 chars | ~6050 tok (heuristic) | ~118 tools (DOMAIN) | 91 caps + 28 nav (schema); writing stdout …
 ./target/debug/dump_prompt ./apis/clickup >/dev/null
 # dump_prompt: prompt built — 18294 chars | ~4573 tok (heuristic) | ~109 tools (DOMAIN) | 85 caps + 11 nav (schema); writing stdout …
 ./target/debug/dump_prompt ./fixtures/schemas/overshow_tools >/dev/null
@@ -81,10 +81,10 @@ Representative full-catalog runs (same as stderr above; `cwd` = `plasm-oss/`):
 
 | Catalog (loaded CGS) | Prompt chars | ~Heuristic tokens (÷4) | ~DOMAIN tools (lines) | Capabilities (schema) | Nav / relations (schema) |
 |----------------------|-------------:|------------------------:|----------------------:|------------------------:|---------------------------:|
-| `apis/github` | 24,797 | 6,199 | 118 | 91 | 28 |
+| `apis/github` | 24,202 | 6,050 | 118 | 91 | 28 |
 | `apis/clickup` | 18,294 | 4,573 | 109 | 85 | 11 |
 
-For reference, the official `github-mcp-server` **v0.15.0** serialized `tools/list` surface is **64,129** characters (about **16,032** heuristic tokens by the same `÷4` rule) for **93** tool definitions—same order of comparison as the GitHub `apis/github` Plasm prompt row (**24,797** chars here), different artifact.
+For reference, the official `github-mcp-server` **v0.15.0** serialized `tools/list` surface is **64,129** characters (about **16,032** heuristic tokens by the same `÷4` rule) for **93** tool definitions—same order of comparison as the GitHub `apis/github` Plasm prompt row (**24,202** chars here), different artifact.
 
 With more than one API in play, Plasm’s **intent-based catalog queries** (`discover_capabilities`) and **federated sessions** let the agent add only the relevant entities (GitHub, Linear, Slack, another catalog) and keep one typed symbol space—closer to a small query planner over API domains than a single fixed `tools/list`.
 

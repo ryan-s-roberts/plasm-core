@@ -112,8 +112,12 @@ pub mod tests;
 pub mod type_checker;
 pub mod value;
 
+mod o200k_token_count;
 mod spans;
 mod utf8_trunc;
+
+/// Local `o200k_base` BPE length (OpenAI `o200k_base` via riptoken).
+pub use o200k_token_count::o200k_token_count;
 
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{FederationDispatch, QualifiedEntityKey};
