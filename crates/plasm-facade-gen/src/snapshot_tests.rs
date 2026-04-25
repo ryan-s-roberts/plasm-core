@@ -47,7 +47,7 @@ fn snapshot_code_facade_prelude_emitted() {
     assert_eq!(facade_delta.catalog_aliases[0].alias, "acme");
     assert_eq!(facade_delta.qualified_entities.len(), 1);
     assert_eq!(facade_delta.qualified_entities[0].entity, "Product");
-    assert_eq!(facade_delta.qualified_entities[0].capabilities.len(), 1);
+    assert_eq!(facade_delta.qualified_entities[0].capabilities.len(), 3);
     assert!(facade_delta.collision_notes.is_empty());
 
     assert!(!ts.agent_prelude.contains("linearTeam"));

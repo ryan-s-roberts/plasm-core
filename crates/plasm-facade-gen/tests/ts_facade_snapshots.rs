@@ -1,8 +1,8 @@
 //! Snapshot tests for `build_code_facade` — stable CGS + exposure → TS + `facade_delta` JSON.
 use indexmap::IndexMap;
+use plasm_core::load_schema;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
-use plasm_core::load_schema;
 use plasm_facade_gen::ExposedSet;
 use plasm_facade_gen::FacadeGenRequest;
 use plasm_facade_gen::{build_code_facade, quickjs_runtime_from_facade_delta};
@@ -59,15 +59,13 @@ fn snapshot_code_facade_prelude_emitted() {
     assert!(!ts.agent_prelude.contains("stage("));
     assert!(!ts.agent_prelude.contains("derive("));
     assert!(ts.agent_namespace_body.contains("/**"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("Minimal fixture product for TS facade snapshot tests")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("Minimal fixture product for TS facade snapshot tests"));
     assert!(ts.agent_namespace_body.contains("Fetch a product by id"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("search(input: ProductSearchInput)")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("search(input: ProductSearchInput)"));
     assert!(ts.agent_namespace_body.contains("interface ProductRow"));
     assert!(ts.agent_loaded_apis.contains("Product: Acme.ProductEntity"));
     assert!(ts
@@ -108,16 +106,14 @@ fn snapshot_search_and_relation_surface() {
         emit_prelude: true,
     };
     let (facade_delta, ts) = build_code_facade(&req, &exp, &ctxs);
-    assert!(
-        ts.agent_namespace_body
-            .contains("type ProductSearchInput = string | {")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("type ProductSearchInput = string | {"));
     assert!(ts.agent_namespace_body.contains("q: string;"));
     assert!(ts.agent_namespace_body.contains("active?: boolean;"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("category(): CategoryNodeHandle;")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("category(): CategoryNodeHandle;"));
 
     let runtime = quickjs_runtime_from_facade_delta(&facade_delta);
     assert!(runtime.contains("search(input)"));
@@ -136,10 +132,9 @@ fn relation_methods_resolve_targets_from_prior_waves() {
         emit_prelude: false,
     };
     let (_facade_delta, ts) = build_code_facade(&req, &exp, &ctxs);
-    assert!(
-        ts.agent_namespace_body
-            .contains("category(): CategoryNodeHandle;")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("category(): CategoryNodeHandle;"));
 }
 
 #[test]
