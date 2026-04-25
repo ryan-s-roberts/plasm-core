@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use axum::body::Bytes;
 use futures_util::TryStreamExt;
-use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};
+use object_store::{ObjectStore, ObjectStoreExt, path::Path as StorePath};
 use plasm_runtime::{ExecutionResult, ExecutionSource, ExecutionStats};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,6 +46,7 @@ pub struct CodePlanArchiveHandle {
     pub plan_handle: String,
     pub plasm_uri: String,
     pub canonical_plasm_uri: String,
+    pub http_path: String,
     pub payload_len: usize,
     pub plan_hash: String,
 }
@@ -330,6 +331,7 @@ impl RunArtifactStore {
             plan_handle: code_plan_handle(plan_index),
             plasm_uri: plasm_short_code_plan_uri(plan_index),
             canonical_plasm_uri: plasm_code_plan_resource_uri(prompt_hash, session_id, &plan_id),
+            http_path: code_plan_http_path(prompt_hash, session_id, &plan_id),
             payload_len: n,
             plan_hash: doc.plan_hash.clone(),
         })
@@ -1163,6 +1165,10 @@ pub fn parse_plasm_session_short_plan_uri(uri: &str) -> Option<(LogicalSessionUr
 
 pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &Uuid) -> String {
     format!("/execute/{prompt_hash}/{session_id}/artifacts/{run_id}")
+}
+
+pub fn code_plan_http_path(prompt_hash: &str, session_id: &str, plan_id: &Uuid) -> String {
+    format!("/execute/{prompt_hash}/{session_id}/plans/{plan_id}")
 }
 
 /// Parse `plasm://execute/{prompt_hash}/{session_id}/run/{run_id}`.

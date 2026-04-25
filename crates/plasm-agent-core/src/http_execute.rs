@@ -14,24 +14,24 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::future::join_all;
-use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
-use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
+use plasm_core::error_render::{FeedbackStyle, render_parse_error_with_feedback};
 use plasm_core::{
+    AuthScheme, CGS, CgsContext, PagingHandle, PromptRenderMode, SymbolMap,
     entity_slices_for_render,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     split_tsv_domain_contract_and_table, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog,
     symbol_tuning::FocusSpec,
-    AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
 use plasm_runtime::{
-    auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, ExecutionSource,
-    ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError, StreamConsumeOpts,
+    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
+    ExecutionResult, ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData,
+    RuntimeError, StreamConsumeOpts, auth_resolution_mode_from_env, validate_principal_for_mode,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,13 +41,13 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::run_artifacts::{
+    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
     artifact_http_path, document_from_run, plasm_run_resource_uri,
     plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
 };
 use crate::trace_hub::{
-    trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
-    TraceSegment,
+    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent, TraceSegment,
+    trace_id_for_http_execute_session,
 };
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
 
@@ -134,24 +134,24 @@ where
     }
 }
 
-use crate::batch_scheduler::{build_batch_stages, line_may_share_parallel_query_stage, BatchStage};
+use crate::batch_scheduler::{BatchStage, build_batch_stages, line_may_share_parallel_query_stage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
-    incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
+    IncomingPrincipal, incoming_auth_problem, session_allows_principal, tenant_scope,
 };
-use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
+use crate::mcp_plasm_meta::{PlasmMetaIndex, PlasmPagingStepMeta, plasm_paging_json_value};
 use crate::mcp_run_markdown::{
-    execute_expression_preview, mcp_compact_markdown_batch, mcp_compact_markdown_single,
-    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
-    mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
-    merge_snapshot_column_hints, OmittedReferenceOnlyFields,
+    OmittedReferenceOnlyFields, execute_expression_preview, mcp_compact_markdown_batch,
+    mcp_compact_markdown_single, mcp_format_execute_result_table_or_tsv,
+    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
+    mcp_preview_markdown_needed, merge_snapshot_column_hints,
 };
 use crate::output::{
-    apply_projection, format_result_with_cgs, http_execute_results_value,
-    reference_only_omitted_field_names, InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
+    InBandSummaryReport, LossySummaryFieldNames, OutputFormat, apply_projection,
+    format_result_with_cgs, http_execute_results_value, reference_only_omitted_field_names,
 };
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
@@ -192,6 +192,7 @@ fn plasm_meta_object(
                 let mut step = serde_json::json!({
                     "run_id": h.run_id.to_string(),
                     "artifact_uri": h.plasm_uri,
+                    "canonical_artifact_uri": h.canonical_plasm_uri,
                     "artifact_path": h.http_path,
                     "request_fingerprints": h.request_fingerprints,
                 });
@@ -3263,6 +3264,14 @@ pub fn execute_routes() -> Router {
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
             get(get_execute_run_artifact),
         )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/plans/by-index/{plan_index}",
+            get(get_execute_code_plan_by_index),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/plans/{plan_id}",
+            get(get_execute_code_plan),
+        )
 }
 
 async fn post_create_execute_session(
@@ -3479,6 +3488,155 @@ async fn get_execute_run_artifact(
         );
     });
 
+    let content_type = payload.metadata.content_type;
+    let header = axum::http::HeaderValue::from_str(content_type.as_str())
+        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
+    crate::metrics::record_execute_artifact_serve("success", "none", started.elapsed());
+    (StatusCode::OK, [(CONTENT_TYPE, header)], payload.bytes).into_response()
+}
+
+async fn get_execute_code_plan(
+    Extension(st): Extension<PlasmHostState>,
+    Path((ph, sid, pid)): Path<(String, String, String)>,
+) -> Response {
+    let started = Instant::now();
+    let prompt_hash = match ph.parse::<PromptHashHex>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `prompt_hash` path segment: {msg}"),
+            );
+        }
+    };
+    let session_id = match sid.parse::<ExecuteSessionId>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `session_id` path segment: {msg}"),
+            );
+        }
+    };
+    let plan_id = match Uuid::parse_str(pid.trim()) {
+        Ok(u) => u,
+        Err(_) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                "invalid `plan_id` path segment: expected UUID",
+            );
+        }
+    };
+
+    serve_execute_code_plan_payload(st, prompt_hash, session_id, plan_id, started).await
+}
+
+async fn get_execute_code_plan_by_index(
+    Extension(st): Extension<PlasmHostState>,
+    Path((ph, sid, raw_idx)): Path<(String, String, String)>,
+) -> Response {
+    let started = Instant::now();
+    let prompt_hash = match ph.parse::<PromptHashHex>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `prompt_hash` path segment: {msg}"),
+            );
+        }
+    };
+    let session_id = match sid.parse::<ExecuteSessionId>() {
+        Ok(v) => v,
+        Err(msg) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `session_id` path segment: {msg}"),
+            );
+        }
+    };
+    let plan_index = match raw_idx.trim().parse::<u64>() {
+        Ok(v) => v,
+        Err(_) => {
+            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                "invalid `plan_index` path segment: expected unsigned integer",
+            );
+        }
+    };
+    let Some(plan_id) = st
+        .run_artifacts
+        .resolve_code_plan_id_for_index(prompt_hash.as_str(), session_id.as_str(), plan_index)
+        .await
+    else {
+        crate::metrics::record_execute_artifact_serve("error", "not_found", started.elapsed());
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown Code Mode plan index for this session"),
+        );
+    };
+    serve_execute_code_plan_payload(st, prompt_hash, session_id, plan_id, started).await
+}
+
+async fn serve_execute_code_plan_payload(
+    st: PlasmHostState,
+    prompt_hash: PromptHashHex,
+    session_id: ExecuteSessionId,
+    plan_id: Uuid,
+    started: Instant,
+) -> Response {
+    let payload = match st
+        .run_artifacts
+        .get_code_plan_payload_result(prompt_hash.as_str(), session_id.as_str(), plan_id)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            crate::metrics::record_execute_artifact_serve(
+                "error",
+                "decode_failed",
+                started.elapsed(),
+            );
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                )
+                .with_title("Internal Server Error")
+                .with_detail(format!("code plan decode failed: {e}")),
+            );
+        }
+    };
+    let Some(payload) = payload else {
+        crate::metrics::record_execute_artifact_serve("error", "not_found", started.elapsed());
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown Code Mode plan for this session"),
+        );
+    };
+    crate::spans::execute_artifact_serve().in_scope(|| {
+        tracing::info!(
+            target: "plasm_agent::http_execute",
+            prompt_hash = %prompt_hash.as_str(),
+            session_id = %session_id.as_str(),
+            plan_id = %plan_id,
+            bytes = payload.bytes.len(),
+            "GET execute Code Mode plan"
+        );
+    });
     let content_type = payload.metadata.content_type;
     let header = axum::http::HeaderValue::from_str(content_type.as_str())
         .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
@@ -3720,10 +3878,10 @@ mod tests {
     use super::*;
     use crate::http;
     use crate::incoming_auth::IncomingPrincipal;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
     use axum::http::Request;
-    use axum::Router;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};

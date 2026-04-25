@@ -13,10 +13,10 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use futures_util::stream::{self, Stream};
 use futures_util::StreamExt;
-use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
+use futures_util::stream::{self, Stream};
 use http_problem::Problem;
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -338,6 +338,16 @@ async fn list_traces_from_sink(
     Ok(traces)
 }
 
+fn logical_session_id_from_sink_records(records: &[JsonValue]) -> Option<String> {
+    records.iter().find_map(|r| {
+        r.get("_plasm_audit")
+            .and_then(|v| v.get("logical_session_id"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    })
+}
+
 async fn fetch_trace_detail_from_sink(
     base: &str,
     tenant_id: &str,
@@ -381,11 +391,12 @@ async fn fetch_trace_detail_from_sink(
         .into_iter()
         .map(|r| r.record)
         .collect::<Vec<_>>();
+    let logical_session_id = logical_session_id_from_sink_records(&records);
     let detail = crate::trace_hub::TraceDetailDto {
         summary: TraceSummaryDto {
             trace_id: summary.trace_id.to_string(),
             mcp_session_id: summary.mcp_session_id,
-            logical_session_id: None,
+            logical_session_id,
             status: hub_status_from_sink(&summary.status),
             started_at_ms: summary.started_at_ms,
             ended_at_ms: summary.ended_at_ms,
@@ -424,5 +435,10 @@ fn hub_totals_from_sink(
         cache_hits: t.cache_hits,
         cache_misses: t.cache_misses,
         http_trace_entry_count: t.http_trace_entry_count,
+        code_plans_evaluated: t.code_plans_evaluated,
+        code_plans_executed: t.code_plans_executed,
+        code_plan_code_chars: t.code_plan_code_chars,
+        code_plan_nodes: t.code_plan_nodes,
+        code_plan_derived_runs: t.code_plan_derived_runs,
     }
 }

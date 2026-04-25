@@ -16,6 +16,26 @@ pub struct PlasmLineTraceMeta {
     pub api_entry_id: Option<String>,
 }
 
+/// Structured reference to a run snapshot produced while executing an archived Code Mode plan.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CodePlanRunArtifactRef {
+    pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_artifact_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_step: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub request_fingerprints: Vec<String>,
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -116,6 +136,12 @@ pub enum TraceSegment {
         plan_id: String,
         plan_name: String,
         plan_hash: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        plan_uri: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        canonical_plan_uri: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        plan_http_path: String,
         prompt_hash: String,
         session_id: String,
         node_count: usize,
@@ -126,10 +152,22 @@ pub enum TraceSegment {
         plan_id: String,
         plan_name: String,
         plan_hash: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        plan_uri: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        canonical_plan_uri: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        plan_http_path: String,
         prompt_hash: String,
         session_id: String,
+        #[serde(default)]
+        node_count: usize,
+        #[serde(default)]
+        code_chars: u64,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         run_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        run_artifacts: Vec<CodePlanRunArtifactRef>,
     },
 }
 
@@ -144,6 +182,11 @@ mod tests {
             plan_id: "00000000-0000-0000-0000-000000000000".into(),
             plan_name: "demo".into(),
             plan_hash: "abc".into(),
+            plan_uri: "plasm://session/s0/p/1".into(),
+            canonical_plan_uri:
+                "plasm://execute/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/s1/plan/00000000-0000-0000-0000-000000000000".into(),
+            plan_http_path:
+                "/execute/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/s1/plans/00000000-0000-0000-0000-000000000000".into(),
             prompt_hash: "p".repeat(64),
             session_id: "s1".into(),
             node_count: 2,
@@ -158,12 +201,58 @@ mod tests {
             plan_id: "00000000-0000-0000-0000-000000000000".into(),
             plan_name: "demo".into(),
             plan_hash: "abc".into(),
+            plan_uri: "plasm://session/s0/p/1".into(),
+            canonical_plan_uri:
+                "plasm://execute/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/s1/plan/00000000-0000-0000-0000-000000000000".into(),
+            plan_http_path:
+                "/execute/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/s1/plans/00000000-0000-0000-0000-000000000000".into(),
             prompt_hash: "p".repeat(64),
             session_id: "s1".into(),
+            node_count: 2,
+            code_chars: 42,
             run_ids: vec!["r1".into()],
+            run_artifacts: vec![super::CodePlanRunArtifactRef {
+                run_id: "r1".into(),
+                artifact_uri: Some("plasm://session/s0/r/1".into()),
+                canonical_artifact_uri: Some("plasm://execute/p/s1/run/r1".into()),
+                artifact_path: Some("/execute/p/s1/artifacts/r1".into()),
+                batch_step: Some(1),
+                node_id: Some("n1".into()),
+                display: Some("query".into()),
+                request_fingerprints: vec!["fp".into()],
+            }],
         };
         let v = serde_json::to_value(exec).expect("json");
         assert_eq!(v["kind"], "code_plan_execute");
         assert_eq!(v["run_ids"][0], "r1");
+        assert_eq!(v["run_artifacts"][0]["run_id"], "r1");
+    }
+
+    #[test]
+    fn code_plan_trace_segments_accept_legacy_rows() {
+        let legacy = serde_json::json!({
+            "kind": "code_plan_execute",
+            "plan_handle": "p1",
+            "plan_id": "00000000-0000-0000-0000-000000000000",
+            "plan_name": "demo",
+            "plan_hash": "abc",
+            "prompt_hash": "p".repeat(64),
+            "session_id": "s1",
+            "run_ids": ["r1"]
+        });
+        let seg: TraceSegment = serde_json::from_value(legacy).expect("legacy code plan trace");
+        match seg {
+            TraceSegment::CodePlanExecute {
+                plan_uri,
+                run_artifacts,
+                node_count,
+                ..
+            } => {
+                assert!(plan_uri.is_empty());
+                assert!(run_artifacts.is_empty());
+                assert_eq!(node_count, 0);
+            }
+            other => panic!("unexpected segment: {other:?}"),
+        }
     }
 }

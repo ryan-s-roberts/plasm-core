@@ -40,17 +40,17 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
 use plasm_core::CgsDiscovery;
+use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
 #[cfg(feature = "code_mode")]
-use plasm_facade_gen::{build_code_facade, quickjs_runtime_from_facade_delta, FacadeGenRequest};
+use plasm_facade_gen::{FacadeGenRequest, build_code_facade, quickjs_runtime_from_facade_delta};
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
-use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -59,37 +59,39 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::McpServer;
+use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
 #[cfg(feature = "code_mode")]
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::http_execute::{
-    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
-    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
+    execute_session_run_markdown, normalize_capability_seeds,
 };
-use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
 #[cfg(feature = "code_mode")]
 use crate::mcp_plasm_code::{
-    evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text, run_code_mode_plan,
-    CodeModePlasmRunHooks, CodePlanDryRunTextMeta,
+    CodeModePlasmRunHooks, CodePlanDryRunTextMeta, evaluate_code_mode_plan_dry,
+    render_code_mode_plan_dry_text, run_code_mode_plan,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
+use crate::run_artifacts::{
+    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_plan_uri,
+    parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
+    parse_plasm_session_short_resource_uri,
+};
 #[cfg(feature = "code_mode")]
 use crate::run_artifacts::{
-    parse_code_plan_handle, plasm_session_short_plan_uri, CodePlanArchiveDocument,
-};
-use crate::run_artifacts::{
-    parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
-    parse_plasm_session_short_resource_uri, ArtifactPayload, LogicalSessionUriSegment,
+    CodePlanArchiveDocument, code_plan_http_path, parse_code_plan_handle,
+    plasm_session_short_plan_uri,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
-use plasm_trace::RunArtifactArchiveRef;
+use plasm_trace::{CodePlanRunArtifactRef, RunArtifactArchiveRef};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -189,6 +191,117 @@ fn code_plan_session_mismatch(
         return Some("domain_revision");
     }
     None
+}
+
+#[cfg(feature = "code_mode")]
+fn code_plan_run_artifacts_from_meta(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> (Vec<String>, Vec<CodePlanRunArtifactRef>) {
+    fn dict_string<'a>(
+        index_delta: Option<&'a serde_json::Value>,
+        dict_name: &str,
+        id: Option<u64>,
+    ) -> Option<String> {
+        let key = id?.to_string();
+        index_delta?
+            .get(dict_name)?
+            .get(key)?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    fn dict_string_vec(
+        index_delta: Option<&serde_json::Value>,
+        dict_name: &str,
+        id: Option<u64>,
+    ) -> Vec<String> {
+        let Some(key) = id.map(|n| n.to_string()) else {
+            return Vec::new();
+        };
+        index_delta
+            .and_then(|v| v.get(dict_name))
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
+    let plasm = meta.and_then(|m| m.get("plasm"));
+    let index_delta = plasm.and_then(|v| v.get("index_delta"));
+    let Some(steps) = meta
+        .and_then(|_| plasm)
+        .and_then(|v| v.get("steps"))
+        .and_then(|v| v.as_array())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let mut run_ids = Vec::new();
+    let mut refs = Vec::new();
+    for step in steps {
+        let Some(run_id) = step.get("run_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        run_ids.push(run_id.to_string());
+        let request_fingerprints = step
+            .get("request_fingerprints")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .or_else(|| {
+                let fp_id = step
+                    .get("dict_ref")
+                    .and_then(|v| v.get("fp"))
+                    .and_then(|v| v.as_u64());
+                Some(dict_string_vec(index_delta, "fp", fp_id))
+            })
+            .unwrap_or_default();
+        let artifact_path = step
+            .get("artifact_path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                let path_id = step
+                    .get("dict_ref")
+                    .and_then(|v| v.get("artifact_path"))
+                    .and_then(|v| v.as_u64());
+                dict_string(index_delta, "artifact_path", path_id)
+            });
+        refs.push(CodePlanRunArtifactRef {
+            run_id: run_id.to_string(),
+            artifact_uri: step
+                .get("artifact_uri")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            canonical_artifact_uri: step
+                .get("canonical_artifact_uri")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            artifact_path,
+            batch_step: step
+                .get("batch_step")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| usize::try_from(n).ok()),
+            node_id: step
+                .get("node_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            display: step
+                .get("display")
+                .or_else(|| step.get("expr_preview"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            request_fingerprints,
+        });
+    }
+    (run_ids, refs)
 }
 
 fn parse_logical_session_ref_arg(
@@ -2209,11 +2322,15 @@ impl ServerHandler for PlasmMcpHandler {
                                 plan_id: plan_id.to_string(),
                                 plan_name: name.clone(),
                                 plan_hash: plan_hash.clone(),
+                                plan_uri: short_uri.clone(),
+                                canonical_plan_uri: stored.canonical_plasm_uri.clone(),
+                                plan_http_path: stored.http_path.clone(),
                                 prompt_hash: b.prompt_hash.clone(),
                                 session_id: b.session_id.clone(),
                                 node_count: dry.node_results.len(),
                                 code_chars: doc.code.chars().count() as u64,
                                 run_ids: Vec::new(),
+                                run_artifacts: Vec::new(),
                             },
                         )
                         .await;
@@ -2232,6 +2349,7 @@ impl ServerHandler for PlasmMcpHandler {
                         "plan_handle": plan_handle,
                         "plan_uri": short_uri,
                         "canonical_plan_uri": stored.canonical_plasm_uri,
+                        "plan_http_path": stored.http_path,
                         "plan_id": plan_id.to_string(),
                         "plan_name": name,
                         "plan_hash": plan_hash,
@@ -2257,6 +2375,7 @@ impl ServerHandler for PlasmMcpHandler {
                                 "plan_handle": root_value["plan_handle"],
                                 "plan_uri": root_value["plan_uri"],
                                 "canonical_plan_uri": root_value["canonical_plan_uri"],
+                                "plan_http_path": root_value["plan_http_path"],
                                 "plan_id": root_value["plan_id"],
                                 "plan_hash": root_value["plan_hash"],
                                 "dry_run": {
@@ -2470,20 +2589,22 @@ impl ServerHandler for PlasmMcpHandler {
                             )
                             .await;
                     }
-                    let run_ids = run_result
-                        .run_plasm_meta
-                        .as_ref()
-                        .and_then(|m| m.get("plasm"))
-                        .and_then(|v| v.get("steps"))
-                        .and_then(|v| v.as_array())
-                        .map(|steps| {
-                            steps
-                                .iter()
-                                .filter_map(|s| s.get("run_id").and_then(|v| v.as_str()))
-                                .map(str::to_string)
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
+                    let (run_ids, run_artifacts) =
+                        code_plan_run_artifacts_from_meta(run_result.run_plasm_meta.as_ref());
+                    let plan_uuid = Uuid::parse_str(&doc.plan_id).map_err(|_| {
+                        CallToolError::from_message(
+                            "archived Code Mode plan has invalid plan_id; re-evaluate it",
+                        )
+                    })?;
+                    let plan_uri = plasm_session_short_plan_uri(&session_ref, doc.plan_index);
+                    let canonical_plan_uri =
+                        crate::run_artifacts::plasm_code_plan_resource_uri(
+                            &doc.prompt_hash,
+                            &doc.session_id,
+                            &plan_uuid,
+                        );
+                    let plan_http_path =
+                        code_plan_http_path(&doc.prompt_hash, &doc.session_id, &plan_uuid);
                     self.plasm
                         .trace_hub
                         .trace_record_code_plan_execute(
@@ -2493,11 +2614,15 @@ impl ServerHandler for PlasmMcpHandler {
                                 plan_id: doc.plan_id.clone(),
                                 plan_name: doc.name.clone(),
                                 plan_hash: doc.plan_hash.clone(),
+                                plan_uri: plan_uri.clone(),
+                                canonical_plan_uri: canonical_plan_uri.clone(),
+                                plan_http_path: plan_http_path.clone(),
                                 prompt_hash: doc.prompt_hash.clone(),
                                 session_id: doc.session_id.clone(),
                                 node_count: dry.node_results.len(),
                                 code_chars: doc.code.chars().count() as u64,
                                 run_ids,
+                                run_artifacts,
                             },
                         )
                         .await;
@@ -2517,7 +2642,9 @@ impl ServerHandler for PlasmMcpHandler {
                                 "plan_id": doc.plan_id,
                                 "plan_name": doc.name,
                                 "plan_hash": doc.plan_hash,
-                                "plan_uri": plasm_session_short_plan_uri(&session_ref, doc.plan_index),
+                                "plan_uri": plan_uri,
+                                "canonical_plan_uri": canonical_plan_uri,
+                                "plan_http_path": plan_http_path,
                             }),
                         );
                     }
