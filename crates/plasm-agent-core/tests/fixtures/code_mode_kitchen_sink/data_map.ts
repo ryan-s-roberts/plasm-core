@@ -1,12 +1,12 @@
 const products = plasm.acme.Product.query({ name: "KitchenSink" })
   .select("id", "name");
 
-const staticLabels = Plan.data(["mirror", "generated"]);
+const staticLabels = Plan.data({ label: "mirror" });
 
 const payloads = Plan.map(products, (product) => ({
   source_id: product.id,
   title: template`Mirror ${product.name}`,
-  labels: staticLabels,
+  label: staticLabels.label,
 }));
 
 Plan.return({ products, staticLabels, payloads });

@@ -11,10 +11,13 @@ use std::sync::Arc;
 use axum::{routing::get, Json, Router};
 use indexmap::IndexMap;
 use plasm_agent_core::code_mode::CodeModeSandbox;
+use plasm_agent_core::code_mode_plan::{parse_plan_value, validate_plan_artifact};
 use plasm_agent_core::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use plasm_agent_core::execute_session::{ExecuteSession, SessionReuseKey};
 use plasm_agent_core::http::{self, PlasmHostBootstrap};
-use plasm_agent_core::mcp_plasm_code::{evaluate_code_mode_plan_dry, run_code_mode_plan};
+use plasm_agent_core::mcp_plasm_code::{
+    evaluate_validated_code_mode_plan_dry, run_validated_code_mode_plan,
+};
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::load_schema;
@@ -253,13 +256,14 @@ async fn typescript_to_plan_to_run_code_mode_executes_http() {
         .eval_typescript_to_json_value("plan.ts", &ts, Some(&quickjs_runtime))
         .expect("TS → Oxc → QuickJS plan JSON");
 
-    let out = run_code_mode_plan(
+    let plan_typed = parse_plan_value(&plan).expect("parse plan");
+    let validated = validate_plan_artifact(&plan_typed).expect("validate plan");
+    let out = run_validated_code_mode_plan(
         es.as_ref(),
         &st,
-        None,
         &prompt_hash,
         &session_id,
-        &plan,
+        &validated,
         true,
         None,
     )
@@ -293,7 +297,11 @@ fn kitchen_sink_positive_fixtures_dry_run() {
         "google_sheets_table.ts",
     ] {
         let plan = eval_fixture_plan(&es, fixture);
-        let dry = evaluate_code_mode_plan_dry(&es, &plan)
+        let plan_typed = parse_plan_value(&plan)
+            .unwrap_or_else(|e| panic!("{fixture} parse failed: {e}\n{plan:#}"));
+        let validated = validate_plan_artifact(&plan_typed)
+            .unwrap_or_else(|e| panic!("{fixture} validate failed: {e}\n{plan:#}"));
+        let dry = evaluate_validated_code_mode_plan_dry(&es, &validated)
             .unwrap_or_else(|e| panic!("{fixture} dry run failed: {e}\n{plan:#}"));
         assert_eq!(dry.version, json!(1), "{fixture}");
         assert!(
@@ -327,14 +335,14 @@ fn kitchen_sink_positive_fixtures_dry_run() {
             assert!(
                 dry.node_results
                     .iter()
-                    .any(|n| n["kind"] == json!("data") && n["data"]["kind"] == json!("array")),
+                    .any(|n| n["kind"] == json!("data") && n["data"]["kind"] == json!("object")),
                 "data_map.ts should include a typed static data node: {:#?}",
                 dry.node_results
             );
             assert!(
                 dry.node_results
                     .iter()
-                    .any(|n| n["derive_template"]["kind"] == json!("map")),
+                    .any(|n| n["kind"] == json!("derive") && n["item_binding"] == json!("product")),
                 "data_map.ts should include a typed map derive node: {:#?}",
                 dry.node_results
             );
@@ -414,13 +422,14 @@ async fn computed_plan_result_executes_as_archived_synthetic_result() {
         session_graph_persistence: None,
     });
 
-    let out = run_code_mode_plan(
+    let plan_typed = parse_plan_value(&plan).expect("parse plan");
+    let validated = validate_plan_artifact(&plan_typed).expect("validate plan");
+    let out = run_validated_code_mode_plan(
         &es,
         &st,
-        None,
         es.prompt_hash.as_str(),
         "synthetic-session",
-        &plan,
+        &validated,
         true,
         None,
     )
@@ -507,8 +516,11 @@ fn kitchen_sink_negative_fixtures_reject_invalid_plans() {
     let es = test_execute_session();
     for fixture in ["negative_unknown_return.ts"] {
         let plan = eval_fixture_plan(&es, fixture);
+        let dry_result = parse_plan_value(&plan)
+            .and_then(|plan_typed| validate_plan_artifact(&plan_typed))
+            .and_then(|validated| evaluate_validated_code_mode_plan_dry(&es, &validated));
         assert!(
-            evaluate_code_mode_plan_dry(&es, &plan).is_err(),
+            dry_result.is_err(),
             "{fixture} should be rejected, got {plan:#}"
         );
     }

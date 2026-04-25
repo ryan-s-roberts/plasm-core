@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::marker::PhantomData;
 
 macro_rules! plan_string_atom {
     ($(#[$meta:meta])* $name:ident) => {
@@ -149,13 +150,15 @@ pub enum InputCardinality {
     Singleton,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CardinalityAnalysis {
     StaticSingleton,
     PluralOrUnknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InputCardinalityProof {
     StaticSingleton,
     RuntimeCheckedSingleton,
@@ -176,9 +179,9 @@ pub struct PlanDataInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedPlanDataInput {
-    pub node: PlanNodeId,
-    pub alias: InputAlias,
-    pub proof: InputCardinalityProof,
+    pub(crate) node: PlanNodeId,
+    pub(crate) alias: InputAlias,
+    pub(crate) proof: InputCardinalityProof,
 }
 
 /// A structured predicate preserved alongside the rendered Plasm expression.
@@ -262,23 +265,50 @@ fn default_plan_version() -> u32 {
     1
 }
 
+pub trait PlanState {
+    type Node;
+    type Return;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawPlanState {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedPlanState {}
+
+impl PlanState for RawPlanState {
+    type Node = PlanNode;
+    type Return = PlanReturn;
+}
+
+impl PlanState for ValidatedPlanState {
+    type Node = ValidatedPlanNode;
+    type Return = ValidatedPlanReturn;
+}
+
 /// Single code-mode artifact: a program-shaped Plan DAG.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Plan {
+#[serde(bound(
+    serialize = "State::Node: Serialize, State::Return: Serialize",
+    deserialize = "State::Node: Deserialize<'de>, State::Return: Deserialize<'de>"
+))]
+pub struct Plan<State: PlanState = RawPlanState> {
     #[serde(default = "default_plan_version")]
     pub version: u32,
     #[serde(default = "default_plan_kind")]
     pub kind: PlanKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    pub nodes: Vec<PlanNode>,
+    pub nodes: Vec<State::Node>,
     #[serde(rename = "return")]
-    pub return_value: PlanReturn,
+    pub return_value: State::Return,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, serde_json::Value>,
+    #[serde(skip)]
+    state: PhantomData<State>,
 }
 
-pub type RawPlanArtifact = Plan;
+pub type RawPlanArtifact = Plan<RawPlanState>;
 
 /// Agent-visible return shape: a single node, a parallel set, or named outputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,13 +321,13 @@ pub enum PlanReturn {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ValidatedPlanReturn {
-    Parallel { parallel: Vec<NodeRef> },
-    Record(BTreeMap<OutputName, NodeRef>),
-    Node(NodeRef),
+    Parallel { parallel: Vec<PlanNodeId> },
+    Record(BTreeMap<OutputName, PlanNodeId>),
+    Node(PlanNodeId),
 }
 
 impl ValidatedPlanReturn {
-    pub fn refs(&self) -> Vec<&NodeRef> {
+    pub fn refs(&self) -> Vec<&PlanNodeId> {
         match self {
             ValidatedPlanReturn::Node(id) => vec![id],
             ValidatedPlanReturn::Parallel { parallel } => parallel.iter().collect(),
@@ -309,14 +339,10 @@ impl ValidatedPlanReturn {
 /// Proof-bearing Plan artifact consumed by dry-run and execution.
 #[derive(Debug, Clone)]
 pub struct ValidatedPlanArtifact {
-    pub version: u32,
-    pub name: Option<String>,
-    pub metadata: BTreeMap<String, serde_json::Value>,
-    pub nodes: Vec<ValidatedPlanNode>,
-    pub topo: Vec<PlanNodeId>,
-    pub return_value: ValidatedPlanReturn,
-    pub node_indices: HashMap<PlanNodeId, usize>,
-    pub approval_gates: Vec<PlanNodeId>,
+    artifact: Plan<ValidatedPlanState>,
+    topo: Vec<PlanNodeId>,
+    node_indices: HashMap<PlanNodeId, usize>,
+    approval_gates: Vec<PlanNodeId>,
 }
 
 pub type ValidatedPlan = ValidatedPlanArtifact;
@@ -332,65 +358,65 @@ pub enum ValidatedPlanNode {
 
 #[derive(Debug, Clone)]
 pub struct ValidatedSurfaceNode {
-    pub id: PlanNodeId,
-    pub kind: PlanNodeKind,
-    pub qualified_entity: Option<QualifiedEntityKey>,
-    pub expr: String,
-    pub effect_class: EffectClass,
-    pub result_shape: ResultShape,
-    pub projection: Vec<String>,
-    pub predicates: Vec<PlanPredicate>,
-    pub depends_on: Vec<PlanNodeId>,
-    pub uses_result: Vec<PlanResultUse>,
-    pub approval: Option<String>,
+    pub(crate) id: PlanNodeId,
+    pub(crate) kind: PlanNodeKind,
+    pub(crate) qualified_entity: Option<QualifiedEntityKey>,
+    pub(crate) expr: String,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) projection: Vec<String>,
+    pub(crate) predicates: Vec<PlanPredicate>,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
+    pub(crate) approval: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidatedDataNode {
-    pub id: PlanNodeId,
-    pub effect_class: EffectClass,
-    pub result_shape: ResultShape,
-    pub data: PlanValue,
-    pub depends_on: Vec<PlanNodeId>,
-    pub uses_result: Vec<PlanResultUse>,
+    pub(crate) id: PlanNodeId,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) data: PlanValue,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidatedDeriveNode {
-    pub id: PlanNodeId,
-    pub effect_class: EffectClass,
-    pub result_shape: ResultShape,
-    pub source: PlanNodeId,
-    pub item_binding: BindingName,
-    pub inputs: Vec<ValidatedPlanDataInput>,
-    pub value: PlanValue,
-    pub depends_on: Vec<PlanNodeId>,
-    pub uses_result: Vec<PlanResultUse>,
+    pub(crate) id: PlanNodeId,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) source: PlanNodeId,
+    pub(crate) item_binding: BindingName,
+    pub(crate) inputs: Vec<ValidatedPlanDataInput>,
+    pub(crate) value: PlanValue,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidatedComputeNode {
-    pub id: PlanNodeId,
-    pub effect_class: EffectClass,
-    pub result_shape: ResultShape,
-    pub compute: ComputeTemplate,
-    pub depends_on: Vec<PlanNodeId>,
-    pub uses_result: Vec<PlanResultUse>,
+    pub(crate) id: PlanNodeId,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) compute: ComputeTemplate,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidatedForEachNode {
-    pub id: PlanNodeId,
-    pub effect_class: EffectClass,
-    pub result_shape: ResultShape,
-    pub source: PlanNodeId,
-    pub item_binding: BindingName,
-    pub effect_template: EffectTemplate,
-    pub projection: Vec<String>,
-    pub predicates: Vec<PlanPredicate>,
-    pub depends_on: Vec<PlanNodeId>,
-    pub uses_result: Vec<PlanResultUse>,
-    pub approval: Option<String>,
+    pub(crate) id: PlanNodeId,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) source: PlanNodeId,
+    pub(crate) item_binding: BindingName,
+    pub(crate) effect_template: EffectTemplate,
+    pub(crate) projection: Vec<String>,
+    pub(crate) predicates: Vec<PlanPredicate>,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
+    pub(crate) approval: Option<String>,
 }
 
 impl ValidatedPlanNode {
@@ -454,171 +480,45 @@ impl ValidatedPlanNode {
         }
     }
 
-    pub fn to_plan_node(&self) -> PlanNode {
+    pub fn as_surface(&self) -> Option<&ValidatedSurfaceNode> {
         match self {
-            Self::Surface(n) => PlanNode {
-                id: n.id.as_str().to_string(),
-                kind: n.kind,
-                qualified_entity: n.qualified_entity.clone(),
-                expr: Some(n.expr.clone()),
-                effect_class: n.effect_class,
-                result_shape: n.result_shape,
-                projection: n.projection.clone(),
-                predicates: n.predicates.clone(),
-                source: None,
-                item_binding: None,
-                effect_template: None,
-                approval: n.approval.clone(),
-                data: None,
-                derive_template: None,
-                compute: None,
-                depends_on: n
-                    .depends_on
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect(),
-                uses_result: n.uses_result.clone(),
-            },
-            Self::Data(n) => PlanNode {
-                id: n.id.as_str().to_string(),
-                kind: PlanNodeKind::Data,
-                qualified_entity: None,
-                expr: None,
-                effect_class: n.effect_class,
-                result_shape: n.result_shape,
-                projection: vec![],
-                predicates: vec![],
-                source: None,
-                item_binding: None,
-                effect_template: None,
-                approval: None,
-                data: Some(n.data.clone()),
-                derive_template: None,
-                compute: None,
-                depends_on: n
-                    .depends_on
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect(),
-                uses_result: n.uses_result.clone(),
-            },
-            Self::Derive(n) => PlanNode {
-                id: n.id.as_str().to_string(),
-                kind: PlanNodeKind::Derive,
-                qualified_entity: None,
-                expr: None,
-                effect_class: n.effect_class,
-                result_shape: n.result_shape,
-                projection: vec![],
-                predicates: vec![],
-                source: None,
-                item_binding: None,
-                effect_template: None,
-                approval: None,
-                data: None,
-                derive_template: Some(DeriveTemplate {
-                    kind: DeriveKind::Map,
-                    source: Some(n.source.as_str().to_string()),
-                    item_binding: Some(n.item_binding.as_str().to_string()),
-                    inputs: n.inputs.iter().map(PlanDataInput::from).collect(),
-                    value: n.value.clone(),
-                }),
-                compute: None,
-                depends_on: n
-                    .depends_on
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect(),
-                uses_result: n.uses_result.clone(),
-            },
-            Self::Compute(n) => PlanNode {
-                id: n.id.as_str().to_string(),
-                kind: PlanNodeKind::Compute,
-                qualified_entity: None,
-                expr: None,
-                effect_class: n.effect_class,
-                result_shape: n.result_shape,
-                projection: vec![],
-                predicates: vec![],
-                source: None,
-                item_binding: None,
-                effect_template: None,
-                approval: None,
-                data: None,
-                derive_template: None,
-                compute: Some(n.compute.clone()),
-                depends_on: n
-                    .depends_on
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect(),
-                uses_result: n.uses_result.clone(),
-            },
-            Self::ForEach(n) => PlanNode {
-                id: n.id.as_str().to_string(),
-                kind: PlanNodeKind::ForEach,
-                qualified_entity: None,
-                expr: None,
-                effect_class: n.effect_class,
-                result_shape: n.result_shape,
-                projection: n.projection.clone(),
-                predicates: n.predicates.clone(),
-                source: Some(n.source.as_str().to_string()),
-                item_binding: Some(n.item_binding.as_str().to_string()),
-                effect_template: Some(n.effect_template.clone()),
-                approval: n.approval.clone(),
-                data: None,
-                derive_template: None,
-                compute: None,
-                depends_on: n
-                    .depends_on
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect(),
-                uses_result: n.uses_result.clone(),
-            },
-        }
-    }
-}
-
-impl From<&ValidatedPlanDataInput> for PlanDataInput {
-    fn from(input: &ValidatedPlanDataInput) -> Self {
-        Self {
-            node: input.node.as_str().to_string(),
-            alias: input.alias.as_str().to_string(),
-            cardinality: match input.proof {
-                InputCardinalityProof::StaticSingleton => InputCardinality::Auto,
-                InputCardinalityProof::RuntimeCheckedSingleton => InputCardinality::Singleton,
-            },
+            Self::Surface(n) => Some(n),
+            _ => None,
         }
     }
 }
 
 impl ValidatedPlanArtifact {
-    pub fn to_raw_plan(&self) -> RawPlanArtifact {
-        RawPlanArtifact {
-            version: self.version,
-            kind: PlanKind::Program,
-            name: self.name.clone(),
-            nodes: self
-                .nodes
-                .iter()
-                .map(ValidatedPlanNode::to_plan_node)
-                .collect(),
-            return_value: match &self.return_value {
-                ValidatedPlanReturn::Node(id) => PlanReturn::Node(id.as_str().to_string()),
-                ValidatedPlanReturn::Parallel { parallel } => PlanReturn::Parallel {
-                    parallel: parallel.iter().map(|id| id.as_str().to_string()).collect(),
-                },
-                ValidatedPlanReturn::Record(record) => PlanReturn::Record(
-                    record
-                        .iter()
-                        .map(|(name, id)| (name.as_str().to_string(), id.as_str().to_string()))
-                        .collect(),
-                ),
-            },
-            metadata: self.metadata.clone(),
-        }
+    pub fn artifact(&self) -> &Plan<ValidatedPlanState> {
+        &self.artifact
+    }
+
+    pub fn version(&self) -> u32 {
+        self.artifact.version
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.artifact.name.as_deref()
+    }
+
+    pub fn nodes(&self) -> &[ValidatedPlanNode] {
+        &self.artifact.nodes
+    }
+
+    pub fn return_value(&self) -> &ValidatedPlanReturn {
+        &self.artifact.return_value
+    }
+
+    pub fn topological_order(&self) -> &[PlanNodeId] {
+        &self.topo
+    }
+
+    pub fn node_index(&self, id: &PlanNodeId) -> Option<usize> {
+        self.node_indices.get(id).copied()
+    }
+
+    pub fn approval_gates(&self) -> &[PlanNodeId] {
+        &self.approval_gates
     }
 }
 
@@ -861,91 +761,9 @@ fn return_refs(ret: &PlanReturn) -> Vec<&str> {
     }
 }
 
-/// Parse and normalize Plan JSON. The canonical shape is program-DAG-only; a narrow legacy
-/// `{ version, nodes: [{ expr }] }` shim is accepted and normalized to a program Plan.
+/// Parse canonical program-DAG Plan JSON.
 pub fn parse_plan_value(plan: &serde_json::Value) -> Result<Plan, String> {
-    if is_legacy_expr_list(plan) {
-        return normalize_legacy_expr_list(plan);
-    }
     serde_json::from_value(plan.clone()).map_err(|e| format!("Plan JSON: {e}"))
-}
-
-fn is_legacy_expr_list(plan: &serde_json::Value) -> bool {
-    let Some(obj) = plan.as_object() else {
-        return false;
-    };
-    obj.contains_key("nodes")
-        && !obj.contains_key("return")
-        && !obj.contains_key("kind")
-        && !obj.contains_key("name")
-}
-
-fn normalize_legacy_expr_list(plan: &serde_json::Value) -> Result<Plan, String> {
-    let obj = plan
-        .as_object()
-        .ok_or_else(|| "plan must be a JSON object".to_string())?;
-    let version = obj
-        .get("version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1)
-        .try_into()
-        .map_err(|_| "plan.version must fit in u32".to_string())?;
-    let nodes = obj
-        .get("nodes")
-        .and_then(|n| n.as_array())
-        .ok_or_else(|| "plan.nodes must be a JSON array".to_string())?;
-    let mut out = Vec::new();
-    for (i, n) in nodes.iter().enumerate() {
-        let o = n
-            .as_object()
-            .ok_or_else(|| format!("plan.nodes[{i}] must be a JSON object"))?;
-        let expr = o
-            .get("expr")
-            .and_then(|e| e.as_str())
-            .ok_or_else(|| format!("plan.nodes[{i}].expr must be a string"))?
-            .trim();
-        if expr.is_empty() {
-            return Err(format!("plan.nodes[{i}].expr is empty"));
-        }
-        let id = o
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| format!("n{}", i + 1));
-        out.push(PlanNode {
-            id,
-            kind: PlanNodeKind::Query,
-            qualified_entity: None,
-            expr: Some(expr.to_string()),
-            effect_class: EffectClass::Read,
-            result_shape: ResultShape::List,
-            projection: vec![],
-            predicates: vec![],
-            source: None,
-            item_binding: None,
-            effect_template: None,
-            approval: None,
-            data: None,
-            derive_template: None,
-            compute: None,
-            depends_on: vec![],
-            uses_result: vec![],
-        });
-    }
-    let first = out
-        .first()
-        .map(|n| n.id.clone())
-        .ok_or_else(|| "plan.nodes must be non-empty".to_string())?;
-    let mut metadata = BTreeMap::new();
-    metadata.insert("legacy_expr_list".to_string(), serde_json::json!(true));
-    Ok(Plan {
-        version,
-        kind: PlanKind::Program,
-        name: Some("legacy-expression-list".to_string()),
-        nodes: out,
-        return_value: PlanReturn::Node(first),
-        metadata,
-    })
 }
 
 /// Parse and validate one program-shaped Plan.
@@ -981,13 +799,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             if expr.trim().is_empty() {
                 return Err(format!("plan.nodes[{i}].expr is empty"));
             }
-            if n.qualified_entity.is_none()
-                && !plan
-                    .metadata
-                    .get("legacy_expr_list")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            {
+            if n.qualified_entity.is_none() {
                 return Err(format!(
                     "plan.nodes[{i}].qualified_entity is required for executable node {:?}",
                     n.kind
@@ -1185,12 +997,16 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         .map(|n| PlanNodeId::new(n.id.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ValidatedPlan {
-        version: plan.version,
-        name: plan.name.clone(),
-        metadata: plan.metadata.clone(),
-        nodes,
+        artifact: Plan {
+            version: plan.version,
+            kind: plan.kind,
+            name: plan.name.clone(),
+            nodes,
+            return_value,
+            metadata: plan.metadata.clone(),
+            state: PhantomData,
+        },
         topo,
-        return_value,
         node_indices,
         approval_gates,
     })
@@ -1400,13 +1216,19 @@ fn validate_derive_value_inputs(
             ));
         }
     }
-    validate_plan_value_input_refs(&template.value, node_index, &inputs_by_alias)
+    validate_plan_value_input_refs(
+        &template.value,
+        node_index,
+        &inputs_by_alias,
+        template.item_binding.as_deref(),
+    )
 }
 
 fn validate_plan_value_input_refs(
     value: &PlanValue,
     node_index: usize,
     inputs_by_alias: &HashMap<&str, &str>,
+    item_binding: Option<&str>,
 ) -> Result<(), String> {
     match value {
         PlanValue::NodeSymbol { node, alias, .. } => match inputs_by_alias.get(alias.as_str()) {
@@ -1420,31 +1242,69 @@ fn validate_plan_value_input_refs(
                 alias
             )),
         },
-        PlanValue::Template { input_bindings, .. } => {
+        PlanValue::Template {
+            template,
+            input_bindings,
+        } => {
             for binding in input_bindings {
                 let Some((alias, _)) = binding.from.split_once('.') else {
                     continue;
                 };
-                if inputs_by_alias.contains_key(alias) {
+                validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
+            }
+            for raw_path in template_paths(template) {
+                let (alias, _) = raw_path
+                    .split_once('.')
+                    .map_or((raw_path.as_str(), ""), |(alias, rest)| (alias, rest));
+                if alias.is_empty() {
                     continue;
                 }
+                validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
             }
             Ok(())
         }
         PlanValue::Array { items } => {
             for item in items {
-                validate_plan_value_input_refs(item, node_index, inputs_by_alias)?;
+                validate_plan_value_input_refs(item, node_index, inputs_by_alias, item_binding)?;
             }
             Ok(())
         }
         PlanValue::Object { fields } => {
             for field in fields.values() {
-                validate_plan_value_input_refs(field, node_index, inputs_by_alias)?;
+                validate_plan_value_input_refs(field, node_index, inputs_by_alias, item_binding)?;
             }
             Ok(())
         }
         _ => Ok(()),
     }
+}
+
+fn validate_template_alias(
+    alias: &str,
+    node_index: usize,
+    inputs_by_alias: &HashMap<&str, &str>,
+    item_binding: Option<&str>,
+) -> Result<(), String> {
+    if item_binding == Some(alias) || inputs_by_alias.contains_key(alias) {
+        return Ok(());
+    }
+    Err(format!(
+        "plan.nodes[{node_index}].derive_template.value template references undeclared alias {alias:?}"
+    ))
+}
+
+fn template_paths(template: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("${") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            break;
+        };
+        out.push(after[..end].trim().to_string());
+        rest = &after[end + 1..];
+    }
+    out
 }
 
 fn analyze_static_cardinality(
@@ -1597,17 +1457,17 @@ fn validate_return_refs(
         }
     }
     match ret {
-        PlanReturn::Node(id) => Ok(ValidatedPlanReturn::Node(NodeRef::new(id.clone())?)),
+        PlanReturn::Node(id) => Ok(ValidatedPlanReturn::Node(PlanNodeId::new(id.clone())?)),
         PlanReturn::Parallel { parallel } => Ok(ValidatedPlanReturn::Parallel {
             parallel: parallel
                 .iter()
                 .cloned()
-                .map(NodeRef::new)
+                .map(PlanNodeId::new)
                 .collect::<Result<Vec<_>, _>>()?,
         }),
         PlanReturn::Record(map) => Ok(ValidatedPlanReturn::Record(
             map.iter()
-                .map(|(k, v)| Ok((OutputName::new(k.clone())?, NodeRef::new(v.clone())?)))
+                .map(|(k, v)| Ok((OutputName::new(k.clone())?, PlanNodeId::new(v.clone())?)))
                 .collect::<Result<BTreeMap<_, _>, String>>()?,
         )),
     }
@@ -1736,14 +1596,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_expr_list_normalizes_but_is_not_canonical() {
+    fn legacy_expr_list_is_rejected() {
         let v = serde_json::json!({
             "nodes": [{ "expr": "x" }],
         });
-        let p = parse_plan_value(&v).expect("legacy");
-        assert_eq!(p.kind, PlanKind::Program);
-        assert_eq!(p.nodes[0].id, "n1");
-        validate_plan(&p).expect("legacy validates");
+        let err = parse_plan_value(&v).expect_err("legacy expression list rejected");
+        assert!(err.contains("missing field"), "{err}");
     }
 
     #[test]
@@ -1905,8 +1763,8 @@ mod tests {
         });
         let plan = parse_plan_value(&v).expect("parse");
         let validated = validate_plan_artifact(&plan).expect("validate");
-        assert_eq!(validated.topo[0].as_str(), "rows");
-        assert_eq!(validated.topo[1].as_str(), "limited");
-        assert_eq!(validated.return_value.refs()[0].as_str(), "limited");
+        assert_eq!(validated.topological_order()[0].as_str(), "rows");
+        assert_eq!(validated.topological_order()[1].as_str(), "limited");
+        assert_eq!(validated.return_value().refs()[0].as_str(), "limited");
     }
 }

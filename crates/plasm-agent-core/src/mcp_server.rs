@@ -2377,7 +2377,7 @@ impl ServerHandler for PlasmMcpHandler {
                     }
                     let dry = evaluate_code_mode_plan_dry(&es, &doc.plan)
                         .map_err(CallToolError::from_message)?;
-                    let batch_count = dry.expression_strings.len().max(dry.node_results.len());
+                    let batch_count = dry.node_results.len();
                     let state2 = self.logical_mutex(&key, &ls_key).await;
                     let (this_invocation_chars, mut idx, call_count) = {
                         let mut g = state2.lock().await;

@@ -12,15 +12,16 @@ use plasm_core::CGS;
 
 use crate::code_mode_plan::{
     parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
-    ComputeTemplate, EffectClass, EffectTemplate, FieldPath, InputAlias, Plan, PlanDataInput,
-    PlanNode, PlanNodeId, PlanNodeKind, PlanValue, QualifiedEntityKey, ValidatedPlan,
-    ValidatedPlanDataInput, ValidatedPlanNode,
+    ComputeTemplate, EffectClass, FieldPath, InputAlias, Plan, PlanNodeId, PlanNodeKind, PlanValue,
+    QualifiedEntityKey, ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan,
+    ValidatedPlanDataInput, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
+    ValidatedSurfaceNode,
 };
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    archive_code_mode_result_snapshot, execute_code_mode_plasm_line, execute_session_run_markdown,
+    archive_code_mode_result_snapshot, execute_code_mode_plasm_line,
     publish_code_mode_result_steps, PublishedResultStep,
 };
 use crate::incoming_auth::TenantPrincipal;
@@ -150,22 +151,23 @@ pub struct CodeModePlanRunResult {
     pub run_plasm_meta: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Dry-run a code-mode plan: validate, type-check, simulation JSON per node, and collect surface
-/// `expr` strings in plan order (for `plasm` batch runs). [`run_code_mode_plan`] and MCP `execute`
-/// both use this as the single authoritative parse/typecheck path.
+/// Dry-run a code-mode plan: validate, type-check, and render simulation JSON per node.
 #[derive(Debug)]
 pub struct DryCodeModePlanEvaluation {
     pub version: serde_json::Value,
     pub name: Option<String>,
-    pub plan: Plan,
+    plan: Plan<ValidatedPlanState>,
     pub topological_order: Vec<String>,
     pub node_results: Vec<serde_json::Value>,
-    /// One Plasm `expr` string per simple executable node. Staged Plans may dry-run but cannot use
-    /// the legacy batch runner.
-    pub expression_strings: Vec<String>,
     pub can_batch_run: bool,
     pub execution_unsupported: Vec<String>,
     pub graph_summary: serde_json::Value,
+}
+
+impl DryCodeModePlanEvaluation {
+    pub fn validated_plan(&self) -> &Plan<ValidatedPlanState> {
+        &self.plan
+    }
 }
 
 /// Optional archive/provenance fields shown at the top of compact dry-run text.
@@ -178,30 +180,27 @@ pub struct CodePlanDryRunTextMeta<'a> {
 }
 
 /// Parse, validate, and dry-run a typed code-mode `Plan`.
-pub fn evaluate_code_mode_plan_dry(
+pub(crate) fn evaluate_code_mode_plan_dry(
     es: &ExecuteSession,
     plan: &serde_json::Value,
 ) -> Result<DryCodeModePlanEvaluation, String> {
     let plan = parse_plan_value(plan)?;
     let validated = validate_plan_artifact(&plan)?;
-    evaluate_typed_plan_dry(es, &validated)
+    evaluate_validated_code_mode_plan_dry(es, &validated)
 }
 
-fn evaluate_typed_plan_dry(
+pub fn evaluate_validated_code_mode_plan_dry(
     es: &ExecuteSession,
     validated: &ValidatedPlan,
 ) -> Result<DryCodeModePlanEvaluation, String> {
-    let plan = validated.to_raw_plan();
-    let plan = &plan;
+    let plan = validated.artifact();
     let version = serde_json::json!(plan.version);
     let mut out = Vec::new();
-    let mut expression_strings: Vec<String> = Vec::new();
     let mut can_batch_run = true;
     let mut execution_unsupported = Vec::new();
-    for node_id in &validated.topo {
-        let i = *validated
-            .node_indices
-            .get(node_id)
+    for node_id in validated.topological_order() {
+        let i = validated
+            .node_index(node_id)
             .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
         let n = &plan.nodes[i];
         ensure_node_dispatchable(es, n, i)?;
@@ -210,31 +209,37 @@ fn evaluate_typed_plan_dry(
             can_batch_run = false;
             execution_unsupported.push(format!(
                 "node {:?} ({}) requires host-inferred approval",
-                n.kind, n.id
+                n.kind(),
+                n.id()
             ));
         }
-        if n.depends_on.is_empty() && n.uses_result.is_empty() && n.kind.has_surface_expr() {
-            let expr = n
-                .expr
-                .as_deref()
-                .ok_or_else(|| format!("validated node {} missing expr", n.id))?
-                .trim();
+        if n.depends_on().is_empty() && n.uses_result().is_empty() {
+            let Some(surface) = n.as_surface() else {
+                can_batch_run = false;
+                execution_unsupported.push(format!(
+                    "node {:?} ({}) requires staged execution",
+                    n.kind(),
+                    n.id()
+                ));
+                out.push(dry_stage_result(i, n));
+                continue;
+            };
+            let expr = surface.expr.trim();
             let pe = parse_parsed_expr_for_session(es, expr)
                 .map_err(|e| format!("parse error in plan.nodes[{i}]: {e}"))?;
             typecheck_parsed_for_session(es, &pe)
                 .map_err(|e| format!("type check in plan.nodes[{i}]: {e}"))?;
-            expression_strings.push(expr.to_string());
             let (intent, il, bindings) = dry_run_simulation_for_session(es, &pe);
             out.push(serde_json::json!({
                 "index": i,
                 "ok": true,
-                "id": n.id,
-                "kind": n.kind,
-                "qualified_entity": n.qualified_entity,
-                "effect_class": n.effect_class,
-                "result_shape": n.result_shape,
-                "projection": n.projection,
-                "predicates": n.predicates,
+                "id": n.id().as_str(),
+                "kind": n.kind(),
+                "qualified_entity": surface.qualified_entity,
+                "effect_class": n.effect_class(),
+                "result_shape": n.result_shape(),
+                "projection": surface.projection,
+                "predicates": surface.predicates,
                 "approval_gate": inferred_approval,
                 "ir": {
                     "expr": pe.expr,
@@ -253,7 +258,8 @@ fn evaluate_typed_plan_dry(
         can_batch_run = false;
         execution_unsupported.push(format!(
             "node {:?} ({}) requires staged execution",
-            n.kind, n.id
+            n.kind(),
+            n.id()
         ));
         out.push(dry_stage_result(i, n));
     }
@@ -262,12 +268,11 @@ fn evaluate_typed_plan_dry(
         name: plan.name.clone(),
         plan: plan.clone(),
         topological_order: validated
-            .topo
+            .topological_order()
             .iter()
             .map(|id| id.as_str().to_string())
             .collect(),
         node_results: out,
-        expression_strings,
         can_batch_run,
         execution_unsupported,
         graph_summary: graph_summary(plan),
@@ -280,7 +285,7 @@ pub fn render_code_mode_plan_dry_text(
     archive: Option<CodePlanDryRunTextMeta<'_>>,
 ) -> String {
     let mut out = String::new();
-    let plan = &dry.plan;
+    let plan = dry.validated_plan();
     let summary = &dry.graph_summary;
     let name = archive
         .as_ref()
@@ -342,7 +347,7 @@ pub fn render_code_mode_plan_dry_text(
     let _ = writeln!(out, "dag:");
 
     for (ordinal, id) in dry.topological_order.iter().enumerate() {
-        let Some(node) = plan.nodes.iter().find(|n| n.id == *id) else {
+        let Some(node) = plan.nodes.iter().find(|n| n.id().as_str() == id) else {
             continue;
         };
         let deps = node_dependencies(node);
@@ -350,11 +355,11 @@ pub fn render_code_mode_plan_dry_text(
             out,
             "{:02}. {}{} -> {} [{}; {}]",
             ordinal + 1,
-            node.id,
+            node.id(),
             render_dependency_suffix(&deps),
             render_node_operation(node),
-            render_effect_class(node.effect_class),
-            render_result_shape(node.result_shape)
+            render_effect_class(node.effect_class()),
+            render_result_shape(node.result_shape())
         );
         let uses = render_uses_result(node);
         if !uses.is_empty() {
@@ -387,24 +392,28 @@ fn json_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn node_dependencies(node: &PlanNode) -> Vec<String> {
+fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
     let mut out = Vec::new();
-    push_unique(&mut out, node.depends_on.iter().cloned());
-    push_unique(&mut out, node.uses_result.iter().map(|u| u.node.clone()));
-    if let Some(source) = &node.source {
-        push_unique(&mut out, std::iter::once(source.clone()));
-    }
-    if let Some(derive) = &node.derive_template {
-        if let Some(source) = &derive.source {
-            push_unique(&mut out, std::iter::once(source.clone()));
+    push_unique(
+        &mut out,
+        node.depends_on().iter().map(|id| id.as_str().to_string()),
+    );
+    push_unique(&mut out, node.uses_result().iter().map(|u| u.node.clone()));
+    match node {
+        ValidatedPlanNode::Derive(n) => {
+            push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
+            push_unique(
+                &mut out,
+                n.inputs.iter().map(|input| input.node.as_str().to_string()),
+            );
         }
-        push_unique(
-            &mut out,
-            derive.inputs.iter().map(|input| input.node.clone()),
-        );
-    }
-    if let Some(compute) = &node.compute {
-        push_unique(&mut out, std::iter::once(compute.source.clone()));
+        ValidatedPlanNode::Compute(n) => {
+            push_unique(&mut out, std::iter::once(n.compute.source.clone()));
+        }
+        ValidatedPlanNode::ForEach(n) => {
+            push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
+        }
+        _ => {}
     }
     out
 }
@@ -425,100 +434,73 @@ fn render_dependency_suffix(deps: &[String]) -> String {
     }
 }
 
-fn render_uses_result(node: &PlanNode) -> Vec<String> {
-    node.uses_result
+fn render_uses_result(node: &ValidatedPlanNode) -> Vec<String> {
+    node.uses_result()
         .iter()
         .map(|u| format!("{} as {}", u.node, u.r#as))
         .collect()
 }
 
-fn render_node_operation(node: &PlanNode) -> String {
-    match node.kind {
-        PlanNodeKind::Query
-        | PlanNodeKind::Search
-        | PlanNodeKind::Get
-        | PlanNodeKind::Create
-        | PlanNodeKind::Update
-        | PlanNodeKind::Delete
-        | PlanNodeKind::Action => render_surface_operation(node),
-        PlanNodeKind::Data => node
-            .data
-            .as_ref()
-            .map(|v| format!("data {}", render_plan_value(v)))
-            .unwrap_or_else(|| "data <missing>".to_string()),
-        PlanNodeKind::Derive => node
-            .derive_template
-            .as_ref()
-            .map(render_derive_template)
-            .unwrap_or_else(|| "derive <missing>".to_string()),
-        PlanNodeKind::Compute => node
-            .compute
-            .as_ref()
-            .map(render_compute_template)
-            .unwrap_or_else(|| "compute <missing>".to_string()),
-        PlanNodeKind::ForEach => {
-            let source = node.source.as_deref().unwrap_or("<missing>");
-            let binding = node.item_binding.as_deref().unwrap_or("item");
-            let template = node
-                .effect_template
-                .as_ref()
-                .map(|t| t.expr_template.as_str())
-                .unwrap_or("<missing>");
+fn render_node_operation(node: &ValidatedPlanNode) -> String {
+    match node {
+        ValidatedPlanNode::Surface(n) => render_surface_operation(n),
+        ValidatedPlanNode::Data(n) => format!("data {}", render_plan_value(&n.data)),
+        ValidatedPlanNode::Derive(n) => render_derive_template(n),
+        ValidatedPlanNode::Compute(n) => render_compute_template(&n.compute),
+        ValidatedPlanNode::ForEach(n) => {
+            let source = n.source.as_str();
+            let binding = n.item_binding.as_str();
+            let template = n.effect_template.expr_template.as_str();
             format!("for_each {source} as {binding} => {template}")
         }
     }
 }
 
-fn render_surface_operation(node: &PlanNode) -> String {
+fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
     let entity = node
         .qualified_entity
         .as_ref()
         .map(|q| format!("{}.{}", q.entry_id, q.entity))
         .unwrap_or_else(|| "<unqualified>".to_string());
-    let expr = node.expr.as_deref().unwrap_or("<missing>");
+    let expr = node.expr.as_str();
     format!("{} {} <= {}", render_kind(node.kind), entity, expr)
 }
 
-fn render_derive_template(template: &crate::code_mode_plan::DeriveTemplate) -> String {
-    match template.kind {
-        crate::code_mode_plan::DeriveKind::Map => {
-            let source = template.source.as_deref().unwrap_or("<missing>");
-            let binding = template.item_binding.as_deref().unwrap_or("item");
-            let inputs = render_data_inputs(&template.inputs);
-            let input_suffix = if inputs.is_empty() {
-                String::new()
-            } else {
-                format!(" with {}", inputs.join(", "))
-            };
-            format!(
-                "map {source} as {binding}{input_suffix} => {}",
-                render_plan_value(&template.value)
-            )
-        }
-        crate::code_mode_plan::DeriveKind::Data => {
-            format!("derive data {}", render_plan_value(&template.value))
-        }
-    }
+fn render_derive_template(template: &ValidatedDeriveNode) -> String {
+    let source = template.source.as_str();
+    let binding = template.item_binding.as_str();
+    let inputs = render_data_inputs(&template.inputs);
+    let input_suffix = if inputs.is_empty() {
+        String::new()
+    } else {
+        format!(" with {}", inputs.join(", "))
+    };
+    format!(
+        "map {source} as {binding}{input_suffix} => {}",
+        render_plan_value(&template.value)
+    )
 }
 
-fn render_data_inputs(inputs: &[PlanDataInput]) -> Vec<String> {
+fn render_data_inputs(inputs: &[ValidatedPlanDataInput]) -> Vec<String> {
     inputs
         .iter()
         .map(|input| {
             format!(
                 "{} as {} {}",
-                input.node,
-                input.alias,
-                render_input_cardinality(input.cardinality)
+                input.node.as_str(),
+                input.alias.as_str(),
+                render_input_cardinality(input.proof)
             )
         })
         .collect()
 }
 
-fn render_input_cardinality(cardinality: crate::code_mode_plan::InputCardinality) -> &'static str {
-    match cardinality {
-        crate::code_mode_plan::InputCardinality::Auto => "auto",
-        crate::code_mode_plan::InputCardinality::Singleton => "singleton",
+fn render_input_cardinality(proof: crate::code_mode_plan::InputCardinalityProof) -> &'static str {
+    match proof {
+        crate::code_mode_plan::InputCardinalityProof::StaticSingleton => "static-singleton",
+        crate::code_mode_plan::InputCardinalityProof::RuntimeCheckedSingleton => {
+            "runtime-checked-singleton"
+        }
     }
 }
 
@@ -694,17 +676,17 @@ fn render_json_value(value: &serde_json::Value) -> String {
     }
 }
 
-fn render_return_lines(ret: &crate::code_mode_plan::PlanReturn) -> Vec<String> {
+fn render_return_lines(ret: &ValidatedPlanReturn) -> Vec<String> {
     match ret {
-        crate::code_mode_plan::PlanReturn::Node(id) => vec![id.clone()],
-        crate::code_mode_plan::PlanReturn::Parallel { parallel } => parallel
+        ValidatedPlanReturn::Node(id) => vec![id.as_str().to_string()],
+        ValidatedPlanReturn::Parallel { parallel } => parallel
             .iter()
             .enumerate()
-            .map(|(i, id)| format!("parallel[{}] -> {}", i, id))
+            .map(|(i, id)| format!("parallel[{}] -> {}", i, id.as_str()))
             .collect(),
-        crate::code_mode_plan::PlanReturn::Record(map) => map
+        ValidatedPlanReturn::Record(map) => map
             .iter()
-            .map(|(name, id)| format!("{} -> {}", name.as_str(), id))
+            .map(|(name, id)| format!("{} -> {}", name.as_str(), id.as_str()))
             .collect(),
     }
 }
@@ -769,7 +751,7 @@ fn render_predicate_op(op: crate::code_mode_plan::PlanPredicateOp) -> &'static s
     }
 }
 
-fn graph_summary(plan: &Plan) -> serde_json::Value {
+fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
     let mut read_nodes = Vec::new();
     let mut write_or_side_effect_nodes = Vec::new();
     let mut derive_nodes = Vec::new();
@@ -779,17 +761,17 @@ fn graph_summary(plan: &Plan) -> serde_json::Value {
 
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
-            parallelizable_roots.push(n.id.clone());
+            parallelizable_roots.push(n.id().as_str().to_string());
         }
-        match n.effect_class {
-            EffectClass::Read => read_nodes.push(n.id.clone()),
+        match n.effect_class() {
+            EffectClass::Read => read_nodes.push(n.id().as_str().to_string()),
             EffectClass::Write | EffectClass::SideEffect => {
-                write_or_side_effect_nodes.push(n.id.clone())
+                write_or_side_effect_nodes.push(n.id().as_str().to_string())
             }
-            EffectClass::ArtifactRead => derive_nodes.push(n.id.clone()),
+            EffectClass::ArtifactRead => derive_nodes.push(n.id().as_str().to_string()),
         }
-        if n.effect_template.is_some() {
-            template_nodes.push(n.id.clone());
+        if matches!(n, ValidatedPlanNode::ForEach(_)) {
+            template_nodes.push(n.id().as_str().to_string());
         }
         if let Some(approval) = inferred_node_approval(n) {
             approval_gates.push(approval);
@@ -807,35 +789,32 @@ fn graph_summary(plan: &Plan) -> serde_json::Value {
     })
 }
 
-fn inferred_node_approval(node: &PlanNode) -> Option<serde_json::Value> {
-    if let Some(t) = node.effect_template.as_ref() {
-        return inferred_template_approval(node, t);
+fn inferred_node_approval(node: &ValidatedPlanNode) -> Option<serde_json::Value> {
+    match node {
+        ValidatedPlanNode::ForEach(n) => inferred_template_approval(n),
+        ValidatedPlanNode::Surface(n) if node_requires_approval(n.kind, n.effect_class) => {
+            let q = n.qualified_entity.as_ref()?;
+            Some(approval_gate_json(
+                n.id.as_str(),
+                q,
+                n.kind,
+                None,
+                n.approval.as_deref(),
+            ))
+        }
+        _ => None,
     }
-    if node_requires_approval(node.kind, node.effect_class) {
-        let q = node.qualified_entity.as_ref()?;
-        return Some(approval_gate_json(
-            node.id.as_str(),
-            q,
-            node.kind,
-            None,
-            node.approval.as_deref(),
-        ));
-    }
-    None
 }
 
-fn inferred_template_approval(
-    node: &PlanNode,
-    template: &EffectTemplate,
-) -> Option<serde_json::Value> {
-    if !node_requires_approval(template.kind, template.effect_class) {
+fn inferred_template_approval(node: &ValidatedForEachNode) -> Option<serde_json::Value> {
+    if !node_requires_approval(node.effect_template.kind, node.effect_template.effect_class) {
         return None;
     }
     Some(approval_gate_json(
         node.id.as_str(),
-        &template.qualified_entity,
-        template.kind,
-        action_name_from_template(template.expr_template.as_str()).as_deref(),
+        &node.effect_template.qualified_entity,
+        node.effect_template.kind,
+        action_name_from_template(node.effect_template.expr_template.as_str()).as_deref(),
         node.approval.as_deref(),
     ))
 }
@@ -891,16 +870,20 @@ fn action_name_from_template(expr_template: &str) -> Option<String> {
 
 fn ensure_node_dispatchable(
     es: &ExecuteSession,
-    node: &PlanNode,
+    node: &ValidatedPlanNode,
     index: usize,
 ) -> Result<(), String> {
-    let Some(q) = node.qualified_entity.as_ref() else {
-        if es.contexts_by_entry.len() > 1 && node.kind.has_surface_expr() {
-            return Err(format!(
-                "plan.nodes[{index}] is missing qualified_entity in a federated session"
-            ));
-        }
+    let ValidatedPlanNode::Surface(surface) = node else {
         return Ok(());
+    };
+    let Some(q) = surface.qualified_entity.as_ref() else {
+        return if es.contexts_by_entry.len() > 1 {
+            Err(format!(
+                "plan.nodes[{index}] is missing qualified_entity in a federated session"
+            ))
+        } else {
+            Ok(())
+        };
     };
     let Some(ctx) = es.contexts_by_entry.get(&q.entry_id) else {
         return Err(format!(
@@ -917,67 +900,79 @@ fn ensure_node_dispatchable(
     Ok(())
 }
 
-fn dry_stage_result(index: usize, n: &PlanNode) -> serde_json::Value {
-    match n.kind {
-        PlanNodeKind::ForEach => serde_json::json!({
+fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
+    match n {
+        ValidatedPlanNode::ForEach(for_each) => serde_json::json!({
             "index": index,
             "ok": true,
-            "id": n.id,
-            "kind": n.kind,
-            "effect_class": n.effect_class,
-            "result_shape": n.result_shape,
-            "projection": n.projection,
-            "predicates": n.predicates,
-            "depends_on": n.depends_on,
-            "uses_result": n.uses_result,
-            "source": n.source,
-            "item_binding": n.item_binding,
-            "approval": n.approval,
+            "id": n.id().as_str(),
+            "kind": n.kind(),
+            "effect_class": n.effect_class(),
+            "result_shape": n.result_shape(),
+            "projection": for_each.projection,
+            "predicates": for_each.predicates,
+            "depends_on": node_ids_json(n.depends_on()),
+            "uses_result": n.uses_result(),
+            "source": for_each.source.as_str(),
+            "item_binding": for_each.item_binding.as_str(),
+            "approval": for_each.approval,
             "approval_gate": inferred_node_approval(n),
-            "data": n.data,
-            "derive_template": n.derive_template,
-            "effect_template": n.effect_template,
+            "effect_template": for_each.effect_template,
             "simulation": {
                 "kind": "template_stage",
                 "max_write_set": {
-                    "source": n.source,
+                    "source": for_each.source.as_str(),
                     "shape": "one template invocation per source row"
                 },
                 "execution": "requires phased Plan runner"
             }
         }),
-        PlanNodeKind::Derive => serde_json::json!({
+        ValidatedPlanNode::Data(data) => serde_json::json!({
             "index": index,
             "ok": true,
-            "id": n.id,
-            "kind": n.kind,
-            "effect_class": n.effect_class,
-            "result_shape": n.result_shape,
-            "projection": n.projection,
-            "predicates": n.predicates,
-            "depends_on": n.depends_on,
-            "uses_result": n.uses_result,
+            "id": n.id().as_str(),
+            "kind": n.kind(),
+            "effect_class": n.effect_class(),
+            "result_shape": n.result_shape(),
+            "depends_on": node_ids_json(n.depends_on()),
+            "uses_result": n.uses_result(),
             "approval_gate": inferred_node_approval(n),
-            "data": n.data,
-            "derive_template": n.derive_template,
+            "data": data.data,
+            "simulation": {
+                "kind": "static_data",
+                "execution": "materializes static Plan data through the phased Plan runner"
+            }
+        }),
+        ValidatedPlanNode::Derive(derive) => serde_json::json!({
+            "index": index,
+            "ok": true,
+            "id": n.id().as_str(),
+            "kind": n.kind(),
+            "effect_class": n.effect_class(),
+            "result_shape": n.result_shape(),
+            "depends_on": node_ids_json(n.depends_on()),
+            "uses_result": n.uses_result(),
+            "approval_gate": inferred_node_approval(n),
+            "source": derive.source.as_str(),
+            "item_binding": derive.item_binding.as_str(),
+            "inputs": validated_inputs_json(&derive.inputs),
+            "value": derive.value,
             "simulation": {
                 "kind": "local_derivation",
                 "execution": "runs after dependencies are materialized by the phased Plan runner"
             }
         }),
-        PlanNodeKind::Compute => serde_json::json!({
+        ValidatedPlanNode::Compute(compute) => serde_json::json!({
             "index": index,
             "ok": true,
-            "id": n.id,
-            "kind": n.kind,
-            "effect_class": n.effect_class,
-            "result_shape": n.result_shape,
-            "projection": n.projection,
-            "predicates": n.predicates,
-            "depends_on": n.depends_on,
-            "uses_result": n.uses_result,
+            "id": n.id().as_str(),
+            "kind": n.kind(),
+            "effect_class": n.effect_class(),
+            "result_shape": n.result_shape(),
+            "depends_on": node_ids_json(n.depends_on()),
+            "uses_result": n.uses_result(),
             "approval_gate": inferred_node_approval(n),
-            "compute": n.compute,
+            "compute": compute.compute,
             "simulation": {
                 "kind": "deterministic_compute",
                 "execution": "materializes a synthetic Plasm result set via the phased Plan runner"
@@ -986,17 +981,13 @@ fn dry_stage_result(index: usize, n: &PlanNode) -> serde_json::Value {
         _ => serde_json::json!({
             "index": index,
             "ok": true,
-            "id": n.id,
-            "kind": n.kind,
-            "effect_class": n.effect_class,
-            "result_shape": n.result_shape,
-            "projection": n.projection,
-            "predicates": n.predicates,
-            "depends_on": n.depends_on,
-            "uses_result": n.uses_result,
+            "id": n.id().as_str(),
+            "kind": n.kind(),
+            "effect_class": n.effect_class(),
+            "result_shape": n.result_shape(),
+            "depends_on": node_ids_json(n.depends_on()),
+            "uses_result": n.uses_result(),
             "approval_gate": inferred_node_approval(n),
-            "data": n.data,
-            "derive_template": n.derive_template,
             "simulation": {
                 "kind": "staged_effect",
                 "execution": "requires phased Plan runner"
@@ -1005,13 +996,29 @@ fn dry_stage_result(index: usize, n: &PlanNode) -> serde_json::Value {
     }
 }
 
-/// Code-mode / program-synthesis **plan** execution: validate each `expr`, materialize the same
-/// per-node `simulation` as MCP `execute` (`run: false`), and optionally run the full batch
-/// through [`execute_session_run_markdown`] (same as MCP `execute` with `run: true`).
-pub async fn run_code_mode_plan(
+fn node_ids_json(ids: &[PlanNodeId]) -> Vec<&str> {
+    ids.iter().map(PlanNodeId::as_str).collect()
+}
+
+fn validated_inputs_json(inputs: &[ValidatedPlanDataInput]) -> Vec<serde_json::Value> {
+    inputs
+        .iter()
+        .map(|input| {
+            serde_json::json!({
+                "node": input.node.as_str(),
+                "alias": input.alias.as_str(),
+                "proof": input.proof,
+            })
+        })
+        .collect()
+}
+
+/// Raw MCP ingress wrapper. Validation happens once, then execution proceeds through the
+/// proof-bearing [`ValidatedPlan`] core.
+pub(crate) async fn run_code_mode_plan(
     es: &ExecuteSession,
     st: &PlasmHostState,
-    principal: Option<&TenantPrincipal>,
+    _principal: Option<&TenantPrincipal>,
     prompt_hash: &str,
     session_id: &str,
     plan: &serde_json::Value,
@@ -1020,7 +1027,20 @@ pub async fn run_code_mode_plan(
 ) -> Result<CodeModePlanRunResult, String> {
     let plan_typed = parse_plan_value(plan)?;
     let validated = validate_plan_artifact(&plan_typed)?;
-    let dry = evaluate_typed_plan_dry(es, &validated)?;
+    run_validated_code_mode_plan(es, st, prompt_hash, session_id, &validated, run, mcp_plasm).await
+}
+
+/// Code-mode / program-synthesis **plan** execution over a proof-bearing validated artifact.
+pub async fn run_validated_code_mode_plan(
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    validated: &ValidatedPlan,
+    run: bool,
+    mcp_plasm: Option<CodeModePlasmRunHooks<'_>>,
+) -> Result<CodeModePlanRunResult, String> {
+    let dry = evaluate_validated_code_mode_plan_dry(es, validated)?;
     if !run {
         return Ok(CodeModePlanRunResult {
             version: dry.version,
@@ -1030,55 +1050,7 @@ pub async fn run_code_mode_plan(
             run_plasm_meta: None,
         });
     }
-    if !dry.can_batch_run {
-        return run_validated_plan_phased(
-            es,
-            st,
-            prompt_hash,
-            session_id,
-            &validated,
-            dry,
-            mcp_plasm,
-        )
-        .await;
-    }
-    if dry.expression_strings.is_empty() {
-        return Err("run mode: internal error (no expressions collected)".to_string());
-    }
-    let exprs = dry.expression_strings;
-    let run_out = if let Some(mut h) = mcp_plasm {
-        execute_session_run_markdown(
-            st,
-            principal,
-            prompt_hash,
-            session_id,
-            exprs,
-            Some(&mut h.meta_index),
-            Some(h.trace),
-            Some(h.sink),
-        )
-        .await
-    } else {
-        execute_session_run_markdown(
-            st,
-            principal,
-            prompt_hash,
-            session_id,
-            exprs,
-            None,
-            None,
-            None,
-        )
-        .await
-    }
-    .map_err(|e| e)?;
-    Ok(CodeModePlanRunResult {
-        version: dry.version,
-        node_results: dry.node_results,
-        graph_summary: dry.graph_summary,
-        run_markdown: Some(run_out.markdown),
-        run_plasm_meta: run_out.tool_meta,
-    })
+    run_validated_plan_phased(es, st, prompt_hash, session_id, validated, dry, mcp_plasm).await
 }
 
 #[derive(Debug, Clone)]
@@ -1087,6 +1059,12 @@ struct MaterializedNode {
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     display: String,
     projection: Option<Vec<String>>,
+}
+
+struct MaterializedInputRow {
+    node: PlanNodeId,
+    proof: crate::code_mode_plan::InputCardinalityProof,
+    row: serde_json::Value,
 }
 
 async fn run_validated_plan_phased(
@@ -1109,14 +1087,12 @@ async fn run_validated_plan_phased(
         meta_index = Some(hooks.meta_index);
     }
     let _ = sink;
-    for node_id in &validated.topo {
-        let idx = *validated
-            .node_indices
-            .get(node_id)
+    for node_id in validated.topological_order() {
+        let idx = validated
+            .node_index(node_id)
             .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
-        let node = &validated.nodes[idx];
-        let raw_node = node.to_plan_node();
-        if inferred_node_approval(&raw_node).is_some() {
+        let node = &validated.nodes()[idx];
+        if inferred_node_approval(node).is_some() {
             return Err(format!(
                 "Plan execution blocked: node {:?} ({}) requires host-inferred approval",
                 node.kind(),
@@ -1146,7 +1122,7 @@ async fn run_validated_plan_phased(
                     st,
                     es,
                     session_id,
-                    &raw_node,
+                    node,
                     plan_value_to_rows(&data.data)?,
                     trace.as_ref(),
                 )
@@ -1157,21 +1133,19 @@ async fn run_validated_plan_phased(
                 let input_rows = materialized_singleton_inputs(&materialized, &derive.inputs)?;
                 let mut rows = Vec::with_capacity(source_rows.len());
                 for row in source_rows {
-                    let scope = EvalScope {
+                    let scope = EvalScope::Bound {
                         row: &row,
-                        binding: Some(&derive.item_binding),
+                        binding: &derive.item_binding,
                     };
                     let inputs = InputEnv { rows: &input_rows };
                     let env = PlanEvalEnv { scope, inputs };
                     rows.push(eval_plan_value(&derive.value, &env)?);
                 }
-                materialize_synthetic_node(st, es, session_id, &raw_node, rows, trace.as_ref())
-                    .await?
+                materialize_synthetic_node(st, es, session_id, node, rows, trace.as_ref()).await?
             }
             ValidatedPlanNode::Compute(compute) => {
                 let rows = eval_compute(&compute.compute, &materialized)?;
-                materialize_synthetic_node(st, es, session_id, &raw_node, rows, trace.as_ref())
-                    .await?
+                materialize_synthetic_node(st, es, session_id, node, rows, trace.as_ref()).await?
             }
             ValidatedPlanNode::ForEach(for_each) => {
                 return Err(format!(
@@ -1183,17 +1157,15 @@ async fn run_validated_plan_phased(
         materialized.insert(node.id().clone(), mat);
     }
 
-    let return_refs = validated.return_value.refs();
+    let return_refs = validated.return_value().refs();
     let mut steps = Vec::new();
     for node_ref in return_refs {
-        let mat = materialized
-            .get(&PlanNodeId::new(node_ref.as_str().to_string())?)
-            .ok_or_else(|| {
-                format!(
-                    "plan.return materialized node {:?} missing",
-                    node_ref.as_str()
-                )
-            })?;
+        let mat = materialized.get(node_ref).ok_or_else(|| {
+            format!(
+                "plan.return materialized node {:?} missing",
+                node_ref.as_str()
+            )
+        })?;
         steps.push(PublishedResultStep {
             display: mat.display.clone(),
             projection: mat.projection.clone(),
@@ -1215,15 +1187,19 @@ async fn materialize_synthetic_node(
     st: &PlasmHostState,
     es: &ExecuteSession,
     session_id: &str,
-    node: &PlanNode,
+    node: &ValidatedPlanNode,
     rows: Vec<serde_json::Value>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
-    let entity = node
-        .compute
-        .as_ref()
-        .and_then(|c| c.schema.entity.clone())
-        .unwrap_or_else(|| format!("PlanComputed_{}", node.id));
+    let entity = match node {
+        ValidatedPlanNode::Compute(compute) => compute
+            .compute
+            .schema
+            .entity
+            .clone()
+            .unwrap_or_else(|| format!("PlanComputed_{}", node.id().as_str())),
+        _ => format!("PlanComputed_{}", node.id().as_str()),
+    };
     let full_entities = json_rows_to_entities(&entity, &rows);
     let request_fingerprints = vec![compute_fingerprint(node, &rows)];
     let full_result = ExecutionResult {
@@ -1245,21 +1221,20 @@ async fn materialize_synthetic_node(
         st,
         es,
         session_id,
-        vec![format!("plan.compute({})", node.id)],
+        vec![format!("plan.compute({})", node.id().as_str())],
         &full_result,
         trace,
     )
     .await?;
-    let page_size = node
-        .compute
-        .as_ref()
-        .and_then(|c| c.page_size)
-        .unwrap_or(50);
+    let page_size = match node {
+        ValidatedPlanNode::Compute(compute) => compute.compute.page_size.unwrap_or(50),
+        _ => 50,
+    };
     let (entities, has_more, paging_handle) = if full_entities.len() > page_size {
         let first = full_entities[..page_size].to_vec();
         let handle = es.register_synthetic_paging_continuation(
             crate::execute_session::SyntheticPageCursor {
-                node_id: node.id.clone(),
+                node_id: node.id().as_str().to_string(),
                 entity_type: entity.clone(),
                 rows: full_entities,
                 offset: page_size,
@@ -1289,12 +1264,12 @@ async fn materialize_synthetic_node(
     })
 }
 
-fn synthetic_node_display(node: &PlanNode) -> String {
-    match node.kind {
-        PlanNodeKind::Data => format!("plan.data({})", node.id),
-        PlanNodeKind::Derive => format!("plan.derive({})", node.id),
-        PlanNodeKind::Compute => format!("plan.compute({})", node.id),
-        _ => format!("plan.stage({})", node.id),
+fn synthetic_node_display(node: &ValidatedPlanNode) -> String {
+    match node {
+        ValidatedPlanNode::Data(_) => format!("plan.data({})", node.id().as_str()),
+        ValidatedPlanNode::Derive(_) => format!("plan.derive({})", node.id().as_str()),
+        ValidatedPlanNode::Compute(_) => format!("plan.compute({})", node.id().as_str()),
+        _ => format!("plan.stage({})", node.id().as_str()),
     }
 }
 
@@ -1319,7 +1294,7 @@ fn materialized_rows(
 fn materialized_singleton_inputs(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     inputs: &[ValidatedPlanDataInput],
-) -> Result<BTreeMap<InputAlias, serde_json::Value>, String> {
+) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
     let mut out = BTreeMap::new();
     for input in inputs {
         let mat = materialized.get(&input.node).ok_or_else(|| {
@@ -1350,16 +1325,22 @@ fn materialized_singleton_inputs(
                     input.alias.as_str()
                 )
             })?;
-        out.insert(input.alias.clone(), row);
+        out.insert(
+            input.alias.clone(),
+            MaterializedInputRow {
+                node: input.node.clone(),
+                proof: input.proof,
+                row,
+            },
+        );
     }
     Ok(out)
 }
 
 fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Value>, String> {
     let inputs = BTreeMap::new();
-    let scope = EvalScope {
+    let scope = EvalScope::Root {
         row: &serde_json::Value::Null,
-        binding: None,
     };
     let input_env = InputEnv { rows: &inputs };
     let env = PlanEvalEnv {
@@ -1420,13 +1401,26 @@ fn eval_compute(
     }
 }
 
-struct EvalScope<'a> {
-    row: &'a serde_json::Value,
-    binding: Option<&'a BindingName>,
+enum EvalScope<'a> {
+    Root {
+        row: &'a serde_json::Value,
+    },
+    Bound {
+        row: &'a serde_json::Value,
+        binding: &'a BindingName,
+    },
+}
+
+impl<'a> EvalScope<'a> {
+    fn row(&self) -> &'a serde_json::Value {
+        match self {
+            Self::Root { row } | Self::Bound { row, .. } => row,
+        }
+    }
 }
 
 struct InputEnv<'a> {
-    rows: &'a BTreeMap<InputAlias, serde_json::Value>,
+    rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
 }
 
 struct PlanEvalEnv<'a> {
@@ -1442,35 +1436,60 @@ fn eval_plan_value(value: &PlanValue, env: &PlanEvalEnv<'_>) -> Result<serde_jso
             .map(|s| serde_json::Value::String(s.clone()))
             .unwrap_or_else(|| serde_json::Value::Array(args.clone()))),
         PlanValue::Symbol { path } => {
-            let path = strip_binding(path, env.scope.binding);
-            Ok(value_at_dotted(env.scope.row, path)
+            let path = match &env.scope {
+                EvalScope::Root { .. } => path.as_str(),
+                EvalScope::Bound { binding, .. } => strip_binding(path, binding),
+            };
+            Ok(value_at_dotted(env.scope.row(), path)
                 .cloned()
                 .unwrap_or(serde_json::Value::Null))
         }
         PlanValue::BindingSymbol { binding, path } => {
-            if env.scope.binding.map(BindingName::as_str) != Some(binding.as_str()) {
+            let EvalScope::Bound {
+                binding: scope_binding,
+                ..
+            } = &env.scope
+            else {
+                return Err(format!(
+                    "binding symbol {binding:?} cannot resolve at root scope"
+                ));
+            };
+            if scope_binding.as_str() != binding.as_str() {
                 return Err(format!(
                     "binding symbol references unknown binding {binding:?}"
                 ));
             }
-            Ok(value_at_segments(env.scope.row, path)
+            Ok(value_at_segments(env.scope.row(), path)
                 .cloned()
                 .unwrap_or(serde_json::Value::Null))
         }
-        PlanValue::NodeSymbol { alias, path, .. } => {
+        PlanValue::NodeSymbol { node, alias, path } => {
             let alias = InputAlias::new(alias.clone())?;
-            let row = env.inputs.rows.get(&alias).ok_or_else(|| {
+            let expected_node = PlanNodeId::new(node.clone())?;
+            let input = env.inputs.rows.get(&alias).ok_or_else(|| {
                 format!(
                     "node symbol references missing input alias {:?}",
                     alias.as_str()
                 )
             })?;
-            Ok(value_at_segments(row, path)
+            if input.node != expected_node {
+                return Err(format!(
+                    "node symbol alias {:?} is bound to {:?}, not {:?}",
+                    alias.as_str(),
+                    input.node.as_str(),
+                    expected_node.as_str()
+                ));
+            }
+            match input.proof {
+                crate::code_mode_plan::InputCardinalityProof::StaticSingleton
+                | crate::code_mode_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
+            }
+            Ok(value_at_segments(&input.row, path)
                 .cloned()
                 .unwrap_or(serde_json::Value::Null))
         }
         PlanValue::Template { template, .. } => {
-            Ok(serde_json::Value::String(render_template(template, env)))
+            Ok(serde_json::Value::String(render_template(template, env)?))
         }
         PlanValue::Array { items } => Ok(serde_json::Value::Array(
             items
@@ -1488,47 +1507,44 @@ fn eval_plan_value(value: &PlanValue, env: &PlanEvalEnv<'_>) -> Result<serde_jso
     }
 }
 
-fn strip_binding<'a>(path: &'a str, binding: Option<&BindingName>) -> &'a str {
-    if let Some(binding) = binding {
-        let binding = binding.as_str();
-        if path == binding {
-            return "";
-        }
-        if let Some(rest) = path.strip_prefix(&format!("{binding}.")) {
-            return rest;
-        }
+fn strip_binding<'a>(path: &'a str, binding: &BindingName) -> &'a str {
+    let binding = binding.as_str();
+    if path == binding {
+        return "";
+    }
+    if let Some(rest) = path.strip_prefix(&format!("{binding}.")) {
+        return rest;
     }
     path
 }
 
-fn render_template(template: &str, env: &PlanEvalEnv<'_>) -> String {
+fn render_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
     while let Some(start) = rest.find("${") {
         out.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let Some(end) = after.find('}') else {
-            out.push_str(&rest[start..]);
-            return out;
+            return Err("template contains an unterminated ${...} substitution".to_string());
         };
         let raw_path = &after[..end];
         let rendered = resolve_template_path(raw_path, env)
             .map(json_scalar_display)
-            .unwrap_or_default();
+            .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
         out.push_str(&rendered);
         rest = &after[end + 1..];
     }
     out.push_str(rest);
-    out
+    Ok(out)
 }
 
 fn resolve_template_path<'a>(
     raw_path: &str,
     env: &'a PlanEvalEnv<'_>,
 ) -> Option<&'a serde_json::Value> {
-    if let Some(binding) = env.scope.binding {
+    if let EvalScope::Bound { binding, .. } = &env.scope {
         if raw_path == binding.as_str() || raw_path.starts_with(&format!("{binding}.")) {
-            return value_at_dotted(env.scope.row, strip_binding(raw_path, Some(binding)));
+            return value_at_dotted(env.scope.row(), strip_binding(raw_path, binding));
         }
     }
     let (alias, rest) = raw_path
@@ -1538,7 +1554,7 @@ fn resolve_template_path<'a>(
     env.inputs
         .rows
         .get(&alias)
-        .and_then(|row| value_at_dotted(row, rest))
+        .and_then(|input| value_at_dotted(&input.row, rest))
 }
 
 fn value_at_path<'a>(
@@ -1779,24 +1795,30 @@ fn json_to_plasm_value(v: &serde_json::Value) -> Value {
     }
 }
 
-fn synthetic_projection(node: &PlanNode) -> Option<Vec<String>> {
-    node.compute.as_ref().map(|compute| {
-        compute
-            .schema
-            .fields
-            .iter()
-            .map(|f| f.name.as_str().to_string())
-            .collect()
-    })
+fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<String>> {
+    match node {
+        ValidatedPlanNode::Compute(compute) => Some(
+            compute
+                .compute
+                .schema
+                .fields
+                .iter()
+                .map(|f| f.name.as_str().to_string())
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
-fn compute_fingerprint(node: &PlanNode, rows: &[serde_json::Value]) -> String {
+fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(node.id.as_bytes());
-    match serde_json::to_vec(&node.compute) {
-        Ok(bytes) => hasher.update(bytes),
-        Err(e) => hasher.update(format!("compute-serialization-error:{e}").as_bytes()),
+    hasher.update(node.id().as_str().as_bytes());
+    if let ValidatedPlanNode::Compute(compute) = node {
+        match serde_json::to_vec(&compute.compute) {
+            Ok(bytes) => hasher.update(bytes),
+            Err(e) => hasher.update(format!("compute-serialization-error:{e}").as_bytes()),
+        }
     }
     match serde_json::to_vec(rows) {
         Ok(bytes) => hasher.update(bytes),
@@ -1889,8 +1911,8 @@ mod tests {
             "return": "n0"
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
-        assert_eq!(dry.expression_strings, vec!["Product".to_string()]);
         assert_eq!(dry.node_results.len(), 1);
+        assert!(dry.can_batch_run);
     }
 
     #[test]
@@ -2011,12 +2033,16 @@ returns:
         let row = serde_json::json!({ "name": "pikachu" });
         let inputs = BTreeMap::from([(
             InputAlias::new("moveFacts".to_string()).expect("alias"),
-            serde_json::json!({ "move": "thunderbolt", "power": 90 }),
+            MaterializedInputRow {
+                node: PlanNodeId::new("moveFacts".to_string()).expect("node id"),
+                proof: crate::code_mode_plan::InputCardinalityProof::StaticSingleton,
+                row: serde_json::json!({ "move": "thunderbolt", "power": 90 }),
+            },
         )]);
         let binding = BindingName::new("p".to_string()).expect("binding");
-        let scope = EvalScope {
+        let scope = EvalScope::Bound {
             row: &row,
-            binding: Some(&binding),
+            binding: &binding,
         };
         let input_env = InputEnv { rows: &inputs };
         let env = PlanEvalEnv {
