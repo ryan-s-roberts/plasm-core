@@ -68,6 +68,8 @@ use crate::http_execute::{
     ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
     execute_session_run_markdown, normalize_capability_seeds,
 };
+#[cfg(feature = "code_mode")]
+use crate::http_execute::mcp_add_code_capabilities_markdown;
 use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
 #[cfg(feature = "code_mode")]
 use crate::mcp_plasm_code::{
@@ -2013,20 +2015,34 @@ impl ServerHandler for PlasmMcpHandler {
                         .ensure_logical_session(&ls_key, Some(&key), trace_meta)
                         .await;
 
-                    let mut text = String::new();
-                    let mut tsv_from_waves: Option<String> = None;
+                    let (text, tsv_from_waves) = if is_add_code {
+                        #[cfg(feature = "code_mode")]
+                        {
+                            (mcp_add_code_capabilities_markdown(&out), None)
+                        }
+                        #[cfg(not(feature = "code_mode"))]
+                        {
+                            (String::new(), None)
+                        }
+                    } else {
+                        let mut t = String::new();
+                        let mut tsv: Option<String> = None;
+                        for wave in &out.waves {
+                            if tsv.is_none() {
+                                if let Some(front) = wave.tsv_static_frontmatter.as_ref() {
+                                    tsv = Some(front.clone());
+                                }
+                            }
+                            if !wave.markdown_delta.is_empty() {
+                                t.push_str(&wave.markdown_delta);
+                                if !t.ends_with('\n') {
+                                    t.push('\n');
+                                }
+                            }
+                        }
+                        (t, tsv)
+                    };
                     for wave in &out.waves {
-                        if tsv_from_waves.is_none() {
-                            if let Some(t) = wave.tsv_static_frontmatter.as_ref() {
-                                tsv_from_waves = Some(t.clone());
-                            }
-                        }
-                        if !wave.markdown_delta.is_empty() {
-                            text.push_str(&wave.markdown_delta);
-                            if !text.ends_with('\n') {
-                                text.push('\n');
-                            }
-                        }
                         if wave.domain_prompt_chars_added > 0 {
                             let ls = self.logical_mutex(&key, &ls_key).await;
                             let mut g = ls.lock().await;

@@ -605,6 +605,83 @@ pub(crate) fn format_add_capabilities_wave_line(entry_id: &str, entities: &[Stri
     format!("Added capabilities from {entry_id}: {}", v.join(", "))
 }
 
+/// MCP `add_code_capabilities` text body: wave summaries + pointers to `TypeScriptCodeArtifacts` /
+/// `facade_delta` in `_meta.plasm` (from `plasm_facade_gen::build_code_facade` in the MCP host), **not**
+/// the Plasm DOMAIN / `e#` teaching table (that is `add_capabilities` / `plasm`).
+#[cfg(feature = "code_mode")]
+pub(crate) fn mcp_add_code_capabilities_markdown(out: &ApplyCapabilitySeedsOutcome) -> String {
+    let mut s = String::new();
+    if out.stale_execute_binding_recovered {
+        s.push_str(
+            "**Prior execute session was missing or expired.** A new `(prompt_hash, session)` was opened—discard any cached **Code Mode** `typescript` / `facade_delta` from earlier turns. Use `_meta.plasm.typescript` and `facade_delta` from this response only.\n\n",
+        );
+    }
+    for wave in &out.waves {
+        match wave.mode.as_str() {
+            "open" => {
+                if out.new_symbol_space
+                    && !out.stale_execute_binding_recovered
+                    && !wave.reused_session
+                {
+                    s.push_str(
+                        "_New Code Mode session: the Plan/Code surface is in `_meta.plasm.typescript` and `facade_delta` (this message is not a Plasm path-expression table)._\n\n",
+                    );
+                }
+                s.push_str(&format_add_capabilities_wave_line(
+                    &wave.entry_id,
+                    &wave.entities,
+                ));
+                if wave.reused_session {
+                    s.push_str("\n\n_Session unchanged._\n");
+                } else {
+                    s.push_str(
+                        "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta` (not the Plasm `e#` / `m#` / `p#` table)._\n",
+                    );
+                }
+            }
+            "federate" => {
+                if wave.markdown_delta.contains("No new entities in this federated wave") {
+                    s.push_str(&wave.markdown_delta);
+                    s.push('\n');
+                } else {
+                    s.push_str(&format_add_capabilities_wave_line(
+                        &wave.entry_id,
+                        &wave.entities,
+                    ));
+                    s.push_str(
+                        "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta`._\n",
+                    );
+                }
+            }
+            "expand" => {
+                if wave.markdown_delta.contains("No new entities in this wave") {
+                    s.push_str(
+                        "_No new entities in this wave (already exposed)._\n\n_If there are updates, they appear in `_meta.plasm.typescript` and `facade_delta`._\n",
+                    );
+                } else {
+                    s.push_str(&format_add_capabilities_wave_line(
+                        &wave.entry_id,
+                        &wave.entities,
+                    ));
+                    s.push_str(
+                        "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta`._\n",
+                    );
+                }
+            }
+            _ => {
+                s.push_str(&format_add_capabilities_wave_line(
+                    &wave.entry_id,
+                    &wave.entities,
+                ));
+                s.push_str(
+                    "\n\n_Incremental TypeScript: read `_meta.plasm.typescript` and `facade_delta`._\n",
+                );
+            }
+        }
+    }
+    s
+}
+
 /// Wrap DOMAIN / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
 /// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
 fn wrap_domain_markdown_literal_block(body: &str, render_mode: PromptRenderMode) -> String {
@@ -4364,5 +4441,38 @@ mod tests {
             ExecResponseKind::Ndjson
         );
         assert!(negotiate_accept(Some("application/soap+xml")).is_err());
+    }
+}
+
+#[cfg(all(test, feature = "code_mode"))]
+mod mcp_add_code_capabilities_markdown_tests {
+    use super::*;
+
+    #[test]
+    fn ignores_plasm_domain_markdown_delta_for_open_wave() {
+        let out = ApplyCapabilitySeedsOutcome {
+            prompt_hash: "a".repeat(64),
+            session_id: "sess".to_string(),
+            primary_entry_id: "hackernews".to_string(),
+            principal: None,
+            waves: vec![CapabilityWaveOutcome {
+                mode: "open".to_string(),
+                entry_id: "hackernews".to_string(),
+                entities: vec!["Item".to_string()],
+                // Simulates full DOMAIN / TSV that must not appear in add_code_capabilities text.
+                markdown_delta: "Expression\tMeaning\ne1($)[p1]\treturns e1\n".to_string(),
+                reused_session: false,
+                domain_prompt_chars_added: 10_000,
+                tsv_static_frontmatter: Some("# ignored for code-mode MCP text".to_string()),
+            }],
+            binding_updated: true,
+            new_symbol_space: true,
+            stale_execute_binding_recovered: false,
+            stale_binding_previous: None,
+        };
+        let md = mcp_add_code_capabilities_markdown(&out);
+        assert!(!md.contains("Expression"), "md:\n{md}");
+        assert!(!md.contains("e1("), "md:\n{md}");
+        assert!(md.contains("hackernews") && md.contains("Item"), "md:\n{md}");
     }
 }
