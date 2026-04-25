@@ -71,6 +71,11 @@ plan_string_atom! {
     InputAlias
 }
 
+plan_string_atom! {
+    /// Declared CGS relation name used by a Code Mode traversal node.
+    RelationName
+}
+
 /// Dotted field path after validation.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -354,6 +359,7 @@ pub enum ValidatedPlanNode {
     Derive(ValidatedDeriveNode),
     Compute(ValidatedComputeNode),
     ForEach(ValidatedForEachNode),
+    RelationTraversal(ValidatedRelationTraversalNode),
 }
 
 #[derive(Debug, Clone)]
@@ -419,6 +425,26 @@ pub struct ValidatedForEachNode {
     pub(crate) approval: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidatedRelationTraversalNode {
+    pub(crate) id: PlanNodeId,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) relation: ValidatedPlanRelationTraversal,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedPlanRelationTraversal {
+    pub(crate) source: PlanNodeId,
+    pub(crate) relation: RelationName,
+    pub(crate) target: QualifiedEntityKey,
+    pub(crate) cardinality: RelationCardinality,
+    pub(crate) source_cardinality: RelationSourceCardinality,
+    pub(crate) expr: String,
+}
+
 impl ValidatedPlanNode {
     pub fn id(&self) -> &PlanNodeId {
         match self {
@@ -427,6 +453,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => &n.id,
             Self::Compute(n) => &n.id,
             Self::ForEach(n) => &n.id,
+            Self::RelationTraversal(n) => &n.id,
         }
     }
 
@@ -437,6 +464,7 @@ impl ValidatedPlanNode {
             Self::Derive(_) => PlanNodeKind::Derive,
             Self::Compute(_) => PlanNodeKind::Compute,
             Self::ForEach(_) => PlanNodeKind::ForEach,
+            Self::RelationTraversal(_) => PlanNodeKind::Relation,
         }
     }
 
@@ -447,6 +475,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => n.effect_class,
             Self::Compute(n) => n.effect_class,
             Self::ForEach(n) => n.effect_class,
+            Self::RelationTraversal(n) => n.effect_class,
         }
     }
 
@@ -457,6 +486,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => n.result_shape,
             Self::Compute(n) => n.result_shape,
             Self::ForEach(n) => n.result_shape,
+            Self::RelationTraversal(n) => n.result_shape,
         }
     }
 
@@ -467,6 +497,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => &n.depends_on,
             Self::Compute(n) => &n.depends_on,
             Self::ForEach(n) => &n.depends_on,
+            Self::RelationTraversal(n) => &n.depends_on,
         }
     }
 
@@ -477,6 +508,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => &n.uses_result,
             Self::Compute(n) => &n.uses_result,
             Self::ForEach(n) => &n.uses_result,
+            Self::RelationTraversal(n) => &n.uses_result,
         }
     }
 
@@ -537,6 +569,7 @@ pub enum PlanNodeKind {
     Derive,
     Compute,
     ForEach,
+    Relation,
 }
 
 impl PlanNodeKind {
@@ -596,10 +629,37 @@ pub struct PlanNode {
     pub derive_template: Option<DeriveTemplate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compute: Option<ComputeTemplate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<PlanRelationTraversal>,
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub uses_result: Vec<PlanResultUse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanRelationTraversal {
+    pub source: String,
+    pub relation: String,
+    pub target: QualifiedEntityKey,
+    pub cardinality: RelationCardinality,
+    pub source_cardinality: RelationSourceCardinality,
+    pub expr: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationCardinality {
+    One,
+    Many,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationSourceCardinality {
+    Single,
+    Many,
+    RuntimeCheckedSingleton,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -805,6 +865,14 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                     n.kind
                 ));
             }
+            if n.kind == PlanNodeKind::Search {
+                if n.effect_class != EffectClass::Read {
+                    return Err(format!("plan.nodes[{i}].search effect_class must be read"));
+                }
+                if n.result_shape != ResultShape::List {
+                    return Err(format!("plan.nodes[{i}].search result_shape must be list"));
+                }
+            }
         }
         if n.kind == PlanNodeKind::Derive && n.expr.is_some() {
             return Err(format!("plan.nodes[{i}].derive must not carry expr"));
@@ -822,15 +890,48 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 .compute
                 .as_ref()
                 .ok_or_else(|| format!("plan.nodes[{i}].compute is required for compute nodes"))?;
-            if n.expr.is_some() || n.data.is_some() || n.effect_template.is_some() {
+            if n.expr.is_some()
+                || n.data.is_some()
+                || n.effect_template.is_some()
+                || n.relation.is_some()
+            {
                 return Err(format!(
-                    "plan.nodes[{i}].compute must not carry expr, data, or effect_template"
+                    "plan.nodes[{i}].compute must not carry expr, data, effect_template, or relation"
                 ));
             }
             validate_compute_template(compute, i, &by_id)?;
         } else if n.compute.is_some() {
             return Err(format!(
                 "plan.nodes[{i}].compute is only valid for compute nodes"
+            ));
+        }
+        if n.kind == PlanNodeKind::Relation {
+            let relation = n.relation.as_ref().ok_or_else(|| {
+                format!("plan.nodes[{i}].relation is required for relation nodes")
+            })?;
+            if n.effect_class != EffectClass::Read {
+                return Err(format!(
+                    "plan.nodes[{i}].relation effect_class must be read"
+                ));
+            }
+            if !matches!(n.result_shape, ResultShape::List | ResultShape::Single) {
+                return Err(format!(
+                    "plan.nodes[{i}].relation result_shape must be list or single"
+                ));
+            }
+            if n.expr.is_some()
+                || n.data.is_some()
+                || n.effect_template.is_some()
+                || n.compute.is_some()
+            {
+                return Err(format!(
+                    "plan.nodes[{i}].relation must not carry expr, data, effect_template, or compute"
+                ));
+            }
+            validate_relation_traversal(plan, relation, i, &by_id)?;
+        } else if n.relation.is_some() {
+            return Err(format!(
+                "plan.nodes[{i}].relation is only valid for relation nodes"
             ));
         }
         if let Some(data) = &n.data {
@@ -959,6 +1060,17 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 format!(
                     "plan.nodes[{i}].compute.source references unknown id {:?}",
                     compute.source
+                )
+            })?;
+            if !adj[i].contains(&t) {
+                adj[i].push(t);
+            }
+        }
+        if let Some(relation) = &n.relation {
+            let t = *by_id.get(&relation.source).ok_or_else(|| {
+                format!(
+                    "plan.nodes[{i}].relation.source references unknown id {:?}",
+                    relation.source
                 )
             })?;
             if !adj[i].contains(&t) {
@@ -1102,6 +1214,29 @@ fn validated_node_from_raw(
             depends_on,
             uses_result,
         })),
+        PlanNodeKind::Relation => {
+            let relation = node
+                .relation
+                .as_ref()
+                .ok_or_else(|| format!("plan.nodes[{node_index}].relation is required"))?;
+            Ok(ValidatedPlanNode::RelationTraversal(
+                ValidatedRelationTraversalNode {
+                    id,
+                    effect_class: node.effect_class,
+                    result_shape: node.result_shape,
+                    relation: ValidatedPlanRelationTraversal {
+                        source: PlanNodeId::new(relation.source.clone())?,
+                        relation: RelationName::new(relation.relation.clone())?,
+                        target: relation.target.clone(),
+                        cardinality: relation.cardinality,
+                        source_cardinality: relation.source_cardinality,
+                        expr: relation.expr.clone(),
+                    },
+                    depends_on,
+                    uses_result,
+                },
+            ))
+        }
         PlanNodeKind::ForEach => Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
             id,
             effect_class: node.effect_class,
@@ -1147,7 +1282,7 @@ fn validated_data_input(
                     return Err(format!(
                         "input {:?} is not statically singleton and lacks explicit singleton proof",
                         input.node
-                    ))
+                    ));
                 }
             }
         }
@@ -1366,6 +1501,25 @@ fn analyze_static_cardinality(
                     }
                 })
                 .unwrap_or(CardinalityAnalysis::PluralOrUnknown),
+            PlanNodeKind::Relation => node
+                .relation
+                .as_ref()
+                .map(
+                    |relation| match (relation.cardinality, relation.source_cardinality) {
+                        (RelationCardinality::One, RelationSourceCardinality::Single) => {
+                            inner(plan, by_id, &relation.source, memo)
+                        }
+                        (
+                            RelationCardinality::One,
+                            RelationSourceCardinality::RuntimeCheckedSingleton,
+                        ) => CardinalityAnalysis::PluralOrUnknown,
+                        (RelationCardinality::Many, _)
+                        | (RelationCardinality::One, RelationSourceCardinality::Many) => {
+                            CardinalityAnalysis::PluralOrUnknown
+                        }
+                    },
+                )
+                .unwrap_or(CardinalityAnalysis::PluralOrUnknown),
             _ => CardinalityAnalysis::PluralOrUnknown,
         };
         memo.insert(node_id.to_string(), singleton);
@@ -1443,6 +1597,48 @@ fn validate_compute_template(
             ));
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_relation_traversal(
+    plan: &Plan,
+    relation: &PlanRelationTraversal,
+    node_index: usize,
+    by_id: &HashMap<String, usize>,
+) -> Result<(), String> {
+    if relation.source.trim().is_empty() || !by_id.contains_key(&relation.source) {
+        return Err(format!(
+            "plan.nodes[{node_index}].relation.source references unknown id {:?}",
+            relation.source
+        ));
+    }
+    RelationName::new(relation.relation.clone())
+        .map_err(|e| format!("plan.nodes[{node_index}].relation.relation: {e}"))?;
+    if relation.target.entry_id.trim().is_empty() || relation.target.entity.trim().is_empty() {
+        return Err(format!(
+            "plan.nodes[{node_index}].relation.target must include non-empty entry_id and entity"
+        ));
+    }
+    if relation.expr.trim().is_empty() {
+        return Err(format!("plan.nodes[{node_index}].relation.expr is empty"));
+    }
+    if relation.cardinality == RelationCardinality::One
+        && relation.source_cardinality == RelationSourceCardinality::Many
+    {
+        return Err(format!(
+            "plan.nodes[{node_index}].relation one-cardinality traversal requires a singleton source; wrap the source with Plan.singleton(...)"
+        ));
+    }
+    if relation.cardinality == RelationCardinality::One
+        && relation.source_cardinality == RelationSourceCardinality::Single
+        && analyze_static_cardinality(plan, by_id, relation.source.as_str())
+            != CardinalityAnalysis::StaticSingleton
+    {
+        return Err(format!(
+            "plan.nodes[{node_index}].relation source {:?} is not statically singleton; use Plan.singleton(...) for runtime-checked traversal",
+            relation.source
+        ));
     }
     Ok(())
 }
@@ -1731,6 +1927,105 @@ mod tests {
             "return": "totals"
         });
         assert!(validate_plan_value(&bad_aggregate).is_err());
+    }
+
+    #[test]
+    fn search_requires_read_list_shape() {
+        let bad_shape = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "search",
+                "kind": "search",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product~\"bolt\"",
+                "effect_class": "read",
+                "result_shape": "single"
+            }],
+            "return": "search"
+        });
+        let err = validate_plan_value(&bad_shape).expect_err("bad search shape rejected");
+        assert!(err.contains("search result_shape must be list"), "{err}");
+    }
+
+    #[test]
+    fn relation_traversal_carries_validated_proof() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "expr": "Product(\"p1\").category"
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                }
+            ],
+            "return": "category"
+        });
+        let plan = parse_plan_value(&v).expect("parse");
+        let validated = validate_plan_artifact(&plan).expect("validate");
+        assert_eq!(validated.topological_order()[0].as_str(), "product");
+        assert_eq!(validated.topological_order()[1].as_str(), "category");
+        assert!(matches!(
+            &validated.nodes()[1],
+            ValidatedPlanNode::RelationTraversal(node)
+                if node.relation.target.entity == "Category"
+        ));
+    }
+
+    #[test]
+    fn relation_one_rejects_plural_source_without_singleton_proof() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "products",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "effect_class": "read",
+                    "result_shape": "list"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "relation": {
+                        "source": "products",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "many",
+                        "expr": "Product.category"
+                    },
+                    "depends_on": ["products"]
+                }
+            ],
+            "return": "category"
+        });
+        let err = validate_plan_value(&v).expect_err("plural one relation rejected");
+        assert!(err.contains("requires a singleton source"), "{err}");
     }
 
     #[test]

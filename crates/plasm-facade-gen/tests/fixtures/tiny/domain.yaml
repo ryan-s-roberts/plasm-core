@@ -18,6 +18,27 @@ entities:
         field_type: string
         required: false
         string_semantics: short
+      category_id:
+        field_type: entity_ref
+        target: Category
+        required: false
+    relations:
+      category:
+        description: Category this product belongs to
+        target: Category
+        cardinality: one
+  Category:
+    id_field: id
+    description: Product category fixture
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
     relations: {}
 
 capabilities:
@@ -25,6 +46,31 @@ capabilities:
     description: Fetch a product by id
     kind: get
     entity: Product
+    provides:
+    - id
+    - name
+    - category_id
+  product_query:
+    description: List products
+    kind: query
+    entity: Product
+  product_search:
+    description: Search products by free text
+    kind: search
+    entity: Product
+    parameters:
+    - name: q
+      type: string
+      required: true
+      role: search
+      string_semantics: short
+    - name: active
+      type: boolean
+      required: false
+  category_get:
+    description: Fetch a category by id
+    kind: get
+    entity: Category
     provides:
     - id
     - name

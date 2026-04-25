@@ -133,7 +133,7 @@ fn derive_ast_plan_hints(body: &[Statement<'_>]) -> CodeModeAstPlanHints {
             for d in &decl.declarations {
                 if let (Some(name), Some(init)) = (binding_identifier_name(&d.id), d.init.as_ref())
                 {
-                    if is_plan_node_initializer(init) {
+                    if is_plan_node_initializer_with_known(init, &node_ids) {
                         node_ids.insert(name);
                     }
                 }
@@ -145,6 +145,33 @@ fn derive_ast_plan_hints(body: &[Statement<'_>]) -> CodeModeAstPlanHints {
     }
 }
 
+fn is_plan_node_initializer_with_known(
+    expr: &Expression<'_>,
+    known_node_ids: &BTreeSet<String>,
+) -> bool {
+    match expr {
+        Expression::CallExpression(call) => {
+            is_plan_call_expression(call) || is_known_node_member_call(call, known_node_ids)
+        }
+        Expression::ParenthesizedExpression(p) => {
+            is_plan_node_initializer_with_known(&p.expression, known_node_ids)
+        }
+        Expression::TSAsExpression(e) => {
+            is_plan_node_initializer_with_known(&e.expression, known_node_ids)
+        }
+        Expression::TSSatisfiesExpression(e) => {
+            is_plan_node_initializer_with_known(&e.expression, known_node_ids)
+        }
+        Expression::TSNonNullExpression(e) => {
+            is_plan_node_initializer_with_known(&e.expression, known_node_ids)
+        }
+        Expression::TSInstantiationExpression(e) => {
+            is_plan_node_initializer_with_known(&e.expression, known_node_ids)
+        }
+        _ => false,
+    }
+}
+
 fn is_plan_node_initializer(expr: &Expression<'_>) -> bool {
     match expr {
         Expression::CallExpression(call) => is_plan_call_expression(call),
@@ -153,6 +180,21 @@ fn is_plan_node_initializer(expr: &Expression<'_>) -> bool {
         Expression::TSSatisfiesExpression(e) => is_plan_node_initializer(&e.expression),
         Expression::TSNonNullExpression(e) => is_plan_node_initializer(&e.expression),
         Expression::TSInstantiationExpression(e) => is_plan_node_initializer(&e.expression),
+        _ => false,
+    }
+}
+
+fn is_known_node_member_call(call: &CallExpression<'_>, known_node_ids: &BTreeSet<String>) -> bool {
+    match &call.callee {
+        Expression::StaticMemberExpression(member) => {
+            matches!(&member.object, Expression::Identifier(id) if known_node_ids.contains(id.name.as_str()))
+        }
+        Expression::ChainExpression(chain) => match &chain.expression {
+            oxc::ast::ast::ChainElement::StaticMemberExpression(member) => {
+                matches!(&member.object, Expression::Identifier(id) if known_node_ids.contains(id.name.as_str()))
+            }
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -397,7 +439,7 @@ fn flatten_esm_bootstrap(js: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        inject_plan_symbol_hints_typescript, transpile_typescript_to_javascript, CodeModeSandbox,
+        CodeModeSandbox, inject_plan_symbol_hints_typescript, transpile_typescript_to_javascript,
     };
 
     #[test]

@@ -4,15 +4,15 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
-use plasm_core::schema::CapabilityKind;
-use plasm_core::value::FieldType;
+use plasm_core::CGS;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
 use plasm_core::FieldSchema;
 use plasm_core::InputFieldSchema;
 use plasm_core::InputType;
 use plasm_core::OutputType;
-use plasm_core::CGS;
+use plasm_core::schema::CapabilityKind;
+use plasm_core::value::FieldType;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -436,6 +436,54 @@ fn jsdoc_comment(s: &Option<String>, indent: &str) -> String {
     }
 }
 
+fn input_param_type_to_ts(param: &FacadeInputParameter, cat_alias: &str) -> String {
+    let field = FacadeField {
+        name: param.name.clone(),
+        description: param.description.clone(),
+        r#type: param.r#type,
+        required: param.required,
+        value_format: None,
+        select_values: param.allowed_values.clone(),
+        entity_ref_target: None,
+    };
+    field_type_to_ts(&field, cat_alias)
+}
+
+fn search_input_fields_ts(entity: &QualifiedEntitySurface) -> String {
+    let Some(cap) = entity.capabilities.iter().find(|c| c.kind == "search") else {
+        return "    q: string;\n".to_string();
+    };
+    if cap.input_parameters.is_empty() {
+        return "    q: string;\n".to_string();
+    }
+    cap.input_parameters
+        .iter()
+        .map(|param| {
+            let q = if param.required { "" } else { "?" };
+            let ts = input_param_type_to_ts(param, entity.catalog_alias.as_str());
+            format!("    {}{q}: {ts};\n", param.name)
+        })
+        .collect::<String>()
+}
+
+fn relation_methods_ts(
+    entity: &QualifiedEntitySurface,
+    available_entities: &BTreeSet<String>,
+) -> String {
+    entity
+        .relations
+        .iter()
+        .filter(|rel| available_entities.contains(rel.target.as_str()))
+        .map(|rel| {
+            let name = to_js_identifier(rel.name.as_str());
+            format!(
+                "    /** Follow relation `{}` to `{}` ({}). */\n    {}(): {}NodeHandle;\n",
+                rel.name, rel.target, rel.cardinality, name, rel.target
+            )
+        })
+        .collect::<String>()
+}
+
 const TS_PRELUDE: &str = r#"declare namespace Plasm {
   export type EntityRef<Api extends string, E extends string, K = string> = {
     readonly api: Api;
@@ -453,6 +501,8 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
     | { readonly kind: "array"; readonly items: readonly PlanValue[] }
     | { readonly kind: "object"; readonly fields: Record<string, PlanValue> };
   export type PlanInputCardinality = "auto" | "singleton";
+  export type RelationCardinality = "one" | "many";
+  export type RelationSourceCardinality = "single" | "many" | "runtime_checked_singleton";
   export type PlanInputBinding = { readonly from: string; readonly to: string; readonly node?: string; readonly alias?: string; readonly cardinality?: PlanInputCardinality };
   export type PlanDataInput = { readonly node: string; readonly alias: string; readonly cardinality?: PlanInputCardinality };
   export type PredicateOp = "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "contains" | "in" | "exists";
@@ -484,6 +534,14 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
       readonly op: PlanComputeOp;
       readonly schema: SyntheticResultSchema;
       readonly page_size?: number;
+    };
+    readonly relation?: {
+      readonly source: string;
+      readonly relation: string;
+      readonly target: { readonly entry_id: string; readonly entity: string };
+      readonly cardinality: RelationCardinality;
+      readonly source_cardinality: RelationSourceCardinality;
+      readonly expr: string;
     };
   };
   export type SyntheticValueKind = "null" | "boolean" | "integer" | "number" | "string" | "array" | "object" | "unknown";
@@ -639,6 +697,17 @@ pub fn build_code_facade(
     // for new entities; `LoadedApis` one line per entry for this wave
     let mut namespace_body = String::new();
     for r in &qsurfaces {
+        let available_entities: BTreeSet<String> = qsurfaces
+            .iter()
+            .filter(|s| s.entry_id == r.entry_id)
+            .map(|s| s.entity.clone())
+            .chain(
+                req.already_emitted
+                    .iter()
+                    .filter(|(entry_id, _)| entry_id == &r.entry_id)
+                    .map(|(_, entity)| entity.clone()),
+            )
+            .collect();
         let ns = pascal(r.catalog_alias.as_str());
         let e_s = r
             .e_index
@@ -672,27 +741,49 @@ pub fn build_code_facade(
             );
         }
         let _ = writeln!(&mut namespace_body, "  }}");
+        let relation_methods = relation_methods_ts(r, &available_entities);
         let _ = writeln!(
             &mut namespace_body,
-            "  interface {e}QueryBuilder extends Plasm.PlanNodeHandle {{\n    /** Add structured predicates that the host preserves for dry-run and execution reports. */\n    where(...predicates: Plasm.PlanPredicate[]): this;\n    /** Select fields to include in typed projection metadata. */\n    select(...fields: Array<keyof {e}Row & string>): this;\n  }}\n  interface {e}Entity {{",
+            "  interface {e}NodeHandle extends Plasm.PlanNodeHandle {{\n{relation_methods}  }}\n  interface {e}QueryBuilder extends {e}NodeHandle {{\n    /** Add structured predicates that the host preserves for dry-run and execution reports. */\n    where(...predicates: Plasm.PlanPredicate[]): this;\n    /** Select fields to include in typed projection metadata. */\n    select(...fields: Array<keyof {e}Row & string>): this;\n  }}",
             e = r.entity
         );
-        if let Some(cap) = r
-            .capabilities
-            .iter()
-            .find(|c| c.kind == "query" || c.kind == "search")
-        {
-            namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+        if r.capabilities.iter().any(|c| c.kind == "search") {
+            let _ = writeln!(
+                &mut namespace_body,
+                "  type {e}SearchInput = string | {{\n{}  }};\n  interface {e}SearchBuilder extends {e}QueryBuilder {{}}",
+                search_input_fields_ts(r),
+                e = r.entity
+            );
         }
         let _ = writeln!(
             &mut namespace_body,
-            "    query(filters?: Partial<{e}Row>): {e}QueryBuilder;",
+            "  interface {e}Entity {{",
             e = r.entity
         );
+        if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "query") {
+            namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+            let _ = writeln!(
+                &mut namespace_body,
+                "    query(filters?: Partial<{e}Row>): {e}QueryBuilder;",
+                e = r.entity
+            );
+        }
+        if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "search") {
+            namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+            let _ = writeln!(
+                &mut namespace_body,
+                "    search(input: {e}SearchInput): {e}SearchBuilder;",
+                e = r.entity
+            );
+        }
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "get") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
         }
-        let _ = writeln!(&mut namespace_body, "    get(id: string): Plasm.PlanStep;");
+        let _ = writeln!(
+            &mut namespace_body,
+            "    get(id: string): {e}NodeHandle;",
+            e = r.entity
+        );
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
         }

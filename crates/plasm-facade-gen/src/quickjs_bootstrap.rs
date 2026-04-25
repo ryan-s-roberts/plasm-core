@@ -151,7 +151,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         function __nodeHandle(id, node) {
             const nid = id || __anonId();
             const h = { __planNodeId: nid };
-            if (node) h.__planNodes = [Object.assign({}, node, { id: nid })];
+            if (node) {
+                h.__planNodes = [Object.assign({}, node, { id: nid })];
+                h.__relations = node.__relations || [];
+                h.__resultShape = node.result_shape || "list";
+            }
             return __nodeHandleProxy(h);
         }
 
@@ -183,11 +187,14 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __nodeHandleProxy(handle, cardinality) {
+            if (cardinality) handle.__cardinality = cardinality;
             return new Proxy(handle, {
                 get(target, prop) {
                     if (prop in target) return target[prop];
                     if (typeof prop === "symbol") return target[prop];
                     if (prop === "__planValue" || prop === "__toPlanHandle") return undefined;
+                    const rel = (target.__relations || []).find(r => String(r.name) === String(prop));
+                    if (rel) return function() { return __relationTraversal(target, rel); };
                     const node = String(target.__planNodeId);
                     if (!__plasmAstHints.node_ids.includes(node)) {
                         throw new Error("Plan node field access is not AST-authorized for `" + node + "`");
@@ -542,45 +549,153 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return "(" + keys.map(k => k + "=" + __quote(input[k])).join(", ") + ")";
         }
 
-        export function makeEntity(entry_id, entity) {
+        const __plasmRelations = {};
+
+        function __relationsFor(entry_id, entity) {
+            return (((__plasmRelations || {})[entry_id] || {})[entity] || []);
+        }
+
+        function __searchInput(input, searchParam) {
+            if (input && typeof input === "object" && !Array.isArray(input) && !__isSpecial(input)) {
+                const candidates = [searchParam, "q", "query", "search", "text"].filter(Boolean).map(String);
+                const textKey = candidates.find(k => Object.prototype.hasOwnProperty.call(input, k));
+                const text = textKey ? input[textKey] : "";
+                const filters = {};
+                for (const k of Object.keys(input)) {
+                    if (k !== textKey) filters[k] = input[k];
+                }
+                return { text, filters };
+            }
+            return { text: input, filters: {} };
+        }
+
+        function __surfaceBuilder(entry_id, entity, kind, input, relations, searchParam) {
+            let projection = [];
+            let baseFilters = {};
+            let searchText = null;
+            if (kind === "search") {
+                const parsed = __searchInput(input, searchParam);
+                searchText = parsed.text;
+                baseFilters = parsed.filters || {};
+            } else {
+                baseFilters = input || {};
+            }
+            let predicates = __filterPredicates(baseFilters);
+            const builder = {
+                where(...ps) {
+                    predicates = predicates.concat(ps.flat());
+                    return this;
+                },
+                select(...fields) {
+                    projection = fields;
+                    return this;
+                },
+                yield() {
+                    const extraPredicates = predicates.slice(Object.keys(baseFilters || {}).length);
+                    const exprBase = kind === "search"
+                        ? entity + "~" + __quote(searchText) + __filters(baseFilters || {}, extraPredicates)
+                        : entity + __filters(baseFilters || {}, extraPredicates);
+                    const expr = projection.length ? exprBase + "[" + projection.join(",") + "]" : exprBase;
+                    const node = {
+                        kind,
+                        qualified_entity: { entry_id, entity },
+                        expr,
+                        effect_class: "read",
+                        result_shape: "list",
+                        projection,
+                        predicates,
+                        depends_on: [],
+                        uses_result: [],
+                    };
+                    node.__relations = relations || [];
+                    return __attachRelationMethods(node, relations || []);
+                },
+                as(id) {
+                    return __nodeHandle(id, Object.assign(this.yield(), { id }));
+                },
+                __toPlanHandle(id) {
+                    return __nodeHandle(id, this.yield());
+                },
+            };
+            return __attachRelationMethods(builder, relations || []);
+        }
+
+        function __attachRelationMethods(target, relations) {
+            for (const rel of (relations || [])) {
+                const name = String(rel.name);
+                if (target[name]) continue;
+                target[name] = function() {
+                    return __relationTraversal(target, rel);
+                };
+            }
+            target.__relations = relations || [];
+            return target;
+        }
+
+        function __relationTraversal(source, relation) {
+            return {
+                __toPlanHandle(id) {
+                    return this.as(id);
+                },
+                as(id) {
+                    const nodes = [];
+                    __collectNodes(source, nodes);
+                    let sourceId = source && source.__planNodeId ? __normalizeReturn(source) : null;
+                    if (!sourceId && source && source.kind && source.effect_class) {
+                        sourceId = source.id || (String(id) + "_source");
+                        nodes.push(Object.assign({}, source, { id: sourceId }));
+                    } else if (!sourceId && source && typeof source.yield === "function") {
+                        sourceId = String(id) + "_source";
+                        nodes.push(Object.assign({}, source.yield(), { id: sourceId }));
+                    }
+                    const sourceNode = nodes[nodes.length - 1];
+                    if (!sourceNode || !sourceNode.expr) {
+                        throw new Error("Relation traversal requires a source node with a Plasm expression");
+                    }
+                    const expr = sourceNode.expr + "." + relation.name;
+                    const sourceCardinality = source.__cardinality === "singleton"
+                        ? "runtime_checked_singleton"
+                        : (sourceNode.result_shape === "single" ? "single" : "many");
+                    const resultShape = relation.cardinality === "one" && sourceCardinality !== "many" ? "single" : "list";
+                    const target = { entry_id: relation.entry_id, entity: relation.target };
+                    const node = {
+                        id,
+                        kind: "relation",
+                        effect_class: "read",
+                        result_shape: resultShape,
+                        relation: {
+                            source: sourceId,
+                            relation: relation.name,
+                            target,
+                            cardinality: relation.cardinality,
+                            source_cardinality: sourceCardinality,
+                            expr,
+                        },
+                        qualified_entity: target,
+                        projection: [],
+                        predicates: [],
+                        depends_on: [sourceId],
+                        uses_result: [{ node: sourceId, as: "source" }],
+                    };
+                    node.__relations = __relationsFor(relation.entry_id, relation.target);
+                    nodes.push(node);
+                    const handle = __nodeHandle(id, node);
+                    handle.__planNodes = nodes;
+                    return handle;
+                }
+            };
+        }
+
+        export function makeEntity(entry_id, entity, relations, searchParam) {
             return {
                 query(filters) {
-                    let projection = [];
-                    let predicates = __filterPredicates(filters || {});
-                    return {
-                        where(...ps) {
-                            predicates = predicates.concat(ps.flat());
-                            return this;
-                        },
-                        select(...fields) {
-                            projection = fields;
-                            return this;
-                        },
-                        yield() {
-                            const exprBase = entity + __filters(filters || {}, predicates.slice(Object.keys(filters || {}).length));
-                            const expr = projection.length ? exprBase + "[" + projection.join(",") + "]" : exprBase;
-                            return {
-                                kind: "query",
-                                qualified_entity: { entry_id, entity },
-                                expr,
-                                effect_class: "read",
-                                result_shape: "list",
-                                projection,
-                                predicates,
-                                depends_on: [],
-                                uses_result: [],
-                            };
-                        },
-                        as(id) {
-                            return __nodeHandle(id, Object.assign(this.yield(), { id }));
-                        },
-                        __toPlanHandle(id) {
-                            return __nodeHandle(id, this.yield());
-                        },
-                    };
+                    return __surfaceBuilder(entry_id, entity, "query", filters, relations || [], null);
+                },
+                search(input) {
+                    return __surfaceBuilder(entry_id, entity, "search", input, relations || [], searchParam || "q");
                 },
                 get(id) {
-                    return {
+                    const node = {
                         kind: "get",
                         qualified_entity: { entry_id, entity },
                         expr: entity + "(" + __quote(id) + ")",
@@ -591,6 +706,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         depends_on: [],
                         uses_result: [],
                     };
+                    node.__relations = relations || [];
+                    return node;
                 },
                 create(input) {
                     const expr = entity + ".create" + __callArgs(input || {});
@@ -702,10 +819,38 @@ pub fn quickjs_runtime_from_facade_delta(delta: &FacadeDeltaV1) -> String {
         let alias = serde_json::Value::String(q.catalog_alias.clone()).to_string();
         let entity = serde_json::Value::String(q.entity.clone()).to_string();
         let entry_id = serde_json::Value::String(q.entry_id.clone()).to_string();
+        let relations = q
+            .relations
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "name": r.name,
+                    "target": r.target,
+                    "cardinality": r.cardinality,
+                    "entry_id": q.entry_id,
+                })
+            })
+            .collect::<Vec<_>>();
+        let relations_json = serde_json::to_string(&relations).unwrap_or_else(|_| "[]".to_string());
+        let search_param = q
+            .capabilities
+            .iter()
+            .find(|c| c.kind == "search")
+            .and_then(|cap| {
+                cap.input_parameters
+                    .iter()
+                    .find(|p| p.role.as_deref() == Some("search"))
+                    .or_else(|| cap.input_parameters.iter().find(|p| p.required))
+                    .map(|p| p.name.clone())
+            })
+            .unwrap_or_else(|| "q".to_string());
+        let search_param = serde_json::Value::String(search_param).to_string();
         let _ = writeln!(
             &mut out,
             "globalThis.plasm[{alias}] = globalThis.plasm[{alias}] || {{}};\n\
-             globalThis.plasm[{alias}][{entity}] = makeEntity({entry_id}, {entity});"
+             __plasmRelations[{entry_id}] = __plasmRelations[{entry_id}] || {{}};\n\
+             __plasmRelations[{entry_id}][{entity}] = {relations_json};\n\
+             globalThis.plasm[{alias}][{entity}] = makeEntity({entry_id}, {entity}, {relations_json}, {search_param});"
         );
     }
     out
@@ -750,6 +895,45 @@ mod tests {
             assert_eq!(v["version"], 1);
             assert_eq!(v["kind"], "program");
             assert_eq!(v["nodes"][0]["qualified_entity"]["entry_id"], "acme");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plasm_plan_json_serializes_search_nodes() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js.replace("export function", "function").replace("export class", "class");
+            let _v: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx
+                .eval("const Product = makeEntity('acme', 'Product', [], 'term'); const n = __plasmBind(Product.search({term: 'bolt', active: true}).select('id'), 'n1'); Plan.return(n)")
+                .expect("plan");
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["kind"], "search");
+            assert_eq!(v["nodes"][0]["expr"], "Product~\"bolt\"{active=true}[id]");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plasm_plan_json_serializes_relation_nodes() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js.replace("export function", "function").replace("export class", "class");
+            let _v: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx
+                .eval("const rels = [{ name: 'category', target: 'Category', cardinality: 'one', entry_id: 'acme' }]; const Product = makeEntity('acme', 'Product', rels); const p = __plasmBind(Product.get('p1'), 'p'); const c = __plasmBind(p.category(), 'c'); Plan.return(c)")
+                .expect("plan");
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][1]["kind"], "relation");
+            assert_eq!(v["nodes"][1]["relation"]["relation"], "category");
+            assert_eq!(v["nodes"][1]["relation"]["expr"], "Product(\"p1\").category");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
