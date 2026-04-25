@@ -109,7 +109,8 @@ pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_sessi
      **Session reuse (required default):** After the first successful **`add_capabilities`** open for that ref, **most subsequent user requests should be `plasm` only** with the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`** or repeat **`add_capabilities`** with the same catalog just to \"re-initialize\" -- that wastes tokens and breaks continuity. Call **`add_capabilities`** again **only** when you must **append** new **`api` / `entity`** seeds (another API, more entities) you have **not** already added. \
      Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
-     **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session.";
+     **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
+     **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
 
 fn parse_tool_seeds(
     tool: &str,
@@ -682,33 +683,33 @@ impl PlasmMcpHandler {
             eval_props.insert(
                 "logical_session_ref".into(),
                 json_schema_string_type(
-                    "From `plasm_session_init` (e.g. `s0`); the execute session must be open via `add_code_capabilities`.",
+                    "From `plasm_session_init` (e.g. `s0`); the execute session must be open via `add_code_capabilities` for the entities the TypeScript facade uses.",
                 ),
             );
             eval_props.insert(
                 "name".into(),
-                json_schema_string_type("Stable human-readable name for the archived plan."),
+                json_schema_string_type("Stable human-readable name for the archived plan; use a short task-oriented name so the `pN` handle is auditable."),
             );
             eval_props.insert(
                 "code".into(),
                 json_schema_string_type(
-                    "TypeScript Code Mode program. The host evaluates it in QuickJS, validates the resulting Plan, stores it permanently, and returns a small pN handle plus dry-run results.",
+                    "TypeScript Code Mode program for multiple coordinated operations, transformations, or compute. Prefer `plasm` for simple one-shot calls. Keep code narrow: use `.select(...)` / `Plan.project` for needed fields and `Plan.return(...)` only for final answer nodes.",
                 ),
             );
             let mut execute_plan_props = BTreeMap::new();
             execute_plan_props.insert(
                 "logical_session_ref".into(),
-                json_schema_string_type("Same logical session used to evaluate the plan."),
+                json_schema_string_type("Same logical session used to evaluate the plan; stale symbol spaces must re-evaluate before execution."),
             );
             execute_plan_props.insert(
                 "plan_handle".into(),
-                json_schema_string_type("Monotonic handle from `evaluate_code_plan`, e.g. `p1`."),
+                json_schema_string_type("Monotonic handle from `evaluate_code_plan`, e.g. `p1`; execute by handle instead of resending TypeScript."),
             );
             tools.push(Tool {
                 name: "add_code_capabilities".into(),
                 title: None,
                 description: Some(
-                    "Same as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). QuickJS runtime bootstrap stays host-injected and is not included in the agent payload. Use for code-first **Plan** authoring; the host still returns dry-run / execution results rather than exposing raw Plan internals by default.".into(),
+                    "Open capabilities for Code Mode authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Use only for multiple coordinated operations, transformations, compute, approval review, or reuse; prefer **`plasm`** for simple one-shot calls. Keep output small with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -731,7 +732,7 @@ impl PlasmMcpHandler {
                 name: "evaluate_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Evaluate a named TypeScript Code Mode program, archive the validated Plan permanently, and return a small `plan_handle` plus dry-run results. Use this before `execute_code_plan`; do not send the TypeScript again once a handle exists.".into(),
+                    "Evaluate a named TypeScript Code Mode program, archive the validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run DAG. Use this before **`execute_code_plan`**. Do not send TypeScript again once a handle exists unless changing the plan or symbol space. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "name".into(), "code".into()],
@@ -754,7 +755,7 @@ impl PlasmMcpHandler {
                 name: "execute_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Execute a previously archived Code Mode Plan by `plan_handle` (for example `p1`). The response uses the same Markdown, `_meta.plasm.steps`, resource links, and paging conventions as the `plasm` tool.".into(),
+                    "Execute a previously archived Code Mode Plan by **`plan_handle`** (for example `p1`). The response publishes only nodes named by **`Plan.return(...)`** and uses the same Markdown, **`_meta.plasm.steps`**, resource links, and paging conventions as **`plasm`**. Use artifact/resource links for full snapshots instead of returning wide intermediates.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "plan_handle".into()],
@@ -3103,8 +3104,12 @@ mod tests {
     /// Code-mode plan tools document the archive handle flow.
     #[cfg(feature = "code_mode")]
     #[test]
-    fn mcp_code_plan_tools_mention_handle_flow() {
+    fn mcp_code_plan_tools_document_when_how_and_small_outputs() {
         let tools = super::PlasmMcpHandler::plasm_tools();
+        let add = tools
+            .iter()
+            .find(|t| t.name == "add_code_capabilities")
+            .expect("add_code_capabilities tool");
         let eval = tools
             .iter()
             .find(|t| t.name == "evaluate_code_plan")
@@ -3114,14 +3119,51 @@ mod tests {
             .find(|t| t.name == "execute_code_plan")
             .expect("execute_code_plan tool");
         let d = format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
+            add.description.as_deref().unwrap(),
             eval.description.as_deref().unwrap(),
             run.description.as_deref().unwrap()
         );
         assert!(
-            d.contains("plan_handle") && d.contains("archived") && d.contains("_meta.plasm.steps"),
+            d.contains("plan_handle")
+                && d.contains("archived")
+                && d.contains("_meta.plasm.steps")
+                && d.contains("prefer **`plasm`**")
+                && d.contains("multiple coordinated operations")
+                && d.contains("transformations")
+                && d.contains("compute")
+                && d.contains("Plan.project")
+                && d.contains(".select(...)")
+                && d.contains("Plan.return(...)")
+                && d.contains("final answer nodes")
+                && d.contains("wide intermediates"),
             "code plan tool descriptions: {d}"
         );
+    }
+
+    #[cfg(feature = "code_mode")]
+    #[test]
+    fn initialize_instructions_document_code_mode_decision_and_flow() {
+        let d = super::MCP_SERVER_INITIALIZE_INSTRUCTIONS;
+        for expected in [
+            "prefer **`plasm`** for one-shot reads/writes",
+            "multiple operations needing coordination",
+            "transformation",
+            "compute",
+            "add_code_capabilities",
+            "evaluate_code_plan(name, code)",
+            "execute_code_plan(plan_handle)",
+            "Reuse the **`plan_handle`**",
+            "Plan.project",
+            ".select(...)",
+            "Plan.return(...)",
+            "not intermediates",
+        ] {
+            assert!(
+                d.contains(expected),
+                "initialize instructions missing {expected:?}: {d}"
+            );
+        }
     }
 
     #[cfg(feature = "code_mode")]
