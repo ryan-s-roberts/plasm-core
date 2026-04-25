@@ -20,6 +20,7 @@ use http_problem::Problem;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use uuid::Uuid;
 
@@ -46,6 +47,36 @@ pub struct TraceListQuery {
 
 fn default_limit() -> usize {
     50
+}
+
+fn trace_list_limit(limit: usize) -> usize {
+    limit.clamp(1, 200)
+}
+
+fn merge_trace_summaries(
+    durable: Vec<TraceSummaryDto>,
+    live: Vec<TraceSummaryDto>,
+    offset: usize,
+    limit: usize,
+) -> Vec<TraceSummaryDto> {
+    let mut by_trace_id: HashMap<String, TraceSummaryDto> = HashMap::new();
+    for trace in durable {
+        by_trace_id.insert(trace.trace_id.clone(), trace);
+    }
+    for trace in live {
+        by_trace_id.insert(trace.trace_id.clone(), trace);
+    }
+    let mut traces = by_trace_id.into_values().collect::<Vec<_>>();
+    traces.sort_by(|a, b| {
+        b.started_at_ms
+            .cmp(&a.started_at_ms)
+            .then_with(|| b.trace_id.cmp(&a.trace_id))
+    });
+    traces
+        .into_iter()
+        .skip(offset)
+        .take(trace_list_limit(limit))
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -82,9 +113,11 @@ async fn list_traces(
     Extension(principal): Extension<IncomingPrincipal>,
     Query(q): Query<TraceListQuery>,
 ) -> Result<Json<TraceListResponse>, Response> {
+    let status = TraceListStatus::parse(q.status.as_deref());
+    let limit = trace_list_limit(q.limit);
+    let merged_limit = q.offset.saturating_add(limit);
     if let Some(tenant) = viewer_tenant(&principal) {
         if let Some(base) = st.trace_sink_read_base_url.as_deref() {
-            let merged_limit = q.offset.saturating_add(q.limit);
             let list_span = crate::spans::billing_trace_list(tenant, q.limit, q.offset);
             match list_traces_from_sink(
                 base,
@@ -97,7 +130,21 @@ async fn list_traces(
             .instrument(list_span)
             .await
             {
-                Ok(traces) => return Ok(Json(TraceListResponse { traces })),
+                Ok(durable) => {
+                    let live = st
+                        .trace_hub
+                        .list_for_tenant(
+                            Some(tenant),
+                            q.project_slug.as_deref(),
+                            0,
+                            merged_limit,
+                            status,
+                        )
+                        .await;
+                    return Ok(Json(TraceListResponse {
+                        traces: merge_trace_summaries(durable, live, q.offset, limit),
+                    }));
+                }
                 Err(detail) => {
                     tracing::warn!(
                         target: "plasm_agent::http_traces",
@@ -109,12 +156,25 @@ async fn list_traces(
                 }
             }
         } else if let Some(arch) = st.local_trace_archive.as_ref() {
-            let st_q = TraceListStatus::parse(q.status.as_deref());
             match arch
-                .list_for_tenant(tenant, q.project_slug.as_deref(), q.offset, q.limit, st_q)
+                .list_for_tenant(tenant, q.project_slug.as_deref(), 0, merged_limit, status)
                 .await
             {
-                Ok(traces) => return Ok(Json(TraceListResponse { traces })),
+                Ok(durable) => {
+                    let live = st
+                        .trace_hub
+                        .list_for_tenant(
+                            Some(tenant),
+                            q.project_slug.as_deref(),
+                            0,
+                            merged_limit,
+                            status,
+                        )
+                        .await;
+                    return Ok(Json(TraceListResponse {
+                        traces: merge_trace_summaries(durable, live, q.offset, limit),
+                    }));
+                }
                 Err(e) => {
                     tracing::warn!(
                         target: "plasm_agent::http_traces",
@@ -143,8 +203,8 @@ async fn list_traces(
             viewer_tenant(&principal),
             q.project_slug.as_deref(),
             q.offset,
-            q.limit,
-            TraceListStatus::parse(q.status.as_deref()),
+            limit,
+            status,
         )
         .await;
     Ok(Json(TraceListResponse { traces }))
@@ -440,5 +500,76 @@ fn hub_totals_from_sink(
         code_plan_code_chars: t.code_plan_code_chars,
         code_plan_nodes: t.code_plan_nodes,
         code_plan_derived_runs: t.code_plan_derived_runs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trace_hub::TraceTotals;
+
+    fn summary(trace_id: &str, status: &'static str, started_at_ms: u64) -> TraceSummaryDto {
+        TraceSummaryDto {
+            trace_id: trace_id.to_string(),
+            mcp_session_id: format!("mcp-{trace_id}"),
+            logical_session_id: None,
+            status,
+            started_at_ms,
+            ended_at_ms: if status == "completed" {
+                Some(started_at_ms + 10)
+            } else {
+                None
+            },
+            project_slug: "main".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            mcp_config: None,
+            totals: TraceTotals::default(),
+        }
+    }
+
+    #[test]
+    fn merge_trace_summaries_prefers_live_duplicate_and_sorts_newest_first() {
+        let duplicate_id = Uuid::new_v4().to_string();
+        let old_id = Uuid::new_v4().to_string();
+        let newest_id = Uuid::new_v4().to_string();
+
+        let durable = vec![
+            summary(&duplicate_id, "completed", 100),
+            summary(&old_id, "completed", 50),
+        ];
+        let live = vec![
+            summary(&duplicate_id, "live", 300),
+            summary(&newest_id, "live", 400),
+        ];
+
+        let merged = merge_trace_summaries(durable, live, 0, 10);
+
+        assert_eq!(
+            merged
+                .iter()
+                .map(|t| t.trace_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![newest_id.as_str(), duplicate_id.as_str(), old_id.as_str()]
+        );
+        let duplicate = merged.iter().find(|t| t.trace_id == duplicate_id).unwrap();
+        assert_eq!(duplicate.status, "live");
+        assert_eq!(duplicate.started_at_ms, 300);
+    }
+
+    #[test]
+    fn merge_trace_summaries_applies_offset_and_limit_after_merge() {
+        let a = Uuid::new_v4().to_string();
+        let b = Uuid::new_v4().to_string();
+        let c = Uuid::new_v4().to_string();
+
+        let merged = merge_trace_summaries(
+            vec![summary(&a, "completed", 100), summary(&c, "completed", 300)],
+            vec![summary(&b, "live", 200)],
+            1,
+            1,
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].trace_id, b);
     }
 }
