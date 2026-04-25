@@ -571,17 +571,22 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
   };
   export type Symbolic<T = unknown> = T & { readonly __bindingPath: string; readonly __plasmExpr: string };
   export type TemplateValue = { readonly __plasmExpr: string; readonly __planValue: PlanValue; readonly input_bindings: readonly PlanInputBinding[] };
+  export type ProjectionValue = Symbolic<unknown>;
+  export type PlanReturnable = PlanNodeHandle | Record<string, PlanNodeHandle>;
 }
 declare class Plan {
-  static return(value: string | Plasm.PlanNodeHandle | Record<string, string | Plasm.PlanNodeHandle>): string;
+  static return(value: Plasm.PlanReturnable): string;
   static data(value: unknown): Plasm.PlanNodeHandle;
   static singleton<T extends Plasm.PlanNodeHandle>(source: T): T;
   static map<T, R>(source: Plasm.PlanNodeHandle, fn: (item: Plasm.Symbolic<T>) => R): Plasm.PlanNodeHandle;
-  static project<T>(source: Plasm.PlanNodeHandle, spec: Record<string, (item: Plasm.Symbolic<T>) => unknown> | readonly string[]): Plasm.PlanNodeHandle;
+  static project<T>(source: Plasm.PlanNodeHandle, spec: Record<string, (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue> | readonly string[]): Plasm.PlanNodeHandle;
   static filter<T>(source: Plasm.PlanNodeHandle, ...predicates: readonly Plasm.PlanPredicate[]): Plasm.PlanNodeHandle;
+  /** Aggregates over the full logical source collection. Returned result views may be paged. */
   static aggregate(source: Plasm.PlanNodeHandle, aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle;
-  static groupBy<T>(source: Plasm.PlanNodeHandle, keyFn: (item: Plasm.Symbolic<T>) => unknown): { count(name?: string): Plasm.PlanNodeHandle; aggregate(aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle };
-  static sort<T>(source: Plasm.PlanNodeHandle, keyFn: (item: Plasm.Symbolic<T>) => unknown, direction?: "asc" | "desc"): Plasm.PlanNodeHandle;
+  /** Groups the full logical source collection. Returned result views may be paged. */
+  static groupBy<T>(source: Plasm.PlanNodeHandle, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue): { count(name?: string): Plasm.PlanNodeHandle; aggregate(aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle };
+  static sort<T>(source: Plasm.PlanNodeHandle, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue, direction?: "asc" | "desc"): Plasm.PlanNodeHandle;
+  /** Semantic truncation of the DAG collection, not ordinary result pagination. */
   static limit(source: Plasm.PlanNodeHandle, count: number): Plasm.PlanNodeHandle;
   static table(source: Plasm.PlanNodeHandle, spec: { readonly columns: readonly string[]; readonly hasHeader?: boolean }): Plasm.PlanNodeHandle;
 }
@@ -727,11 +732,21 @@ pub fn build_code_facade(
             eid = r.entry_id
         );
         namespace_body.push_str(&jsdoc_comment(&r.description, "  "));
+        let _ = writeln!(
+            &mut namespace_body,
+            "  /** Row surface for this catalog version. Optional fields may be absent/null when a list/search endpoint returns a summary shape; use get(...) or an explicit modeled relation when detail hydration is required. CGS relations are not ordinary row fields unless this interface declares them. */"
+        );
         writeln!(&mut namespace_body, "  interface {e}Row {{", e = r.entity).ok();
         for f in &r.fields {
             let q = if f.required { "" } else { "?" };
             let ts = field_type_to_ts(f, r.catalog_alias.as_str());
             namespace_body.push_str(&jsdoc_comment(&f.description, "    "));
+            if !f.required {
+                let _ = writeln!(
+                    &mut namespace_body,
+                    "    /** Optional in CGS; may be absent or null in summary/list rows. */"
+                );
+            }
             let _ = writeln!(
                 &mut namespace_body,
                 "    {}{q}: {ts};",
@@ -764,7 +779,7 @@ pub fn build_code_facade(
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
             let _ = writeln!(
                 &mut namespace_body,
-                "    query(filters?: Partial<{e}Row>): {e}QueryBuilder;",
+                "    /** Logical collection over all enumerable rows; result rendering/artifacts may page the returned view. Use Plan.limit(...) for semantic truncation. */\n    query(filters?: Partial<{e}Row>): {e}QueryBuilder;",
                 e = r.entity
             );
         }
@@ -781,7 +796,7 @@ pub fn build_code_facade(
         }
         let _ = writeln!(
             &mut namespace_body,
-            "    get(id: string): {e}NodeHandle;",
+            "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: string): {e}NodeHandle;",
             e = r.entity
         );
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {

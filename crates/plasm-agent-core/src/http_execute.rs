@@ -1973,6 +1973,18 @@ pub async fn execute_code_mode_plasm_line(
 }
 
 #[cfg(feature = "code_mode")]
+pub async fn trace_record_code_mode_plasm_line(
+    sink: &McpPlasmTraceSink,
+    line_index: usize,
+    line: &str,
+    parsed: &ParsedExpr,
+    result: &ExecutionResult,
+    sess: &ExecuteSession,
+) {
+    trace_record_plasm_line_batch(sink, line_index, line, parsed, result, sess).await;
+}
+
+#[cfg(feature = "code_mode")]
 pub async fn archive_code_mode_result_snapshot(
     st: &PlasmHostState,
     sess: &ExecuteSession,

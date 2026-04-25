@@ -22,7 +22,7 @@ use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
     PublishedResultStep, archive_code_mode_result_snapshot, execute_code_mode_plasm_line,
-    publish_code_mode_result_steps,
+    publish_code_mode_result_steps, trace_record_code_mode_plasm_line,
 };
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -307,6 +307,7 @@ pub fn render_code_mode_plan_dry_text(
         .map_or(0, Vec::len);
     let reads = json_string_array(summary.get("read_nodes")).len();
     let writes = json_string_array(summary.get("write_or_side_effect_nodes")).len();
+    let warnings = json_string_array(summary.get("warnings"));
     let staged = dry.execution_unsupported.len();
 
     let _ = writeln!(out, "code-plan dry-run");
@@ -352,6 +353,13 @@ pub fn render_code_mode_plan_dry_text(
         }
     );
     let _ = writeln!(out);
+    if !warnings.is_empty() {
+        let _ = writeln!(out, "warnings:");
+        for warning in warnings {
+            let _ = writeln!(out, "- {warning}");
+        }
+        let _ = writeln!(out);
+    }
     let _ = writeln!(out, "dag:");
 
     for (ordinal, id) in dry.topological_order.iter().enumerate() {
@@ -386,6 +394,45 @@ pub fn render_code_mode_plan_dry_text(
         let _ = writeln!(out, "- {line}");
     }
     out
+}
+
+/// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
+/// compact dry-run text, so clients do not have to parse Markdown to draw plan topology.
+pub fn code_mode_plan_dag_json(dry: &DryCodeModePlanEvaluation) -> serde_json::Value {
+    let plan = dry.validated_plan();
+    let nodes = plan
+        .nodes
+        .iter()
+        .map(|node| {
+            serde_json::json!({
+                "id": node.id().as_str(),
+                "kind": node.kind(),
+                "effect_class": node.effect_class(),
+                "result_shape": node.result_shape(),
+                "dependencies": node_dependencies(node),
+                "uses_result": render_uses_result(node),
+                "operation": render_node_operation(node),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut edges = Vec::new();
+    for node in &plan.nodes {
+        for from in node_dependencies(node) {
+            edges.push(serde_json::json!({
+                "from": from,
+                "to": node.id().as_str(),
+            }));
+        }
+    }
+    serde_json::json!({
+        "version": plan.version,
+        "name": dry.name.clone(),
+        "nodes": nodes,
+        "edges": edges,
+        "topological_order": dry.topological_order.clone(),
+        "returns": render_return_lines(&plan.return_value),
+        "summary": dry.graph_summary.clone(),
+    })
 }
 
 fn json_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
@@ -782,6 +829,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
     let mut template_nodes = Vec::new();
     let mut approval_gates = Vec::new();
     let mut parallelizable_roots = Vec::new();
+    let mut warnings = Vec::new();
 
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
@@ -800,6 +848,34 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
         if let Some(approval) = inferred_node_approval(n) {
             approval_gates.push(approval);
         }
+        if matches!(n.result_shape(), crate::code_mode_plan::ResultShape::List)
+            && n.effect_class() == EffectClass::Read
+            && node_dependencies(n).is_empty()
+        {
+            warnings.push(format!(
+                "{} is an unbounded read root; first evaluate small plans with Plan.limit(...) when cost or latency is uncertain",
+                n.id().as_str()
+            ));
+        }
+        if matches!(n, ValidatedPlanNode::Compute(_)) {
+            let op = render_node_operation(n);
+            warnings.push(format!(
+                "{} computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed",
+                n.id().as_str()
+            ));
+            if op.contains("limit ") {
+                warnings.push(format!(
+                    "{} uses Plan.limit for explicit semantic truncation",
+                    n.id().as_str()
+                ));
+            }
+        }
+        if matches!(n, ValidatedPlanNode::ForEach(_)) {
+            warnings.push(format!(
+                "{} may fan out over every row in its logical source; keep the source bounded when approval/cost matters",
+                n.id().as_str()
+            ));
+        }
     }
 
     serde_json::json!({
@@ -810,6 +886,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
         "template_nodes": template_nodes,
         "approval_gates": approval_gates,
         "parallelizable_roots": parallelizable_roots,
+        "warnings": warnings,
     })
 }
 
@@ -1229,6 +1306,9 @@ pub async fn run_validated_code_mode_plan(
 #[derive(Debug, Clone)]
 struct MaterializedNode {
     result: ExecutionResult,
+    /// Complete logical rows for downstream DAG semantics. `result.entities` may be a paged view for
+    /// display/publication, but compute/project/group/map must consume the full materialized collection.
+    all_entities: Vec<CachedEntity>,
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     display: String,
     projection: Option<Vec<String>>,
@@ -1259,7 +1339,6 @@ async fn run_validated_plan_phased(
         sink = Some(hooks.sink);
         meta_index = Some(hooks.meta_index);
     }
-    let _ = sink;
     for node_id in validated.topological_order() {
         let idx = validated
             .node_index(node_id)
@@ -1283,9 +1362,21 @@ async fn run_validated_plan_phased(
                     idx as i64,
                 )
                 .await?;
+                if let Some(sink) = sink.as_ref() {
+                    trace_record_code_mode_plasm_line(
+                        sink,
+                        idx,
+                        &surface.expr,
+                        &parsed,
+                        &result,
+                        es,
+                    )
+                    .await;
+                }
                 MaterializedNode {
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
+                    all_entities: result.entities.clone(),
                     result,
                     artifact,
                 }
@@ -1441,6 +1532,7 @@ async fn materialize_synthetic_node(
     Ok(MaterializedNode {
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
+        all_entities: full_result.entities.clone(),
         result: ExecutionResult {
             count: entities.len(),
             entities,
@@ -1478,8 +1570,7 @@ fn materialized_rows(
         )
     })?;
     Ok(mat
-        .result
-        .entities
+        .all_entities
         .iter()
         .map(CachedEntity::payload_to_json)
         .collect())
@@ -1498,18 +1589,17 @@ fn materialized_singleton_inputs(
                 input.alias.as_str()
             )
         })?;
-        if mat.result.has_more || mat.result.entities.len() != 1 {
+        if mat.all_entities.len() != 1 {
             return Err(format!(
                 "Plan input {:?} for alias {:?} expected one row for {:?} broadcast, got {}",
                 input.node.as_str(),
                 input.alias.as_str(),
                 input.proof,
-                mat.result.entities.len()
+                mat.all_entities.len()
             ));
         }
         let row = mat
-            .result
-            .entities
+            .all_entities
             .first()
             .map(CachedEntity::payload_to_json)
             .ok_or_else(|| {
@@ -2270,6 +2360,11 @@ mod tests {
             "return": { "summary": "summary", "cards": "cards" }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dag = code_mode_plan_dag_json(&dry);
+        assert_eq!(dag["nodes"][0]["id"], "products");
+        assert_eq!(dag["nodes"][1]["dependencies"][0], "products");
+        assert_eq!(dag["edges"][0]["from"], "products");
+        assert_eq!(dag["edges"][0]["to"], "summary");
         let text = render_code_mode_plan_dry_text(
             &dry,
             Some(CodePlanDryRunTextMeta {

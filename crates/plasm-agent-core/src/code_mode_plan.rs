@@ -837,7 +837,10 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         return Err(format!("unsupported Plan version: {}", plan.version));
     }
     if plan.nodes.is_empty() {
-        return Err("plan.nodes must be non-empty".to_string());
+        return Err(
+            "plan.nodes must be non-empty: every Code Mode plan needs at least one DAG root such as plasm.<api>.<Entity>.query() or plasm.<api>.<Entity>.get(...); Plan.return({ x: 1 }) is a literal-only program and cannot execute"
+                .to_string(),
+        );
     }
     let mut by_id: HashMap<String, usize> = HashMap::new();
     for (i, n) in plan.nodes.iter().enumerate() {
@@ -1647,6 +1650,18 @@ fn validate_return_refs(
     ret: &PlanReturn,
     by_id: &HashMap<String, usize>,
 ) -> Result<ValidatedPlanReturn, String> {
+    match ret {
+        PlanReturn::Node(id) if id.trim().is_empty() => {
+            return Err("plan.return node id must be non-empty".to_string());
+        }
+        PlanReturn::Parallel { parallel } if parallel.is_empty() => {
+            return Err("plan.return.parallel must contain at least one node".to_string());
+        }
+        PlanReturn::Record(map) if map.is_empty() => {
+            return Err("plan.return record must contain at least one named node".to_string());
+        }
+        _ => {}
+    }
     for id in return_refs(ret) {
         if !by_id.contains_key(id) {
             return Err(format!("plan.return references unknown id {id:?}"));

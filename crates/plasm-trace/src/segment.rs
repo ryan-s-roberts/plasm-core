@@ -146,6 +146,8 @@ pub enum TraceSegment {
         session_id: String,
         node_count: usize,
         code_chars: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dag: Option<serde_json::Value>,
     },
     CodePlanExecute {
         plan_handle: String,
@@ -164,6 +166,10 @@ pub enum TraceSegment {
         node_count: usize,
         #[serde(default)]
         code_chars: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dag: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plasm_call_index: Option<u64>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         run_ids: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -191,10 +197,12 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 42,
+            dag: Some(serde_json::json!({"nodes": [{"id": "n1"}], "edges": []})),
         };
         let v = serde_json::to_value(eval).expect("json");
         assert_eq!(v["kind"], "code_plan_evaluate");
         assert_eq!(v["plan_handle"], "p1");
+        assert_eq!(v["dag"]["nodes"][0]["id"], "n1");
 
         let exec = TraceSegment::CodePlanExecute {
             plan_handle: "p1".into(),
@@ -210,6 +218,8 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 42,
+            dag: Some(serde_json::json!({"nodes": [{"id": "n1"}], "edges": []})),
+            plasm_call_index: Some(7),
             run_ids: vec!["r1".into()],
             run_artifacts: vec![super::CodePlanRunArtifactRef {
                 run_id: "r1".into(),
@@ -224,6 +234,7 @@ mod tests {
         };
         let v = serde_json::to_value(exec).expect("json");
         assert_eq!(v["kind"], "code_plan_execute");
+        assert_eq!(v["plasm_call_index"], 7);
         assert_eq!(v["run_ids"][0], "r1");
         assert_eq!(v["run_artifacts"][0]["run_id"], "r1");
     }
