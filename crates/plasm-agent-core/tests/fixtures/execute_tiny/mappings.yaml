@@ -4,10 +4,28 @@ product_list:
     - type: literal
       value: "/products"
 
+product_search:
+  method: GET
+  path:
+    - type: literal
+      value: "/products/search"
+  query:
+    type: object
+    fields:
+      - ["q", { type: var, name: q }]
+
 product_get:
   method: GET
   path:
     - type: literal
       value: "/products"
+    - type: var
+      name: id
+
+category_get:
+  method: GET
+  path:
+    - type: literal
+      value: "/categories"
     - type: var
       name: id

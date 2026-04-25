@@ -1,28 +1,28 @@
 //! Code Mode MCP helpers: parse Plasm effect plans and optional QuickJS bootstrap string.
 
+use plasm_core::CGS;
+use plasm_core::TypeError;
 use plasm_core::cgs_federation::FederationDispatch;
-use plasm_core::expr_parser::{parse, parse_with_cgs_layers, ParseError, ParsedExpr};
+use plasm_core::expr_parser::{ParseError, ParsedExpr, parse, parse_with_cgs_layers};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
-use plasm_core::TypeError;
-use plasm_core::CGS;
 
 use crate::code_mode_plan::{
-    parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
-    ComputeTemplate, EffectClass, FieldPath, InputAlias, Plan, PlanNodeId, PlanNodeKind, PlanValue,
-    QualifiedEntityKey, ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan,
-    ValidatedPlanDataInput, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
-    ValidatedSurfaceNode,
+    AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
+    Plan, PlanNodeId, PlanNodeKind, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
+    ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanNode,
+    ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode, parse_plan_value,
+    validate_plan_artifact,
 };
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    archive_code_mode_result_snapshot, execute_code_mode_plasm_line,
-    publish_code_mode_result_steps, trace_record_code_mode_plasm_line, PublishedResultStep,
+    PublishedResultStep, archive_code_mode_result_snapshot, execute_code_mode_plasm_line,
+    publish_code_mode_result_steps, trace_record_code_mode_plasm_line,
 };
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -30,7 +30,7 @@ use crate::server_state::PlasmHostState;
 use crate::trace_hub::McpPlasmTraceSink;
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
-use plasm_core::{EntityName, Ref, Value};
+use plasm_core::{CapabilityKind, EntityName, Expr, Ref, Value};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
@@ -248,6 +248,13 @@ pub fn evaluate_validated_code_mode_plan_dry(
             .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
         let n = &plan.nodes[i];
         ensure_node_dispatchable(es, n, i)?;
+        if let ValidatedPlanNode::RelationTraversal(relation) = n {
+            let pe = parse_parsed_expr_for_session(es, relation.relation.expr.trim())
+                .map_err(|e| format!("parse error in plan.nodes[{i}].relation.expr: {e}"))?;
+            typecheck_parsed_for_session(es, &pe)
+                .map_err(|e| format!("type check in plan.nodes[{i}].relation.expr: {e}"))?;
+            ensure_relation_expr_matches_plan(es, relation, &pe, i)?;
+        }
         let inferred_approval = inferred_node_approval(n);
         if n.depends_on().is_empty() && n.uses_result().is_empty() {
             let Some(surface) = n.as_surface() else {
@@ -265,6 +272,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
                 .map_err(|e| format!("parse error in plan.nodes[{i}]: {e}"))?;
             typecheck_parsed_for_session(es, &pe)
                 .map_err(|e| format!("type check in plan.nodes[{i}]: {e}"))?;
+            ensure_surface_expr_matches_plan_kind(es, surface, &pe, i)?;
             let (intent, il, bindings) = dry_run_simulation_for_session(es, &pe);
             out.push(serde_json::json!({
                 "index": i,
@@ -496,6 +504,12 @@ fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
         ValidatedPlanNode::ForEach(n) => {
             push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
         }
+        ValidatedPlanNode::RelationTraversal(n) => {
+            push_unique(
+                &mut out,
+                std::iter::once(n.relation.source.as_str().to_string()),
+            );
+        }
         _ => {}
     }
     out
@@ -530,6 +544,15 @@ fn render_node_operation(node: &ValidatedPlanNode) -> String {
         ValidatedPlanNode::Data(n) => format!("data {}", render_plan_value(&n.data)),
         ValidatedPlanNode::Derive(n) => render_derive_template(n),
         ValidatedPlanNode::Compute(n) => render_compute_template(&n.compute),
+        ValidatedPlanNode::RelationTraversal(n) => {
+            let source = n.relation.source.as_str();
+            let relation = n.relation.relation.as_str();
+            let target = format!(
+                "{}.{}",
+                n.relation.target.entry_id, n.relation.target.entity
+            );
+            format!("relation {source}.{relation} -> {target}")
+        }
         ValidatedPlanNode::ForEach(n) => {
             let source = n.source.as_str();
             let binding = n.item_binding.as_str();
@@ -787,6 +810,7 @@ fn render_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::Derive => "derive",
         PlanNodeKind::Compute => "compute",
         PlanNodeKind::ForEach => "for_each",
+        PlanNodeKind::Relation => "relation",
     }
 }
 
@@ -958,6 +982,7 @@ fn approval_gate_json(
         PlanNodeKind::Derive => "derive",
         PlanNodeKind::Compute => "compute",
         PlanNodeKind::ForEach => "for_each",
+        PlanNodeKind::Relation => "relation",
     });
     serde_json::json!({
         "node": node_id,
@@ -988,6 +1013,23 @@ fn ensure_node_dispatchable(
     node: &ValidatedPlanNode,
     index: usize,
 ) -> Result<(), String> {
+    if let ValidatedPlanNode::RelationTraversal(relation) = node {
+        let Some(ctx) = es.contexts_by_entry.get(&relation.relation.target.entry_id) else {
+            return Err(format!(
+                "plan.nodes[{index}].relation.target.entry_id {:?} is not loaded in this session",
+                relation.relation.target.entry_id
+            ));
+        };
+        let target = relation.relation.target.entity.as_str();
+        if !ctx.cgs.entities.contains_key(target) {
+            return Err(format!(
+                "plan.nodes[{index}].relation.target entity {:?} is not present under entry_id {:?}",
+                relation.relation.target.entity, relation.relation.target.entry_id
+            ));
+        }
+        return Ok(());
+    };
+
     let ValidatedPlanNode::Surface(surface) = node else {
         return Ok(());
     };
@@ -1010,6 +1052,114 @@ fn ensure_node_dispatchable(
         return Err(format!(
             "plan.nodes[{index}].qualified_entity entity {:?} is not present under entry_id {:?}",
             q.entity, q.entry_id
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_surface_expr_matches_plan_kind(
+    es: &ExecuteSession,
+    surface: &ValidatedSurfaceNode,
+    pe: &ParsedExpr,
+    index: usize,
+) -> Result<(), String> {
+    let Expr::Query(query) = &pe.expr else {
+        if surface.kind == PlanNodeKind::Search {
+            return Err(format!(
+                "plan.nodes[{index}] is kind search but did not parse to a search query expression"
+            ));
+        }
+        return Ok(());
+    };
+    let Some(name) = query.capability_name.as_deref() else {
+        if surface.kind == PlanNodeKind::Search {
+            return Err(format!(
+                "plan.nodes[{index}] is kind search but expression did not resolve a search capability"
+            ));
+        }
+        return Ok(());
+    };
+    let cgs = es
+        .contexts_by_entry
+        .get(
+            surface
+                .qualified_entity
+                .as_ref()
+                .map(|q| q.entry_id.as_str())
+                .unwrap_or(es.entry_id.as_str()),
+        )
+        .map(|ctx| ctx.cgs.as_ref())
+        .unwrap_or(es.cgs.as_ref());
+    let Some(cap) = cgs.get_capability(name) else {
+        return Err(format!(
+            "plan.nodes[{index}] references unknown capability {name:?}"
+        ));
+    };
+    match (surface.kind, cap.kind) {
+        (PlanNodeKind::Search, CapabilityKind::Search) => Ok(()),
+        (PlanNodeKind::Search, other) => Err(format!(
+            "plan.nodes[{index}] is kind search but expression resolved capability {name:?} with kind {other:?}"
+        )),
+        (PlanNodeKind::Query, CapabilityKind::Search) => Err(format!(
+            "plan.nodes[{index}] is kind query but expression resolved search capability {name:?}; use the search facade"
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn ensure_relation_expr_matches_plan(
+    es: &ExecuteSession,
+    relation: &crate::code_mode_plan::ValidatedRelationTraversalNode,
+    pe: &ParsedExpr,
+    index: usize,
+) -> Result<(), String> {
+    let Expr::Chain(chain) = &pe.expr else {
+        return Err(format!(
+            "plan.nodes[{index}].relation.expr must parse to a Plasm relation chain"
+        ));
+    };
+    if chain.selector != relation.relation.relation.as_str() {
+        return Err(format!(
+            "plan.nodes[{index}].relation relation {:?} does not match parsed selector {:?}",
+            relation.relation.relation.as_str(),
+            chain.selector
+        ));
+    }
+    let source_entity = chain.source.primary_entity();
+    let source_cgs = es
+        .contexts_by_entry
+        .get(&relation.relation.target.entry_id)
+        .map(|ctx| ctx.cgs.as_ref())
+        .unwrap_or(es.cgs.as_ref());
+    let Some(source_def) = source_cgs.get_entity(source_entity) else {
+        return Err(format!(
+            "plan.nodes[{index}].relation source entity {source_entity:?} is not present"
+        ));
+    };
+    let Some(schema_relation) = source_def
+        .relations
+        .get(relation.relation.relation.as_str())
+    else {
+        return Err(format!(
+            "plan.nodes[{index}].relation source entity {source_entity:?} has no relation {:?}",
+            relation.relation.relation.as_str()
+        ));
+    };
+    if schema_relation.target_resource.as_str() != relation.relation.target.entity {
+        return Err(format!(
+            "plan.nodes[{index}].relation target {:?} does not match CGS target {:?}",
+            relation.relation.target.entity,
+            schema_relation.target_resource.as_str()
+        ));
+    }
+    let expected_cardinality = match schema_relation.cardinality {
+        plasm_core::Cardinality::One => crate::code_mode_plan::RelationCardinality::One,
+        plasm_core::Cardinality::Many => crate::code_mode_plan::RelationCardinality::Many,
+    };
+    if relation.relation.cardinality != expected_cardinality {
+        return Err(format!(
+            "plan.nodes[{index}].relation cardinality {:?} does not match CGS cardinality {:?}",
+            relation.relation.cardinality, expected_cardinality
         ));
     }
     Ok(())
@@ -1091,6 +1241,29 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "simulation": {
                 "kind": "deterministic_compute",
                 "execution": "materializes a synthetic Plasm result set via the phased Plan runner"
+            }
+        }),
+        ValidatedPlanNode::RelationTraversal(relation) => serde_json::json!({
+            "index": index,
+            "ok": true,
+            "id": n.id().as_str(),
+            "kind": n.kind(),
+            "effect_class": n.effect_class(),
+            "result_shape": n.result_shape(),
+            "depends_on": node_ids_json(n.depends_on()),
+            "uses_result": n.uses_result(),
+            "approval_gate": inferred_node_approval(n),
+            "relation": {
+                "source": relation.relation.source.as_str(),
+                "name": relation.relation.relation.as_str(),
+                "target": relation.relation.target,
+                "cardinality": relation.relation.cardinality,
+                "source_cardinality": relation.relation.source_cardinality,
+                "expr": relation.relation.expr,
+            },
+            "simulation": {
+                "kind": "relation_traversal",
+                "execution": "lowers through the typed Plasm chain relation path after the source node is materialized"
             }
         }),
         _ => serde_json::json!({
@@ -1277,6 +1450,24 @@ async fn run_validated_plan_phased(
                 let rows = eval_compute(&compute.compute, &materialized)?;
                 materialize_synthetic_node(st, es, session_id, node, rows, trace.as_ref()).await?
             }
+            ValidatedPlanNode::RelationTraversal(relation) => {
+                let _ = materialized_rows(&materialized, &relation.relation.source)?;
+                let (parsed, result, artifact) = execute_code_mode_plasm_line(
+                    st,
+                    es,
+                    session_id,
+                    &relation.relation.expr,
+                    trace.as_ref(),
+                    idx as i64,
+                )
+                .await?;
+                MaterializedNode {
+                    display: crate::expr_display::expr_display(&parsed.expr),
+                    projection: parsed.projection,
+                    result,
+                    artifact,
+                }
+            }
             ValidatedPlanNode::ForEach(for_each) => {
                 return Err(format!(
                     "Plan execution blocked: for_each node {} requires staged template execution",
@@ -1429,6 +1620,9 @@ fn synthetic_node_display(node: &ValidatedPlanNode) -> String {
         ValidatedPlanNode::Data(_) => format!("plan.data({})", node.id().as_str()),
         ValidatedPlanNode::Derive(_) => format!("plan.derive({})", node.id().as_str()),
         ValidatedPlanNode::Compute(_) => format!("plan.compute({})", node.id().as_str()),
+        ValidatedPlanNode::RelationTraversal(_) => {
+            format!("plan.relation({})", node.id().as_str())
+        }
         _ => format!("plan.stage({})", node.id().as_str()),
     }
 }
@@ -1818,9 +2012,11 @@ fn append_aggregates(
         let value = match agg.function {
             AggregateFunction::Count => serde_json::json!(rows.len()),
             AggregateFunction::Sum => {
-                serde_json::json!(aggregate_numbers(rows, agg.field.as_ref())
-                    .iter()
-                    .sum::<f64>())
+                serde_json::json!(
+                    aggregate_numbers(rows, agg.field.as_ref())
+                        .iter()
+                        .sum::<f64>()
+                )
             }
             AggregateFunction::Avg => {
                 let nums = aggregate_numbers(rows, agg.field.as_ref());
@@ -1988,9 +2184,9 @@ fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::load_schema;
     use plasm_core::CgsContext;
     use plasm_core::DomainExposureSession;
+    use plasm_core::load_schema;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -2004,7 +2200,7 @@ mod tests {
             "acme".into(),
             Arc::new(CgsContext::entry("acme", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
+        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product", "Category"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -2014,7 +2210,7 @@ mod tests {
             String::new(),
             String::new(),
             None,
-            vec!["Product".into()],
+            vec!["Product".into(), "Category".into()],
             Some(exp),
             None,
             None,
@@ -2071,6 +2267,109 @@ mod tests {
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 1);
         assert!(dry.can_batch_run);
+    }
+
+    #[test]
+    fn evaluate_code_mode_plan_dry_accepts_search_node() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "search-products",
+            "nodes": [{
+                "id": "search",
+                "kind": "search",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product~\"bolt\"",
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": "search"
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        assert!(dry.can_batch_run);
+        assert_eq!(dry.node_results[0]["kind"], "search");
+    }
+
+    #[test]
+    fn evaluate_code_mode_plan_dry_rejects_relation_target_mismatch() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "bad_relation",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Product" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "expr": "Product(\"p1\").category"
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                }
+            ],
+            "return": "bad_relation"
+        });
+        let err =
+            evaluate_code_mode_plan_dry(&s, &plan).expect_err("relation target mismatch rejected");
+        assert!(err.contains("does not match CGS target"), "{err}");
+    }
+
+    #[test]
+    fn evaluate_code_mode_plan_dry_typechecks_relation_node() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "expr": "Product(\"p1\").category"
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                }
+            ],
+            "return": "category"
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        assert!(!dry.can_batch_run);
+        assert_eq!(
+            dry.node_results[1]["simulation"]["kind"],
+            "relation_traversal"
+        );
     }
 
     #[test]

@@ -58,11 +58,11 @@ use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,
     path_var_names_from_mapping_json, template_invoke_requires_explicit_anchor_id,
 };
-use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
+use crate::symbol_tuning::{FocusSpec, SymbolMap, entity_slices_for_render};
 use crate::{
-    ArrayItemsSchema, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
+    ArrayItemsSchema, CGS, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
     EntityKey, Expr, FieldType, GetExpr, InputType, InvokeExpr, PageExpr, ParameterRole, Predicate,
-    QueryExpr, Ref, Value, ValueWireFormat, CGS,
+    QueryExpr, Ref, Value, ValueWireFormat,
 };
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -240,10 +240,9 @@ impl fmt::Display for ParseErrorKind {
                 f,
                 "no EntityRef from '{target_entity}' to '{source_entity}' found"
             ),
-            ParseErrorKind::NoZeroArityMethod { entity, label } => write!(
-                f,
-                "no zero-arity method `{label}` on entity `{entity}`"
-            ),
+            ParseErrorKind::NoZeroArityMethod { entity, label } => {
+                write!(f, "no zero-arity method `{label}` on entity `{entity}`")
+            }
             ParseErrorKind::AmbiguousZeroArityMethod {
                 entity,
                 label,
@@ -1721,8 +1720,14 @@ impl<'a> Parser<'a> {
                         .map(|c| c.name.clone())
                 };
 
-                let pred = Predicate::eq(q_field, text_str);
-                let mut query = QueryExpr::filtered(entity.clone(), pred);
+                let mut preds = vec![Predicate::eq(q_field, text_str)];
+                self.skip_ws();
+                if self.peek_char() == Some('{') {
+                    self.pos += 1;
+                    preds.extend(self.parse_preds(&entity)?);
+                    self.expect_char('}')?;
+                }
+                let mut query = Self::preds_to_query(&entity, preds);
                 query.capability_name = cap_name;
                 Ok(Expr::Query(query))
             }
@@ -2023,10 +2028,10 @@ fn extract_primary_id(expr: &Expr) -> Option<String> {
 mod tests {
     use super::*;
     use crate::schema::capability_method_label_kebab;
-    use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
+    use crate::symbol_tuning::{FocusSpec, SymbolMap, entity_slices_for_render};
     use crate::{
-        loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
-        EntityKey, FieldSchema, FieldType, RelationSchema, ResourceSchema, CGS,
+        CGS, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality, EntityKey,
+        FieldSchema, FieldType, RelationSchema, ResourceSchema, loader::load_schema_dir,
     };
 
     fn petstore_cgs() -> CGS {
