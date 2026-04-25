@@ -33,7 +33,10 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Copy, Debug)]
 struct PromptStatsSnapshot {
     prompt_chars: usize,
+    /// `o200k_base` (local riptoken), closer to API usage than `chars/4`.
     prompt_token_est: usize,
+    /// Legacy `chars/4` rough line.
+    prompt_token_est_div4: usize,
     json_tool_capability_count: usize,
     json_tool_navigation_count: usize,
     json_tool_estimate: usize,
@@ -43,7 +46,8 @@ impl From<plasm_core::prompt_render::PromptSurfaceStats> for PromptStatsSnapshot
     fn from(v: plasm_core::prompt_render::PromptSurfaceStats) -> Self {
         Self {
             prompt_chars: v.prompt_chars,
-            prompt_token_est: v.token_estimate,
+            prompt_token_est: v.prompt_tokens_o200k,
+            prompt_token_est_div4: v.token_estimate,
             json_tool_capability_count: v.capability_tools,
             json_tool_navigation_count: v.navigation_tools,
             json_tool_estimate: v.json_tool_estimate,
@@ -179,7 +183,8 @@ fn run_one_case(
     max_attempts: u32,
     registry: &ClientRegistry,
     pipeline: &PromptPipelineConfig,
-    // One multi-turn transcript for the whole eval run (same contract as `plasm-repl` `:llm`).
+    // One transcript for the whole run: first user = DOMAIN + goal; later users = `--- GOAL ---` only;
+    // assistant = Plasm `text` only (no `reasoning`) to keep per-request size bounded.
     chat_session: &mut Vec<PlanChatTurn>,
 ) -> anyhow::Result<serde_json::Value> {
     let mut correction_context = String::new();
@@ -227,20 +232,24 @@ fn run_one_case(
 
         let (validation, lexicon_notes) =
             validate_plan_steps_with_lexicon_detailed(cgs, &texts, &lexicon, pipeline, None);
+        // First user: DOMAIN + `--- GOAL ---`; later users: goal only. Assistant: backtick `text` only
+        // (keeps later LLM calls from re-processing long reasoning; full steps stay in `attempt_trace`).
+        // On validation failure we must still append (user, assistant) or correction rounds resend the DOMAIN.
+        let user_hist = if first_turn {
+            format!("{prompt}\n--- GOAL ---\n{}", case.goal)
+        } else {
+            format!("--- GOAL ---\n{}", case.goal)
+        };
+        let assistant_hist = format!("`{text}`");
         match validation {
             Ok(parsed) => {
-                let user_hist = if first_turn {
-                    format!("{prompt}\n--- GOAL ---\n{}", case.goal)
-                } else {
-                    format!("--- GOAL ---\n{}", case.goal)
-                };
                 chat_session.push(PlanChatTurn {
                     role: Union2KassistantOrKuser::Kuser,
                     content: user_hist,
                 });
                 chat_session.push(PlanChatTurn {
                     role: Union2KassistantOrKuser::Kassistant,
-                    content: format!("Plasm expression: `{text}`\n{reasoning}"),
+                    content: assistant_hist,
                 });
                 attempt_trace.push(EvalAttemptReport {
                     attempt: attempt + 1,
@@ -256,6 +265,14 @@ fn run_one_case(
                 break;
             }
             Err(diags) => {
+                chat_session.push(PlanChatTurn {
+                    role: Union2KassistantOrKuser::Kuser,
+                    content: user_hist,
+                });
+                chat_session.push(PlanChatTurn {
+                    role: Union2KassistantOrKuser::Kassistant,
+                    content: assistant_hist,
+                });
                 last_failure_json = serde_json::to_value(&diags).ok();
                 attempt_trace.push(EvalAttemptReport {
                     attempt: attempt + 1,
@@ -564,6 +581,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
                 "cases": case_list.len(),
                 "prompt_chars": prompt_stats.prompt_chars,
                 "prompt_token_est": prompt_stats.prompt_token_est,
+                "prompt_token_est_div4": prompt_stats.prompt_token_est_div4,
                 "json_tool_capability_count": prompt_stats.json_tool_capability_count,
                 "json_tool_navigation_count": prompt_stats.json_tool_navigation_count,
                 "json_tool_estimate": prompt_stats.json_tool_estimate,
@@ -597,7 +615,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
     );
 
     eprintln!(
-        "eval: {} cases, sequential multi-turn transcript, {} attempt(s)/case (DOMAIN/schema user turn only on the first LLM call; later cases append `--- GOAL ---` — same pattern as `plasm-repl` `:llm`)",
+        "eval: {} cases, sequential transcript, {} attempt(s)/case (first user: DOMAIN+goal; later: `--- GOAL ---` only; assistant: Plasm `text` only — `attempt_trace` keeps full reasoning)",
         case_list.len(),
         max_attempts
     );
@@ -624,6 +642,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
         "schema_prompt": prompt.as_str(),
         "schema_prompt_chars": prompt_stats.prompt_chars,
         "schema_prompt_token_est": prompt_stats.prompt_token_est,
+        "schema_prompt_token_est_div4": prompt_stats.prompt_token_est_div4,
         "json_tool_capability_count": prompt_stats.json_tool_capability_count,
         "json_tool_navigation_count": prompt_stats.json_tool_navigation_count,
         "json_tool_estimate": prompt_stats.json_tool_estimate,
@@ -737,7 +756,7 @@ fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Va
     let _ = writeln!(out, "{}", "─".repeat(72));
     let _ = writeln!(
         out,
-        "Plasm schema prompt (eval uses one multi-turn transcript per run: this DOMAIN bundle appears only in the **first** LLM user turn; each later case appends a short `--- GOAL ---` user turn — same pattern as `plasm-repl` `:llm`.)"
+        "Plasm schema prompt (eval: DOMAIN only in the **first** user turn; later user turns are `--- GOAL ---` + goal; each assistant turn is the Plasm expression only, no reasoning — keeps requests small.)"
     );
     let _ = writeln!(out, "{}", "─".repeat(72));
     out.push_str(schema_prompt);

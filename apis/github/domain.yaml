@@ -415,7 +415,7 @@ entities:
     - owner
     - repo
     - sha
-    description: A commit in a repository (owner, repo, and SHA; branch and tag names resolve in get).
+    description: Repo commit (owner, repo, SHA); branch/tags resolve in get.
     fields:
       owner:
         field_type: string
@@ -444,7 +444,7 @@ entities:
     - owner
     - repo
     - name
-    description: Git branch for a repository (owner, repo, and branch name).
+    description: Git branch (owner, repo, branch name).
     fields:
       owner:
         field_type: string
@@ -623,7 +623,7 @@ entities:
     - repo
     - name
     id_field: name
-    description: A label that can be applied to issues and pull requests
+    description: Label for issues and PRs
     fields:
       owner:
         field_type: string
@@ -1090,7 +1090,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: A GitHub Actions workflow configured in a repository
+    description: A workflow in a repository
     fields:
       owner:
         field_type: string
@@ -1157,7 +1157,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: A single GitHub Actions workflow run for a repository
+    description: One workflow run for a repository
     fields:
       owner:
         field_type: string
@@ -1370,7 +1370,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: A downloadable artifact produced by a GitHub Actions workflow run
+    description: Downloadable artifact from a workflow run
     fields:
       owner:
         field_type: string
@@ -1419,7 +1419,7 @@ entities:
     - repo
     - run_id
     id_field: run_id
-    description: Timing and billed runner usage for a GitHub Actions workflow run
+    description: Per-job timing and billable usage for a run
     fields:
       owner:
         field_type: string
@@ -1554,7 +1554,7 @@ capabilities:
   auth_user_repos_query:
     kind: query
     entity: Repository
-    description: List repositories the authenticated user can access.
+    description: List repos the auth user can access.
     parameters:
     - name: visibility
       type: select
@@ -1568,7 +1568,7 @@ capabilities:
       required: false
       string_semantics: short
       description: >-
-        Comma-separated: owner, collaborator, organization_member.
+        Comma list: owner, collaborator, organization_member.
     - name: sort
       type: select
       allowed_values:
@@ -1744,7 +1744,7 @@ capabilities:
   issue_search:
     kind: search
     entity: Issue
-    description: Search issues and pull requests globally.
+    description: Global issue/PR search.
     parameters:
     - name: q
       type: string
@@ -1859,7 +1859,7 @@ capabilities:
   pr_touching_path_search:
     kind: query
     entity: PullRequest
-    description: Search pull requests in a repository by path or file name text.
+    description: Find PRs in a repo by path or file name substring.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -1915,7 +1915,7 @@ capabilities:
   commit_get:
     kind: get
     entity: Commit
-    description: Get a commit by owner, repo, and revision (SHA, branch, or tag name).
+    description: "Fetch commit: owner, repo, revision (SHA, branch, or tag)."
     provides:
     - owner
     - repo
@@ -2083,7 +2083,7 @@ capabilities:
       string_semantics: markdown
     output:
       type: side_effect
-      description: Submit the pending pull request review with the chosen review decision.
+      description: Submit pending PR review with chosen decision.
   pr_review_delete:
     kind: delete
     entity: PullRequestReview
@@ -2134,7 +2134,7 @@ capabilities:
       type: string
       required: false
       string_semantics: short
-      description: Repository file path to comment on for a new inline comment.
+      description: File path in repo for a new inline comment.
     - name: line
       type: integer
       required: false
@@ -2163,7 +2163,7 @@ capabilities:
       - line
       - file
       required: false
-      description: Whether the comment is on a diff line or an entire file.
+      description: Comment on a diff line vs whole file.
     - name: in_reply_to
       type: integer
       required: false
@@ -2204,7 +2204,7 @@ capabilities:
   contributor_query:
     kind: query
     entity: Contributor
-    description: List repository contributors with commit counts.
+    description: List repo contributors with commit counts.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -2215,11 +2215,11 @@ capabilities:
     - name: anon
       type: boolean
       required: false
-      description: Include anonymous contributors in commit counts.
+      description: Count anonymous contributions too.
   workflow_query:
     kind: query
     entity: Workflow
-    description: List GitHub Actions workflows configured in a repository.
+    description: List workflows in a repository.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: owner
@@ -2235,7 +2235,7 @@ capabilities:
   workflow_get:
     kind: get
     entity: Workflow
-    description: Get a GitHub Actions workflow by numeric id or workflow file name.
+    description: Get a workflow by numeric id or file name.
     provides:
     - id
     - owner
@@ -2260,11 +2260,11 @@ capabilities:
       description: Branch, tag, or commit SHA to run the workflow on.
     output:
       type: side_effect
-      description: Queue a workflow run for the selected workflow and ref.
+      description: Dispatch workflow for selected ref.
   workflow_run_query:
     kind: query
     entity: WorkflowRun
-    description: List GitHub Actions workflow runs for a repository.
+    description: List workflow runs in a repository.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: owner
@@ -2474,7 +2474,7 @@ capabilities:
       - latest
       - all
       required: false
-      description: Whether to include only latest-attempt jobs or all attempts.
+      description: Only latest-attempt jobs vs all attempts.
   workflow_artifact_query:
     kind: query
     entity: WorkflowArtifact
@@ -2498,7 +2498,7 @@ capabilities:
   workflow_run_usage_get:
     kind: get
     entity: WorkflowRunUsage
-    description: Get timing and billable runner usage for a workflow run.
+    description: Runner timing and billable usage for a run.
     provides:
     - owner
     - repo
@@ -2581,7 +2581,7 @@ capabilities:
   issue_type_query:
     kind: query
     entity: IssueType
-    description: List issue types configured for an organization.
+    description: List org issue types.
     parameters:
     - name: org
       type: entity_ref
@@ -2627,7 +2627,7 @@ capabilities:
   org_public_repos_query:
     kind: query
     entity: Repository
-    description: List public repositories for an organization.
+    description: List an org's public repos.
     parameters:
     - name: org
       type: entity_ref
@@ -2698,7 +2698,7 @@ capabilities:
   notification_query:
     kind: query
     entity: Notification
-    description: List notification threads for the authenticated user.
+    description: List notification threads for the auth user.
     parameters:
     - name: all
       type: boolean
@@ -2734,7 +2734,7 @@ capabilities:
     description: Mark a notification thread as read.
     output:
       type: side_effect
-      description: Clears unread state for this thread in the recipient's inbox
+      description: Mark thread read in the recipient's inbox
   label_query:
     kind: query
     entity: Label
@@ -2876,7 +2876,7 @@ capabilities:
   milestone_update:
     kind: update
     entity: Milestone
-    description: Update a milestone (title, state, description, due date).
+    description: Update milestone (title, state, description, due).
     provides:
     - number
     - owner
@@ -2986,12 +2986,12 @@ capabilities:
     - name: target_commitish
       type: string
       required: false
-      description: Branch or commit SHA the tag targets when creating the release.
+      description: Branch or commit SHA the release tag points at.
       string_semantics: short
     - name: generate_release_notes
       type: boolean
       required: false
-      description: Ask GitHub to auto-generate release notes from merged PRs when supported.
+      description: Auto release notes from merged PRs (if supported).
   release_update:
     kind: update
     entity: Release
@@ -3190,13 +3190,13 @@ capabilities:
       - not_planned
       - duplicate
       required: false
-      description: Reason for state change (ignored unless state is changed).
+      description: State-change reason; ignored if state unchanged.
     - name: labels
       type: array
       required: false
       items:
         type: string
-      description: Full replacement list of label names (omit to leave labels unchanged).
+      description: Full label-name list; omit to leave labels unchanged.
     - name: assignees
       type: array
       required: false
@@ -3224,11 +3224,11 @@ capabilities:
     - name: sub_issue_id
       type: integer
       required: true
-      description: Numeric database id of the issue to attach as a sub-issue.
+      description: Sub-issue to attach (numeric issue id).
     - name: replace_parent
       type: boolean
       required: false
-      description: Move the sub-issue from another parent when GitHub allows it.
+      description: Re-parent the sub-issue when the API allows.
     output:
       type: side_effect
       description: Attach the selected issue under this parent issue.
@@ -3243,7 +3243,7 @@ capabilities:
       description: Numeric database id of the sub-issue to remove.
     output:
       type: side_effect
-      description: Remove the selected child from this issue's sub-issue list.
+      description: Remove the selected sub-issue from this parent.
   issue_sub_issue_reprioritize:
     kind: action
     entity: Issue
@@ -3263,11 +3263,11 @@ capabilities:
       description: Place the sub-issue before this sibling id.
     output:
       type: side_effect
-      description: Reposition the selected sub-issue within the parent issue.
+      description: Reorder a sub-issue under this parent.
   issue_assignees_add:
     kind: action
     entity: Issue
-    description: Add one or more assignees to an issue without replacing existing assignees.
+    description: Add assignees without replacing existing ones.
     parameters:
     - name: assignees
       type: array
@@ -3297,13 +3297,13 @@ capabilities:
   issue_assign_copilot:
     kind: action
     entity: Issue
-    description: Assign GitHub Copilot coding agent to work on an issue.
+    description: Assign Copilot agent to an issue.
     parameters:
     - name: target_repo
       type: string
       required: true
       string_semantics: short
-      description: Owner/name repository where Copilot should work, such as octocat/Hello-World.
+      description: Target repo (owner/name), e.g. octocat/Hello-World.
     - name: base_branch
       type: string
       required: true
@@ -3326,7 +3326,7 @@ capabilities:
       description: Model name for Copilot to use, when supported.
     output:
       type: side_effect
-      description: Assign Copilot to the issue with the requested agent assignment settings.
+      description: Apply Copilot assignment with requested settings.
   issue_comment_create:
     kind: create
     entity: IssueComment
@@ -3454,14 +3454,14 @@ capabilities:
       type: string
       required: false
       string_semantics: short
-      description: Only update if the pull request head still has this SHA.
+      description: Only if PR head still matches this SHA.
     output:
       type: side_effect
       description: Update the pull request head from the base branch.
   pr_create:
     kind: create
     entity: PullRequest
-    description: Open a new pull request (head branch into base).
+    description: Open a PR (head into base).
     provides:
     - id
     - owner
@@ -3508,7 +3508,7 @@ capabilities:
     - name: maintainer_can_modify
       type: boolean
       required: false
-      description: Let maintainers of the base repo edit the head branch.
+      description: Allow base maintainers to push to head.
     - name: issue
       type: integer
       required: false
@@ -3548,7 +3548,7 @@ capabilities:
   label_update:
     kind: update
     entity: Label
-    description: Update a repository label (rename, color, or description).
+    description: Update a label (name, color, or description).
     provides:
     - name
     - owner
@@ -3607,7 +3607,7 @@ capabilities:
     - name: sha
       type: string
       required: false
-      description: Blob SHA of the file being replaced (required when updating an existing path).
+      description: Replaced file blob SHA; required when updating path.
       string_semantics: short
     output:
       type: side_effect
@@ -3634,7 +3634,7 @@ capabilities:
     - name: sha
       type: string
       required: true
-      description: SHA of the file blob being removed (from the current tree).
+      description: Blob SHA to remove (current tree).
       string_semantics: short
     - name: branch
       type: string
@@ -3751,14 +3751,14 @@ oauth:
       docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
   default_scope_sets:
     plasm_github_readonly_core:
-      description: Read-heavy automation — repos, org directory, notifications, profile.
+      description: Read-only scope — repos, org, notifications, profile.
       scopes:
       - read:user
       - repo
       - read:org
       - notifications
     plasm_github_contributor_core:
-      description: Issue/PR edits, file pushes, Actions workflow YAML, gists, inbox.
+      description: Edits, pushes, workflow YAML, gists, inbox.
       scopes:
       - user
       - repo
@@ -3767,7 +3767,7 @@ oauth:
       - gist
       - read:org
     plasm_github_public_repo_focus:
-      description: Narrow grant — public repositories plus basic profile reads.
+      description: Public repos and basic profile reads.
       scopes:
       - public_repo
       - read:user

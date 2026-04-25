@@ -56,7 +56,8 @@ pub const DEFAULT_OPENROUTER_EVAL_SEED: u64 = 42;
 /// Static `baml_src/clients.baml` entries use the same pattern for named clients.
 /// Build one `TranslatePlan` user turn: on the **first** turn of a session, embed the full schema
 /// bundle plus goal and correction JSON; later turns carry only goal + correction (schema stays in
-/// earlier transcript turns).
+/// earlier turns). The eval harness appends only goal-shaped user turns and backtick Plasm `text` as
+/// assistant (no per-turn reasoning in the transcript) to cap growth.
 pub fn nl_translate_user_bundle(
     first_turn: bool,
     schema_context: &str,

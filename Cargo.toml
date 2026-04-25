@@ -48,9 +48,6 @@ http-problem = "0.3.0"
 axum = { version = "0.8", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
 
-# OpenAPI parsing
-openapiv3 = "2.0"
-
 # Cryptographic hashing for fingerprinting
 blake3 = "1.5"
 sha2 = "0.10"
@@ -134,7 +131,6 @@ tempfile = "3.0"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
 chrono-english = "0.1.8"
 toon = "0.1"
-rayon = "1.10"
 
 # LLM / REPL
 baml = "0.220"
@@ -166,9 +162,6 @@ alloy-provider = { version = "1.8.2", features = ["anvil-api"] }
 alloy-rpc-client = "1.8.2"
 alloy-rpc-types = "1.8.2"
 alloy-transport-http = "1.8.2"
-alloy-network = "1.8.2"
-alloy-signer-local = "1.8.2"
-alloy-sol-types = "1.5.7"
 
 # Containers
 testcontainers-modules = "0.15.0"

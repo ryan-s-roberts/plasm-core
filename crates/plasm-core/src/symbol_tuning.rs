@@ -526,6 +526,8 @@ pub(crate) struct CompactArgSlotGloss {
     pub text: String,
     /// When false, keep a full `p#  ;;` gloss row (long enums, `select+`, `multiselect+`, unknown array shape, …).
     pub allows_suppress_standalone_gloss: bool,
+    /// Schema `required` — used to order `args:` (required before optional).
+    pub required: bool,
 }
 
 const MAX_INLINE_ARGS_SELECT_ENUM: usize = 80;
@@ -546,6 +548,7 @@ pub(crate) fn build_compact_arg_slot_gloss(
             CompactArgSlotGloss {
                 text: format!("{sym} {wire} {t} {ro}"),
                 allows_suppress_standalone_gloss: true,
+                required,
             }
         }
         FieldType::Select | FieldType::MultiSelect => {
@@ -560,6 +563,7 @@ pub(crate) fn build_compact_arg_slot_gloss(
                         return CompactArgSlotGloss {
                             text: format!("{sym} {wire} {br} {ro}"),
                             allows_suppress_standalone_gloss: true,
+                            required,
                         };
                     }
                 }
@@ -572,6 +576,7 @@ pub(crate) fn build_compact_arg_slot_gloss(
             CompactArgSlotGloss {
                 text: format!("{sym} {wire} {t} {ro}"),
                 allows_suppress_standalone_gloss: false,
+                required,
             }
         }
         FieldType::Array => {
@@ -580,11 +585,13 @@ pub(crate) fn build_compact_arg_slot_gloss(
                 CompactArgSlotGloss {
                     text: format!("{sym} {wire} array[{inner}] {ro}"),
                     allows_suppress_standalone_gloss: true,
+                    required,
                 }
             } else {
                 CompactArgSlotGloss {
                     text: format!("{sym} {wire} array+ {ro}"),
                     allows_suppress_standalone_gloss: false,
+                    required,
                 }
             }
         }
@@ -598,22 +605,29 @@ pub(crate) fn build_compact_arg_slot_gloss(
             CompactArgSlotGloss {
                 text: format!("{sym} {wire} {t} {ro}"),
                 allows_suppress_standalone_gloss: true,
+                required,
             }
         }
     }
 }
 
 /// Joins compact slot glosses for `  ;;  … args: …` (DOMAIN) and TSV `Meaning`.
+/// Required parameters are listed before optional (stable order within each group).
 pub(crate) fn join_compact_invocation_arg_fragments(
     fragments: Vec<CompactArgSlotGloss>,
 ) -> Option<String> {
     if fragments.is_empty() {
         return None;
     }
+    let mut indexed: Vec<(usize, CompactArgSlotGloss)> = fragments.into_iter().enumerate().collect();
+    indexed.sort_by_key(|(i, f)| {
+        // Required slots first; preserve original field order within each group.
+        (!f.required, *i)
+    });
     Some(
-        fragments
+        indexed
             .into_iter()
-            .map(|f| f.text)
+            .map(|(_, f)| f.text)
             .collect::<Vec<_>>()
             .join("; "),
     )
@@ -1035,8 +1049,48 @@ impl SymbolMap {
             .map(|(d, k)| (d.as_str(), k.as_str()))
     }
 
+    /// `[scope …]` fragment for DOMAIN `;;` legends only (no `optional params:` list).
+    /// For [`CapabilityKind::Query`], returns empty (scope is not shown for query-style capabilities).
+    pub(crate) fn capability_scope_legend_gloss(&self, cap: &CapabilitySchema) -> String {
+        const MAX_SIG: usize = 96;
+        let Some(is) = &cap.input_schema else {
+            return String::new();
+        };
+        let InputType::Object { fields, .. } = &is.input_type else {
+            return String::new();
+        };
+        if cap.kind == CapabilityKind::Query {
+            return String::new();
+        }
+        let mut scope_parts: Vec<String> = Vec::new();
+        let domain = cap.domain.as_str();
+        let cap_name = cap.name.as_str();
+        for f in fields {
+            if !matches!(f.role, Some(ParameterRole::Scope)) {
+                continue;
+            }
+            if let FieldType::EntityRef { target } = &f.field_type {
+                let ps = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
+                let es = self.entity_sym(target.as_str());
+                scope_parts.push(format!("{ps}→{es}"));
+            } else {
+                scope_parts.push(self.ident_sym_cap_param(
+                    domain,
+                    cap_name,
+                    f.name.as_str(),
+                ));
+            }
+        }
+        if scope_parts.is_empty() {
+            return String::new();
+        }
+        let s = format!("[scope {}]", scope_parts.join(", "));
+        crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(s, MAX_SIG)
+    }
+
     /// Optional / scope parameter symbols for DOMAIN `;;` legends. Required parameters are omitted — they
     /// are already shown in the example expression. For [`CapabilityKind::Query`], omits `[scope …]`.
+    /// When compact `args:` is present, prefer [`capability_scope_legend_gloss`] + `args:` instead (no duplicate list).
     pub(crate) fn capability_input_signature_gloss(&self, cap: &CapabilitySchema) -> String {
         const MAX_SIG: usize = 96;
         let Some(is) = &cap.input_schema else {
@@ -1045,26 +1099,12 @@ impl SymbolMap {
         let InputType::Object { fields, .. } = &is.input_type else {
             return String::new();
         };
-        let emit_scope_legend = cap.kind != CapabilityKind::Query;
-        let mut scope_parts: Vec<String> = Vec::new();
+        let mut scope_s = self.capability_scope_legend_gloss(cap);
         let mut optional_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
         for f in fields {
             if matches!(f.role, Some(ParameterRole::Scope)) {
-                if emit_scope_legend {
-                    if let FieldType::EntityRef { target } = &f.field_type {
-                        let ps = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
-                        let es = self.entity_sym(target.as_str());
-                        scope_parts.push(format!("{ps}→{es}"));
-                    } else {
-                        scope_parts.push(self.ident_sym_cap_param(
-                            domain,
-                            cap_name,
-                            f.name.as_str(),
-                        ));
-                    }
-                }
                 continue;
             }
             if !field_is_filter_like_gloss(f) {
@@ -1076,20 +1116,16 @@ impl SymbolMap {
             }
             optional_parts.push(sym);
         }
-        let mut s = String::new();
-        if !scope_parts.is_empty() {
-            let _ = write!(&mut s, "[scope {}]", scope_parts.join(", "));
-        }
         if !optional_parts.is_empty() {
-            if !s.is_empty() {
-                s.push(' ');
+            if !scope_s.is_empty() {
+                scope_s.push(' ');
             }
-            let _ = write!(&mut s, "optional params: {}", optional_parts.join(", "));
+            let _ = write!(&mut scope_s, "optional params: {}", optional_parts.join(", "));
         }
-        if s.is_empty() {
-            return s;
+        if scope_s.is_empty() {
+            return scope_s;
         }
-        crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(s, MAX_SIG)
+        crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(scope_s, MAX_SIG)
     }
 
     /// Reserved for future SYMBOL MAP content; **FIELDS** moved inline into **DOMAIN** (see [`build_ident_gloss_map`]).
