@@ -40,17 +40,17 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::CgsDiscovery;
 use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
+use plasm_core::CgsDiscovery;
 #[cfg(feature = "code_mode")]
-use plasm_facade_gen::{FacadeGenRequest, build_code_facade, quickjs_runtime_from_facade_delta};
-use rust_mcp_sdk::McpServer;
+use plasm_facade_gen::{build_code_facade, quickjs_runtime_from_facade_delta, FacadeGenRequest};
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
+use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -59,36 +59,35 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
+use rust_mcp_sdk::McpServer;
 #[cfg(feature = "code_mode")]
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::http_execute::{
-    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
-    execute_session_run_markdown, normalize_capability_seeds,
-};
 #[cfg(feature = "code_mode")]
 use crate::http_execute::mcp_add_code_capabilities_markdown;
-use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
+use crate::http_execute::{
+    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+};
+use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 #[cfg(feature = "code_mode")]
 use crate::mcp_plasm_code::{
-    CodeModePlasmRunHooks, CodePlanDryRunTextMeta, evaluate_code_mode_plan_dry,
-    render_code_mode_plan_dry_text, run_code_mode_plan,
+    evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text, run_code_mode_plan,
+    CodeModePlasmRunHooks, CodePlanDryRunTextMeta,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
-use crate::run_artifacts::{
-    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_plan_uri,
-    parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
-    parse_plasm_session_short_resource_uri,
-};
 #[cfg(feature = "code_mode")]
 use crate::run_artifacts::{
-    CodePlanArchiveDocument, code_plan_http_path, parse_code_plan_handle,
-    plasm_session_short_plan_uri,
+    code_plan_http_path, parse_code_plan_handle, plasm_session_short_plan_uri,
+    CodePlanArchiveDocument,
+};
+use crate::run_artifacts::{
+    parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
+    parse_plasm_session_short_resource_uri, ArtifactPayload, LogicalSessionUriSegment,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -2015,10 +2014,10 @@ impl ServerHandler for PlasmMcpHandler {
                         .ensure_logical_session(&ls_key, Some(&key), trace_meta)
                         .await;
 
-                    let (text, tsv_from_waves) = if is_add_code {
+                    let (mut text, tsv_from_waves) = if is_add_code {
                         #[cfg(feature = "code_mode")]
                         {
-                            (mcp_add_code_capabilities_markdown(&out), None)
+                            (String::new(), None)
                         }
                         #[cfg(not(feature = "code_mode"))]
                         {
@@ -2070,9 +2069,6 @@ impl ServerHandler for PlasmMcpHandler {
                             )
                             .await;
                     }
-                    let mut res = CallToolResult::text_content(vec![TextContent::new(
-                        text, None, None,
-                    )]);
                     let mut plasm = serde_json::Map::new();
                     if let Some(front) = tsv_from_waves {
                         plasm.insert("tsv_static_frontmatter".to_string(), json!(front));
@@ -2141,6 +2137,7 @@ impl ServerHandler for PlasmMcpHandler {
                             emit_prelude,
                         };
                         let (fac, ts) = build_code_facade(&gen_req, de, &es.contexts_by_entry);
+                        text = mcp_add_code_capabilities_markdown(&out, &ts);
                         {
                             let mut g = ls.lock().await;
                             for (entry_id, entity) in &seed_pairs_for_facade {
@@ -2170,6 +2167,9 @@ impl ServerHandler for PlasmMcpHandler {
                         );
                         }
                     }
+                    let mut res = CallToolResult::text_content(vec![TextContent::new(
+                        text, None, None,
+                    )]);
                     if !plasm.is_empty() {
                         let mut meta = serde_json::Map::new();
                         meta.insert("plasm".to_string(), serde_json::Value::Object(plasm));
