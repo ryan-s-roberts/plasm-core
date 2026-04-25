@@ -1,0 +1,30 @@
+berry_query:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: v2
+    - type: literal
+      value: berry
+    - type: literal
+      value: ""
+  pagination:
+    params:
+      offset: { counter: 0 }
+      limit: { fixed: 20 }
+    stop_when: { field: next, absent: true }
+
+berry_get:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: v2
+    - type: literal
+      value: berry
+    - type: var
+      name: id
+    - type: literal
+      value: ""

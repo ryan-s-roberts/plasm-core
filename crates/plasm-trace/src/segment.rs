@@ -111,4 +111,59 @@ pub enum TraceSegment {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error_class: Option<String>,
     },
+    CodePlanEvaluate {
+        plan_handle: String,
+        plan_id: String,
+        plan_name: String,
+        plan_hash: String,
+        prompt_hash: String,
+        session_id: String,
+        node_count: usize,
+        code_chars: u64,
+    },
+    CodePlanExecute {
+        plan_handle: String,
+        plan_id: String,
+        plan_name: String,
+        plan_hash: String,
+        prompt_hash: String,
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        run_ids: Vec<String>,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TraceSegment;
+
+    #[test]
+    fn code_plan_trace_segments_carry_provenance() {
+        let eval = TraceSegment::CodePlanEvaluate {
+            plan_handle: "p1".into(),
+            plan_id: "00000000-0000-0000-0000-000000000000".into(),
+            plan_name: "demo".into(),
+            plan_hash: "abc".into(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            node_count: 2,
+            code_chars: 42,
+        };
+        let v = serde_json::to_value(eval).expect("json");
+        assert_eq!(v["kind"], "code_plan_evaluate");
+        assert_eq!(v["plan_handle"], "p1");
+
+        let exec = TraceSegment::CodePlanExecute {
+            plan_handle: "p1".into(),
+            plan_id: "00000000-0000-0000-0000-000000000000".into(),
+            plan_name: "demo".into(),
+            plan_hash: "abc".into(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            run_ids: vec!["r1".into()],
+        };
+        let v = serde_json::to_value(exec).expect("json");
+        assert_eq!(v["kind"], "code_plan_execute");
+        assert_eq!(v["run_ids"][0], "r1");
+    }
 }

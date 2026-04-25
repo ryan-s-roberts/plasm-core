@@ -8,7 +8,7 @@ use plasm_core::FederationDispatch;
 use plasm_core::PagingHandle;
 use plasm_core::CGS;
 use plasm_plugin_host::LoadedPluginGeneration;
-use plasm_runtime::{GraphCache, MutexGraphCacheSession, QueryPaginationResumeData};
+use plasm_runtime::{CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -233,6 +233,22 @@ pub struct SessionRunArtifact {
     pub payload: ArtifactPayload,
 }
 
+#[derive(Clone, Debug)]
+pub struct SyntheticPageCursor {
+    pub node_id: String,
+    pub entity_type: String,
+    pub rows: Vec<CachedEntity>,
+    pub offset: usize,
+    pub page_size: usize,
+    pub request_fingerprints: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum PagingResume {
+    Query(QueryPaginationResumeData),
+    Synthetic(SyntheticPageCursor),
+}
+
 #[derive(Debug)]
 struct SessionCoreState {
     seq: DeltaSeq,
@@ -353,8 +369,10 @@ pub struct ExecuteSession {
     pub core: Arc<SessionCore>,
     /// Next `plasm://r/{n}` index for this execute session (1-based after first mint).
     run_resource_next: Arc<AtomicU64>,
-    /// Opaque `pg#` handles → pagination resume snapshots for [`plasm_core::Expr::Page`].
-    paging_resume_by_handle: Arc<StdMutex<HashMap<PagingHandle, QueryPaginationResumeData>>>,
+    /// Next `plasm://p/{n}` Code Mode plan index for this execute session (1-based after first mint).
+    code_plan_next: Arc<AtomicU64>,
+    /// Opaque `pg#` handles → query or synthetic pagination resume snapshots for [`plasm_core::Expr::Page`].
+    paging_resume_by_handle: Arc<StdMutex<HashMap<PagingHandle, PagingResume>>>,
     paging_handle_next: Arc<AtomicU64>,
     /// Serializes `page(pg#)` peek → execute → upsert so concurrent clients cannot corrupt continuation state.
     pub(crate) paging_op_lock: Arc<tokio::sync::Mutex<()>>,
@@ -396,6 +414,7 @@ impl ExecuteSession {
             graph_cache: core.graph_cache(),
             core,
             run_resource_next: Arc::new(AtomicU64::new(0)),
+            code_plan_next: Arc::new(AtomicU64::new(0)),
             paging_resume_by_handle: Arc::new(StdMutex::new(HashMap::new())),
             paging_handle_next: Arc::new(AtomicU64::new(0)),
             paging_op_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -405,6 +424,11 @@ impl ExecuteSession {
     /// Allocate the next monotonic `resource_index` for this execute session (used for `plasm://r/{n}`).
     pub fn mint_run_resource_index(&self) -> u64 {
         self.run_resource_next.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Allocate the next monotonic Code Mode plan index for this execute session (`p{n}`).
+    pub fn mint_code_plan_index(&self) -> u64 {
+        self.code_plan_next.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Mint a paging handle and store `resume` for subsequent `page(...)` expressions.
@@ -423,7 +447,7 @@ impl ExecuteSession {
         self.paging_resume_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(handle.clone(), resume);
+            .insert(handle.clone(), PagingResume::Query(resume));
         handle
     }
 
@@ -432,14 +456,59 @@ impl ExecuteSession {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(handle)
-            .cloned()
+            .and_then(|resume| match resume {
+                PagingResume::Query(query) => Some(query.clone()),
+                PagingResume::Synthetic(_) => None,
+            })
     }
 
     pub fn upsert_paging_resume(&self, handle: &PagingHandle, resume: QueryPaginationResumeData) {
         self.paging_resume_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(handle.clone(), resume);
+            .insert(handle.clone(), PagingResume::Query(resume));
+    }
+
+    pub fn register_synthetic_paging_continuation(
+        &self,
+        resume: SyntheticPageCursor,
+        logical_session_ref: Option<&str>,
+    ) -> PagingHandle {
+        let n = self.paging_handle_next.fetch_add(1, Ordering::Relaxed) + 1;
+        let handle = match logical_session_ref {
+            Some(r) => PagingHandle::mint_namespaced(r, n),
+            None => PagingHandle::mint_monotonic(n),
+        };
+        self.paging_resume_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(handle.clone(), PagingResume::Synthetic(resume));
+        handle
+    }
+
+    pub fn peek_synthetic_paging_resume(
+        &self,
+        handle: &PagingHandle,
+    ) -> Option<SyntheticPageCursor> {
+        self.paging_resume_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .and_then(|resume| match resume {
+                PagingResume::Query(_) => None,
+                PagingResume::Synthetic(cursor) => Some(cursor.clone()),
+            })
+    }
+
+    pub fn upsert_synthetic_paging_resume(
+        &self,
+        handle: &PagingHandle,
+        resume: SyntheticPageCursor,
+    ) {
+        self.paging_resume_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(handle.clone(), PagingResume::Synthetic(resume));
     }
 
     pub fn remove_paging_resume(&self, handle: &PagingHandle) {

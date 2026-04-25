@@ -170,7 +170,10 @@ pub use schema::{
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;
 pub use string_unescape::normalize_structured_string_inputs;
-pub use summary_render::{render_intent, render_intent_with_projection, render_outcome};
+pub use summary_render::{
+    expr_simulation_bindings, render_intent, render_intent_federated,
+    render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
+};
 pub use symbol_tuning::{
     entity_slices_for_render, expand_expr_for_domain_session, expand_expr_for_parse,
     expand_path_symbols, resolve_prompt_surface_entities, strip_prompt_expression_annotations,

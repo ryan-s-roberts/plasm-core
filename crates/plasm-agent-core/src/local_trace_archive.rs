@@ -54,10 +54,7 @@ impl LocalTraceArchive {
     /// Best-effort persist a completed trace for later list/detail.
     pub async fn persist_trace(&self, detail: &TraceDetailDto) -> std::io::Result<()> {
         let trace_id = Uuid::parse_str(&detail.summary.trace_id).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("trace_id: {e}"),
-            )
+            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("trace_id: {e}"))
         })?;
         let dir = self.trace_dir(&detail.summary.tenant_id, trace_id)?;
         tokio::fs::create_dir_all(&dir).await?;
@@ -229,11 +226,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(l.len(), 1);
-        let g = arch
-            .get_detail("t1", tid)
-            .await
-            .unwrap()
-            .expect("detail");
+        let g = arch.get_detail("t1", tid).await.unwrap().expect("detail");
         assert_eq!(g.summary.trace_id, d.summary.trace_id);
         assert_eq!(g.records.len(), 1);
         let _ = std::fs::remove_dir_all(&root);

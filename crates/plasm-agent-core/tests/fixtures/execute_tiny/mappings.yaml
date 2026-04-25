@@ -1,0 +1,13 @@
+product_list:
+  method: GET
+  path:
+    - type: literal
+      value: "/products"
+
+product_get:
+  method: GET
+  path:
+    - type: literal
+      value: "/products"
+    - type: var
+      name: id

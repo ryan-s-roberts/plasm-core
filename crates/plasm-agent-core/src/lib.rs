@@ -8,6 +8,11 @@ mod batch_scheduler;
 pub mod bootstrap_secrets;
 pub mod catalog_runtime;
 pub mod cli_builder;
+/// Plasm **Code Mode**: Oxc TypeScript → JS + QuickJS sandbox (`code_mode` Cargo feature).
+#[cfg(feature = "code_mode")]
+pub mod code_mode;
+#[cfg(feature = "code_mode")]
+pub mod code_mode_plan;
 pub mod control_plane_http;
 pub mod dispatch;
 pub mod dotenv_safe;
@@ -21,12 +26,14 @@ pub mod http_execute;
 pub mod http_incoming_context;
 pub mod http_problem_util;
 mod http_traces;
-pub mod local_trace_archive;
 pub mod incoming_auth;
 pub mod input_field_cli;
 pub mod invoke_args;
+pub mod local_trace_archive;
 pub mod mcp_api_key_registry;
 pub mod mcp_config_repository;
+#[cfg(feature = "code_mode")]
+pub mod mcp_plasm_code;
 pub mod mcp_plasm_meta;
 pub mod mcp_policy;
 mod mcp_run_markdown;

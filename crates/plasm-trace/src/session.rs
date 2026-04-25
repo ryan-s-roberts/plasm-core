@@ -216,7 +216,9 @@ impl SessionTraceData {
                     .aggregate_http_trace_entry_count
                     .saturating_add(http_calls.len() as u64);
             }
-            TraceSegment::PlasmError { .. } => {}
+            TraceSegment::PlasmError { .. }
+            | TraceSegment::CodePlanEvaluate { .. }
+            | TraceSegment::CodePlanExecute { .. } => {}
         }
     }
 

@@ -38,6 +38,18 @@ pub struct RunArtifactHandle {
     pub request_fingerprints: Vec<String>,
 }
 
+/// Handle for a stored Code Mode plan (permanent plan archive, not run snapshot GC).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodePlanArchiveHandle {
+    pub plan_id: Uuid,
+    pub plan_index: u64,
+    pub plan_handle: String,
+    pub plasm_uri: String,
+    pub canonical_plasm_uri: String,
+    pub payload_len: usize,
+    pub plan_hash: String,
+}
+
 /// Payload metadata for cache deltas / run artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactPayloadMetadata {
@@ -85,6 +97,29 @@ pub struct RunArtifactDocument {
     pub stats: ExecutionStats,
 }
 
+/// Permanent archived Code Mode plan document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodePlanArchiveDocument {
+    pub kind: String,
+    pub plan_id: String,
+    pub prompt_hash: String,
+    pub session_id: String,
+    pub entry_id: String,
+    /// Monotonic per `(prompt_hash, session_id)` Code Mode plan index; drives `plasm://.../p/{n}`.
+    pub plan_index: u64,
+    pub plan_handle: String,
+    pub name: String,
+    pub code: String,
+    pub plan_hash: String,
+    pub plan: serde_json::Value,
+    pub catalog_cgs_hash: String,
+    pub domain_revision: u32,
+    pub entities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunArtifactError {
     #[error("run artifact JSON: {0}")]
@@ -128,6 +163,29 @@ pub trait RunArtifactBackend: Send + Sync {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
+    ) -> Option<Uuid>;
+
+    async fn insert_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+        plan_index: u64,
+        encoded: Vec<u8>,
+    ) -> Result<usize, RunArtifactError>;
+
+    async fn get_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+    ) -> Option<Vec<u8>>;
+
+    async fn get_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
     ) -> Option<Uuid>;
 }
 
@@ -247,6 +305,79 @@ impl RunArtifactStore {
             .get_run_id_for_resource_index(prompt_hash, session_id, resource_index)
             .await
     }
+
+    pub async fn insert_code_plan(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+        plan_index: u64,
+        doc: &CodePlanArchiveDocument,
+    ) -> Result<CodePlanArchiveHandle, RunArtifactError> {
+        let bytes = serde_json::to_vec(doc)?;
+        let payload = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata::json_default(),
+            bytes: bytes.into(),
+        };
+        let encoded = encode_payload(&payload)?;
+        let n = self
+            .inner
+            .insert_plan_encoded(prompt_hash, session_id, plan_id, plan_index, encoded)
+            .await?;
+        Ok(CodePlanArchiveHandle {
+            plan_id,
+            plan_index,
+            plan_handle: code_plan_handle(plan_index),
+            plasm_uri: plasm_short_code_plan_uri(plan_index),
+            canonical_plasm_uri: plasm_code_plan_resource_uri(prompt_hash, session_id, &plan_id),
+            payload_len: n,
+            plan_hash: doc.plan_hash.clone(),
+        })
+    }
+
+    pub async fn get_code_plan_payload_result(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+    ) -> Result<Option<ArtifactPayload>, RunArtifactError> {
+        let encoded = self
+            .inner
+            .get_plan_encoded(prompt_hash, session_id, plan_id)
+            .await;
+        match encoded {
+            Some(bytes) => decode_payload(&bytes).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn get_code_plan_payload_result_by_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+    ) -> Result<Option<ArtifactPayload>, RunArtifactError> {
+        let Some(plan_id) = self
+            .inner
+            .get_plan_id_for_index(prompt_hash, session_id, plan_index)
+            .await
+        else {
+            return Ok(None);
+        };
+        self.get_code_plan_payload_result(prompt_hash, session_id, plan_id)
+            .await
+    }
+
+    pub async fn resolve_code_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+    ) -> Option<Uuid> {
+        self.inner
+            .get_plan_id_for_index(prompt_hash, session_id, plan_index)
+            .await
+    }
 }
 
 impl Default for RunArtifactStore {
@@ -259,6 +390,8 @@ impl Default for RunArtifactStore {
 struct MemoryRunArtifactState {
     blobs: HashMap<(String, String, Uuid), Vec<u8>>,
     by_resource_index: HashMap<(String, String, u64), Uuid>,
+    plan_blobs: HashMap<(String, String, Uuid), Vec<u8>>,
+    plan_by_index: HashMap<(String, String, u64), Uuid>,
 }
 
 #[derive(Debug, Default)]
@@ -330,6 +463,51 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
             ))
             .copied()
     }
+
+    async fn insert_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+        plan_index: u64,
+        encoded: Vec<u8>,
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let mut g = self.inner.write().expect("run artifact mutex poisoned");
+        g.plan_blobs.insert(
+            (prompt_hash.to_string(), session_id.to_string(), plan_id),
+            encoded,
+        );
+        g.plan_by_index.insert(
+            (prompt_hash.to_string(), session_id.to_string(), plan_index),
+            plan_id,
+        );
+        Ok(n)
+    }
+
+    async fn get_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+    ) -> Option<Vec<u8>> {
+        let g = self.inner.read().ok()?;
+        g.plan_blobs
+            .get(&(prompt_hash.to_string(), session_id.to_string(), plan_id))
+            .cloned()
+    }
+
+    async fn get_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+    ) -> Option<Uuid> {
+        let g = self.inner.read().ok()?;
+        g.plan_by_index
+            .get(&(prompt_hash.to_string(), session_id.to_string(), plan_index))
+            .copied()
+    }
 }
 
 /// Local filesystem run artifacts: `execute/{prompt_hash}/{session_id}/{run_id}.artifact` and
@@ -380,6 +558,39 @@ impl FsRunArtifactBackend {
             .join(sid)
             .join("resource-index")
             .join(format!("{resource_index}.txt")))
+    }
+
+    fn plan_blob_path(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+    ) -> Result<PathBuf, RunArtifactError> {
+        let ph = run_artifact_fs_segment(prompt_hash)?;
+        let sid = run_artifact_fs_segment(session_id)?;
+        Ok(self
+            .root
+            .join("code-plans")
+            .join(ph)
+            .join(sid)
+            .join(format!("{plan_id}.artifact")))
+    }
+
+    fn plan_index_path(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+    ) -> Result<PathBuf, RunArtifactError> {
+        let ph = run_artifact_fs_segment(prompt_hash)?;
+        let sid = run_artifact_fs_segment(session_id)?;
+        Ok(self
+            .root
+            .join("code-plans")
+            .join(ph)
+            .join(sid)
+            .join("plan-index")
+            .join(format!("{plan_index}.txt")))
     }
 }
 
@@ -443,6 +654,60 @@ impl RunArtifactBackend for FsRunArtifactBackend {
     ) -> Option<Uuid> {
         let path = self
             .resource_index_path(prompt_hash, session_id, resource_index)
+            .ok()?;
+        let bytes = tokio::fs::read(&path).await.ok()?;
+        let s = std::str::from_utf8(&bytes).ok()?;
+        Uuid::parse_str(s.trim()).ok()
+    }
+
+    async fn insert_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+        plan_index: u64,
+        encoded: Vec<u8>,
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let path = self.plan_blob_path(prompt_hash, session_id, plan_id)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        }
+        tokio::fs::write(&path, encoded)
+            .await
+            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        let index_path = self.plan_index_path(prompt_hash, session_id, plan_index)?;
+        if let Some(parent) = index_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        }
+        tokio::fs::write(&index_path, plan_id.as_hyphenated().to_string())
+            .await
+            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        Ok(n)
+    }
+
+    async fn get_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+    ) -> Option<Vec<u8>> {
+        let path = self.plan_blob_path(prompt_hash, session_id, plan_id).ok()?;
+        tokio::fs::read(&path).await.ok()
+    }
+
+    async fn get_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+    ) -> Option<Uuid> {
+        let path = self
+            .plan_index_path(prompt_hash, session_id, plan_index)
             .ok()?;
         let bytes = tokio::fs::read(&path).await.ok()?;
         let s = std::str::from_utf8(&bytes).ok()?;
@@ -512,6 +777,55 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         let s = std::str::from_utf8(bytes.as_ref()).ok()?;
         Uuid::parse_str(s.trim()).ok()
     }
+
+    async fn insert_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+        plan_index: u64,
+        encoded: Vec<u8>,
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let key = code_plan_object_key(&self.prefix, prompt_hash, session_id, plan_id);
+        self.store
+            .put(&key, encoded.into())
+            .await
+            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        let idx = code_plan_index_pointer_key(&self.prefix, prompt_hash, session_id, plan_index);
+        self.store
+            .put(
+                &idx,
+                plan_id.as_hyphenated().to_string().into_bytes().into(),
+            )
+            .await
+            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        Ok(n)
+    }
+
+    async fn get_plan_encoded(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_id: Uuid,
+    ) -> Option<Vec<u8>> {
+        let key = code_plan_object_key(&self.prefix, prompt_hash, session_id, plan_id);
+        let res = self.store.get(&key).await.ok()?;
+        res.bytes().await.ok().map(|b| b.to_vec())
+    }
+
+    async fn get_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+    ) -> Option<Uuid> {
+        let key = code_plan_index_pointer_key(&self.prefix, prompt_hash, session_id, plan_index);
+        let res = self.store.get(&key).await.ok()?;
+        let bytes = res.bytes().await.ok()?;
+        let s = std::str::from_utf8(bytes.as_ref()).ok()?;
+        Uuid::parse_str(s.trim()).ok()
+    }
 }
 
 fn artifact_object_key(
@@ -541,6 +855,35 @@ fn resource_index_pointer_key(
         .join(session_id)
         .join("_index")
         .join(format!("{resource_index}.run_id"))
+}
+
+fn code_plan_object_key(
+    prefix: &StorePath,
+    prompt_hash: &str,
+    session_id: &str,
+    plan_id: Uuid,
+) -> StorePath {
+    prefix
+        .clone()
+        .join("code-plans")
+        .join(prompt_hash)
+        .join(session_id)
+        .join(format!("{plan_id}.artifact"))
+}
+
+fn code_plan_index_pointer_key(
+    prefix: &StorePath,
+    prompt_hash: &str,
+    session_id: &str,
+    plan_index: u64,
+) -> StorePath {
+    prefix
+        .clone()
+        .join("code-plans")
+        .join(prompt_hash)
+        .join(session_id)
+        .join("_index")
+        .join(format!("{plan_index}.plan_id"))
 }
 
 const ARTIFACT_MAGIC: &[u8] = b"PLAR1\n";
@@ -609,7 +952,9 @@ pub fn init_from_env() -> Result<Arc<RunArtifactStore>, String> {
         if !dir.trim().is_empty() {
             let root: PathBuf = dir.trim().to_string().into();
             if let Err(e) = std::fs::create_dir_all(&root) {
-                return Err(format!("PLASM_RUN_ARTIFACTS_DIR: could not create {root:?}: {e}"));
+                return Err(format!(
+                    "PLASM_RUN_ARTIFACTS_DIR: could not create {root:?}: {e}"
+                ));
             }
             tracing::info!(path = %root.display(), "run artifacts: local filesystem backend");
             return Ok(Arc::new(RunArtifactStore {
@@ -677,6 +1022,12 @@ async fn run_artifact_gc_pass(
     let cutoff = Utc::now() - chrono::Duration::seconds(secs);
     let mut stream = store.list(Some(list_prefix));
     while let Some(meta) = stream.try_next().await? {
+        // Code plans are permanent provenance records; only time-GC execute run snapshots.
+        if !meta.location.as_ref().contains("/execute/")
+            && !meta.location.as_ref().starts_with("execute/")
+        {
+            continue;
+        }
         if meta.last_modified < cutoff {
             store.delete(&meta.location).await?;
             tracing::debug!(path = %meta.location, "run artifact GC deleted object");
@@ -699,6 +1050,33 @@ pub fn plasm_short_resource_uri(resource_index: u64) -> String {
 /// `session_segment` is the client-facing slot id (`s0`, `s1`, …) or a canonical UUID string.
 pub fn plasm_session_short_resource_uri(session_segment: &str, resource_index: u64) -> String {
     format!("plasm://session/{session_segment}/r/{resource_index}")
+}
+
+pub fn code_plan_handle(plan_index: u64) -> String {
+    format!("p{plan_index}")
+}
+
+pub fn parse_code_plan_handle(handle: &str) -> Option<u64> {
+    let rest = handle.strip_prefix('p')?;
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+/// Short LLM-facing Code Mode plan URI; resolve via bound execute session.
+pub fn plasm_short_code_plan_uri(plan_index: u64) -> String {
+    format!("plasm://p/{plan_index}")
+}
+
+/// Short Code Mode plan URI scoped to an MCP logical session slot or UUID.
+pub fn plasm_session_short_plan_uri(session_segment: &str, plan_index: u64) -> String {
+    format!("plasm://session/{session_segment}/p/{plan_index}")
+}
+
+/// Canonical URI for a permanent Code Mode plan archive document.
+pub fn plasm_code_plan_resource_uri(prompt_hash: &str, session_id: &str, plan_id: &Uuid) -> String {
+    format!("plasm://execute/{prompt_hash}/{session_id}/plan/{plan_id}")
 }
 
 /// Legacy helper: embed canonical logical session UUID in the short resource URI.
@@ -755,6 +1133,34 @@ pub fn parse_plasm_session_short_resource_uri(
     Some((segment, idx))
 }
 
+/// Parse `plasm://session/{uuid}/p/{decimal}` or `plasm://session/s{n}/p/{decimal}`.
+pub fn parse_plasm_session_short_plan_uri(uri: &str) -> Option<(LogicalSessionUriSegment, u64)> {
+    let rest = uri.strip_prefix("plasm://session/")?;
+    let mut parts = rest.split('/').filter(|s| !s.is_empty());
+    let seg = parts.next()?;
+    let segment = if let Ok(u) = Uuid::parse_str(seg) {
+        LogicalSessionUriSegment::Uuid(u)
+    } else if seg.len() >= 2 && seg.starts_with('s') && seg[1..].chars().all(|c| c.is_ascii_digit())
+    {
+        LogicalSessionUriSegment::Slot(seg.to_string())
+    } else {
+        return None;
+    };
+    let p = parts.next()?;
+    let n = parts.next()?;
+    if p != "p" {
+        return None;
+    }
+    if n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    let idx: u64 = n.parse().ok()?;
+    Some((segment, idx))
+}
+
 pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &Uuid) -> String {
     format!("/execute/{prompt_hash}/{session_id}/artifacts/{run_id}")
 }
@@ -768,6 +1174,17 @@ pub fn parse_plasm_execute_run_uri(uri: &str) -> Option<(String, String, Uuid)> 
     }
     let run_id = Uuid::parse_str(parts[3]).ok()?;
     Some((parts[0].to_string(), parts[1].to_string(), run_id))
+}
+
+/// Parse `plasm://execute/{prompt_hash}/{session_id}/plan/{plan_id}`.
+pub fn parse_plasm_execute_plan_uri(uri: &str) -> Option<(String, String, Uuid)> {
+    let rest = uri.strip_prefix("plasm://execute/")?;
+    let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() != 4 || parts[2] != "plan" {
+        return None;
+    }
+    let plan_id = Uuid::parse_str(parts[3]).ok()?;
+    Some((parts[0].to_string(), parts[1].to_string(), plan_id))
 }
 
 /// Arguments for [`document_from_run`].
@@ -931,6 +1348,61 @@ mod tests {
         assert!(parse_plasm_session_short_resource_uri("plasm://session/s/r/1").is_none());
     }
 
+    #[test]
+    fn parse_code_plan_handles_and_uris() {
+        let id = Uuid::nil();
+        assert_eq!(code_plan_handle(3), "p3");
+        assert_eq!(parse_code_plan_handle("p3"), Some(3));
+        assert!(parse_code_plan_handle("r3").is_none());
+        let short = plasm_session_short_plan_uri("s0", 3);
+        assert_eq!(
+            parse_plasm_session_short_plan_uri(&short),
+            Some((LogicalSessionUriSegment::Slot("s0".into()), 3))
+        );
+        let canonical = plasm_code_plan_resource_uri(&"a".repeat(64), "sess", &id);
+        assert_eq!(
+            parse_plasm_execute_plan_uri(&canonical),
+            Some(("a".repeat(64), "sess".into(), id))
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_code_plan_round_trip_by_index() {
+        let store = RunArtifactStore::memory();
+        let plan_id = Uuid::new_v4();
+        let doc = CodePlanArchiveDocument {
+            kind: "code_plan".into(),
+            plan_id: plan_id.to_string(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            entry_id: "demo".into(),
+            plan_index: 1,
+            plan_handle: "p1".into(),
+            name: "demo plan".into(),
+            code: "JSON.stringify({version:1,nodes:[]})".into(),
+            plan_hash: "h".repeat(64),
+            plan: serde_json::json!({"version": 1, "nodes": []}),
+            catalog_cgs_hash: "c".repeat(64),
+            domain_revision: 0,
+            entities: vec!["Widget".into()],
+            principal: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+        store
+            .insert_code_plan(&"p".repeat(64), "s1", plan_id, 1, &doc)
+            .await
+            .expect("insert");
+        let payload = store
+            .get_code_plan_payload_result_by_index(&"p".repeat(64), "s1", 1)
+            .await
+            .expect("decode")
+            .expect("payload");
+        let got: CodePlanArchiveDocument =
+            serde_json::from_slice(payload.bytes.as_ref()).expect("doc");
+        assert_eq!(got.plan_id, plan_id.to_string());
+        assert_eq!(got.plan_handle, "p1");
+    }
+
     #[tokio::test]
     async fn fs_backend_resource_index_round_trip() {
         let tmp = tempfile::tempdir().expect("tmp");
@@ -955,10 +1427,7 @@ mod tests {
                 cache_misses: 0,
             },
         };
-        store
-            .insert(&ph, "s1", run_id, &doc)
-            .await
-            .expect("insert");
+        store.insert(&ph, "s1", run_id, &doc).await.expect("insert");
         let by_idx = store
             .get_payload_result_by_resource_index(&ph, "s1", 3)
             .await

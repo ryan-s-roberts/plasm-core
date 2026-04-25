@@ -1409,7 +1409,8 @@ mod tests {
 
     #[test]
     fn fixture_tool_model_all_smoke() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let meta = CatalogEntryMeta {
             entry_id: "overshow".into(),

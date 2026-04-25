@@ -1,0 +1,37 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: http://example.test
+
+entities:
+  Product:
+    id_field: id
+    description: Minimal product for execute tool tests
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+capabilities:
+  product_list:
+    description: List products
+    kind: query
+    entity: Product
+    provides:
+    - id
+    - name
+  product_get:
+    description: Fetch a product by id
+    kind: get
+    entity: Product
+    provides:
+    - id
+    - name

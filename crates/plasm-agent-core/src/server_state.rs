@@ -10,10 +10,10 @@
 use crate::catalog_runtime::CatalogRuntime;
 use crate::execute_session::ExecuteSessionStore;
 use crate::incoming_auth::IncomingAuthVerifier;
+use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
 use crate::oauth_link_catalog::OauthLinkCatalog;
-use crate::local_trace_archive::LocalTraceArchive;
 use crate::run_artifacts::RunArtifactStore;
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::session_identity::LogicalSessionRegistry;

@@ -24,11 +24,11 @@ use crate::http_incoming_context::incoming_context_routes;
 use crate::http_traces::trace_routes;
 use crate::incoming_auth::incoming_auth_http_middleware;
 use crate::incoming_auth::IncomingAuthVerifier;
+use crate::local_trace_archive::LocalTraceArchive;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState, PlasmOssHostState};
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::session_identity::LogicalSessionRegistry;
-use crate::local_trace_archive::LocalTraceArchive;
 use crate::trace_hub::{TraceHubBuilder, TraceHubConfig};
 use crate::trace_sink_emit::{EnvTraceIngestClient, TraceIngestClient};
 use plasm_otel::tower_http_trace_parent_span;
@@ -78,10 +78,10 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         }
     };
     let trace_hub_requested = TraceHubConfig::from_env();
-    let trace_hub = Arc::new(TraceHubBuilder::from_config(trace_hub_requested).build(
-        Some(trace_ingest.clone()),
-        local_trace_archive.clone(),
-    ));
+    let trace_hub = Arc::new(
+        TraceHubBuilder::from_config(trace_hub_requested)
+            .build(Some(trace_ingest.clone()), local_trace_archive.clone()),
+    );
     let trace_hub_config = TraceHubConfig {
         bounds: trace_hub.bounds(),
     };

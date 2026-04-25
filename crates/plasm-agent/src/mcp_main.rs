@@ -5,11 +5,11 @@
 
 use clap::{Arg, ArgAction, Command};
 use plasm_agent_core::error::AgentError;
+use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_plugin_host::PluginManager;
 use plasm_runtime::{AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode};
-use plasm_agent_core::server_state::CatalogBootstrap;
 
 async fn shutdown_signal() {
     #[cfg(unix)]
@@ -136,13 +136,17 @@ Use the hosted `plasm-mcp-app` binary (private monorepo) or the deploy scripts t
     };
 
     if let Some(reg) = &preloaded_opt {
-        plasm_agent_core::plugin_catalog::validate_registry_templates(reg).map_err(AgentError::Schema)?;
+        plasm_agent_core::plugin_catalog::validate_registry_templates(reg)
+            .map_err(AgentError::Schema)?;
     } else {
         plasm_compile::validate_cgs_capability_templates(&cgs)
             .map_err(|e| AgentError::Schema(e.to_string()))?;
     }
 
-    let app = plasm_agent_core::cli_builder::build_app(&cgs, plasm_agent_core::AgentCliSurface::McpServer);
+    let app = plasm_agent_core::cli_builder::build_app(
+        &cgs,
+        plasm_agent_core::AgentCliSurface::McpServer,
+    );
     let matches = app.get_matches_from(&argv);
 
     if matches.get_one::<String>("schema").is_some()
@@ -156,8 +160,10 @@ Use the hosted `plasm-mcp-app` binary (private monorepo) or the deploy scripts t
         .get_one::<String>("backend")
         .map(|s| s.as_str())
         .unwrap_or("http://localhost:1080");
-    let backend =
-        plasm_agent_core::backend_normalize::normalize_live_backend_url(schema_path.as_str(), backend_raw);
+    let backend = plasm_agent_core::backend_normalize::normalize_live_backend_url(
+        schema_path.as_str(),
+        backend_raw,
+    );
 
     let mode = match matches
         .get_one::<String>("mode")
@@ -233,16 +239,18 @@ Use the hosted `plasm-mcp-app` binary (private monorepo) or the deploy scripts t
         .map_err(|e| std::io::Error::other(format!("run artifacts: {e}")))?;
     let session_graph_persistence = plasm_agent_core::session_graph_persistence::init_from_env()
         .map_err(|e| std::io::Error::other(format!("session graph persistence: {e}")))?;
-    let app_state = plasm_agent_core::http::build_plasm_host_state(plasm_agent_core::http::PlasmHostBootstrap {
-        engine,
-        mode,
-        registry,
-        catalog_bootstrap,
-        plugin_manager,
-        incoming_auth: None,
-        run_artifacts,
-        session_graph_persistence,
-    });
+    let app_state = plasm_agent_core::http::build_plasm_host_state(
+        plasm_agent_core::http::PlasmHostBootstrap {
+            engine,
+            mode,
+            registry,
+            catalog_bootstrap,
+            plugin_manager,
+            incoming_auth: None,
+            run_artifacts,
+            session_graph_persistence,
+        },
+    );
     // `app_state.saas` stays `None` — no auth-framework, no MCP transport API keys, no tenant DB.
 
     let mcp_port = match matches.get_one::<u16>("mcp_port").copied() {

@@ -1,0 +1,30 @@
+version: 1
+
+auth:
+  scheme: none
+
+http_backend: http://example.test
+
+entities:
+  Product:
+    id_field: id
+    description: Minimal fixture product for TS facade snapshot tests
+    fields:
+      id:
+        field_type: string
+        required: true
+        string_semantics: short
+      name:
+        field_type: string
+        required: false
+        string_semantics: short
+    relations: {}
+
+capabilities:
+  product_get:
+    description: Fetch a product by id
+    kind: get
+    entity: Product
+    provides:
+    - id
+    - name

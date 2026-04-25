@@ -111,13 +111,7 @@ async fn list_traces(
         } else if let Some(arch) = st.local_trace_archive.as_ref() {
             let st_q = TraceListStatus::parse(q.status.as_deref());
             match arch
-                .list_for_tenant(
-                    tenant,
-                    q.project_slug.as_deref(),
-                    q.offset,
-                    q.limit,
-                    st_q,
-                )
+                .list_for_tenant(tenant, q.project_slug.as_deref(), q.offset, q.limit, st_q)
                 .await
             {
                 Ok(traces) => return Ok(Json(TraceListResponse { traces })),
@@ -128,7 +122,9 @@ async fn list_traces(
                         error = %e,
                         "GET /v1/traces: local trace archive list failed",
                     );
-                    return Err(problem_response(problem_trace_sink_unavailable(e.to_string())));
+                    return Err(problem_response(problem_trace_sink_unavailable(
+                        e.to_string(),
+                    )));
                 }
             }
         } else {
@@ -203,7 +199,9 @@ async fn get_trace_detail(
                     error = %e,
                     "GET /v1/traces/:id: local trace archive read failed",
                 );
-                return Err(problem_response(problem_trace_sink_unavailable(e.to_string())));
+                return Err(problem_response(problem_trace_sink_unavailable(
+                    e.to_string(),
+                )));
             }
         }
     }
