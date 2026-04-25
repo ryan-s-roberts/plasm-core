@@ -73,8 +73,8 @@ use crate::http_execute::{
 use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 #[cfg(feature = "code_mode")]
 use crate::mcp_plasm_code::{
-    evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text, run_code_mode_plan,
-    CodeModePlasmRunHooks, CodePlanDryRunTextMeta,
+    code_mode_plan_dag_json, evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text,
+    run_code_mode_plan, CodeModePlasmRunHooks, CodePlanDryRunTextMeta,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
@@ -113,7 +113,7 @@ pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_sessi
      Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
      **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
-     **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
+     **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
 
 fn parse_tool_seeds(
     tool: &str,
@@ -846,7 +846,7 @@ impl PlasmMcpHandler {
                 name: "evaluate_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Evaluate a named TypeScript Code Mode program, archive the validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run DAG. Use this before **`execute_code_plan`**. Do not send TypeScript again once a handle exists unless changing the plan or symbol space. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
+                    "Evaluate a named TypeScript Code Mode program, archive the validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run DAG. Use this before **`execute_code_plan`**. Do not send TypeScript again once a handle exists unless changing the plan or symbol space. Start uncertain list/feed plans with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "name".into(), "code".into()],
@@ -2281,6 +2281,7 @@ impl ServerHandler for PlasmMcpHandler {
                         .map_err(CallToolError::from_message)?;
                     let dry = evaluate_code_mode_plan_dry(&es, &plan_value)
                         .map_err(CallToolError::from_message)?;
+                    let dag = code_mode_plan_dag_json(&dry);
                     let plan_bytes = serde_json::to_vec(&plan_value)
                         .map_err(|e| CallToolError::from_message(e.to_string()))?;
                     let mut hasher = Sha256::new();
@@ -2345,6 +2346,8 @@ impl ServerHandler for PlasmMcpHandler {
                                 session_id: b.session_id.clone(),
                                 node_count: dry.node_results.len(),
                                 code_chars: doc.code.chars().count() as u64,
+                                dag: dag.clone(),
+                                plasm_call_index: None,
                                 run_ids: Vec::new(),
                                 run_artifacts: Vec::new(),
                             },
@@ -2394,6 +2397,7 @@ impl ServerHandler for PlasmMcpHandler {
                                 "plan_http_path": root_value["plan_http_path"],
                                 "plan_id": root_value["plan_id"],
                                 "plan_hash": root_value["plan_hash"],
+                                "dag": dag,
                                 "dry_run": {
                                     "graph_summary": root_value["dry_run"]["graph_summary"],
                                     "can_batch_run": root_value["dry_run"]["can_batch_run"],
@@ -2513,6 +2517,7 @@ impl ServerHandler for PlasmMcpHandler {
                     }
                     let dry = evaluate_code_mode_plan_dry(&es, &doc.plan)
                         .map_err(CallToolError::from_message)?;
+                    let dag = code_mode_plan_dag_json(&dry);
                     let batch_count = dry.node_results.len();
                     let state2 = self.logical_mutex(&key, &ls_key).await;
                     let (this_invocation_chars, mut idx, call_count) = {
@@ -2637,6 +2642,8 @@ impl ServerHandler for PlasmMcpHandler {
                                 session_id: doc.session_id.clone(),
                                 node_count: dry.node_results.len(),
                                 code_chars: doc.code.chars().count() as u64,
+                                dag: dag.clone(),
+                                plasm_call_index: Some(call_index),
                                 run_ids,
                                 run_artifacts,
                             },
@@ -2661,6 +2668,8 @@ impl ServerHandler for PlasmMcpHandler {
                                 "plan_uri": plan_uri,
                                 "canonical_plan_uri": canonical_plan_uri,
                                 "plan_http_path": plan_http_path,
+                                "plasm_call_index": call_index,
+                                "dag": dag,
                             }),
                         );
                     }

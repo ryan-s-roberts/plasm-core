@@ -66,8 +66,16 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return String(field).split(".").filter(Boolean);
         }
 
+        function __unsupportedProjectionMethod(name) {
+            return function() {
+                throw new Error("Plan.project callbacks support field-path expressions only; unsupported array/string method `" + name + "`. Project a path such as item.types[0].type.name, then use Plan.map or a later supported scalar transform for richer computation.");
+            };
+        }
+
         function __pathFromSymbol(value, binding) {
-            if (!value || !value.__bindingPath) throw new Error("Plan compute callbacks must return symbolic field access only");
+            if (!value || !value.__bindingPath) {
+                throw new Error("Plan.project callback must return a symbolic field path (for example item.types[0].type.name). Unsupported: literals, object construction, loops, .map/.filter/.join, or arbitrary function calls.");
+            }
             const raw = String(value.__bindingPath);
             const prefix = binding + ".";
             return raw === binding ? [] : (raw.startsWith(prefix) ? raw.slice(prefix.length) : raw).split(".").filter(Boolean);
@@ -177,6 +185,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     if (prop in target) return target[prop];
                     if (typeof prop === "symbol") return target[prop];
                     if (prop === "__planValue" || prop === "__planNodeId" || prop === "__toPlanHandle" || prop === "__planNodes") return undefined;
+                    if (["map", "filter", "join", "reduce", "flatMap", "forEach"].includes(String(prop))) return __unsupportedProjectionMethod(String(prop));
                     return __symbol(path + "." + String(prop));
                 }
             });
@@ -786,6 +795,58 @@ mod tests {
             )?;
             let v: serde_json::Value = serde_json::from_str(&s).expect("json");
             assert_eq!(v["nodes"][0]["qualified_entity"]["entry_id"], "acme");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_project_callback_lowers_indexed_field_path() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Product = makeEntity('acme', 'Product'); \
+                 const src = __plasmBind(Product.query({}), 'src'); \
+                 const p = __plasmBind(Plan.project(src, { name0: item => item.types[0].type.name }), 'p'); \
+                 Plan.return(p)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][0], "types");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][1], "0");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][2], "type");
+            assert_eq!(v["nodes"][1]["compute"]["op"]["fields"]["name0"][3], "name");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_project_callback_rejects_array_methods_with_actionable_error() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "try { \
+                   const Product = makeEntity('acme', 'Product'); \
+                   const src = __plasmBind(Product.query({}), 'src'); \
+                   const p = __plasmBind(Plan.project(src, { names: item => item.types.map(x => x.type.name).join(',') }), 'p'); \
+                   Plan.return(p); \
+                   'NO_ERROR'; \
+                 } catch (e) { String(e && e.message || e); }",
+            )?;
+            assert_ne!(msg, "NO_ERROR");
+            assert!(msg.contains("unsupported array/string method") || msg.contains("Plan.project callbacks"), "{msg}");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

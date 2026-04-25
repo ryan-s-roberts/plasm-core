@@ -61,7 +61,18 @@ fn snapshot_code_facade_prelude_emitted() {
     assert!(ts.agent_namespace_body.contains("Fetch a product by id"));
     assert!(ts.agent_namespace_body.contains("interface ProductRow"));
     assert!(ts.agent_loaded_apis.contains("Product: Acme.ProductEntity"));
+    assert!(ts
+        .agent_loaded_apis
+        .contains("declare const plasm: LoadedApis"));
+    assert!(
+        !ts.agent_loaded_apis.contains("default:"),
+        "{}",
+        ts.agent_loaded_apis
+    );
+    assert!(!ts.agent_namespace_body.contains("plasm.default"));
     assert!(ts.agent_prelude.contains("PlanDataInput"));
+    assert!(ts.agent_prelude.contains("PlanReturnable"));
+    assert!(ts.agent_prelude.contains("ProjectionValue"));
     assert!(ts.agent_prelude.contains("binding_symbol"));
     assert!(ts.agent_prelude.contains("node_symbol"));
     assert!(ts.agent_prelude.contains("static singleton"));
