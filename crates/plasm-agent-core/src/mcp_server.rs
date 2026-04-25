@@ -113,7 +113,7 @@ pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_sessi
      Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
      **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
-     **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
+    **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Mutating plan approval gates are host-inferred and currently auto-approved by default. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
 
 fn parse_tool_seeds(
     tool: &str,
@@ -869,7 +869,7 @@ impl PlasmMcpHandler {
                 name: "execute_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Execute a previously archived Code Mode Plan by **`plan_handle`** (for example `p1`). The response publishes only nodes named by **`Plan.return(...)`** and uses the same Markdown, **`_meta.plasm.steps`**, resource links, and paging conventions as **`plasm`**. Use artifact/resource links for full snapshots instead of returning wide intermediates.".into(),
+                    "Execute a previously archived Code Mode Plan by **`plan_handle`** (for example `p1`). Mutating approval gates are host-inferred and currently auto-approved by default. The response publishes only nodes named by **`Plan.return(...)`** and uses the same Markdown, **`_meta.plasm.steps`**, resource links, and paging conventions as **`plasm`**. Use artifact/resource links for full snapshots instead of returning wide intermediates.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "plan_handle".into()],
@@ -3288,6 +3288,7 @@ mod tests {
                 && d.contains(".select(...)")
                 && d.contains("Plan.return(...)")
                 && d.contains("final answer nodes")
+                && d.contains("auto-approved by default")
                 && d.contains("wide intermediates"),
             "code plan tool descriptions: {d}"
         );
@@ -3306,6 +3307,7 @@ mod tests {
             "evaluate_code_plan(name, code)",
             "execute_code_plan(plan_handle)",
             "Reuse the **`plan_handle`**",
+            "auto-approved by default",
             "Plan.project",
             ".select(...)",
             "Plan.return(...)",

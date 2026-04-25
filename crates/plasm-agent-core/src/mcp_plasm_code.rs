@@ -179,6 +179,50 @@ pub struct CodePlanDryRunTextMeta<'a> {
     pub plan_hash: &'a str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodeModeApprovalDecision {
+    Approved,
+}
+
+#[derive(Debug, Clone)]
+struct CodeModeApprovalReceipt {
+    decision: CodeModeApprovalDecision,
+    policy: &'static str,
+    gate: serde_json::Value,
+}
+
+/// Host-owned approval policy for Code Mode write/side-effect nodes.
+///
+/// The current product default is intentionally automatic so Code Mode can execute mutating plans
+/// while the real user/tenant approval surface is built above this boundary.
+#[derive(Debug, Clone)]
+struct CodeModeApprovalPolicy {
+    mode: CodeModeApprovalMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodeModeApprovalMode {
+    AutoApprove,
+}
+
+impl CodeModeApprovalPolicy {
+    fn automatic() -> Self {
+        Self {
+            mode: CodeModeApprovalMode::AutoApprove,
+        }
+    }
+
+    fn review(&self, gate: serde_json::Value) -> CodeModeApprovalReceipt {
+        match self.mode {
+            CodeModeApprovalMode::AutoApprove => CodeModeApprovalReceipt {
+                decision: CodeModeApprovalDecision::Approved,
+                policy: "host.auto_approve",
+                gate,
+            },
+        }
+    }
+}
+
 /// Parse, validate, and dry-run a typed code-mode `Plan`.
 pub(crate) fn evaluate_code_mode_plan_dry(
     es: &ExecuteSession,
@@ -212,14 +256,6 @@ pub fn evaluate_validated_code_mode_plan_dry(
             ensure_relation_expr_matches_plan(es, relation, &pe, i)?;
         }
         let inferred_approval = inferred_node_approval(n);
-        if inferred_approval.is_some() {
-            can_batch_run = false;
-            execution_unsupported.push(format!(
-                "node {:?} ({}) requires host-inferred approval",
-                n.kind(),
-                n.id()
-            ));
-        }
         if n.depends_on().is_empty() && n.uses_result().is_empty() {
             let Some(surface) = n.as_surface() else {
                 can_batch_run = false;
@@ -951,6 +987,8 @@ fn approval_gate_json(
     serde_json::json!({
         "node": node_id,
         "required": true,
+        "host_policy": "host.auto_approve",
+        "default_decision": "approved",
         "policy_key": format!("{}.{}.{}", q.entry_id, q.entity, operation),
         "entry_id": q.entry_id,
         "entity": q.entity,
@@ -1331,6 +1369,8 @@ async fn run_validated_plan_phased(
 ) -> Result<CodeModePlanRunResult, String> {
     let _ = prompt_hash;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
+    let approval_policy = CodeModeApprovalPolicy::automatic();
+    let mut approval_receipts: Vec<CodeModeApprovalReceipt> = Vec::new();
     let mut trace = None;
     let mut sink = None;
     let mut meta_index = None;
@@ -1344,12 +1384,11 @@ async fn run_validated_plan_phased(
             .node_index(node_id)
             .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
         let node = &validated.nodes()[idx];
-        if inferred_node_approval(node).is_some() {
-            return Err(format!(
-                "Plan execution blocked: node {:?} ({}) requires host-inferred approval",
-                node.kind(),
-                node.id()
-            ));
+        if let Some(gate) = inferred_node_approval(node) {
+            let receipt = approval_policy.review(gate);
+            match receipt.decision {
+                CodeModeApprovalDecision::Approved => approval_receipts.push(receipt),
+            }
         }
         let mat = match node {
             ValidatedPlanNode::Surface(surface) => {
@@ -1431,7 +1470,7 @@ async fn run_validated_plan_phased(
             }
             ValidatedPlanNode::ForEach(for_each) => {
                 return Err(format!(
-                    "Plan execution blocked: mutating for_each node {} requires approval receipts",
+                    "Plan execution blocked: for_each node {} requires staged template execution",
                     for_each.id
                 ));
             }
@@ -1459,10 +1498,39 @@ async fn run_validated_plan_phased(
     Ok(CodeModePlanRunResult {
         version: dry.version,
         node_results: dry.node_results,
-        graph_summary: dry.graph_summary,
+        graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
         run_markdown: Some(out.markdown),
         run_plasm_meta: out.tool_meta,
     })
+}
+
+fn graph_summary_with_approval_receipts(
+    mut graph_summary: serde_json::Value,
+    receipts: &[CodeModeApprovalReceipt],
+) -> serde_json::Value {
+    if receipts.is_empty() {
+        return graph_summary;
+    }
+    let receipt_json = receipts
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "decision": match r.decision {
+                    CodeModeApprovalDecision::Approved => "approved",
+                },
+                "policy": r.policy,
+                "gate": r.gate,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(obj) = graph_summary.as_object_mut() {
+        obj.insert(
+            "approval_receipts".to_string(),
+            serde_json::Value::Array(receipt_json),
+        );
+    }
+    graph_summary
 }
 
 async fn materialize_synthetic_node(
@@ -2577,5 +2645,47 @@ returns:
             dry.graph_summary["approval_gates"][0]["policy_key"],
             "acme.Product.label"
         );
+    }
+
+    #[test]
+    fn mutating_surface_gate_declares_default_auto_approval() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "c1",
+                "kind": "create",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product.create(name=\"servo\")",
+                "effect_class": "write",
+                "result_shape": "single"
+            }],
+            "return": "c1"
+        });
+        let typed = parse_plan_value(&plan).expect("parse plan");
+        let validated = validate_plan_artifact(&typed).expect("validate");
+        let gate = inferred_node_approval(&validated.nodes()[0]).expect("approval gate");
+
+        assert_eq!(gate["policy_key"], "acme.Product.create");
+        assert_eq!(gate["host_policy"], "host.auto_approve");
+        assert_eq!(gate["default_decision"], "approved");
+    }
+
+    #[test]
+    fn automatic_approval_policy_emits_receipt_for_gate() {
+        let gate = serde_json::json!({
+            "node": "c1",
+            "required": true,
+            "policy_key": "acme.Product.create"
+        });
+        let receipt = CodeModeApprovalPolicy::automatic().review(gate.clone());
+        let summary = graph_summary_with_approval_receipts(serde_json::json!({}), &[receipt]);
+
+        assert_eq!(summary["approval_receipts"][0]["decision"], "approved");
+        assert_eq!(
+            summary["approval_receipts"][0]["policy"],
+            "host.auto_approve"
+        );
+        assert_eq!(summary["approval_receipts"][0]["gate"], gate);
     }
 }
