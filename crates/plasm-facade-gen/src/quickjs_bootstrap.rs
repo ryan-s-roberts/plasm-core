@@ -71,6 +71,16 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return __brand(value, __BRAND_VALUE);
         }
 
+        function __attachRefMetadata(target, ref) {
+            if (!target || typeof target !== "object" || !ref) return target;
+            Object.defineProperty(target, "__plasmRef", {
+                value: ref,
+                enumerable: false,
+                configurable: true,
+            });
+            return target;
+        }
+
         function __isSpecial(v) {
             return v && typeof v === "object" && (v.__plasmExpr || v.__planValue || v.__bindingPath || v.__planNodeId || v.__toPlanHandle || __isPlanEffect(v) || v.__plasmEntityRef);
         }
@@ -335,14 +345,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 };
             }
             if (value && typeof value === "object" && !__isPlanSource(value) && !__isPlanEffect(value) && !__hasBrand(value, __BRAND_BUILDER)) {
-                const fields = {};
-                const keys = Object.keys(value);
-                if (keys.length === 0) throw new Error("Plan.return record objects must not be empty");
-                for (const key of keys) {
-                    if (!String(key).trim()) throw new Error("Plan.return record names must be non-empty");
-                    fields[key] = __returnNodeId(value[key], key, nodes);
-                }
-                return { kind: "record", fields };
+                throw new Error("Code Mode DSL error: Plan.return expects a single Plan node/effect or an array of Plan nodes/effects; object maps are not supported");
             }
             return { kind: "node", node: __returnNodeId(value, suggestedId || "return", nodes) };
         }
@@ -354,6 +357,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 h.__planNodes = [Object.assign({}, node, { id: nid })];
                 h.__relations = node.__relations || [];
                 h.__resultShape = node.result_shape || "list";
+                if (node.__plasmRef) __attachRefMetadata(h, node.__plasmRef);
             }
             return __nodeHandleProxy(__brand(h, __BRAND_HANDLE, __BRAND_SOURCE));
         }
@@ -394,7 +398,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 get(target, prop) {
                     if (prop in target) return target[prop];
                     if (typeof prop === "symbol") return target[prop];
-                    if (prop === "__planValue" || prop === "__toPlanHandle" || prop === "__cardinality" || prop === "toJSON") return undefined;
+                    if (prop === "__planValue" || prop === "__toPlanHandle" || prop === "__cardinality" || prop === "__plasmRef" || prop === "toJSON") return undefined;
                     if (prop === "select") return function(...fields) { return __projectPlanSource(target, fields); };
                     const rel = (target.__relations || []).find(r => String(r.name) === String(prop));
                     if (rel) return function() { return __relationTraversal(target, rel); };
@@ -422,7 +426,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     if (prop === Symbol.toPrimitive) return function() { return target.__plasmExpr; };
                     if (prop === "toString") return function() { return target.__plasmExpr; };
                     if (typeof prop === "symbol") return target[prop];
-                    if (prop === "__bindingPath" || prop === "__bindingName" || prop === "__bindingFieldPath" || prop === "__planNodeId" || prop === "__toPlanHandle" || prop === "toJSON") return undefined;
+                    if (prop === "__bindingPath" || prop === "__bindingName" || prop === "__bindingFieldPath" || prop === "__planNodeId" || prop === "__toPlanHandle" || prop === "__plasmRef" || prop === "toJSON") return undefined;
                     return __nodeRef(handle, node, parts.concat(String(prop)).join("."), cardinality || "auto");
                 }
             });
@@ -1009,6 +1013,13 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (__isEntityRefValue(value)) return value.key;
             const name = String(param && param.name || "entity_ref");
             const target = param && param.entity_ref_target ? String(param.entity_ref_target) : "";
+            if (value && value.__plasmRef) {
+                const ref = value.__plasmRef;
+                if (target && ref.entity && String(ref.entity) !== target) {
+                    throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects " + target + " but got " + ref.entity);
+                }
+                return ref.key;
+            }
             if (__isWholeSymbolicRow(value) || (value && value.__planNodeId)) {
                 throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects a scalar reference key, not a whole row/read handle; pass ." + "id or entityRef(...)");
             }
@@ -1016,6 +1027,9 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (value && typeof value === "object" && !Array.isArray(value) && !__isSpecial(value)) {
                 if ((keyVars || []).length > 1) return __entityKeyValue(target || name, keyVars, value);
                 throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects a scalar reference key, not an object");
+            }
+            if (value && typeof value === "object" && (__isPlanSource(value) || __isPlanEffect(value) || __hasBrand(value, __BRAND_BUILDER) || value.__toPlanHandle)) {
+                throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects a scalar reference key or get(...) ref handle, not a query/search/list handle");
             }
             return value;
         }
@@ -1052,6 +1066,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             let projection = [];
             let baseFilters = {};
             let searchText = null;
+            const cap = __capability(capabilities || [], kind);
             if (kind === "search") {
                 const parsed = __searchInput(input, searchParam);
                 searchText = parsed.text;
@@ -1059,6 +1074,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             } else {
                 baseFilters = input || {};
             }
+            baseFilters = __normalizeEntityRefInputs(baseFilters, cap, entry_id);
             let predicates = __filterPredicates(baseFilters);
             const builder = {
                 where(...ps) {
@@ -1075,7 +1091,6 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         ? entity + "~" + __quote(searchText) + __filters(baseFilters || {}, extraPredicates)
                         : entity + __filters(baseFilters || {}, extraPredicates);
                     const expr = projection.length ? exprBase + "[" + projection.join(",") + "]" : exprBase;
-                    const cap = __capability(capabilities, kind);
                     const irFilters = Object.assign({}, baseFilters || {});
                     if (kind === "search") irFilters[searchParam || "q"] = searchText;
                     const predicate = __irPredicates(irFilters, extraPredicates);
@@ -1218,6 +1233,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         uses_result,
                     };
                     node.__relations = relations || [];
+                    __attachRefMetadata(node, { entry_id, entity, key, key_vars: keyVars || [] });
                     return __attachPlanSourceMethods(__planEffect(node, true), relations || []);
                 },
                 create(input) {
@@ -1507,23 +1523,24 @@ mod tests {
     }
 
     #[test]
-    fn plasm_plan_return_emits_tagged_record_and_parallel() -> QjResult<()> {
+    fn plasm_plan_return_emits_single_and_parallel() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
         let js = quickjs_runtime_module_bootstrap();
         context.with(|ctx| {
-            let flat = js.replace("export function", "function").replace("export class", "class");
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
             let _: () = ctx.eval(flat.as_str())?;
-            let record: String = ctx.eval(
+            let single: String = ctx.eval(
                 "const Product = makeEntity('acme', 'Product'); \
-                 Plan.return({ sorted: Plan.sort(Product.query({}), row => row.name), detail: Product.get('p1') })",
+                 const detail = __plasmBind(Product.get('p1'), 'detail'); \
+                 Plan.return(detail)",
             )?;
-            let v: serde_json::Value = serde_json::from_str(&record).expect("json");
-            assert_eq!(v["return"]["kind"], "record");
-            assert_eq!(v["return"]["fields"]["sorted"], "sorted");
-            assert_eq!(v["return"]["fields"]["detail"], "detail");
-            assert_eq!(v["nodes"][0]["id"], "sorted_source");
-            assert_eq!(v["nodes"][2]["id"], "detail");
+            let v: serde_json::Value = serde_json::from_str(&single).expect("json");
+            assert_eq!(v["return"]["kind"], "node");
+            assert_eq!(v["return"]["node"], "detail");
+            assert_eq!(v["nodes"][0]["id"], "detail");
 
             let parallel: String = ctx.eval(
                 "const Product2 = makeEntity('acme', 'Product'); \
@@ -1553,7 +1570,7 @@ mod tests {
                  try { Plan.return({ invalid: { node: 'n1' } }); } catch (e) { msg = String(e && e.message || e); } \
                  msg",
             )?;
-            assert!(msg.contains("Plan.return values must be branded"), "{msg}");
+            assert!(msg.contains("object maps are not supported"), "{msg}");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
@@ -2138,6 +2155,109 @@ mod tests {
     }
 
     #[test]
+    fn get_handle_lowers_to_entity_ref_query_input() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   const Contributor = makeEntity('github', 'Contributor', [], null, [{ kind: 'query', name: 'contributor_query', input_parameters: [{ name: 'repository', type: 'entity_ref', entity_ref_target: 'Repository', required: true }] }]); \
+                   const repo = Repository.get('ryan-s-roberts/plasm-core'); \
+                   const contributors = __plasmBind(Contributor.query({ repository: repo }), 'contributors'); \
+                   out = JSON.parse(Plan.return(contributors)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"]["owner"],
+                "ryan-s-roberts"
+            );
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"]["repo"],
+                "plasm-core"
+            );
+            assert!(v["nodes"][0]["expr"]
+                .as_str()
+                .is_some_and(|expr| expr.contains("repository={owner=\"ryan-s-roberts\", repo=\"plasm-core\"")), "{v}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn get_handle_object_key_lowers_to_entity_ref_query_input() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   const Contributor = makeEntity('github', 'Contributor', [], null, [{ kind: 'query', name: 'contributor_query', input_parameters: [{ name: 'repository', type: 'entity_ref', entity_ref_target: 'Repository', required: true }] }]); \
+                   const repo = Repository.get({ owner: 'ryan-s-roberts', repo: 'plasm-core' }); \
+                   const contributors = __plasmBind(Contributor.query({ repository: repo }), 'contributors'); \
+                   out = JSON.parse(Plan.return(contributors)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"]["owner"],
+                "ryan-s-roberts"
+            );
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"]["repo"],
+                "plasm-core"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn query_handle_is_not_an_entity_ref_query_input() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'query', name: 'repo_query' }], ['owner', 'repo']); \
+                   const Contributor = makeEntity('github', 'Contributor', [], null, [{ kind: 'query', name: 'contributor_query', input_parameters: [{ name: 'repository', type: 'entity_ref', entity_ref_target: 'Repository', required: true }] }]); \
+                   Plan.return(Contributor.query({ repository: Repository.query({}) })); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(
+                msg.contains("expects a scalar reference key or get(...) ref handle"),
+                "{msg}"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn entity_ref_values_lower_in_where_predicates() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
@@ -2246,7 +2366,7 @@ mod tests {
                  const fromGet = Product.get('p1').category(); \
                  const getNode = __plasmBind(Product.get('p2'), 'p'); \
                  const fromSingleton = Plan.singleton(getNode).category(); \
-                 Plan.return({ fromGet, fromSingleton })",
+                 Plan.return([fromGet, fromSingleton])",
             )?;
             let v: serde_json::Value = serde_json::from_str(&s).expect("json");
             assert_eq!(v["nodes"][1]["relation"]["source_cardinality"], "single");

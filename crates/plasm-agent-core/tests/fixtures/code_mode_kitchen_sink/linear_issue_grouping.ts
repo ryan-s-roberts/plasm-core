@@ -4,4 +4,4 @@ const issues = plasm.acme.Product.query({ name: "KitchenSink" })
 
 const byState = Plan.groupBy(issues, (issue) => issue.name).count("issues");
 
-Plan.return({ issues, byState });
+Plan.return([issues, byState]);

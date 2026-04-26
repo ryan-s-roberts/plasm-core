@@ -8,4 +8,4 @@ const createDerived = forEach(sourceProducts, (product) =>
   }),
 );
 
-Plan.return({ sourceProducts, createDerived });
+Plan.return([sourceProducts, createDerived]);

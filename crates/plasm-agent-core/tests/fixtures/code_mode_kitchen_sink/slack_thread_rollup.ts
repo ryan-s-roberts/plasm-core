@@ -9,4 +9,4 @@ const threadDigest = Plan.project(messages, {
 
 const byUser = Plan.groupBy(messages, (message) => message.name).count("messages");
 
-Plan.return({ messages, threadDigest, byUser });
+Plan.return([messages, threadDigest, byUser]);

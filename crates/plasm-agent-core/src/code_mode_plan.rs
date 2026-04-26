@@ -365,7 +365,7 @@ pub struct Plan<State: PlanState = RawPlanState> {
 
 pub type RawPlanArtifact = Plan<RawPlanState>;
 
-/// Agent-visible return shape: a single node, a parallel set, or named outputs.
+/// Agent-visible return shape: a single node or a parallel set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PlanReturn {
@@ -377,7 +377,6 @@ pub enum PlanReturn {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ValidatedPlanReturn {
     Parallel { parallel: Vec<PlanNodeId> },
-    Record(BTreeMap<OutputName, PlanNodeId>),
     Node(PlanNodeId),
 }
 
@@ -386,7 +385,6 @@ impl ValidatedPlanReturn {
         match self {
             ValidatedPlanReturn::Node(id) => vec![id],
             ValidatedPlanReturn::Parallel { parallel } => parallel.iter().collect(),
-            ValidatedPlanReturn::Record(map) => map.values().collect(),
         }
     }
 }
@@ -875,7 +873,7 @@ fn return_refs(ret: &PlanReturn) -> Vec<&str> {
     match ret {
         PlanReturn::Node { node } => vec![node.as_str()],
         PlanReturn::Parallel { nodes } => nodes.iter().map(String::as_str).collect(),
-        PlanReturn::Record { fields } => fields.values().map(String::as_str).collect(),
+        PlanReturn::Record { fields: _ } => Vec::new(),
     }
 }
 
@@ -1856,8 +1854,8 @@ fn validate_return_refs(
         PlanReturn::Parallel { nodes } if nodes.is_empty() => {
             return Err("plan.return.nodes must contain at least one node".to_string());
         }
-        PlanReturn::Record { fields } if fields.is_empty() => {
-            return Err("plan.return.fields must contain at least one named node".to_string());
+        PlanReturn::Record { .. } => {
+            return Err("plan.return object maps are not supported; return a single node or { kind: \"parallel\", nodes: [...] }".to_string());
         }
         _ => {}
     }
@@ -1875,12 +1873,7 @@ fn validate_return_refs(
                 .map(PlanNodeId::new)
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        PlanReturn::Record { fields } => Ok(ValidatedPlanReturn::Record(
-            fields
-                .iter()
-                .map(|(k, v)| Ok((OutputName::new(k.clone())?, PlanNodeId::new(v.clone())?)))
-                .collect::<Result<BTreeMap<_, _>, String>>()?,
-        )),
+        PlanReturn::Record { .. } => unreachable!("record returns are rejected above"),
     }
 }
 
@@ -2337,7 +2330,7 @@ mod tests {
                     }
                 }
             ],
-            "return": { "kind": "record", "fields": { "sourceIssues": "find", "labeledIssues": "label" } }
+            "return": { "kind": "parallel", "nodes": ["find", "label"] }
         });
         validate_plan_value(&v).expect("host infers approval gates during dry-run");
     }
@@ -2772,7 +2765,7 @@ mod tests {
                     }
                 }
             ],
-            "return": { "kind": "record", "fields": { "limited": "limited" } }
+            "return": { "kind": "node", "node": "limited" }
         });
         let plan = parse_plan_value(&v).expect("parse");
         let validated = validate_plan_artifact(&plan).expect("validate");

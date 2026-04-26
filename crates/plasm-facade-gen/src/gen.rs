@@ -670,7 +670,7 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
   export type TemplateValue = PlanValueExpr & { readonly __plasmExpr: string; readonly __planValue: PlanValue; readonly input_bindings: readonly PlanInputBinding[] };
   export type ProjectionValue = Symbolic<unknown>;
   export type PlanReturnSource = PlanNodeHandle | PlanBuilder | PlanEffect;
-  export type PlanReturnable = PlanReturnSource | readonly PlanReturnSource[] | Record<string, PlanReturnSource>;
+  export type PlanReturnable = PlanReturnSource | readonly PlanReturnSource[];
 }
 declare class Plan {
   static return(value: Plasm.PlanReturnable): string;

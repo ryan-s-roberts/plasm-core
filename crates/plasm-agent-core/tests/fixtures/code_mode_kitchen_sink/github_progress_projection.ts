@@ -18,4 +18,4 @@ const labelProgress = forEach(labelPayloads, (payload) =>
   }),
 );
 
-Plan.return({ issues, progress, labelPayloads, labelProgress });
+Plan.return([issues, progress, labelPayloads, labelProgress]);

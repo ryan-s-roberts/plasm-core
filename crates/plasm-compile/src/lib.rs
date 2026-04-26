@@ -116,6 +116,14 @@ mod tests {
     }
 
     #[test]
+    fn github_commit_query_provides_same_modeled_fields_as_get() {
+        let cgs = github_cgs();
+        let query = cgs.get_capability("commit_query").expect("commit_query");
+        let get = cgs.get_capability("commit_get").expect("commit_get");
+        assert_eq!(cgs.effective_provides(query), cgs.effective_provides(get));
+    }
+
+    #[test]
     fn github_repository_ref_without_owner_fails_before_malformed_path() {
         let cgs = github_cgs();
         let cap = cgs.get_capability("commit_query").expect("commit_query");

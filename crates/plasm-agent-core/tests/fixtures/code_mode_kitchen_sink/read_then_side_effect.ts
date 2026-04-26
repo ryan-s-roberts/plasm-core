@@ -9,4 +9,4 @@ const labelStale = forEach(stale, (product) =>
   }),
 );
 
-Plan.return({ stale, labelStale });
+Plan.return([stale, labelStale]);

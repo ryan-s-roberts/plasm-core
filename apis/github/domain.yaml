@@ -1,4 +1,4 @@
-version: 17
+version: 18
 
 http_backend: https://api.github.com
 
@@ -1928,6 +1928,12 @@ capabilities:
     kind: query
     entity: Commit
     description: List commits for a repository.
+    provides:
+    - owner
+    - repo
+    - sha
+    - message
+    - html_url
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository

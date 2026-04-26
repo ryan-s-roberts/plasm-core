@@ -25,4 +25,4 @@ const productRows = Plan.project(products, {
   product_name: (product) => product.name,
 });
 
-Plan.return({ products, rows, totals, productRows });
+Plan.return([products, rows, totals, productRows]);

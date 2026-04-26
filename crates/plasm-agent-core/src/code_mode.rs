@@ -549,7 +549,7 @@ const cards = Plan.map(base, (p) => ({
   body: template`${p.name} uses ${moveFacts.move}`,
   power: moveFacts.power,
 }));
-Plan.return({ cards });
+Plan.return(cards);
 "#;
         let hinted = inject_plan_symbol_hints_typescript("plan.ts", source).expect("hints");
         assert!(hinted.contains("__plasmSetAstHints"));

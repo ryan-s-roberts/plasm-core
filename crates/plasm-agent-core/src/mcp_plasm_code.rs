@@ -900,10 +900,6 @@ fn render_return_lines(ret: &ValidatedPlanReturn) -> Vec<String> {
             .enumerate()
             .map(|(i, id)| format!("parallel[{}] -> {}", i, id.as_str()))
             .collect(),
-        ValidatedPlanReturn::Record(map) => map
-            .iter()
-            .map(|(name, id)| format!("{} -> {}", name.as_str(), id.as_str()))
-            .collect(),
     }
 }
 
@@ -1805,10 +1801,6 @@ fn validated_return_names(ret: &ValidatedPlanReturn) -> Vec<Option<String>> {
             .iter()
             .enumerate()
             .map(|(i, _)| Some(format!("parallel[{i}]")))
-            .collect(),
-        ValidatedPlanReturn::Record(map) => map
-            .keys()
-            .map(|name| Some(name.as_str().to_string()))
             .collect(),
     }
 }
@@ -3132,7 +3124,7 @@ mod tests {
                     "uses_result": [{ "node": "summary", "as": "product" }]
                 }
             ],
-            "return": { "kind": "record", "fields": { "summary": "summary", "cards": "cards" } }
+            "return": { "kind": "parallel", "nodes": ["summary", "cards"] }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         let dag = code_mode_plan_dag_json(&dry);
@@ -3314,7 +3306,7 @@ returns:
                     }
                 }
             ],
-            "return": { "kind": "record", "fields": { "products": "find", "labeled": "label" } }
+            "return": { "kind": "parallel", "nodes": ["find", "label"] }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert!(!dry.can_batch_run);
@@ -3570,7 +3562,7 @@ returns:
                     }
                 }
             ],
-            "return": { "kind": "record", "fields": { "products": "find", "labeled": "label" } }
+            "return": { "kind": "parallel", "nodes": ["find", "label"] }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert_eq!(

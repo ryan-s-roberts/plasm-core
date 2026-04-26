@@ -9,4 +9,4 @@ const summary = Plan.map(kitchen, product => ({
   title: template`Summary for ${product.name}`,
 }));
 
-Plan.return({ kitchen, sinks, summary });
+Plan.return([kitchen, sinks, summary]);

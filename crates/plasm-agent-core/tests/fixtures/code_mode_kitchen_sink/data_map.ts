@@ -9,4 +9,4 @@ const payloads = Plan.map(products, (product) => ({
   label: staticLabels.label,
 }));
 
-Plan.return({ products, staticLabels, payloads });
+Plan.return([products, staticLabels, payloads]);

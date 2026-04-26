@@ -4,4 +4,4 @@ const invalid = Plan.project(issues, {
   label: () => "not symbolic",
 });
 
-Plan.return({ invalid });
+Plan.return(invalid);
