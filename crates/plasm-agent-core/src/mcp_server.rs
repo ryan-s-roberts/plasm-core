@@ -40,17 +40,17 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
 use plasm_core::CgsDiscovery;
+use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
 #[cfg(feature = "code_mode")]
-use plasm_facade_gen::{build_code_facade, quickjs_runtime_from_facade_delta, FacadeGenRequest};
+use plasm_facade_gen::{FacadeGenRequest, build_code_facade, quickjs_runtime_from_facade_delta};
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
-use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -59,7 +59,7 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::McpServer;
+use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
 #[cfg(feature = "code_mode")]
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
@@ -67,27 +67,28 @@ use tokio::sync::{Mutex, RwLock};
 #[cfg(feature = "code_mode")]
 use crate::http_execute::mcp_add_code_capabilities_markdown;
 use crate::http_execute::{
-    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
-    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
+    execute_session_run_markdown, normalize_capability_seeds,
 };
-use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
 #[cfg(feature = "code_mode")]
 use crate::mcp_plasm_code::{
-    code_mode_plan_dag_json, evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text,
-    run_code_mode_plan, CodeModePlasmRunHooks, CodePlanDryRunTextMeta,
+    CodeModePlasmRunHooks, CodePlanDryRunTextMeta, code_mode_plan_dag_json,
+    evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text, run_code_mode_plan,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
+use crate::run_artifacts::{
+    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_plan_uri,
+    parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
+    parse_plasm_session_short_resource_uri,
+};
 #[cfg(feature = "code_mode")]
 use crate::run_artifacts::{
-    code_plan_http_path, parse_code_plan_handle, plasm_session_short_plan_uri,
-    CodePlanArchiveDocument,
-};
-use crate::run_artifacts::{
-    parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
-    parse_plasm_session_short_resource_uri, ArtifactPayload, LogicalSessionUriSegment,
+    CodePlanArchiveDocument, code_plan_http_path, parse_code_plan_handle,
+    plasm_session_short_plan_uri,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -113,7 +114,7 @@ pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_sessi
      Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
      **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
-    **Code Mode:** prefer **`plasm`** for one-shot reads/writes and simple follow-ups. Use **`add_code_capabilities`** only for multiple operations needing coordination, transformation, compute, fan-out/fan-in, approval review, or reuse. Flow: **`add_code_capabilities`** -> **`evaluate_code_plan(name, code)`** -> inspect dry-run -> **`execute_code_plan(plan_handle)`**. Reuse the **`plan_handle`**; resend TypeScript only when changing the plan or symbol space. Mutating plan approval gates are host-inferred and currently auto-approved by default. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** include only final answer nodes, not intermediates.";
+    **Code Mode:** prefer **`plasm`** for one simple expression, one-shot reads/writes, and simple follow-ups. Use Code Mode only when the user intent is best satisfied by synthesizing a **program** with multiple operations needing coordination, transformation, compute, fan-out/fan-in, or reusable logic; it is **not a query interface**. Flow: **`add_code_capabilities`** -> write a complete TypeScript program -> **`evaluate_code_plan(name, code)`** -> inspect the dry-run execution plan -> **`execute_code_plan(plan_handle)`** once the plan satisfies the user's intent and risk. If the dry-run reveals a defect, missing capability, excessive output, or unacceptable risk, revise and re-evaluate instead of executing. Reuse the **`plan_handle`**; resend TypeScript only when changing the program or symbol space. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** publish only final answer nodes, never intermediates.";
 
 fn parse_tool_seeds(
     tool: &str,
@@ -802,12 +803,12 @@ impl PlasmMcpHandler {
             );
             eval_props.insert(
                 "name".into(),
-                json_schema_string_type("Stable human-readable name for the archived plan; use a short task-oriented name so the `pN` handle is auditable."),
+                json_schema_string_type("Stable human-readable name for the archived program; use a short task-oriented name so the `pN` handle is auditable."),
             );
             eval_props.insert(
                 "code".into(),
                 json_schema_string_type(
-                    "TypeScript Code Mode program for multiple coordinated operations, transformations, or compute. Prefer `plasm` for simple one-shot calls. Keep code narrow: use `.select(...)` / `Plan.project` for needed fields and `Plan.return(...)` only for final answer nodes.",
+                    "Complete TypeScript Code Mode program that would satisfy the user's intent if executed. Use it for multiple coordinated operations, transformations, compute, fan-out/fan-in, or reuse -- not as a query interface. Keep output minimal: use `.select(...)` / `Plan.project` for required fields and `Plan.return(...)` only for final answer nodes.",
                 ),
             );
             let mut execute_plan_props = BTreeMap::new();
@@ -817,13 +818,13 @@ impl PlasmMcpHandler {
             );
             execute_plan_props.insert(
                 "plan_handle".into(),
-                json_schema_string_type("Monotonic handle from `evaluate_code_plan`, e.g. `p1`; execute by handle instead of resending TypeScript."),
+                json_schema_string_type("Monotonic handle from `evaluate_code_plan`, e.g. `p1`; execute this reviewed dry-run plan by handle instead of resending TypeScript."),
             );
             tools.push(Tool {
                 name: "add_code_capabilities".into(),
                 title: None,
                 description: Some(
-                    "Open capabilities for Code Mode authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Use only for multiple coordinated operations, transformations, compute, approval review, or reuse; prefer **`plasm`** for simple one-shot calls. Keep output small with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only.".into(),
+                    "Open capabilities for Code Mode program authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Use only when synthesizing a program with multiple coordinated operations, transformations, compute, fan-out/fan-in, or reuse; prefer **`plasm`** for one simple expression. Code Mode is **not a query interface**. Keep output minimal with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -846,7 +847,7 @@ impl PlasmMcpHandler {
                 name: "evaluate_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Evaluate a named TypeScript Code Mode program, archive the validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run DAG. Use this before **`execute_code_plan`**. Do not send TypeScript again once a handle exists unless changing the plan or symbol space. Start uncertain list/feed plans with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
+                    "Evaluate a complete named TypeScript Code Mode program, archive the validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run execution DAG. This is plan validation and review, not a query endpoint and usually not the final answer. If the dry-run program satisfies the user's intent with acceptable risk and minimal output, follow with **`execute_code_plan(plan_handle)`**. Revise and re-evaluate only when the dry run shows a defect, missing capability, excessive output, or unacceptable risk. Do not send TypeScript again once a handle exists unless changing the program or symbol space. Start uncertain list/feed plans with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "name".into(), "code".into()],
@@ -869,7 +870,7 @@ impl PlasmMcpHandler {
                 name: "execute_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Execute a previously archived Code Mode Plan by **`plan_handle`** (for example `p1`). Mutating approval gates are host-inferred and currently auto-approved by default. The response publishes only nodes named by **`Plan.return(...)`** and uses the same Markdown, **`_meta.plasm.steps`**, resource links, and paging conventions as **`plasm`**. Use artifact/resource links for full snapshots instead of returning wide intermediates.".into(),
+                    "Execute a previously evaluated and reviewed Code Mode program by **`plan_handle`** (for example `p1`). This is the expected follow-up after a satisfactory dry-run from **`evaluate_code_plan`**; use the handle instead of resending code. The response publishes only nodes named by **`Plan.return(...)`** and uses the same Markdown, **`_meta.plasm.steps`**, resource links, and paging conventions as **`plasm`**. Because only returned nodes are published, programs should return final answer data only and use artifact/resource links for full snapshots instead of returning wide intermediates.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "plan_handle".into()],
@@ -3279,18 +3280,29 @@ mod tests {
         assert!(
             d.contains("plan_handle")
                 && d.contains("archived")
+                && d.contains("program")
+                && d.contains("not a query interface")
+                && d.contains("plan validation and review")
+                && d.contains("usually not the final answer")
+                && d.contains("execute_code_plan(plan_handle)")
+                && d.contains("satisfactory dry-run")
                 && d.contains("_meta.plasm.steps")
                 && d.contains("prefer **`plasm`**")
                 && d.contains("multiple coordinated operations")
                 && d.contains("transformations")
                 && d.contains("compute")
+                && d.contains("fan-out/fan-in")
                 && d.contains("Plan.project")
                 && d.contains(".select(...)")
                 && d.contains("Plan.return(...)")
+                && d.contains("minimal output")
                 && d.contains("final answer nodes")
-                && d.contains("auto-approved by default")
                 && d.contains("wide intermediates"),
             "code plan tool descriptions: {d}"
+        );
+        assert!(
+            !d.contains("approval") && !d.contains("approved") && !d.contains("approve"),
+            "code plan tool descriptions should not mention approval: {d}"
         );
     }
 
@@ -3299,25 +3311,33 @@ mod tests {
     fn initialize_instructions_document_code_mode_decision_and_flow() {
         let d = super::MCP_SERVER_INITIALIZE_INSTRUCTIONS;
         for expected in [
-            "prefer **`plasm`** for one-shot reads/writes",
+            "prefer **`plasm`** for one simple expression",
+            "synthesizing a **program**",
+            "not a query interface",
             "multiple operations needing coordination",
             "transformation",
             "compute",
+            "fan-out/fan-in",
             "add_code_capabilities",
             "evaluate_code_plan(name, code)",
             "execute_code_plan(plan_handle)",
+            "once the plan satisfies the user's intent",
+            "revise and re-evaluate",
             "Reuse the **`plan_handle`**",
-            "auto-approved by default",
             "Plan.project",
             ".select(...)",
             "Plan.return(...)",
-            "not intermediates",
+            "never intermediates",
         ] {
             assert!(
                 d.contains(expected),
                 "initialize instructions missing {expected:?}: {d}"
             );
         }
+        assert!(
+            !d.contains("approval") && !d.contains("approved") && !d.contains("approve"),
+            "initialize instructions should not mention approval: {d}"
+        );
     }
 
     #[cfg(feature = "code_mode")]
