@@ -35,6 +35,9 @@ pub struct QualifiedEntitySurface {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub e_index: Option<usize>,
+    /// CGS identity slots, in declaration order. Compound identities require object keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_vars: Vec<String>,
     /// Declared field typing for prompts (subset of full CGS).
     pub fields: Vec<FacadeField>,
     /// Reverse edges for relation-aware codegen.

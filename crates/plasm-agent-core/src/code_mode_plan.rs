@@ -2039,8 +2039,41 @@ fn validate_entity_ref_key_value(
         | PlanValue::BindingSymbol { .. }
         | PlanValue::NodeSymbol { .. }
         | PlanValue::Template { .. } => validate_plan_value_expr(value, node_index, path),
+        PlanValue::Object { fields } => {
+            if fields.is_empty() {
+                return Err(format!(
+                    "plan.nodes[{node_index}].{path} compound entity_ref_key object must not be empty"
+                ));
+            }
+            if looks_like_unnormalized_entity_ref_wrapper(fields) {
+                return Err(format!(
+                    "plan.nodes[{node_index}].{path} contains an unnormalized Code Mode entity_ref wrapper; entity_ref_key.key must contain only key fields"
+                ));
+            }
+            for (field, child) in fields {
+                if field.trim().is_empty() {
+                    return Err(format!(
+                        "plan.nodes[{node_index}].{path} compound entity_ref_key object contains an empty key"
+                    ));
+                }
+                match child {
+                    PlanValue::Literal { .. }
+                    | PlanValue::BindingSymbol { .. }
+                    | PlanValue::NodeSymbol { .. }
+                    | PlanValue::Template { .. } => {
+                        validate_plan_value_expr(child, node_index, &format!("{path}.{field}"))?
+                    }
+                    other => {
+                        return Err(format!(
+                            "plan.nodes[{node_index}].{path}.{field} must be a literal, binding symbol, node symbol, or template for compound entity_ref_key (got {other:?})"
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
         other => Err(format!(
-            "plan.nodes[{node_index}].{path} must be a literal, binding symbol, node symbol, or template for entity_ref_key (got {other:?})"
+            "plan.nodes[{node_index}].{path} must be a literal, binding symbol, node symbol, template, or non-empty compound object for entity_ref_key (got {other:?})"
         )),
     }
 }
@@ -2480,6 +2513,85 @@ mod tests {
             "return": { "kind": "node", "node": "commits" }
         });
         validate_plan_value(&v).expect("explicit entity_ref_key is valid");
+    }
+
+    #[test]
+    fn compound_entity_ref_key_predicate_values_validate() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "n1",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "github", "entity": "Commit" },
+                "expr": "Commit.query(repository=Repository{owner=\"ryan-s-roberts\", repo=\"plasm-core\"})",
+                "ir": {
+                    "expr": {
+                        "op": "query",
+                        "entity": "Commit",
+                        "predicate": {
+                            "type": "comparison",
+                            "field": "repository",
+                            "op": "=",
+                            "value": {
+                                "owner": "ryan-s-roberts",
+                                "repo": "plasm-core"
+                            }
+                        }
+                    }
+                },
+                "effect_class": "read",
+                "result_shape": "list",
+                "predicates": [{
+                    "field_path": ["repository"],
+                    "op": "eq",
+                    "value": {
+                        "kind": "entity_ref_key",
+                        "api": "github",
+                        "entity": "Repository",
+                        "key": {
+                            "kind": "object",
+                            "fields": {
+                                "owner": { "kind": "literal", "value": "ryan-s-roberts" },
+                                "repo": { "kind": "literal", "value": "plasm-core" }
+                            }
+                        }
+                    }
+                }]
+            }],
+            "return": { "kind": "node", "node": "n1" }
+        });
+        validate_plan_value(&v).expect("compound entity_ref_key is valid");
+    }
+
+    #[test]
+    fn compound_get_ref_key_validates() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "repo",
+                "kind": "get",
+                "qualified_entity": { "entry_id": "github", "entity": "Repository" },
+                "expr": "Repository{owner=\"ryan-s-roberts\", repo=\"plasm-core\"}",
+                "ir": {
+                    "expr": {
+                        "op": "get",
+                        "ref": {
+                            "entity_type": "Repository",
+                            "key": {
+                                "owner": "ryan-s-roberts",
+                                "repo": "plasm-core"
+                            }
+                        }
+                    }
+                },
+                "effect_class": "read",
+                "result_shape": "single"
+            }],
+            "return": { "kind": "node", "node": "repo" }
+        });
+        validate_plan_value(&v).expect("compound get ref key is valid");
     }
 
     #[test]

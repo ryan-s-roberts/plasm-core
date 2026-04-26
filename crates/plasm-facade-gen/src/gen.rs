@@ -361,6 +361,7 @@ fn build_entity_surface(
         entity: ename.to_string(),
         description: non_empty_description(edef.description.as_str()),
         e_index: eidx,
+        key_vars: edef.key_vars.iter().map(|k| k.to_string()).collect(),
         fields,
         relations: rels,
         capabilities: caps,
@@ -514,6 +515,20 @@ fn input_arg_optional(params: &[FacadeInputParameter]) -> &'static str {
     }
 }
 
+fn entity_get_key_type_ts(entity: &QualifiedEntitySurface) -> String {
+    if entity.key_vars.len() <= 1 {
+        "string".to_string()
+    } else {
+        let fields = entity
+            .key_vars
+            .iter()
+            .map(|key| format!("{}: string", serde_json::Value::String(key.clone())))
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!("string | {{ {fields} }}")
+    }
+}
+
 fn capability_suffix(cap: &FacadeCapability) -> String {
     pascal(&cap.name)
 }
@@ -560,12 +575,12 @@ fn action_method_overloads_ts(
 }
 
 const TS_PRELUDE: &str = r#"declare namespace Plasm {
-  export type EntityRef<Api extends string, E extends string, K = string> = PlanValueExpr & {
+  export type EntityRef<Api extends string, E extends string, K = string> = K | PlanValueExpr | (PlanValueExpr & {
     readonly __plasmEntityRef: true;
     readonly api: Api;
     readonly entity: E;
     readonly key: K;
-  };
+  });
   export type PlanBrand<Name extends string> = { readonly __plasmPlanBrands?: readonly Name[] };
   export type PlanSource = PlanBrand<"PlanSource">;
   export type PlanEffect = PlanStep & PlanBrand<"PlanEffect">;
@@ -923,8 +938,9 @@ pub fn build_code_facade(
         }
         let _ = writeln!(
             &mut namespace_body,
-            "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: string): {e}NodeHandle;",
-            e = r.entity
+            "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: {key_type}): {e}NodeHandle;",
+            e = r.entity,
+            key_type = entity_get_key_type_ts(r)
         );
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));

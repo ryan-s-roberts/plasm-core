@@ -854,6 +854,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return { __plasm_hole: Object.assign({ kind }, data || {}) };
         }
 
+        function __isIrStringSlot(v) {
+            return typeof v === "string" || (v && typeof v === "object" && v.__plasm_hole);
+        }
+
         function __symbolicStringParts(v) {
             if (typeof v !== "string") return null;
             const m = /^\$\{([A-Za-z_$][A-Za-z0-9_$]*)(?:\.([^}]+))?\}$/.exec(v);
@@ -878,6 +882,58 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return out;
             }
             return v == null ? null : v;
+        }
+
+        function __entityKeyValue(entity, keyVars, id) {
+            const keys = Array.isArray(keyVars) ? keyVars : [];
+            if (keys.length <= 1) {
+                if (id && typeof id === "object" && !__isSpecial(id) && !Array.isArray(id)) {
+                    throw new Error("Code Mode DSL error: " + entity + ".get(...) has a single-key identity and requires a string key, not an object");
+                }
+                const value = __irValue(id);
+                if (!__isIrStringSlot(value)) {
+                    throw new Error("Code Mode DSL error: " + entity + ".get(...) key must lower to a string");
+                }
+                return value;
+            }
+            if (typeof id === "string") {
+                if (keys.length !== 2) {
+                    throw new Error("Code Mode DSL error: " + entity + ".get(...) string shorthand is only supported for two-part compound keys; use an object with fields [" + keys.join(", ") + "]");
+                }
+                const idx = id.indexOf("/");
+                if (idx < 0) {
+                    throw new Error("Code Mode DSL error: " + entity + ".get(...) compound string shorthand must be 'left/right' for key_vars [" + keys.join(", ") + "]");
+                }
+                const left = id.slice(0, idx).trim();
+                const right = id.slice(idx + 1).trim();
+                if (!left || !right) {
+                    throw new Error("Code Mode DSL error: " + entity + ".get(...) compound string shorthand must contain non-empty key parts for [" + keys.join(", ") + "]");
+                }
+                return { [keys[0]]: left, [keys[1]]: right };
+            }
+            if (!id || typeof id !== "object" || Array.isArray(id) || __isSpecial(id)) {
+                throw new Error("Code Mode DSL error: " + entity + ".get(...) has compound key_vars [" + keys.join(", ") + "] and requires an object with exactly those string fields");
+            }
+            const got = Object.keys(id).sort();
+            const expected = keys.slice().sort();
+            if (got.length !== expected.length || got.some((k, i) => k !== expected[i])) {
+                throw new Error("Code Mode DSL error: " + entity + ".get(...) requires compound key fields [" + keys.join(", ") + "]; got [" + got.join(", ") + "]");
+            }
+            const out = {};
+            for (const key of keys) {
+                const value = __irValue(id[key]);
+                if (!__isIrStringSlot(value)) {
+                    throw new Error("Code Mode DSL error: " + entity + ".get(...) compound key field '" + key + "' must lower to a string");
+                }
+                out[key] = value;
+            }
+            return out;
+        }
+
+        function __displayEntityKey(entity, keyVars, key) {
+            const keys = Array.isArray(keyVars) ? keyVars : [];
+            if (keys.length <= 1) return __quote(key);
+            return "{" + keys.map(k => k + "=" + __quote(key[k])).join(", ") + "}";
         }
 
         function __irValueFromPlanValue(v) {
@@ -923,9 +979,59 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         const __plasmRelations = {};
+        const __plasmEntityKeyVars = {};
 
         function __relationsFor(entry_id, entity) {
             return (((__plasmRelations || {})[entry_id] || {})[entity] || []);
+        }
+
+        function __keyVarsFor(entry_id, entity) {
+            return (((__plasmEntityKeyVars || {})[entry_id] || {})[entity] || []);
+        }
+
+        function __capabilityByNameOrKind(capabilities, kind, name) {
+            const caps = capabilities || [];
+            if (name) {
+                const byName = caps.find(c => c.name === name);
+                if (byName) return byName;
+            }
+            return caps.find(c => c.kind === kind) || {};
+        }
+
+        function __isWholeSymbolicRow(v) {
+            if (v && v.__bindingPath) return (v.__bindingFieldPath || []).length === 0;
+            if (v && v.__planValue && v.__planValue.kind === "node_symbol") return (v.__planValue.path || []).length === 0;
+            return false;
+        }
+
+        function __normalizeEntityRefParam(value, param, entry_id) {
+            if (value == null) return value;
+            if (__isEntityRefValue(value)) return value.key;
+            const name = String(param && param.name || "entity_ref");
+            const target = param && param.entity_ref_target ? String(param.entity_ref_target) : "";
+            if (__isWholeSymbolicRow(value) || (value && value.__planNodeId)) {
+                throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects a scalar reference key, not a whole row/read handle; pass ." + "id or entityRef(...)");
+            }
+            const keyVars = target ? __keyVarsFor(entry_id, target) : [];
+            if (value && typeof value === "object" && !Array.isArray(value) && !__isSpecial(value)) {
+                if ((keyVars || []).length > 1) return __entityKeyValue(target || name, keyVars, value);
+                throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects a scalar reference key, not an object");
+            }
+            return value;
+        }
+
+        function __normalizeEntityRefInputs(input, cap, entry_id) {
+            if (!input || typeof input !== "object" || Array.isArray(input) || __isSpecial(input)) return input;
+            const params = (cap && cap.input_parameters) || [];
+            if (!params.some(p => p && p.type === "entity_ref")) return input;
+            const out = Object.assign({}, input);
+            for (const param of params) {
+                if (!param || param.type !== "entity_ref") continue;
+                const name = String(param.name || "");
+                if (!name || !Object.prototype.hasOwnProperty.call(out, name)) continue;
+                out[name] = __normalizeEntityRefParam(out[name], param, entry_id);
+            }
+            return out;
         }
 
         function __searchInput(input, searchParam) {
@@ -1081,7 +1187,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             }, true);
         }
 
-        export function makeEntity(entry_id, entity, relations, searchParam, capabilities) {
+        export function makeEntity(entry_id, entity, relations, searchParam, capabilities, keyVars) {
             return {
                 query(filters) {
                     return __surfaceBuilder(entry_id, entity, "query", filters, relations || [], null, capabilities || []);
@@ -1090,10 +1196,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return __surfaceBuilder(entry_id, entity, "search", input, relations || [], searchParam || "q", capabilities || []);
                 },
                 get(id) {
-                    const display = entity + "(" + __quote(id) + ")";
+                    const key = __entityKeyValue(entity, keyVars || [], id);
+                    const display = entity + "(" + __displayEntityKey(entity, keyVars || [], key) + ")";
                     const input_bindings = __bindingsFromInput({ id });
                     const uses_result = __usesFromBindings(input_bindings);
-                    const irExpr = { op: "get", ref: { entity_type: entity, key: __irValue(id) } };
+                    const irExpr = { op: "get", ref: { entity_type: entity, key } };
                     const ir = __planIr(irExpr, [], display);
                     const templated = __hasIrHole(irExpr);
                     const node = {
@@ -1114,11 +1221,12 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return __attachPlanSourceMethods(__planEffect(node, true), relations || []);
                 },
                 create(input) {
-                    const expr = entity + ".create" + __callArgs(input || {});
-                    const input_bindings = __bindingsFromInput(input || {});
-                    const uses_result = __usesFromBindings(input_bindings);
                     const cap = __capability(capabilities || [], "create");
-                    const irExpr = { op: "create", capability: cap.name || (entity.toLowerCase() + "_create"), entity, input: __irValue(input || {}) };
+                    const normalizedInput = __normalizeEntityRefInputs(input || {}, cap, entry_id);
+                    const expr = entity + ".create" + __callArgs(normalizedInput || {});
+                    const input_bindings = __bindingsFromInput(normalizedInput || {});
+                    const uses_result = __usesFromBindings(input_bindings);
+                    const irExpr = { op: "create", capability: cap.name || (entity.toLowerCase() + "_create"), entity, input: __irValue(normalizedInput || {}) };
                     const irContract = __planIr(irExpr, [], expr);
                     const templated = __hasIrHole(irExpr);
                     return __planEffect({
@@ -1140,8 +1248,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return {
                         action(name, input) {
                             const method = String(name);
-                            const expr_template = entity + "(" + __quote(id) + ")." + method + __callArgs(input || {});
-                            const input_bindings = __bindingsFromInput(input || {});
+                            const cap = __capabilityByNameOrKind(capabilities || [], "action", method);
+                            const normalizedInput = __normalizeEntityRefInputs(input || {}, cap, entry_id);
+                            const expr_template = entity + "(" + __quote(id) + ")." + method + __callArgs(normalizedInput || {});
+                            const input_bindings = __bindingsFromInput(normalizedInput || {});
                             if (id && id.__bindingPath) input_bindings.push({ from: id.__bindingPath, to: "id" });
                             const symbolicId = __symbolicStringParts(id);
                             if (symbolicId) input_bindings.push({ from: symbolicId.binding + (symbolicId.path.length ? "." + symbolicId.path.join(".") : ""), to: "id" });
@@ -1151,7 +1261,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                                 op: "invoke",
                                 capability: method,
                                 target: { entity_type: entity, key: targetKey },
-                                input: input == null ? undefined : __irValue(input),
+                                input: input == null ? undefined : __irValue(normalizedInput),
                             };
                             const irContract = __planIr(irExpr, [], expr_template);
                             const templated = __hasIrHole(irExpr);
@@ -1281,12 +1391,15 @@ pub fn quickjs_runtime_from_facade_delta(delta: &FacadeDeltaV1) -> String {
         let search_param = serde_json::Value::String(search_param).to_string();
         let capabilities_json =
             serde_json::to_string(&q.capabilities).unwrap_or_else(|_| "[]".to_string());
+        let key_vars_json = serde_json::to_string(&q.key_vars).unwrap_or_else(|_| "[]".to_string());
         let _ = writeln!(
             &mut out,
             "globalThis.plasm[{alias}] = globalThis.plasm[{alias}] || {{}};\n\
              __plasmRelations[{entry_id}] = __plasmRelations[{entry_id}] || {{}};\n\
              __plasmRelations[{entry_id}][{entity}] = {relations_json};\n\
-             globalThis.plasm[{alias}][{entity}] = makeEntity({entry_id}, {entity}, {relations_json}, {search_param}, {capabilities_json});"
+             __plasmEntityKeyVars[{entry_id}] = __plasmEntityKeyVars[{entry_id}] || {{}};\n\
+             __plasmEntityKeyVars[{entry_id}][{entity}] = {key_vars_json};\n\
+             globalThis.plasm[{alias}][{entity}] = makeEntity({entry_id}, {entity}, {relations_json}, {search_param}, {capabilities_json}, {key_vars_json});"
         );
     }
     out
@@ -1497,6 +1610,7 @@ mod tests {
                 entity: "Product".to_string(),
                 description: None,
                 e_index: Some(1),
+                key_vars: vec![],
                 fields: vec![],
                 relations: vec![],
                 capabilities: vec![],
@@ -1676,6 +1790,150 @@ mod tests {
     }
 
     #[test]
+    fn compound_key_get_lowers_to_compound_ref() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   const repo = __plasmBind(Repository.get({ owner: 'ryan-s-roberts', repo: 'plasm-core' }), 'repo'); \
+                   out = JSON.parse(Plan.return(repo)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(v["nodes"][0]["ir"]["expr"]["ref"]["key"]["owner"], "ryan-s-roberts");
+            assert_eq!(v["nodes"][0]["ir"]["expr"]["ref"]["key"]["repo"], "plasm-core");
+            assert!(v["nodes"][0]["expr"]
+                .as_str()
+                .is_some_and(|expr| expr.contains("owner=\"ryan-s-roberts\"") && expr.contains("repo=\"plasm-core\"")), "{v}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn compound_key_get_accepts_plasm_string_shorthand() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   const repo = __plasmBind(Repository.get('ryan-s-roberts/plasm-core'), 'repo'); \
+                   out = JSON.parse(Plan.return(repo)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["ref"]["key"]["owner"],
+                "ryan-s-roberts"
+            );
+            assert_eq!(v["nodes"][0]["ir"]["expr"]["ref"]["key"]["repo"], "plasm-core");
+            assert!(
+                v["nodes"][0]["expr"]
+                    .as_str()
+                    .is_some_and(|expr| expr.contains("owner=\"ryan-s-roberts\"")
+                        && expr.contains("repo=\"plasm-core\"")),
+                "{v}"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn compound_key_get_rejects_incomplete_key_before_plan_json() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   Plan.return(Repository.get({ repo: 'plasm-core' })); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(msg.contains("requires compound key fields [owner, repo]"), "{msg}");
+            assert!(!msg.contains("invalid type: map, expected a string"), "{msg}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn compound_key_get_rejects_map_key_part_before_plan_json() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   Plan.return(Repository.get({ owner: { login: 'ryan-s-roberts' }, repo: 'plasm-core' })); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(msg.contains("compound key field 'owner' must lower to a string"), "{msg}");
+            assert!(!msg.contains("invalid type: map, expected a string"), "{msg}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn compound_key_get_rejects_null_before_display() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Repository = makeEntity('github', 'Repository', [], null, [{ kind: 'get', name: 'repo_get' }], ['owner', 'repo']); \
+                   Plan.return(Repository.get(null)); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(msg.contains("has compound key_vars [owner, repo]"), "{msg}");
+            assert!(!msg.contains("Cannot read"), "{msg}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn bare_template_of_singleton_node_supports_field_access() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
@@ -1767,6 +2025,73 @@ mod tests {
                 "{create_node}"
             );
             assert!(!create_node.to_string().contains("[object Object]"), "{create_node}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ref_create_input_accepts_symbolic_scalar_id() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Team = makeEntity('linear', 'Team'); \
+                 const Issue = makeEntity('linear', 'Issue', [], null, [{ kind: 'create', name: 'issue_create', input_parameters: [{ name: 'team', type: 'entity_ref', entity_ref_target: 'Team', required: true }] }]); \
+                 const firstTeam = __plasmBind(Plan.singleton(Plan.limit(Team.query({}), 1)), 'firstTeam'); \
+                 __plasmSetAstHints({ node_ids: ['firstTeam'] }); \
+                 const report = __plasmBind(Issue.create({ team: firstTeam.id, title: 'Plasm report' }), 'report'); \
+                 Plan.return(report)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            let create_node = v["nodes"]
+                .as_array()
+                .and_then(|nodes| {
+                    nodes
+                        .iter()
+                        .find(|node| node["kind"].as_str() == Some("create"))
+                })
+                .unwrap_or_else(|| panic!("create node missing: {v}"));
+            assert_eq!(
+                create_node["ir_template"]["expr"]["input"]["team"]["__plasm_hole"]["path"][0],
+                "id"
+            );
+            assert!(!create_node.to_string().contains("[object Object]"), "{create_node}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ref_create_input_rejects_whole_row() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Team = makeEntity('linear', 'Team'); \
+                   const Issue = makeEntity('linear', 'Issue', [], null, [{ kind: 'create', name: 'issue_create', input_parameters: [{ name: 'team', type: 'entity_ref', entity_ref_target: 'Team', required: true }] }]); \
+                   const firstTeam = __plasmBind(Plan.singleton(Plan.limit(Team.query({}), 1)), 'firstTeam'); \
+                   __plasmSetAstHints({ node_ids: ['firstTeam'] }); \
+                   Plan.return(Issue.create({ team: firstTeam, title: 'Plasm report' })); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(
+                msg.contains("expects a scalar reference key, not a whole row/read handle"),
+                "{msg}"
+            );
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
