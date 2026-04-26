@@ -1978,6 +1978,31 @@ pub async fn execute_code_mode_plasm_line(
 }
 
 #[cfg(feature = "code_mode")]
+pub async fn execute_code_mode_parsed_expr(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    session_id: &str,
+    source_label: &str,
+    parsed: ParsedExpr,
+    trace: Option<&PlasmTraceContext>,
+    line_index: i64,
+) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
+    let mut cache = sess.graph_cache.lock().await;
+    run_parsed_plasm_line(
+        source_label,
+        sess,
+        st,
+        &mut cache,
+        session_id,
+        parsed,
+        trace,
+        line_index,
+    )
+    .await
+    .map_err(run_line_error_string)
+}
+
+#[cfg(feature = "code_mode")]
 pub async fn trace_record_code_mode_plasm_line(
     sink: &McpPlasmTraceSink,
     line_index: usize,

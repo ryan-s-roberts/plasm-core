@@ -1,6 +1,7 @@
 //! Code Mode MCP helpers: parse Plasm effect plans and optional QuickJS bootstrap string.
 
 use plasm_core::CGS;
+use plasm_core::DomainExposureSession;
 use plasm_core::TypeError;
 use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::expr_parser::{ParseError, ParsedExpr, parse, parse_with_cgs_layers};
@@ -12,16 +13,16 @@ use plasm_core::type_check_expr_federated;
 
 use crate::code_mode_plan::{
     AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
-    Plan, PlanNodeId, PlanNodeKind, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
-    ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanNode,
-    ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode, parse_plan_value,
-    validate_plan_artifact,
+    Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
+    ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput,
+    ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
+    ValidatedSurfaceNode, parse_plan_value, validate_plan_artifact,
 };
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    PublishedResultStep, archive_code_mode_result_snapshot, execute_code_mode_plasm_line,
+    PublishedResultStep, archive_code_mode_result_snapshot, execute_code_mode_parsed_expr,
     publish_code_mode_result_steps, trace_record_code_mode_plasm_line,
 };
 use crate::incoming_auth::TenantPrincipal;
@@ -74,6 +75,42 @@ pub fn typecheck_parsed_for_session(
     let fed =
         FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exposure);
     type_check_expr_federated(&pe.expr, &fed, session.cgs.as_ref())
+}
+
+fn entry_scoped_execute_session(
+    session: &ExecuteSession,
+    qualified_entity: Option<&QualifiedEntityKey>,
+) -> Result<ExecuteSession, String> {
+    let Some(q) = qualified_entity else {
+        return Ok(session.clone());
+    };
+    if session.contexts_by_entry.len() <= 1 && session.entry_id == q.entry_id {
+        return Ok(session.clone());
+    }
+    let ctx = session.contexts_by_entry.get(&q.entry_id).ok_or_else(|| {
+        format!(
+            "Code Mode node targets catalog {:?}, but that catalog is not loaded in this execute session",
+            q.entry_id
+        )
+    })?;
+    let mut scoped = session.clone();
+    scoped.cgs = ctx.cgs.clone();
+    scoped.contexts_by_entry = IndexMap::from([(q.entry_id.clone(), ctx.clone())]);
+    scoped.entry_id = q.entry_id.clone();
+    scoped.http_backend = Some(ctx.cgs.http_backend.clone());
+    scoped.entities = ctx
+        .cgs
+        .entities
+        .keys()
+        .map(|name| name.as_str().to_string())
+        .collect();
+    let focus = [q.entity.as_str()];
+    scoped.domain_exposure = Some(DomainExposureSession::new(
+        ctx.cgs.as_ref(),
+        q.entry_id.as_str(),
+        &focus,
+    ));
+    Ok(scoped)
 }
 
 /// Simulated execution step: human **intent**, compact **il** (query `cap=` from schema), and **bindings** JSON, without HTTP or the `plasm` tool.
@@ -249,8 +286,10 @@ pub fn evaluate_validated_code_mode_plan_dry(
         let n = &plan.nodes[i];
         ensure_node_dispatchable(es, n, i)?;
         if let ValidatedPlanNode::RelationTraversal(relation) = n {
-            let pe = parse_parsed_expr_for_session(es, relation.relation.expr.trim())
-                .map_err(|e| format!("parse error in plan.nodes[{i}].relation.expr: {e}"))?;
+            let pe = ParsedExpr {
+                expr: relation.relation.ir.expr.clone(),
+                projection: relation.relation.ir.projection.clone(),
+            };
             typecheck_parsed_for_session(es, &pe)
                 .map_err(|e| format!("type check in plan.nodes[{i}].relation.expr: {e}"))?;
             ensure_relation_expr_matches_plan(es, relation, &pe, i)?;
@@ -267,13 +306,24 @@ pub fn evaluate_validated_code_mode_plan_dry(
                 out.push(dry_stage_result(i, n));
                 continue;
             };
-            let expr = surface.expr.trim();
-            let pe = parse_parsed_expr_for_session(es, expr)
-                .map_err(|e| format!("parse error in plan.nodes[{i}]: {e}"))?;
-            typecheck_parsed_for_session(es, &pe)
+            let ir = surface
+                .ir
+                .as_ref()
+                .ok_or_else(|| format!("plan.nodes[{i}] requires staged IR execution"))?;
+            let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+            let pe = ParsedExpr {
+                expr: ir.expr.clone(),
+                projection: ir.projection.clone(),
+            };
+            typecheck_parsed_for_session(&scoped_es, &pe)
                 .map_err(|e| format!("type check in plan.nodes[{i}]: {e}"))?;
-            ensure_surface_expr_matches_plan_kind(es, surface, &pe, i)?;
-            let (intent, il, bindings) = dry_run_simulation_for_session(es, &pe);
+            ensure_surface_expr_matches_plan_kind(&scoped_es, surface, &pe, i)?;
+            let (intent, il, bindings) = dry_run_simulation_for_session(&scoped_es, &pe);
+            let expr = ir
+                .display_expr
+                .as_deref()
+                .or(surface.display_expr.as_deref())
+                .unwrap_or("<ir>");
             out.push(serde_json::json!({
                 "index": i,
                 "ok": true,
@@ -292,7 +342,8 @@ pub fn evaluate_validated_code_mode_plan_dry(
                 "execution_contract": {
                     "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
                     "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
-                    "expr": expr,
+                    "display_expr": expr,
+                    "ir": pe.expr,
                     "projection": pe.projection
                 },
                 "type_check": "ok",
@@ -582,7 +633,17 @@ fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
         .as_ref()
         .map(|q| format!("{}.{}", q.entry_id, q.entity))
         .unwrap_or_else(|| "<unqualified>".to_string());
-    let expr = node.expr.as_str();
+    let expr = node
+        .ir
+        .as_ref()
+        .and_then(|ir| ir.display_expr.as_deref())
+        .or_else(|| {
+            node.ir_template
+                .as_ref()
+                .and_then(|ir| ir.display_expr.as_deref())
+        })
+        .or(node.display_expr.as_deref())
+        .unwrap_or("<ir>");
     format!("{} {} <= {}", render_kind(node.kind), entity, expr)
 }
 
@@ -1309,12 +1370,13 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
                 "target": relation.relation.target,
                 "cardinality": relation.relation.cardinality,
                 "source_cardinality": relation.relation.source_cardinality,
-                "expr": relation.relation.expr,
+                "expr": relation.relation.ir.display_expr,
             },
             "execution_contract": {
                 "entry_id": relation.relation.target.entry_id.as_str(),
                 "entity": relation.relation.target.entity.as_str(),
-                "expr": relation.relation.expr.as_str(),
+                "ir": relation.relation.ir.expr,
+                "projection": relation.relation.ir.projection,
                 "source": relation.relation.source.as_str(),
                 "relation": relation.relation.relation.as_str(),
             },
@@ -1417,26 +1479,6 @@ struct MaterializedInputRow {
     row: serde_json::Value,
 }
 
-fn dry_execution_contracts(
-    dry: &DryCodeModePlanEvaluation,
-) -> Result<BTreeMap<PlanNodeId, String>, String> {
-    let mut out = BTreeMap::new();
-    for node in &dry.node_results {
-        let Some(id) = node.get("id").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(expr) = node
-            .get("execution_contract")
-            .and_then(|v| v.get("expr"))
-            .and_then(|v| v.as_str())
-        else {
-            continue;
-        };
-        out.insert(PlanNodeId::new(id.to_string())?, expr.to_string());
-    }
-    Ok(out)
-}
-
 async fn run_validated_plan_phased(
     es: &ExecuteSession,
     st: &PlasmHostState,
@@ -1448,7 +1490,6 @@ async fn run_validated_plan_phased(
 ) -> Result<CodeModePlanRunResult, String> {
     let _ = prompt_hash;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
-    let execution_contracts = dry_execution_contracts(&dry)?;
     let approval_policy = CodeModeApprovalPolicy::automatic();
     let mut approval_receipts: Vec<CodeModeApprovalReceipt> = Vec::new();
     let mut trace = None;
@@ -1472,21 +1513,49 @@ async fn run_validated_plan_phased(
         }
         let mat = match node {
             ValidatedPlanNode::Surface(surface) => {
-                let expr = execution_contracts
-                    .get(&surface.id)
-                    .map(String::as_str)
-                    .unwrap_or(surface.expr.as_str());
-                let (parsed, result, artifact) = execute_code_mode_plasm_line(
+                let parsed = if let Some(ir) = &surface.ir {
+                    ParsedExpr {
+                        expr: ir.expr.clone(),
+                        projection: ir.projection.clone(),
+                    }
+                } else if let Some(template) = &surface.ir_template {
+                    let input_rows =
+                        materialized_result_use_inputs(&materialized, &surface.uses_result)?;
+                    let scope = EvalScope::Root {
+                        row: &serde_json::Value::Null,
+                    };
+                    let inputs = InputEnv { rows: &input_rows };
+                    let env = PlanEvalEnv { scope, inputs };
+                    instantiate_expr_template(template, &env)?
+                } else {
+                    return Err(format!(
+                        "plan node {} has no executable IR",
+                        surface.id.as_str()
+                    ));
+                };
+                let expr_label = surface
+                    .ir
+                    .as_ref()
+                    .and_then(|ir| ir.display_expr.as_deref())
+                    .or(surface.display_expr.as_deref())
+                    .unwrap_or("<ir>");
+                let scoped_es =
+                    entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+                let (parsed, result, artifact) = execute_code_mode_parsed_expr(
                     st,
-                    es,
+                    &scoped_es,
                     session_id,
-                    expr,
+                    expr_label,
+                    parsed,
                     trace.as_ref(),
                     idx as i64,
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_code_mode_plasm_line(sink, idx, expr, &parsed, &result, es).await;
+                    trace_record_code_mode_plasm_line(
+                        sink, idx, expr_label, &parsed, &result, &scoped_es,
+                    )
+                    .await;
                 }
                 MaterializedNode {
                     entry_id: surface
@@ -1568,21 +1637,29 @@ async fn run_validated_plan_phased(
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
                 let _ = materialized_rows(&materialized, &relation.relation.source)?;
-                let expr = execution_contracts
-                    .get(&relation.id)
-                    .map(String::as_str)
-                    .unwrap_or(relation.relation.expr.as_str());
-                let (parsed, result, artifact) = execute_code_mode_plasm_line(
+                let parsed = ParsedExpr {
+                    expr: relation.relation.ir.expr.clone(),
+                    projection: relation.relation.ir.projection.clone(),
+                };
+                let expr_label = relation
+                    .relation
+                    .ir
+                    .display_expr
+                    .as_deref()
+                    .unwrap_or("<ir>");
+                let (parsed, result, artifact) = execute_code_mode_parsed_expr(
                     st,
                     es,
                     session_id,
-                    expr,
+                    expr_label,
+                    parsed,
                     trace.as_ref(),
                     idx as i64,
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_code_mode_plasm_line(sink, idx, expr, &parsed, &result, es).await;
+                    trace_record_code_mode_plasm_line(sink, idx, expr_label, &parsed, &result, es)
+                        .await;
                 }
                 MaterializedNode {
                     entry_id: relation.relation.target.entry_id.clone(),
@@ -1595,10 +1672,17 @@ async fn run_validated_plan_phased(
                 }
             }
             ValidatedPlanNode::ForEach(for_each) => {
-                return Err(format!(
-                    "Plan execution blocked: for_each node {} requires staged template execution",
-                    for_each.id
-                ));
+                materialize_for_each_node(
+                    st,
+                    es,
+                    session_id,
+                    idx,
+                    for_each,
+                    &materialized,
+                    trace.as_ref(),
+                    sink.as_ref(),
+                )
+                .await?
             }
         };
         materialized.insert(node.id().clone(), mat);
@@ -1846,6 +1930,314 @@ fn materialized_singleton_inputs(
     Ok(out)
 }
 
+fn materialized_result_use_inputs(
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    uses_result: &[PlanResultUse],
+) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
+    let mut out = BTreeMap::new();
+    for use_result in uses_result {
+        let node = PlanNodeId::new(use_result.node.clone())?;
+        let alias = InputAlias::new(use_result.r#as.clone())?;
+        let mat = materialized.get(&node).ok_or_else(|| {
+            format!(
+                "input node {:?} for alias {:?} has not been materialized",
+                node.as_str(),
+                alias.as_str()
+            )
+        })?;
+        if mat.all_entities.len() != 1 {
+            return Err(format!(
+                "Plan input {:?} for alias {:?} expected one row for staged expression rendering, got {}",
+                node.as_str(),
+                alias.as_str(),
+                mat.all_entities.len()
+            ));
+        }
+        let row = mat
+            .all_entities
+            .first()
+            .map(CachedEntity::payload_to_json)
+            .ok_or_else(|| {
+                format!(
+                    "Plan input {:?} for alias {:?} expected one row but was empty",
+                    node.as_str(),
+                    alias.as_str()
+                )
+            })?;
+        out.insert(
+            alias,
+            MaterializedInputRow {
+                node,
+                proof: crate::code_mode_plan::InputCardinalityProof::RuntimeCheckedSingleton,
+                row,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn instantiate_expr_template(
+    template: &ValidatedPlanExprTemplate,
+    env: &PlanEvalEnv<'_>,
+) -> Result<ParsedExpr, String> {
+    let expr_json = instantiate_expr_template_value(&template.expr, env)?;
+    let expr = serde_json::from_value(expr_json)
+        .map_err(|e| format!("templated Plasm IR instantiation failed: {e}"))?;
+    Ok(ParsedExpr {
+        expr,
+        projection: template.projection.clone(),
+    })
+}
+
+fn instantiate_raw_expr_template(
+    template: &PlanExprTemplate,
+    env: &PlanEvalEnv<'_>,
+) -> Result<ParsedExpr, String> {
+    let expr_json = instantiate_expr_template_value(&template.expr, env)?;
+    let expr = serde_json::from_value(expr_json)
+        .map_err(|e| format!("templated Plasm IR instantiation failed: {e}"))?;
+    Ok(ParsedExpr {
+        expr,
+        projection: template.projection.clone(),
+    })
+}
+
+fn instantiate_expr_template_value(
+    value: &serde_json::Value,
+    env: &PlanEvalEnv<'_>,
+) -> Result<serde_json::Value, String> {
+    if let Some(hole) = value
+        .as_object()
+        .and_then(|obj| obj.get("__plasm_hole"))
+        .and_then(|v| v.as_object())
+    {
+        return instantiate_ir_hole(hole, env);
+    }
+    match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(|item| instantiate_expr_template_value(item, env))
+            .collect::<Result<Vec<_>, _>>()
+            .map(serde_json::Value::Array),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| Ok((k.clone(), instantiate_expr_template_value(v, env)?)))
+            .collect::<Result<serde_json::Map<_, _>, String>>()
+            .map(serde_json::Value::Object),
+        other => Ok(other.clone()),
+    }
+}
+
+fn instantiate_ir_hole(
+    hole: &serde_json::Map<String, serde_json::Value>,
+    env: &PlanEvalEnv<'_>,
+) -> Result<serde_json::Value, String> {
+    let kind = hole
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "IR value hole is missing kind".to_string())?;
+    let path = hole
+        .get("path")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match kind {
+        "binding" => {
+            let binding = hole
+                .get("binding")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "binding IR hole is missing binding".to_string())?;
+            let EvalScope::Bound {
+                binding: scope_binding,
+                ..
+            } = &env.scope
+            else {
+                return Err("binding IR hole cannot be used outside a row scope".to_string());
+            };
+            if binding != scope_binding.as_str() {
+                return Err(format!(
+                    "binding IR hole references {binding:?}, but active binding is {:?}",
+                    scope_binding.as_str()
+                ));
+            }
+            Ok(value_at_segments(env.scope.row(), &path)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null))
+        }
+        "node_input" => {
+            let alias = hole
+                .get("alias")
+                .and_then(|v| v.as_str())
+                .or_else(|| hole.get("node").and_then(|v| v.as_str()))
+                .ok_or_else(|| "node_input IR hole is missing alias".to_string())?;
+            let alias = InputAlias::new(alias.to_string())?;
+            let input = env.inputs.rows.get(&alias).ok_or_else(|| {
+                format!("node_input IR hole references unavailable alias {alias:?}")
+            })?;
+            Ok(value_at_segments(&input.row, &path)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null))
+        }
+        other => Err(format!("unknown IR value hole kind {other:?}")),
+    }
+}
+
+fn render_for_each_expressions(
+    for_each: &ValidatedForEachNode,
+    source_rows: &[serde_json::Value],
+) -> Result<Vec<String>, String> {
+    let input_rows = BTreeMap::new();
+    source_rows
+        .iter()
+        .map(|row| {
+            let scope = EvalScope::Bound {
+                row,
+                binding: &for_each.item_binding,
+            };
+            let inputs = InputEnv { rows: &input_rows };
+            let env = PlanEvalEnv { scope, inputs };
+            render_expr_template(&for_each.effect_template.expr_template, &env)
+        })
+        .collect()
+}
+
+async fn materialize_for_each_node(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node_index: usize,
+    for_each: &ValidatedForEachNode,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    trace: Option<&PlasmTraceContext>,
+    sink: Option<&McpPlasmTraceSink>,
+) -> Result<MaterializedNode, String> {
+    let source_rows = materialized_rows(materialized, &for_each.source)?;
+    let input_rows = BTreeMap::new();
+    let mut parsed_steps = Vec::with_capacity(source_rows.len());
+    let mut expressions = Vec::with_capacity(source_rows.len());
+    for row in &source_rows {
+        let scope = EvalScope::Bound {
+            row,
+            binding: &for_each.item_binding,
+        };
+        let inputs = InputEnv { rows: &input_rows };
+        let env = PlanEvalEnv { scope, inputs };
+        let parsed = instantiate_raw_expr_template(&for_each.effect_template.ir_template, &env)?;
+        expressions.push(crate::expr_display::expr_display(&parsed.expr));
+        parsed_steps.push(parsed);
+    }
+    let mut entities = Vec::new();
+    let mut request_fingerprints = Vec::new();
+    let mut stats = ExecutionStats {
+        duration_ms: 0,
+        network_requests: 0,
+        cache_hits: 0,
+        cache_misses: 0,
+    };
+    let mut source = ExecutionSource::Cache;
+    let mut displays = Vec::new();
+    let scoped_es =
+        entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))?;
+
+    for (row_index, parsed_expr) in parsed_steps.into_iter().enumerate() {
+        let trace_line_index = node_index
+            .checked_mul(1000)
+            .and_then(|base| base.checked_add(row_index))
+            .unwrap_or(node_index);
+        let expr_label = expressions
+            .get(row_index)
+            .map(String::as_str)
+            .unwrap_or("<ir>");
+        let (parsed, result, _artifact) = execute_code_mode_parsed_expr(
+            st,
+            &scoped_es,
+            session_id,
+            expr_label,
+            parsed_expr,
+            trace,
+            trace_line_index as i64,
+        )
+        .await?;
+        if let Some(sink) = sink {
+            trace_record_code_mode_plasm_line(
+                sink,
+                trace_line_index,
+                expr_label,
+                &parsed,
+                &result,
+                &scoped_es,
+            )
+            .await;
+        }
+        source = combine_execution_source(source, result.source);
+        stats.duration_ms = stats.duration_ms.saturating_add(result.stats.duration_ms);
+        stats.network_requests = stats
+            .network_requests
+            .saturating_add(result.stats.network_requests);
+        stats.cache_hits = stats.cache_hits.saturating_add(result.stats.cache_hits);
+        stats.cache_misses = stats.cache_misses.saturating_add(result.stats.cache_misses);
+        request_fingerprints.extend(result.request_fingerprints);
+        entities.extend(result.entities);
+        displays.push(crate::expr_display::expr_display(&parsed.expr));
+    }
+
+    let result = ExecutionResult {
+        count: entities.len(),
+        entities,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source,
+        stats,
+        request_fingerprints,
+    };
+    let artifact = archive_code_mode_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(for_each.effect_template.qualified_entity.entry_id.as_str()),
+        expressions,
+        &result,
+        trace,
+    )
+    .await?;
+    let display = if displays.len() == 1 {
+        displays
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| format!("for_each {}", for_each.id.as_str()))
+    } else {
+        format!(
+            "for_each {} ({} calls)",
+            for_each.id.as_str(),
+            source_rows.len()
+        )
+    };
+    let all_entities = result.entities.clone();
+    Ok(MaterializedNode {
+        entry_id: for_each.effect_template.qualified_entity.entry_id.clone(),
+        entity: for_each.effect_template.qualified_entity.entity.clone(),
+        result,
+        all_entities,
+        artifact: Some(artifact),
+        display,
+        projection: Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
+    })
+}
+
+fn combine_execution_source(current: ExecutionSource, next: ExecutionSource) -> ExecutionSource {
+    match (current, next) {
+        (ExecutionSource::Live, _) | (_, ExecutionSource::Live) => ExecutionSource::Live,
+        (ExecutionSource::Replay, _) | (_, ExecutionSource::Replay) => ExecutionSource::Replay,
+        (ExecutionSource::Cache, ExecutionSource::Cache) => ExecutionSource::Cache,
+    }
+}
+
 fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Value>, String> {
     let inputs = BTreeMap::new();
     let scope = EvalScope::Root {
@@ -2028,6 +2420,18 @@ fn strip_binding<'a>(path: &'a str, binding: &BindingName) -> &'a str {
 }
 
 fn render_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, String> {
+    render_template_with(template, env, json_scalar_display)
+}
+
+fn render_expr_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, String> {
+    render_template_with(template, env, json_plasm_literal_display)
+}
+
+fn render_template_with(
+    template: &str,
+    env: &PlanEvalEnv<'_>,
+    render_value: fn(&serde_json::Value) -> String,
+) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
     while let Some(start) = rest.find("${") {
@@ -2038,7 +2442,7 @@ fn render_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, Stri
         };
         let raw_path = &after[..end];
         let rendered = resolve_template_path(raw_path, env)
-            .map(json_scalar_display)
+            .map(render_value)
             .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
         out.push_str(&rendered);
         rest = &after[end + 1..];
@@ -2251,6 +2655,17 @@ fn json_scalar_display(v: &serde_json::Value) -> String {
     }
 }
 
+fn json_plasm_literal_display(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => serde_json::to_string(s)
+            .unwrap_or_else(|_| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn json_sort_key(v: Option<&serde_json::Value>) -> String {
     v.map(json_scalar_display).unwrap_or_default()
 }
@@ -2375,6 +2790,60 @@ mod tests {
         )
     }
 
+    fn duplicate_product_create_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("../plasm-facade-gen/tests/fixtures/tiny"))
+                .expect("load facade tiny"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "acme".into(),
+            Arc::new(CgsContext::entry("acme", cgs.clone())),
+        );
+        ctxs.insert(
+            "other".into(),
+            Arc::new(CgsContext::entry("other", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "acme".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Product".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+        )
+    }
+
+    #[test]
+    fn entry_scoped_surface_parse_preserves_typed_catalog_create() {
+        let s = duplicate_product_create_session();
+        let err = parse_parsed_expr_for_session(&s, "Product.create(name=\"bolt\")")
+            .expect_err("unscoped federated create should be ambiguous")
+            .to_string();
+        assert!(err.contains("ambiguous capability label `create`"), "{err}");
+
+        let scoped = entry_scoped_execute_session(
+            &s,
+            Some(&QualifiedEntityKey {
+                entry_id: "other".to_string(),
+                entity: "Product".to_string(),
+            }),
+        )
+        .expect("scope session");
+        let parsed = parse_parsed_expr_for_session(&scoped, "Product.create(name=\"bolt\")")
+            .expect("scoped create parses");
+        typecheck_parsed_for_session(&scoped, &parsed).expect("scoped create typechecks");
+    }
+
     #[test]
     fn plan_parses_product_query() {
         let s = test_session();
@@ -2416,6 +2885,7 @@ mod tests {
                 "kind": "query",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                 "expr": "Product",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
                 "effect_class": "read",
                 "result_shape": "list"
             }],
@@ -2438,6 +2908,7 @@ mod tests {
                 "kind": "search",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                 "expr": "Product~\"bolt\"",
+                "ir": { "expr": { "op": "query", "entity": "Product", "predicate": { "type": "comparison", "field": "q", "op": "=", "value": "bolt" }, "capability_name": "product_search" } },
                 "effect_class": "read",
                 "result_shape": "list"
             }],
@@ -2446,6 +2917,31 @@ mod tests {
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert!(dry.can_batch_run);
         assert_eq!(dry.node_results[0]["kind"], "search");
+    }
+
+    #[test]
+    fn evaluate_code_mode_plan_dry_typechecks_ir_not_display_text() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "read-products",
+            "nodes": [{
+                "id": "n0",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "WrongEntity",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "n0" }
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        assert_eq!(
+            dry.node_results[0]["execution_contract"]["ir"]["entity"],
+            "Product"
+        );
     }
 
     #[test]
@@ -2460,6 +2956,7 @@ mod tests {
                     "kind": "get",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
                     "effect_class": "read",
                     "result_shape": "single"
                 },
@@ -2474,7 +2971,8 @@ mod tests {
                         "target": { "entry_id": "acme", "entity": "Product" },
                         "cardinality": "one",
                         "source_cardinality": "single",
-                        "expr": "Product(\"p1\").category"
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
                     },
                     "depends_on": ["product"],
                     "uses_result": [{ "node": "product", "as": "source" }]
@@ -2499,6 +2997,7 @@ mod tests {
                     "kind": "get",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
                     "effect_class": "read",
                     "result_shape": "single"
                 },
@@ -2513,7 +3012,8 @@ mod tests {
                         "target": { "entry_id": "acme", "entity": "Category" },
                         "cardinality": "one",
                         "source_cardinality": "single",
-                        "expr": "Product(\"p1\").category"
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
                     },
                     "depends_on": ["product"],
                     "uses_result": [{ "node": "product", "as": "source" }]
@@ -2542,6 +3042,7 @@ mod tests {
                     "kind": "query",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
                     "effect_class": "read",
                     "result_shape": "list"
                 },
@@ -2614,7 +3115,7 @@ roots: products
 approvals: none
 
 warnings:
-- products is an unbounded read root; first evaluate small plans with Plan.limit(...) when cost or latency is uncertain
+- products is an unbounded read root; add API filters/search text or Plan.limit(...) when cost or latency is uncertain
 - summary computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed
 
 dag:
@@ -2688,6 +3189,7 @@ returns:
                     "kind": "query",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
                     "effect_class": "read",
                     "result_shape": "list"
                 },
@@ -2731,6 +3233,7 @@ returns:
                     "kind": "query",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
                     "effect_class": "read",
                     "result_shape": "list"
                 },
@@ -2748,6 +3251,15 @@ returns:
                         "kind": "action",
                         "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                         "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                        "ir_template": {
+                            "expr": {
+                                "op": "invoke",
+                                "capability": "product_label",
+                                "target": { "entity_type": "Product", "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } } },
+                                "input": { "label": "stale" }
+                            },
+                            "input_bindings": [{ "from": "product.id", "to": "id" }]
+                        },
                         "effect_class": "side_effect",
                         "result_shape": "side_effect_ack"
                     }
@@ -2766,6 +3278,71 @@ returns:
     }
 
     #[test]
+    fn for_each_templates_render_concrete_row_bound_plasm_calls() {
+        let plan = parse_plan_value(&serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "label-products",
+            "nodes": [
+                {
+                    "id": "find",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "list",
+                    "data": { "kind": "literal", "value": [{ "id": "p1" }] }
+                },
+                {
+                    "id": "label",
+                    "kind": "for_each",
+                    "effect_class": "side_effect",
+                    "result_shape": "side_effect_ack",
+                    "source": "find",
+                    "item_binding": "product",
+                    "depends_on": ["find"],
+                    "uses_result": [{ "node": "find", "as": "product" }],
+                    "effect_template": {
+                        "kind": "action",
+                        "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                        "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                        "ir_template": {
+                            "expr": {
+                                "op": "invoke",
+                                "capability": "product_label",
+                                "target": { "entity_type": "Product", "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } } },
+                                "input": { "label": "stale" }
+                            },
+                            "input_bindings": [{ "from": "product.id", "to": "id" }]
+                        },
+                        "effect_class": "side_effect",
+                        "result_shape": "side_effect_ack"
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "label" }
+        }))
+        .expect("parse plan");
+        let validated = validate_plan_artifact(&plan).expect("validate plan");
+        let for_each = validated
+            .nodes()
+            .iter()
+            .find_map(|node| match node {
+                ValidatedPlanNode::ForEach(node) => Some(node),
+                _ => None,
+            })
+            .expect("for_each node");
+        let expressions = render_for_each_expressions(
+            for_each,
+            &[serde_json::json!({ "id": "p1", "name": "Bolt" })],
+        )
+        .expect("render expressions");
+
+        assert_eq!(
+            expressions,
+            vec!["Product(\"p1\").label(label=\"stale\")".to_string()]
+        );
+    }
+
+    #[test]
     fn mutating_for_each_infers_approval_without_agent_label() {
         let s = test_session();
         let plan = serde_json::json!({
@@ -2778,6 +3355,7 @@ returns:
                     "kind": "query",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
                     "effect_class": "read",
                     "result_shape": "list"
                 },
@@ -2794,6 +3372,15 @@ returns:
                         "kind": "action",
                         "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                         "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                        "ir_template": {
+                            "expr": {
+                                "op": "invoke",
+                                "capability": "product_label",
+                                "target": { "entity_type": "Product", "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } } },
+                                "input": { "label": "stale" }
+                            },
+                            "input_bindings": [{ "from": "product.id", "to": "id" }]
+                        },
                         "effect_class": "side_effect",
                         "result_shape": "side_effect_ack"
                     }
@@ -2818,6 +3405,7 @@ returns:
                 "kind": "create",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                 "expr": "Product.create(name=\"servo\")",
+                "ir": { "expr": { "op": "create", "capability": "product_create", "entity": "Product", "input": { "name": "servo" } } },
                 "effect_class": "write",
                 "result_shape": "single"
             }],
