@@ -14,26 +14,26 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::future::join_all;
-use http_problem::Problem;
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
+use http_problem::Problem;
 use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
-use plasm_core::error_render::{FeedbackStyle, render_parse_error_with_feedback};
+use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
-    AuthScheme, CGS, CgsContext, PagingHandle, PromptRenderMode, SymbolMap,
     entity_slices_for_render,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     split_tsv_domain_contract_and_table, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog,
     symbol_tuning::FocusSpec,
+    AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
 #[cfg(feature = "code_mode")]
 use plasm_facade_gen::TypeScriptCodeArtifacts;
 use plasm_runtime::{
-    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
-    ExecutionResult, ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData,
-    RuntimeError, StreamConsumeOpts, auth_resolution_mode_from_env, validate_principal_for_mode,
+    auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
+    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, ExecutionSource,
+    ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -43,13 +43,13 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::run_artifacts::{
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
     artifact_http_path, document_from_run, plasm_run_resource_uri,
     plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
+    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
 };
 use crate::trace_hub::{
-    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent, TraceSegment,
-    trace_id_for_http_execute_session,
+    trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
+    TraceSegment,
 };
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
 
@@ -136,24 +136,24 @@ where
     }
 }
 
-use crate::batch_scheduler::{BatchStage, build_batch_stages, line_may_share_parallel_query_stage};
+use crate::batch_scheduler::{build_batch_stages, line_may_share_parallel_query_stage, BatchStage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
-    IncomingPrincipal, incoming_auth_problem, session_allows_principal, tenant_scope,
+    incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
 };
-use crate::mcp_plasm_meta::{PlasmMetaIndex, PlasmPagingStepMeta, plasm_paging_json_value};
+use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
 use crate::mcp_run_markdown::{
-    OmittedReferenceOnlyFields, execute_expression_preview, mcp_compact_markdown_batch,
-    mcp_compact_markdown_single, mcp_format_execute_result_table_or_tsv,
-    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
-    mcp_preview_markdown_needed, merge_snapshot_column_hints,
+    execute_expression_preview, mcp_compact_markdown_batch, mcp_compact_markdown_single,
+    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
+    mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
+    merge_snapshot_column_hints, OmittedReferenceOnlyFields,
 };
 use crate::output::{
-    InBandSummaryReport, LossySummaryFieldNames, OutputFormat, apply_projection,
-    format_result_with_cgs, http_execute_results_value, reference_only_omitted_field_names,
+    apply_projection, format_result_with_cgs, http_execute_results_value,
+    reference_only_omitted_field_names, InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
 };
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
@@ -4041,10 +4041,10 @@ mod tests {
     use super::*;
     use crate::http;
     use crate::incoming_auth::IncomingPrincipal;
-    use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
     use axum::http::Request;
+    use axum::Router;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};

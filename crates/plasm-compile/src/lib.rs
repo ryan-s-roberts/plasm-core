@@ -62,3 +62,68 @@ pub fn pagination_config_for_capability(cap: &CapabilitySchema) -> Option<Pagina
         .ok()
         .and_then(|template| template_pagination(&template).cloned())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use plasm_core::apply_entity_ref_scope_splat;
+    use plasm_core::load_schema;
+    use plasm_core::value::Value;
+
+    use super::*;
+
+    fn github_cgs() -> plasm_core::CGS {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        load_schema(&root.join("../../apis/github")).expect("load github schema")
+    }
+
+    fn compile_github_repo_scoped_path(capability: &str, repository: &str) -> String {
+        let cgs = github_cgs();
+        let cap = cgs
+            .get_capability(capability)
+            .unwrap_or_else(|| panic!("missing capability {capability}"));
+        let mut env = CmlEnv::new();
+        env.insert(
+            "repository".to_string(),
+            Value::String(repository.to_string()),
+        );
+        apply_entity_ref_scope_splat(&mut env, &cgs, cap);
+        let template = parse_capability_template(&cap.mapping.template)
+            .unwrap_or_else(|e| panic!("parse {capability}: {e}"));
+        let CompiledOperation::Http(req) = compile_operation(&template, &env)
+            .unwrap_or_else(|e| panic!("compile {capability}: {e}"))
+        else {
+            panic!("{capability} should compile to HTTP");
+        };
+        req.path
+    }
+
+    #[test]
+    fn github_repository_ref_splats_into_repo_scoped_list_paths() {
+        for (capability, suffix) in [
+            ("commit_query", "/commits"),
+            ("branch_query", "/branches"),
+            ("contributor_query", "/contributors"),
+        ] {
+            let path = compile_github_repo_scoped_path(capability, "ryan-s-roberts/plasm-core");
+            assert_eq!(path, format!("/repos/ryan-s-roberts/plasm-core{suffix}"));
+            assert!(
+                !path.contains("%2F") && !path.contains("//"),
+                "{capability} built malformed path {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn github_repository_ref_without_owner_fails_before_malformed_path() {
+        let cgs = github_cgs();
+        let cap = cgs.get_capability("commit_query").expect("commit_query");
+        let mut env = CmlEnv::new();
+        env.insert("repository".to_string(), Value::String("plasm-core".into()));
+        apply_entity_ref_scope_splat(&mut env, &cgs, cap);
+        let template = parse_capability_template(&cap.mapping.template).expect("parse template");
+        let err = compile_operation(&template, &env).expect_err("missing owner/repo rejected");
+        assert!(err.to_string().contains("owner"), "{err}");
+    }
+}

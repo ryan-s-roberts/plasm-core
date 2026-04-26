@@ -190,6 +190,14 @@
   expect:
     entities_any: [Contributor]
 
+- id: gh-23b
+  schema: github
+  goal: "Resolve ryan-s-roberts/plasm-core, then list recent commits, branches, and contributors for a commit-frequency report"
+  tags: [multi_step, commits, branches, contributor]
+  covers: [multi_step, query_filtered, chain]
+  expect:
+    entities_any: [Repository, Commit, Branch, Contributor]
+
 - id: gh-24
   schema: github
   goal: "Inline review comments on plasm/plasm#88 — diff threads only, not the PR timeline chatter"

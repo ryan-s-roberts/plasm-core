@@ -560,7 +560,8 @@ fn action_method_overloads_ts(
 }
 
 const TS_PRELUDE: &str = r#"declare namespace Plasm {
-  export type EntityRef<Api extends string, E extends string, K = string> = {
+  export type EntityRef<Api extends string, E extends string, K = string> = PlanValueExpr & {
+    readonly __plasmEntityRef: true;
     readonly api: Api;
     readonly entity: E;
     readonly key: K;

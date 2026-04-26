@@ -40,17 +40,17 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::CgsDiscovery;
 use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
+use plasm_core::CgsDiscovery;
 #[cfg(feature = "code_mode")]
-use plasm_facade_gen::{FacadeGenRequest, build_code_facade, quickjs_runtime_from_facade_delta};
-use rust_mcp_sdk::McpServer;
+use plasm_facade_gen::{build_code_facade, quickjs_runtime_from_facade_delta, FacadeGenRequest};
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
+use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -59,7 +59,7 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
+use rust_mcp_sdk::McpServer;
 #[cfg(feature = "code_mode")]
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
@@ -67,28 +67,27 @@ use tokio::sync::{Mutex, RwLock};
 #[cfg(feature = "code_mode")]
 use crate::http_execute::mcp_add_code_capabilities_markdown;
 use crate::http_execute::{
-    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
-    execute_session_run_markdown, normalize_capability_seeds,
+    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed,
 };
-use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
+use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 #[cfg(feature = "code_mode")]
 use crate::mcp_plasm_code::{
-    CodeModePlasmRunHooks, CodePlanDryRunTextMeta, code_mode_plan_dag_json,
-    evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text, run_code_mode_plan,
+    code_mode_plan_dag_json, evaluate_code_mode_plan_dry, render_code_mode_plan_dry_text,
+    run_code_mode_plan, CodeModePlasmRunHooks, CodePlanDryRunTextMeta,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
-use crate::run_artifacts::{
-    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_plan_uri,
-    parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
-    parse_plasm_session_short_resource_uri,
-};
 #[cfg(feature = "code_mode")]
 use crate::run_artifacts::{
-    CodePlanArchiveDocument, code_plan_http_path, parse_code_plan_handle,
-    plasm_session_short_plan_uri,
+    code_plan_http_path, parse_code_plan_handle, plasm_session_short_plan_uri,
+    CodePlanArchiveDocument,
+};
+use crate::run_artifacts::{
+    parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
+    parse_plasm_session_short_resource_uri, ArtifactPayload, LogicalSessionUriSegment,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -938,7 +937,9 @@ fn json_schema_string_array(description: &str) -> serde_json::Map<String, serde_
     m
 }
 
-fn json_schema_string_or_string_array(description: &str) -> serde_json::Map<String, serde_json::Value> {
+fn json_schema_string_or_string_array(
+    description: &str,
+) -> serde_json::Map<String, serde_json::Value> {
     let v = serde_json::json!({
         "description": description,
         "oneOf": [
@@ -1045,8 +1046,7 @@ fn mcp_discover_query_from_arguments(v: &serde_json::Value) -> Result<Capability
         }
         Some(_) => {
             return Err(
-                "discover_capabilities `query` must be a string or an array of strings"
-                    .to_string(),
+                "discover_capabilities `query` must be a string or an array of strings".to_string(),
             );
         }
     };
@@ -3251,10 +3251,7 @@ mod tests {
             "query": "github repository commits git linear issue",
         });
         let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
-        assert_eq!(
-            q.tokens,
-            vec!["github repository commits git linear issue"]
-        );
+        assert_eq!(q.tokens, vec!["github repository commits git linear issue"]);
     }
 
     #[test]
@@ -3337,7 +3334,10 @@ mod tests {
             .get("properties")
             .and_then(|p| p.get("query"))
             .expect("query property in input_schema");
-        let one_of = q.get("oneOf").and_then(|x| x.as_array()).expect("query.oneOf array");
+        let one_of = q
+            .get("oneOf")
+            .and_then(|x| x.as_array())
+            .expect("query.oneOf array");
         assert!(
             one_of.len() >= 2,
             "query schema should oneOf string and array, got: {}",

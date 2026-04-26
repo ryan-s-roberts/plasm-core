@@ -481,7 +481,7 @@ fn flatten_esm_bootstrap(js: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodeModeSandbox, inject_plan_symbol_hints_typescript, transpile_typescript_to_javascript,
+        inject_plan_symbol_hints_typescript, transpile_typescript_to_javascript, CodeModeSandbox,
     };
 
     #[test]

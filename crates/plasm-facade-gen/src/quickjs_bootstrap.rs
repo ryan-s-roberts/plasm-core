@@ -8,7 +8,7 @@ use crate::delta::FacadeDeltaV1;
 pub fn quickjs_runtime_module_bootstrap() -> String {
     r#"
         export function entityRef(api, entity, key) {
-            return { api, entity, key };
+            return __planValueExpr({ __plasmEntityRef: true, api, entity, key });
         }
         export function toPlasmExpr(surface) {
             return String(surface);
@@ -72,16 +72,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __isSpecial(v) {
-            return v && typeof v === "object" && (v.__plasmExpr || v.__planValue || v.__bindingPath || v.__planNodeId || v.__toPlanHandle || __isPlanEffect(v));
+            return v && typeof v === "object" && (v.__plasmExpr || v.__planValue || v.__bindingPath || v.__planNodeId || v.__toPlanHandle || __isPlanEffect(v) || v.__plasmEntityRef);
         }
 
-        function __isEntityRefWrapper(v) {
-            return v
-                && typeof v === "object"
-                && !Array.isArray(v)
-                && Object.prototype.hasOwnProperty.call(v, "api")
-                && Object.prototype.hasOwnProperty.call(v, "entity")
-                && Object.prototype.hasOwnProperty.call(v, "key");
+        function __isEntityRefValue(v) {
+            return !!(v && typeof v === "object" && v.__plasmEntityRef === true);
         }
 
         function __valueMeta(v) {
@@ -91,6 +86,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (__isPlanEffect(v) && typeof v.expr === "string" && v.expr.includes("${")) return { kind: "template", template: v.expr, input_bindings: [] };
             if (__isPlanEffect(v) && typeof v.expr === "string") return { kind: "literal", value: v.expr };
             if (Array.isArray(v)) return { kind: "array", items: v.map(__valueMeta) };
+            if (__isEntityRefValue(v)) return { kind: "entity_ref_key", api: String(v.api), entity: String(v.entity), key: __valueMeta(v.key) };
             if (v && typeof v === "object" && !__isSpecial(v)) {
                 const fields = {};
                 for (const k of Object.keys(v)) fields[k] = __valueMeta(v[k]);
@@ -104,7 +100,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (v && v.__bindingPath) return "${" + v.__bindingPath + "}";
             if (typeof v === "number" || typeof v === "boolean") return String(v);
             if (Array.isArray(v)) return "[" + v.map(__quote).join(",") + "]";
-            if (__isEntityRefWrapper(v)) return __quote(v.key);
+            if (__isEntityRefValue(v)) return __quote(v.key);
             if (v && typeof v === "object") {
                 return "{" + Object.keys(v).map(k => k + "=" + __quote(v[k])).join(", ") + "}";
             }
@@ -223,6 +219,12 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (v.kind === "symbol") return "${" + v.path + "}";
             if (v.kind === "binding_symbol" || v.kind === "node_symbol") return "${" + __displayPlanValue(v) + "}";
             if (v.kind === "template") return "template(" + JSON.stringify(v.template) + ")";
+            if (v.kind === "entity_ref_key") return __quoteFromPlanValue(v.key);
+            if (v.kind === "array") return "[" + (v.items || []).map(__quoteFromPlanValue).join(",") + "]";
+            if (v.kind === "object") {
+                const fields = v.fields || {};
+                return "{" + Object.keys(fields).map(k => k + "=" + __quoteFromPlanValue(fields[k])).join(", ") + "}";
+            }
             return JSON.stringify(String(v));
         }
 
@@ -778,7 +780,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     for (let i = 0; i < v.length; i++) visit(v[i], path ? path + "." + i : String(i));
                     return;
                 }
-                if (__isEntityRefWrapper(v)) {
+                if (__isEntityRefValue(v)) {
                     visit(v.key, path);
                     return;
                 }
@@ -869,13 +871,28 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return __irHole("node_input", { node: v.__planValue.node, alias: v.__planValue.alias || v.__planValue.node, path: v.__planValue.path || [], cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
             }
             if (Array.isArray(v)) return v.map(__irValue);
-            if (__isEntityRefWrapper(v)) return __irValue(v.key);
+            if (__isEntityRefValue(v)) return __irValue(v.key);
             if (v && typeof v === "object" && !__isSpecial(v)) {
                 const out = {};
                 for (const [k, child] of Object.entries(v)) out[k] = __irValue(child);
                 return out;
             }
             return v == null ? null : v;
+        }
+
+        function __irValueFromPlanValue(v) {
+            if (!v || v.kind === "literal") return __irValue(v ? v.value : null);
+            if (v.kind === "entity_ref_key") return __irValueFromPlanValue(v.key);
+            if (v.kind === "binding_symbol") return __irHole("binding", { binding: v.binding, path: v.path || [] });
+            if (v.kind === "node_symbol") return __irHole("node_input", { node: v.node, alias: v.alias || v.node, path: v.path || [], cardinality: "auto" });
+            if (v.kind === "template") return __irValue(v.template);
+            if (v.kind === "array") return (v.items || []).map(__irValueFromPlanValue);
+            if (v.kind === "object") {
+                const out = {};
+                for (const [k, child] of Object.entries(v.fields || {})) out[k] = __irValueFromPlanValue(child);
+                return out;
+            }
+            return null;
         }
 
         function __hasIrHole(v) {
@@ -887,7 +904,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
 
         function __irPredicateFromPlan(p) {
             const op = { eq: "=", ne: "!=", lt: "<", lte: "<=", gt: ">", gte: ">=", contains: "contains", in: "in", exists: "exists" }[p.op] || "=";
-            return { type: "comparison", field: (p.field_path || []).join("."), op, value: __irValue((p.value || {}).value) };
+            return { type: "comparison", field: (p.field_path || []).join("."), op, value: __irValueFromPlanValue(p.value) };
         }
 
         function __irPredicates(filters, predicates) {
@@ -1674,7 +1691,7 @@ mod tests {
                    const Team = makeEntity('acme', 'Team'); \
                    const Issue = makeEntity('acme', 'Issue'); \
                    const firstTeam = __plasmBind(Plan.singleton(Plan.limit(Team.query({}), 1)), 'firstTeam'); \
-                   const issue = __plasmBind(Issue.create({ team: { api: 'linear', entity: 'Team', key: template`${firstTeam}`.id } }), 'issue'); \
+                   const issue = __plasmBind(Issue.create({ team: entityRef('linear', 'Team', template`${firstTeam}`.id) }), 'issue'); \
                    out = JSON.parse(Plan.return(issue)); \
                  } catch (e) { out = { fatal: String(e && e.message || e) }; } \
                  JSON.stringify(out)",
@@ -1712,7 +1729,51 @@ mod tests {
     }
 
     #[test]
-    fn entity_ref_wrappers_lower_to_cml_entity_ref_payloads() -> QjResult<()> {
+    fn linear_team_to_issue_create_chaining_normalizes_team_ref() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Team = makeEntity('linear', 'Team'); \
+                 const Issue = makeEntity('linear', 'Issue', [], null, [{ kind: 'create', name: 'issue_create' }]); \
+                 const firstTeam = __plasmBind(Plan.singleton(Plan.limit(Team.query({}), 1)), 'firstTeam'); \
+                 const report = __plasmBind(Issue.create({ team: entityRef('linear', 'Team', template`${firstTeam}`.id), title: 'Plasm report' }), 'report'); \
+                 Plan.return(report)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            let create_node = v["nodes"]
+                .as_array()
+                .and_then(|nodes| {
+                    nodes
+                        .iter()
+                        .find(|node| node["kind"].as_str() == Some("create"))
+                })
+                .unwrap_or_else(|| panic!("create node missing: {v}"));
+            assert_eq!(create_node["depends_on"][0], "firstTeam");
+            assert_eq!(create_node["uses_result"][0]["node"], "firstTeam");
+            assert_eq!(
+                create_node["ir_template"]["expr"]["input"]["team"]["__plasm_hole"]["node"],
+                "firstTeam"
+            );
+            assert!(
+                create_node["ir_template"]["expr"]["input"]["team"]
+                    .get("key")
+                    .is_none(),
+                "{create_node}"
+            );
+            assert!(!create_node.to_string().contains("[object Object]"), "{create_node}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ref_values_lower_to_cml_entity_ref_payloads() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
         let js = quickjs_runtime_module_bootstrap();
@@ -1723,11 +1784,16 @@ mod tests {
             let _: () = ctx.eval(flat.as_str())?;
             let s: String = ctx.eval(
                 "const Commit = makeEntity('github', 'Commit', [], null, [{ kind: 'query', name: 'commit_query' }]); \
-                 const commits = __plasmBind(Commit.query({ repository: { api: 'github', entity: 'Repository', key: 'ryan-s-roberts/plasm-core' } }), 'commits'); \
+                 const commits = __plasmBind(Commit.query({ repository: entityRef('github', 'Repository', 'ryan-s-roberts/plasm-core') }), 'commits'); \
                  Plan.return(commits)",
             )?;
             let v: serde_json::Value = serde_json::from_str(&s).expect("json");
             assert_eq!(v["nodes"][0]["kind"], "query");
+            assert_eq!(v["nodes"][0]["predicates"][0]["value"]["kind"], "entity_ref_key");
+            assert_eq!(
+                v["nodes"][0]["predicates"][0]["value"]["key"]["value"],
+                "ryan-s-roberts/plasm-core"
+            );
             assert_eq!(
                 v["nodes"][0]["ir"]["expr"]["predicate"]["value"],
                 "ryan-s-roberts/plasm-core"
@@ -1741,6 +1807,43 @@ mod tests {
                     .is_none(),
                 "{v}"
             );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ref_values_lower_in_where_predicates() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Commit = makeEntity('github', 'Commit', [], null, [{ kind: 'query', name: 'commit_query' }]); \
+                   const repo = entityRef('github', 'Repository', 'ryan-s-roberts/plasm-core'); \
+                   const commits = __plasmBind(Commit.query({}).where(field('repository').eq(repo)), 'commits'); \
+                   out = JSON.parse(Plan.return(commits)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(v["nodes"][0]["predicates"][0]["value"]["kind"], "entity_ref_key");
+            assert_eq!(
+                v["nodes"][0]["predicates"][0]["value"]["key"]["value"],
+                "ryan-s-roberts/plasm-core"
+            );
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"],
+                "ryan-s-roberts/plasm-core"
+            );
+            assert!(!v.to_string().contains("[object Object]"), "{v}");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

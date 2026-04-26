@@ -1,29 +1,29 @@
 //! Code Mode MCP helpers: parse Plasm effect plans and optional QuickJS bootstrap string.
 
-use plasm_core::CGS;
-use plasm_core::DomainExposureSession;
-use plasm_core::TypeError;
 use plasm_core::cgs_federation::FederationDispatch;
-use plasm_core::expr_parser::{ParseError, ParsedExpr, parse, parse_with_cgs_layers};
+use plasm_core::expr_parser::{parse, parse_with_cgs_layers, ParseError, ParsedExpr};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
+use plasm_core::DomainExposureSession;
+use plasm_core::TypeError;
+use plasm_core::CGS;
 
 use crate::code_mode_plan::{
-    AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
-    Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
-    ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput,
-    ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
-    ValidatedSurfaceNode, parse_plan_value, validate_plan_artifact,
+    parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
+    ComputeTemplate, EffectClass, FieldPath, InputAlias, Plan, PlanExprTemplate, PlanNodeId,
+    PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
+    ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
+    ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
 };
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    PublishedResultStep, archive_code_mode_result_snapshot, execute_code_mode_parsed_expr,
-    publish_code_mode_result_steps, trace_record_code_mode_plasm_line,
+    archive_code_mode_result_snapshot, execute_code_mode_parsed_expr,
+    publish_code_mode_result_steps, trace_record_code_mode_plasm_line, PublishedResultStep,
 };
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -825,6 +825,7 @@ fn render_plan_value(value: &PlanValue) -> String {
             format!("${alias}{suffix}")
         }
         PlanValue::Template { template, .. } => format!("template`{template}`"),
+        PlanValue::EntityRefKey { key, .. } => render_plan_value(key),
         PlanValue::Array { items } => {
             if items.is_empty() {
                 return "[0 items]".to_string();
@@ -2437,6 +2438,7 @@ fn eval_plan_value(value: &PlanValue, env: &PlanEvalEnv<'_>) -> Result<serde_jso
         PlanValue::Template { template, .. } => {
             Ok(serde_json::Value::String(render_template(template, env)?))
         }
+        PlanValue::EntityRefKey { key, .. } => eval_plan_value(key, env),
         PlanValue::Array { items } => Ok(serde_json::Value::Array(
             items
                 .iter()
@@ -2555,6 +2557,10 @@ fn predicate_matches(row: &serde_json::Value, pred: &crate::code_mode_plan::Plan
     let lhs = value_at_path(row, &path).unwrap_or(&serde_json::Value::Null);
     let rhs = match &pred.value {
         PlanValue::Literal { value } => value,
+        PlanValue::EntityRefKey { key, .. } => match key.as_ref() {
+            PlanValue::Literal { value } => value,
+            _ => return false,
+        },
         _ => return false,
     };
     match pred.op {
@@ -2618,11 +2624,9 @@ fn append_aggregates(
         let value = match agg.function {
             AggregateFunction::Count => serde_json::json!(rows.len()),
             AggregateFunction::Sum => {
-                serde_json::json!(
-                    aggregate_numbers(rows, agg.field.as_ref())
-                        .iter()
-                        .sum::<f64>()
-                )
+                serde_json::json!(aggregate_numbers(rows, agg.field.as_ref())
+                    .iter()
+                    .sum::<f64>())
             }
             AggregateFunction::Avg => {
                 let nums = aggregate_numbers(rows, agg.field.as_ref());
@@ -2801,9 +2805,9 @@ fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::load_schema;
     use plasm_core::CgsContext;
     use plasm_core::DomainExposureSession;
-    use plasm_core::load_schema;
     use std::path::PathBuf;
     use std::sync::Arc;
 

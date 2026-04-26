@@ -252,6 +252,11 @@ pub enum PlanValue {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         input_bindings: Vec<PlanInputBinding>,
     },
+    EntityRefKey {
+        api: String,
+        entity: String,
+        key: Box<PlanValue>,
+    },
     Array {
         #[serde(default)]
         items: Vec<PlanValue>,
@@ -1597,6 +1602,9 @@ fn validate_plan_value_input_refs(
             }
             Ok(())
         }
+        PlanValue::EntityRefKey { key, .. } => {
+            validate_plan_value_input_refs(key, node_index, inputs_by_alias, item_binding)
+        }
         PlanValue::Object { fields } => {
             for field in fields.values() {
                 validate_plan_value_input_refs(field, node_index, inputs_by_alias, item_binding)?;
@@ -1664,9 +1672,12 @@ fn analyze_static_cardinality(
                 {
                     CardinalityAnalysis::StaticSingleton
                 }
-                Some(PlanValue::Array { .. } | PlanValue::Literal { .. }) | None => {
-                    CardinalityAnalysis::PluralOrUnknown
-                }
+                Some(
+                    PlanValue::Array { .. }
+                    | PlanValue::Literal { .. }
+                    | PlanValue::EntityRefKey { .. },
+                )
+                | None => CardinalityAnalysis::PluralOrUnknown,
                 Some(_) => CardinalityAnalysis::StaticSingleton,
             },
             PlanNodeKind::Derive => node
@@ -1983,6 +1994,16 @@ fn validate_plan_value_expr(
             }
             Ok(())
         }
+        PlanValue::EntityRefKey { api, entity, key } => {
+            validate_no_js_object_coercion(api, node_index, path)?;
+            validate_no_js_object_coercion(entity, node_index, path)?;
+            if api.trim().is_empty() || entity.trim().is_empty() {
+                return Err(format!(
+                    "plan.nodes[{node_index}].{path} entity_ref_key api and entity must be non-empty"
+                ));
+            }
+            validate_entity_ref_key_value(key, node_index, &format!("{path}.key"))
+        }
         PlanValue::Array { items } => {
             for (i, item) in items.iter().enumerate() {
                 validate_plan_value_expr(item, node_index, &format!("{path}.items[{i}]"))?;
@@ -1990,6 +2011,11 @@ fn validate_plan_value_expr(
             Ok(())
         }
         PlanValue::Object { fields } => {
+            if looks_like_unnormalized_entity_ref_wrapper(fields) {
+                return Err(format!(
+                    "plan.nodes[{node_index}].{path} contains an unnormalized Code Mode entity_ref wrapper; the facade must lower {{api, entity, key}} to its key payload before validation"
+                ));
+            }
             for (k, field) in fields {
                 if k.trim().is_empty() {
                     return Err(format!(
@@ -2001,6 +2027,43 @@ fn validate_plan_value_expr(
             Ok(())
         }
     }
+}
+
+fn validate_entity_ref_key_value(
+    value: &PlanValue,
+    node_index: usize,
+    path: &str,
+) -> Result<(), String> {
+    match value {
+        PlanValue::Literal { .. }
+        | PlanValue::BindingSymbol { .. }
+        | PlanValue::NodeSymbol { .. }
+        | PlanValue::Template { .. } => validate_plan_value_expr(value, node_index, path),
+        other => Err(format!(
+            "plan.nodes[{node_index}].{path} must be a literal, binding symbol, node symbol, or template for entity_ref_key (got {other:?})"
+        )),
+    }
+}
+
+fn looks_like_unnormalized_entity_ref_wrapper(fields: &BTreeMap<String, PlanValue>) -> bool {
+    if fields.len() != 3
+        || !fields.contains_key("api")
+        || !fields.contains_key("entity")
+        || !fields.contains_key("key")
+    {
+        return false;
+    }
+    matches!(
+        fields.get("api"),
+        Some(PlanValue::Literal {
+            value: serde_json::Value::String(_)
+        })
+    ) && matches!(
+        fields.get("entity"),
+        Some(PlanValue::Literal {
+            value: serde_json::Value::String(_)
+        })
+    )
 }
 
 fn validate_template_text(template: &str, node_index: usize, path: &str) -> Result<(), String> {
@@ -2331,6 +2394,92 @@ mod tests {
         });
         let err = validate_plan_value(&v).expect_err("empty substitution rejected");
         assert!(err.contains("empty template substitution"), "{err}");
+    }
+
+    #[test]
+    fn reject_unnormalized_entity_ref_wrapper_predicate_values() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "commits",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "github", "entity": "Commit" },
+                "expr": "Commit{repository=\"ryan-s-roberts/plasm-core\"}",
+                "ir": {
+                    "expr": {
+                        "op": "query",
+                        "entity": "Commit",
+                        "predicate": {
+                            "type": "comparison",
+                            "field": "repository",
+                            "op": "=",
+                            "value": "ryan-s-roberts/plasm-core"
+                        }
+                    }
+                },
+                "effect_class": "read",
+                "result_shape": "list",
+                "predicates": [{
+                    "field_path": ["repository"],
+                    "op": "eq",
+                    "value": {
+                        "kind": "object",
+                        "fields": {
+                            "api": { "kind": "literal", "value": "github" },
+                            "entity": { "kind": "literal", "value": "Repository" },
+                            "key": { "kind": "literal", "value": "ryan-s-roberts/plasm-core" }
+                        }
+                    }
+                }]
+            }],
+            "return": { "kind": "node", "node": "commits" }
+        });
+        let err = validate_plan_value(&v).expect_err("unnormalized wrapper rejected");
+        assert!(
+            err.contains("unnormalized Code Mode entity_ref wrapper"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn explicit_entity_ref_key_predicate_values_validate() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "commits",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "github", "entity": "Commit" },
+                "expr": "Commit{repository=\"ryan-s-roberts/plasm-core\"}",
+                "ir": {
+                    "expr": {
+                        "op": "query",
+                        "entity": "Commit",
+                        "predicate": {
+                            "type": "comparison",
+                            "field": "repository",
+                            "op": "=",
+                            "value": "ryan-s-roberts/plasm-core"
+                        }
+                    }
+                },
+                "effect_class": "read",
+                "result_shape": "list",
+                "predicates": [{
+                    "field_path": ["repository"],
+                    "op": "eq",
+                    "value": {
+                        "kind": "entity_ref_key",
+                        "api": "github",
+                        "entity": "Repository",
+                        "key": { "kind": "literal", "value": "ryan-s-roberts/plasm-core" }
+                    }
+                }]
+            }],
+            "return": { "kind": "node", "node": "commits" }
+        });
+        validate_plan_value(&v).expect("explicit entity_ref_key is valid");
     }
 
     #[test]

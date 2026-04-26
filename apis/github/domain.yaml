@@ -1,4 +1,4 @@
-version: 16
+version: 17
 
 http_backend: https://api.github.com
 
@@ -17,7 +17,7 @@ entities:
         field_type: string
         path: owner.login
         string_semantics: short
-        required: false
+        required: true
       repo:
         field_type: string
         path: name
@@ -102,6 +102,30 @@ entities:
           bindings:
             owner: owner
             repo: repo
+      commits:
+        target: Commit
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: commit_query
+          bindings:
+            repository: full_name
+      branches:
+        target: Branch
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: branch_query
+          bindings:
+            repository: full_name
+      contributors:
+        target: Contributor
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: contributor_query
+          bindings:
+            repository: full_name
   Issue:
     id_field: id
     key_vars:
@@ -1066,6 +1090,10 @@ entities:
         string_semantics: short
         required: false
   Contributor:
+    key_vars:
+    - owner
+    - repo
+    - login
     id_field: login
     description: Repository contributor with commit stats.
     fields:
@@ -1495,13 +1523,17 @@ capabilities:
   repo_search:
     kind: search
     entity: Repository
-    description: Search GitHub repositories.
+    description: Search GitHub repositories using GitHub repository-search query syntax.
     parameters:
     - name: q
       type: string
       required: true
       role: search
       string_semantics: short
+      description: >-
+        GitHub repository search query, not natural language. Use valid qualifiers
+        such as "org:rust-lang rust in:name" or "plasm-core in:name not:fork";
+        invalid qualifier syntax may be rejected by GitHub.
     - name: sort
       type: select
       allowed_values:
@@ -1619,6 +1651,7 @@ capabilities:
       target: Repository
       required: true
       role: scope
+      description: Repository ref with owner and repo key slots.
     - name: affiliation
       type: select
       allowed_values:
@@ -1637,6 +1670,7 @@ capabilities:
       target: Repository
       required: true
       role: scope
+      description: Repository ref with owner and repo key slots.
     - name: sort
       type: select
       allowed_values:
@@ -1681,6 +1715,7 @@ capabilities:
       target: Repository
       required: true
       role: scope
+      description: Repository ref with owner and repo key slots.
     - name: state
       type: select
       allowed_values:
