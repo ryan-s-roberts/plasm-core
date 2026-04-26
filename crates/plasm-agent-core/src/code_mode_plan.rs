@@ -1918,6 +1918,11 @@ fn validate_predicate(
             "plan.nodes[{node_index}].predicates[{pred_index}].field_path must be non-empty"
         ));
     }
+    if let PlanValue::Helper { name, .. } = &p.value {
+        return Err(format!(
+            "plan.nodes[{node_index}].predicates[{pred_index}].value helper {name:?} is not executable in Code Mode predicates; pass a literal/entity_ref_key value or precompute it"
+        ));
+    }
     validate_plan_value_expr(
         &p.value,
         node_index,
@@ -2506,6 +2511,39 @@ mod tests {
             "return": { "kind": "node", "node": "commits" }
         });
         validate_plan_value(&v).expect("explicit entity_ref_key is valid");
+    }
+
+    #[test]
+    fn predicate_helper_values_are_rejected() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "n1",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product{updated_at>30d}",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "effect_class": "read",
+                "result_shape": "list",
+                "predicates": [{
+                    "field_path": ["updated_at"],
+                    "op": "gt",
+                    "value": {
+                        "kind": "helper",
+                        "name": "daysAgo",
+                        "args": [30],
+                        "display": "30d"
+                    }
+                }]
+            }],
+            "return": { "kind": "node", "node": "n1" }
+        });
+        let err = validate_plan_value(&v).expect_err("helper predicate rejected");
+        assert!(
+            err.contains("helper \"daysAgo\" is not executable"),
+            "{err}"
+        );
     }
 
     #[test]

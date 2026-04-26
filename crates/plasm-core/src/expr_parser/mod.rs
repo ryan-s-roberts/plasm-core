@@ -58,11 +58,11 @@ use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,
     path_var_names_from_mapping_json, template_invoke_requires_explicit_anchor_id,
 };
-use crate::symbol_tuning::{FocusSpec, SymbolMap, entity_slices_for_render};
+use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
 use crate::{
-    ArrayItemsSchema, CGS, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
+    ArrayItemsSchema, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
     EntityKey, Expr, FieldType, GetExpr, InputType, InvokeExpr, PageExpr, ParameterRole, Predicate,
-    QueryExpr, Ref, Value, ValueWireFormat,
+    QueryExpr, Ref, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -2028,10 +2028,10 @@ fn extract_primary_id(expr: &Expr) -> Option<String> {
 mod tests {
     use super::*;
     use crate::schema::capability_method_label_kebab;
-    use crate::symbol_tuning::{FocusSpec, SymbolMap, entity_slices_for_render};
+    use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
     use crate::{
-        CGS, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality, EntityKey,
-        FieldSchema, FieldType, RelationSchema, ResourceSchema, loader::load_schema_dir,
+        loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
+        EntityKey, FieldSchema, FieldType, RelationSchema, ResourceSchema, CGS,
     };
 
     fn petstore_cgs() -> CGS {

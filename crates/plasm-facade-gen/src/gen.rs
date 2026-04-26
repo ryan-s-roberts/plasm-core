@@ -518,6 +518,14 @@ fn input_arg_optional(params: &[FacadeInputParameter]) -> &'static str {
 fn entity_get_key_type_ts(entity: &QualifiedEntitySurface) -> String {
     if entity.key_vars.len() <= 1 {
         "string".to_string()
+    } else if entity.key_vars.len() == 2 {
+        let fields = entity
+            .key_vars
+            .iter()
+            .map(|key| format!("{}: string", serde_json::Value::String(key.clone())))
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!("`${{string}}/${{string}}` | {{ {fields} }}")
     } else {
         let fields = entity
             .key_vars
@@ -525,7 +533,7 @@ fn entity_get_key_type_ts(entity: &QualifiedEntitySurface) -> String {
             .map(|key| format!("{}: string", serde_json::Value::String(key.clone())))
             .collect::<Vec<_>>()
             .join("; ");
-        format!("string | {{ {fields} }}")
+        format!("{{ {fields} }}")
     }
 }
 
@@ -587,7 +595,11 @@ fn action_method_overloads_ts(
 }
 
 const TS_PRELUDE: &str = r#"declare namespace Plasm {
-  export type EntityRef<Api extends string, E extends string, K = string> = K | PlanValueExpr | (PlanValueExpr & {
+  export type EntityRefHandle<Api extends string, E extends string, K = string> = PlanSource & {
+    readonly __plasmEntityRefHandle?: { readonly api: Api; readonly entity: E; readonly key: K };
+  };
+  export type SymbolicEntityKey<K = string> = K & PlanValueExpr;
+  export type EntityRef<Api extends string, E extends string, K = string> = K | SymbolicEntityKey<K> | EntityRefHandle<Api, E, K> | (PlanValueExpr & {
     readonly __plasmEntityRef: true;
     readonly api: Api;
     readonly entity: E;
@@ -612,6 +624,7 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
     | { readonly kind: "binding_symbol"; readonly binding: string; readonly path?: readonly string[] }
     | { readonly kind: "node_symbol"; readonly node: string; readonly alias: string; readonly path?: readonly string[]; readonly cardinality?: PlanInputCardinality }
     | { readonly kind: "template"; readonly template: string; readonly input_bindings?: readonly PlanInputBinding[] }
+    | { readonly kind: "entity_ref_key"; readonly api: string; readonly entity: string; readonly key: PlanValue }
     | { readonly kind: "array"; readonly items: readonly PlanValue[] }
     | { readonly kind: "object"; readonly fields: Record<string, PlanValue> };
   export type PlanInputCardinality = "auto" | "singleton";
@@ -663,27 +676,42 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
     readonly entity?: string;
     readonly fields: readonly { readonly name: string; readonly value_kind: SyntheticValueKind; readonly source?: readonly string[] }[];
   };
+  export type NonEmptyArray<T> = readonly [T, ...T[]];
   export type AggregateFunction = "count" | "sum" | "avg" | "min" | "max";
-  export type AggregateSpec = { readonly name: string; readonly function: AggregateFunction; readonly field?: readonly string[] };
+  export type CountAggregateSpec = { readonly name: string; readonly function: "count"; readonly field?: readonly string[] };
+  export type FieldAggregateSpec = { readonly name: string; readonly function: "sum" | "avg" | "min" | "max"; readonly field: readonly [string, ...string[]] };
+  export type AggregateSpec = CountAggregateSpec | FieldAggregateSpec;
   export type PlanComputeOp =
     | { readonly kind: "project"; readonly fields: Record<string, readonly string[]> }
     | { readonly kind: "filter"; readonly predicates: readonly PlanPredicate[] }
-    | { readonly kind: "group_by"; readonly key: readonly string[]; readonly aggregates: readonly AggregateSpec[] }
-    | { readonly kind: "aggregate"; readonly aggregates: readonly AggregateSpec[] }
+    | { readonly kind: "group_by"; readonly key: readonly string[]; readonly aggregates: NonEmptyArray<AggregateSpec> }
+    | { readonly kind: "aggregate"; readonly aggregates: NonEmptyArray<AggregateSpec> }
     | { readonly kind: "sort"; readonly key: readonly string[]; readonly descending?: boolean }
     | { readonly kind: "limit"; readonly count: number }
     | { readonly kind: "table_from_matrix"; readonly columns: readonly string[]; readonly has_header?: boolean };
-  export type FieldPredicateBuilder<T = unknown> = {
+  export type PredicateScalar = string | number | boolean | null;
+  export type EntityRefPredicateValue = PlanValueExpr & {
+    readonly __plasmEntityRef: true;
+    readonly api: string;
+    readonly entity: string;
+    readonly key: unknown;
+  };
+  export type PredicateValue = PredicateScalar | readonly PredicateScalar[] | EntityRefPredicateValue;
+  export type FieldPredicateBuilder<T extends PredicateValue = PredicateValue> = {
     eq(value: T): PlanPredicate;
     ne(value: T): PlanPredicate;
-    lt(value: T): PlanPredicate;
-    lte(value: T): PlanPredicate;
-    gt(value: T): PlanPredicate;
-    gte(value: T): PlanPredicate;
-    contains(value: T): PlanPredicate;
-    in(value: readonly T[]): PlanPredicate;
+    lt(value: Extract<T, PredicateScalar>): PlanPredicate;
+    lte(value: Extract<T, PredicateScalar>): PlanPredicate;
+    gt(value: Extract<T, PredicateScalar>): PlanPredicate;
+    gte(value: Extract<T, PredicateScalar>): PlanPredicate;
+    contains(value: Extract<T, string>): PlanPredicate;
+    in(value: readonly Extract<T, PredicateScalar>[]): PlanPredicate;
+    exists(): PlanPredicate;
   };
-  export type Symbolic<T = unknown> = T & PlanValueExpr & { readonly __bindingPath: string; readonly __plasmExpr: string };
+  export type SymbolicLeaf = PlanValueExpr & { readonly __bindingPath: string; readonly __plasmExpr: string };
+  export type Symbolic<T = unknown> = SymbolicLeaf & {
+    readonly [K in keyof T]: Symbolic<T[K]>;
+  };
   export type TemplateValue = PlanValueExpr & { readonly __plasmExpr: string; readonly __planValue: PlanValue; readonly input_bindings: readonly PlanInputBinding[] };
   export type ProjectionValue = Symbolic<unknown>;
   export type PlanReturnSource = PlanNodeHandle | PlanBuilder | PlanEffect;
@@ -697,9 +725,9 @@ declare class Plan {
   static project<T>(source: Plasm.PlanSource, spec: Record<string, (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue> | readonly string[]): Plasm.PlanNodeHandle;
   static filter<T>(source: Plasm.PlanSource, ...predicates: readonly Plasm.PlanPredicate[]): Plasm.PlanNodeHandle;
   /** Aggregates over the full logical source collection. Returned result views may be paged. */
-  static aggregate(source: Plasm.PlanSource, aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle;
+  static aggregate(source: Plasm.PlanSource, aggregates: Plasm.NonEmptyArray<Plasm.AggregateSpec>): Plasm.PlanNodeHandle;
   /** Groups the full logical source collection. Returned result views may be paged. */
-  static groupBy<T>(source: Plasm.PlanSource, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue): { count(name?: string): Plasm.PlanNodeHandle; aggregate(aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle };
+  static groupBy<T>(source: Plasm.PlanSource, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue): { count(name?: string): Plasm.PlanNodeHandle; aggregate(aggregates: Plasm.NonEmptyArray<Plasm.AggregateSpec>): Plasm.PlanNodeHandle };
   static sort<T>(source: Plasm.PlanSource, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue, direction?: "asc" | "desc"): Plasm.PlanNodeHandle;
   /** Semantic truncation of the DAG collection, not ordinary result pagination. */
   static limit(source: Plasm.PlanSource, count: number): Plasm.PlanNodeHandle;
@@ -952,11 +980,13 @@ pub fn build_code_facade(
         }
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "get") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+            let key_type = entity_get_key_type_ts(r);
             let _ = writeln!(
                 &mut namespace_body,
-                "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: {key_type}): {e}ReadSource<\"single\"> & Plasm.PlanEffect;",
+                "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: {key_type}): {e}ReadSource<\"single\"> & Plasm.PlanEffect & Plasm.EntityRefHandle<\"{api}\", \"{e}\", {key_type}>;",
                 e = r.entity,
-                key_type = entity_get_key_type_ts(r)
+                api = r.catalog_alias,
+                key_type = key_type
             );
         }
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {

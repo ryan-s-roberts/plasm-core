@@ -123,6 +123,14 @@ fn snapshot_code_facade_prelude_emitted() {
     assert!(ts.agent_prelude.contains("PlanDataInput"));
     assert!(ts.agent_prelude.contains("PlanReturnable"));
     assert!(ts.agent_prelude.contains("ProjectionValue"));
+    assert!(ts.agent_prelude.contains("EntityRefHandle"));
+    assert!(!ts.agent_prelude.contains("= K | PlanValueExpr |"));
+    assert!(ts.agent_prelude.contains("kind: \"entity_ref_key\""));
+    assert!(ts.agent_prelude.contains("type NonEmptyArray<T>"));
+    assert!(ts.agent_prelude.contains("exists(): PlanPredicate;"));
+    assert!(!ts
+        .agent_prelude
+        .contains("export type Symbolic<T = unknown> = T &"));
     assert!(ts.agent_prelude.contains("RuntimeSingleton"));
     assert!(ts.agent_prelude.contains("binding_symbol"));
     assert!(ts.agent_prelude.contains("node_symbol"));

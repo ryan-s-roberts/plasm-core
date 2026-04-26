@@ -613,7 +613,7 @@ pub(crate) fn format_add_capabilities_wave_line(entry_id: &str, entities: &[Stri
 }
 
 pub(crate) const ADD_CAPABILITIES_SESSION_REUSE_HINT: &str =
-    "_Session discipline: capability loading is additive for this logical_session_ref. Reuse the same ref; do not reinitialize or call with a smaller seed set to narrow the symbol space. Add all known required seeds together, or append missing seeds later._";
+    "_New types added for this logical_session_ref; previously loaded types remain valid._";
 
 pub(crate) const CODE_MODE_PROGRAM_DISCIPLINE_HINT: &str =
     "_Code Mode discipline: do not use evaluate/execute as a REPL or probe loop. Write one complete TypeScript program for the user goal, include all coordinated reads/computes/writes in that DAG, run evaluate_code_plan once to review the full dry-run, then execute that reviewed handle only when the whole plan is acceptable. Use discover_capabilities or plasm for schema discovery and one-off reads instead of many tiny Code Mode plans._";
@@ -684,8 +684,6 @@ pub(crate) fn mcp_add_code_capabilities_markdown(
         }
     }
     s.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
-    s.push_str("\n\n");
-    s.push_str(CODE_MODE_PROGRAM_DISCIPLINE_HINT);
     s.push_str("\n\n");
     append_code_mode_typescript_fragment(&mut s, "Code Mode prelude", &ts.agent_prelude);
     append_code_mode_typescript_fragment(
@@ -1396,8 +1394,6 @@ pub async fn apply_capability_seeds(
             ));
             open_md.push_str("\n\n");
             open_md.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
-            open_md.push_str("\n\n");
-            open_md.push_str(CODE_MODE_PROGRAM_DISCIPLINE_HINT);
             let mut tsv_meta: Option<String> = None;
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
@@ -4622,19 +4618,12 @@ mod mcp_add_code_capabilities_markdown_tests {
             md.contains("hackernews") && md.contains("Item"),
             "md:\n{md}"
         );
-        assert!(md.contains("capability loading is additive"), "md:\n{md}");
-        assert!(md.contains("Reuse the same ref"), "md:\n{md}");
-        assert!(md.contains("smaller seed set"), "md:\n{md}");
-        assert!(md.contains("Code Mode discipline"), "md:\n{md}");
         assert!(
-            md.contains("not use evaluate/execute as a REPL"),
+            md.contains("New types added") && md.contains("previously loaded types remain valid"),
             "md:\n{md}"
         );
-        assert!(md.contains("one complete TypeScript program"), "md:\n{md}");
-        assert!(
-            md.contains("Use discover_capabilities or plasm"),
-            "md:\n{md}"
-        );
+        assert!(!md.contains("Code Mode discipline"), "md:\n{md}");
+        assert!(!md.contains("REPL or probe loop"), "md:\n{md}");
         assert!(md.contains("```typescript"), "md:\n{md}");
         assert!(md.contains("interface ItemRow"), "md:\n{md}");
     }

@@ -615,7 +615,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return Plan._compute(source, { kind: "filter", predicates: predicates.flat() }, { entity: "PlanFilter", fields: [{ name: "value", value_kind: "unknown" }] });
             }
             static aggregate(source, aggregates) {
-                return Plan._compute(source, { kind: "aggregate", aggregates: aggregates || [] }, __schemaFromFields("PlanAggregate", (aggregates || []).map(a => a.name), []));
+                const specs = __normalizeAggregates(aggregates);
+                return Plan._compute(source, { kind: "aggregate", aggregates: specs }, __schemaFromFields("PlanAggregate", specs.map(a => a.name), []));
             }
             static groupBy(source, keyFn) {
                 const binding = "item";
@@ -633,7 +634,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         });
                     },
                     aggregate(aggregates) {
-                        return Plan._compute(source, { kind: "group_by", key, aggregates: aggregates || [] }, __schemaFromFields("PlanGroup", ["key"].concat((aggregates || []).map(a => a.name)), [key]));
+                        const specs = __normalizeAggregates(aggregates);
+                        return Plan._compute(source, { kind: "group_by", key, aggregates: specs }, __schemaFromFields("PlanGroup", ["key"].concat(specs.map(a => a.name)), [key]));
                     }
                 };
             }
@@ -724,6 +726,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 gte: v => make("gte", v),
                 contains: v => make("contains", v),
                 in: v => make("in", v),
+                exists: () => ({ field_path: path, op: "exists", value: { kind: "literal", value: null } }),
             };
         }
 
@@ -966,6 +969,12 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return null;
         }
 
+        function __validatePredicateValue(p) {
+            if (p && p.value && p.value.kind === "helper") {
+                throw new Error("Code Mode DSL error: predicate helper values such as " + String(p.value.name || "helper") + "(...) are not executable in Code Mode filters; pass a literal/entity ref key or precompute the value.");
+            }
+        }
+
         function __hasIrHole(v) {
             if (!v || typeof v !== "object") return false;
             if (v.__plasm_hole) return true;
@@ -974,6 +983,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __irPredicateFromPlan(p) {
+            __validatePredicateValue(p);
             const op = { eq: "=", ne: "!=", lt: "<", lte: "<=", gt: ">", gte: ">=", contains: "contains", in: "in", exists: "exists" }[p.op] || "=";
             return { type: "comparison", field: (p.field_path || []).join("."), op, value: __irValueFromPlanValue(p.value) };
         }
@@ -987,6 +997,22 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (out.length === 0) return null;
             if (out.length === 1) return out[0];
             return { type: "and", args: out };
+        }
+
+        function __normalizeAggregates(aggregates) {
+            const specs = aggregates || [];
+            if (!Array.isArray(specs) || specs.length === 0) {
+                throw new Error("Code Mode DSL error: Plan.aggregate/groupBy.aggregate requires at least one aggregate spec");
+            }
+            for (const spec of specs) {
+                const fn = String(spec && spec.function || "");
+                if (fn !== "count") {
+                    if (!Array.isArray(spec && spec.field) || spec.field.length === 0) {
+                        throw new Error("Code Mode DSL error: aggregate `" + String(spec && spec.name || fn || "<unnamed>") + "` with function `" + fn + "` requires a non-empty field path");
+                    }
+                }
+            }
+            return specs;
         }
 
         function __planIr(expr, projection, displayExpr) {
@@ -1021,9 +1047,14 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
 
         function __normalizeEntityRefParam(value, param, entry_id) {
             if (value == null) return value;
-            if (__isEntityRefValue(value)) return value.key;
             const name = String(param && param.name || "entity_ref");
             const target = param && param.entity_ref_target ? String(param.entity_ref_target) : "";
+            if (__isEntityRefValue(value)) {
+                if (target && value.entity && String(value.entity) !== target) {
+                    throw new Error("Code Mode DSL error: entity_ref input '" + name + "' expects " + target + " but got " + value.entity);
+                }
+                return value.key;
+            }
             if (value && value.__plasmRef) {
                 const ref = value.__plasmRef;
                 if (target && ref.entity && String(ref.entity) !== target) {
@@ -1998,6 +2029,87 @@ mod tests {
     }
 
     #[test]
+    fn compound_key_get_rejects_three_part_string_shorthand() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Issue = makeEntity('github', 'Issue', [], null, [{ kind: 'get', name: 'issue_get' }], ['owner', 'repo', 'number']); \
+                   Plan.return(Issue.get('ryan-s-roberts/plasm-core/42')); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(msg.contains("string shorthand is only supported for two-part compound keys"), "{msg}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn field_exists_and_predicate_helper_rejection_match_contract() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Product = makeEntity('acme', 'Product'); \
+                   const ok = __plasmBind(Product.query({}).where(field('name').exists()), 'ok'); \
+                   let helperMsg = ''; \
+                   try { Product.query({}).where(field('updated_at').gt(daysAgo(30))).as('bad'); } catch (e) { helperMsg = String(e && e.message || e); } \
+                   out = { plan: JSON.parse(Plan.return(ok)), helperMsg }; \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(v["plan"]["nodes"][0]["predicates"][0]["op"], "exists");
+            assert!(v["helperMsg"]
+                .as_str()
+                .is_some_and(|msg| msg.contains("predicate helper values")), "{v}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_specs_are_guarded_before_plan_json() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msgs = []; \
+                 const Product = makeEntity('acme', 'Product'); \
+                 try { Plan.aggregate(Product.query({}), []); } catch (e) { msgs.push(String(e && e.message || e)); } \
+                 try { Plan.aggregate(Product.query({}), [{ name: 'total', function: 'sum' }]); } catch (e) { msgs.push(String(e && e.message || e)); } \
+                 JSON.stringify(msgs)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&msg).expect("json");
+            assert!(v[0].as_str().is_some_and(|m| m.contains("requires at least one aggregate spec")), "{v}");
+            assert!(v[1].as_str().is_some_and(|m| m.contains("requires a non-empty field path")), "{v}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn compound_key_get_rejects_incomplete_key_before_plan_json() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
@@ -2207,6 +2319,53 @@ mod tests {
     }
 
     #[test]
+    fn entity_ref_create_input_accepts_get_handle_with_symbolic_key() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Team = makeEntity('linear', 'Team', [], null, [{ kind: 'query', name: 'team_query' }, { kind: 'get', name: 'team_get' }]); \
+                   const Issue = makeEntity('linear', 'Issue', [], null, [{ kind: 'create', name: 'issue_create', input_parameters: [{ name: 'team', type: 'entity_ref', entity_ref_target: 'Team', required: true }] }]); \
+                   const teams = __plasmBind(Plan.limit(Team.query({}).select('id'), 1), 'teams'); \
+                   const issueFx = __plasmBind(forEach(teams, (trow) => Issue.create({ team: Team.get(trow.id), title: 'Plasm report' })), 'issueFx'); \
+                   out = JSON.parse(Plan.return(issueFx)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            let for_each = v["nodes"]
+                .as_array()
+                .and_then(|nodes| {
+                    nodes
+                        .iter()
+                        .find(|node| node["kind"].as_str() == Some("for_each"))
+                })
+                .unwrap_or_else(|| panic!("for_each node missing: {v}"));
+            assert_eq!(
+                for_each["effect_template"]["ir_template"]["expr"]["input"]["team"]["__plasm_hole"]
+                    ["binding"],
+                "item"
+            );
+            assert_eq!(
+                for_each["effect_template"]["ir_template"]["expr"]["input"]["team"]["__plasm_hole"]
+                    ["path"][0],
+                "id"
+            );
+            assert!(!for_each.to_string().contains("[object Object]"), "{for_each}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn entity_ref_create_input_rejects_whole_row() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
@@ -2229,6 +2388,33 @@ mod tests {
             )?;
             assert!(
                 msg.contains("expects a scalar reference key, not a whole row/read handle"),
+                "{msg}"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ref_create_input_rejects_wrong_runtime_entity_ref_target() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { \
+                   const Issue = makeEntity('linear', 'Issue', [], null, [{ kind: 'create', name: 'issue_create', input_parameters: [{ name: 'team', type: 'entity_ref', entity_ref_target: 'Team', required: true }] }]); \
+                   Plan.return(Issue.create({ team: entityRef('linear', 'Project', 'p1'), title: 'Plasm report' })); \
+                 } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(
+                msg.contains("entity_ref input 'team' expects Team but got Project"),
                 "{msg}"
             );
             Ok::<(), rquickjs::Error>(())

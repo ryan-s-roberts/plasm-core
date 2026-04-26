@@ -827,7 +827,7 @@ impl PlasmMcpHandler {
                 name: "add_code_capabilities".into(),
                 title: None,
                 description: Some(
-                    format!("Open or append capabilities for Code Mode program authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Reuse the same **`logical_session_ref`**; this is additive, not a replacement or narrowing operation. If the program needs several entities/APIs, include all known required seeds in one call; append newly discovered missing seeds later on the same ref. Do not reinitialize or resend a smaller seed set to narrow the symbol space. Use only when synthesizing one complete program with multiple coordinated operations, transformations, compute, fan-out/fan-in, or reuse; prefer **`plasm`** for one simple expression, schema discovery, or one-off reads. Code Mode is **not a query interface** and **not a REPL**. Keep output minimal with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only. {CODE_MODE_PROGRAM_DISCIPLINE_HINT}").into(),
+                    "Open or append capabilities for Code Mode program authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Reuse the same **`logical_session_ref`**; newly added types extend the current Code Mode surface and previous types remain valid. If the program needs several entities/APIs, include all known required seeds in one call; append newly discovered missing seeds later on the same ref. Prefer **`plasm`** for one simple expression, schema discovery, or one-off reads.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -850,7 +850,7 @@ impl PlasmMcpHandler {
                 name: "evaluate_code_plan".into(),
                 title: None,
                 description: Some(
-                    "Evaluate a complete named TypeScript Code Mode program, create an archived validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run execution DAG. This is whole-program validation and review, not a query endpoint, not a field probe, and usually not the final answer. The expected use is one dry-run for the full user goal, then execution of that reviewed handle. Do not create many tiny plans to count rows, inspect fields, test refs, or check whether a write might work; fold those assumptions into one bounded program or use **`plasm`** for one-off reads. If the dry-run program satisfies the user's intent with acceptable risk and minimal output, follow with **`execute_code_plan(plan_handle)`**. Revise and re-evaluate only when the dry run shows a defect, missing capability, excessive output, or unacceptable risk. Do not send TypeScript again once a handle exists unless changing the complete program or symbol space. Start uncertain list/feed branches inside the complete plan with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs.".into(),
+                    format!("Evaluate a complete named TypeScript Code Mode program, create an archived validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run execution DAG. This is whole-program validation and review, not a query endpoint, not a field probe, and usually not the final answer. The expected use is one dry-run for the full user goal, then execution of that reviewed handle. Do not create many tiny plans to count rows, inspect fields, test refs, or check whether a write might work; fold those assumptions into one bounded program or use **`plasm`** for one-off reads. If the dry-run program satisfies the user's intent with acceptable risk and minimal output, follow with **`execute_code_plan(plan_handle)`**. Revise and re-evaluate only when the dry run shows a defect, missing capability, excessive output, or unacceptable risk. Do not send TypeScript again once a handle exists unless changing the complete program or symbol space. Start uncertain list/feed branches inside the complete plan with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs. {CODE_MODE_PROGRAM_DISCIPLINE_HINT}").into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "name".into(), "code".into()],
@@ -3408,8 +3408,8 @@ mod tests {
             d.contains("plan_handle")
                 && d.contains("archived")
                 && d.contains("program")
-                && d.contains("not a query interface")
-                && d.contains("not a REPL")
+                && d.contains("not a query endpoint")
+                && d.contains("REPL or probe loop")
                 && d.contains("whole-program validation and review")
                 && d.contains("not a field probe")
                 && d.contains("usually not the final answer")
@@ -3418,17 +3418,15 @@ mod tests {
                 && d.contains("Do not create many tiny plans")
                 && d.contains("Do not execute probe plans")
                 && d.contains("_meta.plasm.steps")
-                && d.contains("prefer **`plasm`**")
+                && d.contains("Prefer **`plasm`**")
                 && d.contains("schema discovery")
-                && d.contains("multiple coordinated operations")
-                && d.contains("transformations")
+                && d.contains("several entities/APIs")
+                && d.contains("coordinated reads/computes/writes")
                 && d.contains("compute")
-                && d.contains("fan-out/fan-in")
-                && d.contains("Plan.project")
-                && d.contains(".select(...)")
+                && d.contains("project/select source fields")
                 && d.contains("Plan.return(...)")
                 && d.contains("minimal output")
-                && d.contains("final answer nodes")
+                && d.contains("final nodes")
                 && d.contains("wide intermediates"),
             "code plan tool descriptions: {d}"
         );

@@ -32,6 +32,20 @@ fn tiny_ctxs(cgs: plasm_core::CGS) -> IndexMap<String, Arc<CgsContext>> {
     m
 }
 
+fn github_cgs() -> plasm_core::CGS {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    load_schema(&root.join("../../apis/github")).expect("load github fixture")
+}
+
+fn github_ctxs(cgs: plasm_core::CGS) -> IndexMap<String, Arc<CgsContext>> {
+    let mut m = IndexMap::new();
+    m.insert(
+        "github".to_string(),
+        Arc::new(CgsContext::entry("github", Arc::new(cgs))),
+    );
+    m
+}
+
 #[test]
 fn snapshot_code_facade_prelude_emitted() {
     let cgs = tiny_cgs();
@@ -83,6 +97,15 @@ fn snapshot_code_facade_prelude_emitted() {
     assert!(ts.agent_prelude.contains("PlanDataInput"));
     assert!(ts.agent_prelude.contains("PlanReturnable"));
     assert!(ts.agent_prelude.contains("ProjectionValue"));
+    assert!(ts.agent_prelude.contains("EntityRefHandle"));
+    assert!(!ts.agent_prelude.contains("= K | PlanValueExpr |"));
+    assert!(ts.agent_prelude.contains("kind: \"entity_ref_key\""));
+    assert!(ts.agent_prelude.contains("type NonEmptyArray<T>"));
+    assert!(ts.agent_prelude.contains("type FieldAggregateSpec"));
+    assert!(ts.agent_prelude.contains("exists(): PlanPredicate;"));
+    assert!(!ts
+        .agent_prelude
+        .contains("export type Symbolic<T = unknown> = T &"));
     assert!(ts.agent_prelude.contains("binding_symbol"));
     assert!(ts.agent_prelude.contains("node_symbol"));
     assert!(ts.agent_prelude.contains("static singleton"));
@@ -122,7 +145,7 @@ fn snapshot_search_and_relation_surface() {
         .contains("interface ProductReadSource<C extends Plasm.SourceCardinality"));
     assert!(ts
         .agent_namespace_body
-        .contains("get(id: string): ProductReadSource<\"single\"> & Plasm.PlanEffect;"));
+        .contains("get(id: string): ProductReadSource<\"single\"> & Plasm.PlanEffect & Plasm.EntityRefHandle<\"acme\", \"Product\", string>;"));
     assert!(ts.agent_prelude.contains(
         "static singleton<T extends Plasm.PlanSource>(source: T): Plasm.RuntimeSingleton<T>;"
     ));
@@ -138,6 +161,36 @@ fn snapshot_search_and_relation_surface() {
     let runtime = quickjs_runtime_from_facade_delta(&facade_delta);
     assert!(runtime.contains("search(input)"));
     assert!(runtime.contains("\"name\":\"category\""));
+}
+
+#[test]
+fn compound_key_get_types_match_runtime_shorthand_rules() {
+    let cgs = github_cgs();
+    let exp = DomainExposureSession::new(&cgs, "github", &["Repository", "Issue"]);
+    let ctxs = github_ctxs(cgs);
+    let req = FacadeGenRequest {
+        new_symbol_space: true,
+        seed_pairs: vec![
+            ("github".to_string(), "Repository".to_string()),
+            ("github".to_string(), "Issue".to_string()),
+        ],
+        already_emitted: ExposedSet::default(),
+        emit_prelude: true,
+    };
+    let (_facade_delta, ts) = build_code_facade(&req, &exp, &ctxs);
+
+    assert!(
+        ts.agent_namespace_body
+            .contains("get(id: `${string}/${string}` | { \"owner\": string; \"repo\": string })"),
+        "{}",
+        ts.agent_namespace_body
+    );
+    assert!(
+        ts.agent_namespace_body
+            .contains("get(id: { \"owner\": string; \"repo\": string; \"number\": string })"),
+        "{}",
+        ts.agent_namespace_body
+    );
 }
 
 #[test]
