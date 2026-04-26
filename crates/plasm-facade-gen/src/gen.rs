@@ -466,6 +466,47 @@ fn search_input_fields_ts(entity: &QualifiedEntitySurface) -> String {
         .collect::<String>()
 }
 
+fn capability_input_fields_ts(
+    params: &[FacadeInputParameter],
+    cat_alias: &str,
+    indent: &str,
+) -> String {
+    params
+        .iter()
+        .map(|param| {
+            let q = if param.required { "" } else { "?" };
+            let ts = input_param_type_to_ts(param, cat_alias);
+            format!("{indent}{}{q}: {ts};\n", param.name)
+        })
+        .collect::<String>()
+}
+
+fn capability_input_type_alias_ts(
+    type_name: &str,
+    params: &[FacadeInputParameter],
+    cat_alias: &str,
+) -> Option<String> {
+    if params.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "  type {type_name} = {{\n{}  }};\n",
+        capability_input_fields_ts(params, cat_alias, "    ")
+    ))
+}
+
+fn has_required_input(params: &[FacadeInputParameter]) -> bool {
+    params.iter().any(|param| param.required)
+}
+
+fn input_arg_optional(params: &[FacadeInputParameter]) -> &'static str {
+    if has_required_input(params) { "" } else { "?" }
+}
+
+fn capability_suffix(cap: &FacadeCapability) -> String {
+    pascal(&cap.name)
+}
+
 fn relation_methods_ts(
     entity: &QualifiedEntitySurface,
     available_entities: &BTreeSet<String>,
@@ -482,6 +523,29 @@ fn relation_methods_ts(
             )
         })
         .collect::<String>()
+}
+
+fn action_method_overloads_ts(
+    entity: &QualifiedEntitySurface,
+    caps: &[&FacadeCapability],
+) -> String {
+    let mut out = String::new();
+    for cap in caps {
+        let input_type = if cap.input_parameters.is_empty() {
+            "Record<string, unknown>".to_string()
+        } else {
+            format!("{}{}Input", entity.entity, capability_suffix(cap))
+        };
+        let optional = input_arg_optional(&cap.input_parameters);
+        let cap_name = serde_json::to_string(&cap.name).unwrap_or_else(|_| "\"\"".to_string());
+        out.push_str(&format!(
+            "action(name: {cap_name}, input{optional}: {input_type}): Plasm.PlanEffect; "
+        ));
+    }
+    if out.is_empty() {
+        out.push_str("action(name: string, input?: Record<string, unknown>): Plasm.PlanEffect;");
+    }
+    out
 }
 
 const TS_PRELUDE: &str = r#"declare namespace Plasm {
@@ -766,7 +830,7 @@ pub fn build_code_facade(
         let relation_methods = relation_methods_ts(r, &available_entities);
         let _ = writeln!(
             &mut namespace_body,
-            "  interface {e}NodeHandle extends Plasm.PlanNodeHandle {{\n{relation_methods}  }}\n  interface {e}QueryBuilder extends {e}NodeHandle {{\n    /** Add structured predicates that the host preserves for dry-run and execution reports. */\n    where(...predicates: Plasm.PlanPredicate[]): this;\n    /** Select fields to include in typed projection metadata. */\n    select(...fields: Array<keyof {e}Row & string>): this;\n  }}",
+            "  interface {e}NodeHandle extends Plasm.PlanNodeHandle {{\n{relation_methods}    /** Select fields to include in typed projection metadata. */\n    select(...fields: Array<keyof {e}Row & string>): this;\n  }}\n  interface {e}QueryBuilder extends {e}NodeHandle {{\n    /** Add structured predicates that the host preserves for dry-run and execution reports. */\n    where(...predicates: Plasm.PlanPredicate[]): this;\n  }}",
             e = r.entity
         );
         if r.capabilities.iter().any(|c| c.kind == "search") {
@@ -777,6 +841,38 @@ pub fn build_code_facade(
                 e = r.entity
             );
         }
+        if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "query") {
+            if !cap.input_parameters.is_empty() {
+                let _ = writeln!(
+                    &mut namespace_body,
+                    "  type {e}QueryInput = Partial<{e}Row> & {{\n{}  }};",
+                    capability_input_fields_ts(
+                        &cap.input_parameters,
+                        r.catalog_alias.as_str(),
+                        "    "
+                    ),
+                    e = r.entity
+                );
+            }
+        }
+        if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {
+            if let Some(alias) = capability_input_type_alias_ts(
+                &format!("{}CreateInput", r.entity),
+                &cap.input_parameters,
+                r.catalog_alias.as_str(),
+            ) {
+                namespace_body.push_str(&alias);
+            }
+        }
+        for cap in r.capabilities.iter().filter(|c| c.kind == "action") {
+            if let Some(alias) = capability_input_type_alias_ts(
+                &format!("{}{}Input", r.entity, capability_suffix(cap)),
+                &cap.input_parameters,
+                r.catalog_alias.as_str(),
+            ) {
+                namespace_body.push_str(&alias);
+            }
+        }
         let _ = writeln!(
             &mut namespace_body,
             "  interface {e}Entity {{",
@@ -784,10 +880,22 @@ pub fn build_code_facade(
         );
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "query") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+            let query_input_type = if cap.input_parameters.is_empty() {
+                format!("Partial<{}Row>", r.entity)
+            } else {
+                format!("{}QueryInput", r.entity)
+            };
+            let optional = if has_required_input(&cap.input_parameters) {
+                ""
+            } else {
+                "?"
+            };
             let _ = writeln!(
                 &mut namespace_body,
-                "    /** Logical collection over all enumerable rows; result rendering/artifacts may page the returned view. Use Plan.limit(...) for semantic truncation. */\n    query(filters?: Partial<{e}Row>): {e}QueryBuilder;",
-                e = r.entity
+                "    /** Logical collection over all enumerable rows; result rendering/artifacts may page the returned view. Use Plan.limit(...) for semantic truncation. */\n    query(filters{optional}: {query_input_type}): {e}QueryBuilder;",
+                e = r.entity,
+                optional = optional,
+                query_input_type = query_input_type
             );
         }
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "search") {
@@ -808,20 +916,36 @@ pub fn build_code_facade(
         );
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+            let create_input_type = if cap.input_parameters.is_empty() {
+                "Record<string, unknown>".to_string()
+            } else {
+                format!("{}CreateInput", r.entity)
+            };
+            let optional = input_arg_optional(&cap.input_parameters);
+            let _ = writeln!(
+                &mut namespace_body,
+                "    create(input{optional}: {create_input_type}): Plasm.PlanEffect;",
+                optional = optional,
+                create_input_type = create_input_type
+            );
+        } else {
+            let _ = writeln!(
+                &mut namespace_body,
+                "    create(input?: Record<string, unknown>): Plasm.PlanEffect;"
+            );
         }
-        let _ = writeln!(
-            &mut namespace_body,
-            "    create(input?: Record<string, unknown>): Plasm.PlanEffect;"
-        );
-        let action_description = r
+        let action_caps = r
             .capabilities
             .iter()
-            .find(|c| c.kind == "action")
-            .and_then(|c| c.description.clone());
-        namespace_body.push_str(&jsdoc_comment(&action_description, "    "));
+            .filter(|c| c.kind == "action")
+            .collect::<Vec<_>>();
+        for cap in &action_caps {
+            namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+        }
+        let action_methods = action_method_overloads_ts(r, &action_caps);
         let _ = writeln!(
             &mut namespace_body,
-            "    ref(id: unknown): {{ action(name: string, input?: Record<string, unknown>): Plasm.PlanEffect }};"
+            "    ref(id: unknown): {{ {action_methods} }};"
         );
         let _ = writeln!(&mut namespace_body, "  }}\n}}\n");
     }

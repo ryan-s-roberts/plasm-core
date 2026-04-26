@@ -23,6 +23,32 @@ product_search:
       - ["q", { type: var, name: q }]
       - ["active", { type: var, name: active }]
 
+product_create:
+  method: POST
+  path:
+    - type: literal
+      value: "/products"
+  body:
+    type: object
+    fields:
+      - ["name", { type: var, name: name }]
+      - ["category_id", { type: var, name: category_id }]
+
+product_label:
+  method: POST
+  path:
+    - type: literal
+      value: "/products"
+    - type: var
+      name: id
+    - type: literal
+      value: "/labels"
+  body:
+    type: object
+    fields:
+      - ["label", { type: var, name: label }]
+      - ["notify", { type: var, name: notify }]
+
 category_get:
   method: GET
   path:

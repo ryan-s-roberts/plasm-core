@@ -408,8 +408,20 @@ impl CodeModeSandbox {
                 let flat = flatten_esm_bootstrap(b);
                 let _: () = ctx.eval(flat.as_str()).map_err(|e| e.to_string())?;
             }
-            let out: String = ctx.eval(transpiled_js).map_err(|e| e.to_string())?;
-            serde_json::from_str(out.trim()).map_err(|e| format!("plan JSON: {e}"))
+            let encoded_js = serde_json::to_string(transpiled_js).map_err(|e| e.to_string())?;
+            let wrapped = format!(
+                "try {{ eval({encoded_js}) }} catch (e) {{ JSON.stringify({{ __plasmCodeModeError: String((e && e.message) || e) }}) }}"
+            );
+            let out: String = ctx.eval(wrapped.as_str()).map_err(|e| e.to_string())?;
+            let value: serde_json::Value =
+                serde_json::from_str(out.trim()).map_err(|e| format!("plan JSON: {e}"))?;
+            if let Some(message) = value
+                .get("__plasmCodeModeError")
+                .and_then(serde_json::Value::as_str)
+            {
+                return Err(format!("Code Mode DSL error: {message}"));
+            }
+            Ok(value)
         })
     }
 
@@ -466,6 +478,23 @@ mod tests {
             .expect("eval");
         assert_eq!(v["version"], 1);
         assert_eq!(v["nodes"][0]["expr"], "A");
+    }
+
+    #[test]
+    fn sandbox_reports_quickjs_dsl_errors() {
+        let s = CodeModeSandbox::new().expect("runtime");
+        let err = s
+            .eval_typescript_to_json_value(
+                "plan.ts",
+                "const Product = makeEntity('acme', 'Product'); Plan.return(Product.get('p1').select());",
+                Some(&plasm_facade_gen::quickjs_runtime_module_bootstrap()),
+            )
+            .expect_err("empty select rejected");
+        assert!(err.contains("Code Mode DSL error"), "{err}");
+        assert!(
+            err.contains("select(...) requires at least one field"),
+            "{err}"
+        );
     }
 
     #[test]

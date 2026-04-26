@@ -54,6 +54,20 @@ capabilities:
     description: List products
     kind: query
     entity: Product
+    parameters:
+    - name: owner
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+    - name: repo
+      type: string
+      required: true
+      role: scope
+      string_semantics: short
+    - name: active
+      type: boolean
+      required: false
   product_search:
     description: Search products by free text
     kind: search
@@ -67,6 +81,38 @@ capabilities:
     - name: active
       type: boolean
       required: false
+  product_create:
+    description: Create a product
+    kind: create
+    entity: Product
+    parameters:
+    - name: name
+      type: string
+      required: true
+      string_semantics: short
+    - name: category_id
+      type: string
+      required: false
+      string_semantics: short
+    provides:
+    - id
+    - name
+    - category_id
+  product_label:
+    description: Label a product
+    kind: action
+    entity: Product
+    parameters:
+    - name: label
+      type: string
+      required: true
+      string_semantics: short
+    - name: notify
+      type: boolean
+      required: false
+    output:
+      type: side_effect
+      description: Applies a label to the product.
   category_get:
     description: Fetch a category by id
     kind: get
