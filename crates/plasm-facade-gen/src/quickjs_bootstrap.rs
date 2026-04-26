@@ -143,6 +143,58 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             };
         }
 
+        function __projectionFields(fields) {
+            const out = fields.flat().map(String).map(f => f.trim()).filter(Boolean);
+            if (out.length === 0) {
+                throw new Error("Code Mode DSL error: select(...) requires at least one field name");
+            }
+            return out;
+        }
+
+        function __replaceProjection(expr, fields) {
+            const base = String(expr || "").replace(/\[[^\]]*\]$/, "");
+            return fields.length ? base + "[" + fields.join(",") + "]" : base;
+        }
+
+        function __projectedPlanNode(node, fields) {
+            if (!node || typeof node.expr !== "string") {
+                throw new Error("Code Mode DSL error: select(...) requires a Plasm read source with an expression");
+            }
+            const projection = __projectionFields(fields);
+            return Object.assign({}, node, {
+                expr: __replaceProjection(node.expr, projection),
+                projection,
+            });
+        }
+
+        function __projectPlanSource(source, fields) {
+            if (__hasBrand(source, __BRAND_BUILDER) && typeof source.select === "function") {
+                return source.select.apply(source, fields);
+            }
+            if (__isPlanEffect(source)) {
+                const node = __projectedPlanNode(source, fields);
+                node.__relations = source.__relations || [];
+                const projected = __attachPlanSourceMethods(__planEffect(node, true), node.__relations);
+                projected.__cardinality = source.__cardinality;
+                return projected;
+            }
+            if (__hasBrand(source, __BRAND_HANDLE) && source.__planNodeId && source.__planNodes) {
+                const nodes = source.__planNodes.slice();
+                const last = nodes.length ? nodes[nodes.length - 1] : null;
+                const node = __projectedPlanNode(last, fields);
+                nodes[nodes.length - 1] = Object.assign({}, node, { id: source.__planNodeId });
+                const handle = {
+                    __planNodeId: source.__planNodeId,
+                    __planNodes: nodes,
+                    __relations: source.__relations || node.__relations || [],
+                    __resultShape: node.result_shape || source.__resultShape || "list",
+                    __cardinality: source.__cardinality,
+                };
+                return __nodeHandleProxy(__brand(handle, __BRAND_HANDLE, __BRAND_SOURCE));
+            }
+            throw new Error("Code Mode DSL error: select(...) is only valid on branded Plasm read sources such as query(...), search(...), get(...), or a bound Plan node");
+        }
+
         function __predicateExpr(p) {
             const lhs = p.field_path.join(".");
             if (p.op === "eq") return lhs + "=" + __quoteFromPlanValue(p.value);
@@ -331,6 +383,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     if (prop in target) return target[prop];
                     if (typeof prop === "symbol") return target[prop];
                     if (prop === "__planValue" || prop === "__toPlanHandle" || prop === "toJSON") return undefined;
+                    if (prop === "select") return function(...fields) { return __projectPlanSource(target, fields); };
                     const rel = (target.__relations || []).find(r => String(r.name) === String(prop));
                     if (rel) return function() { return __relationTraversal(target, rel); };
                     const node = String(target.__planNodeId);
@@ -364,8 +417,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __planSingleton(handle) {
-            if (!handle || !handle.__planNodeId) throw new Error("Plan.singleton expects a Plan node");
-            return __nodeHandleProxy(handle, "singleton");
+            if (!__isPlanSource(handle)) throw new Error("Code Mode DSL error: Plan.singleton expects a branded Plan source");
+            if (handle.__planNodeId) return __nodeHandleProxy(handle, "singleton");
+            const source = Object.assign({}, handle);
+            source.__cardinality = "singleton";
+            return __brand(source, ...((handle && handle[__PLAN_BRANDS]) || []), __BRAND_SOURCE);
         }
 
         function __nodeInputsFromPlanValue(value, out) {
@@ -735,7 +791,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         uses_result: [],
                     };
                     node.__relations = relations || [];
-                    return __attachRelationMethods(__planEffect(node, true), relations || []);
+                    return __attachPlanSourceMethods(__planEffect(node, true), relations || []);
                 },
                 as(id) {
                     return __nodeHandle(id, Object.assign(this.yield(), { id }));
@@ -744,7 +800,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return __nodeHandle(id, this.yield());
                 },
             };
-            return __attachRelationMethods(__planBuilder(builder, true), relations || []);
+            return __attachPlanSourceMethods(__planBuilder(builder, true), relations || []);
         }
 
         function __attachRelationMethods(target, relations) {
@@ -757,6 +813,15 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             }
             target.__relations = relations || [];
             return target;
+        }
+
+        function __attachPlanSourceMethods(target, relations) {
+            if (!target.select) {
+                target.select = function(...fields) {
+                    return __projectPlanSource(target, fields);
+                };
+            }
+            return __attachRelationMethods(target, relations || []);
         }
 
         function __relationTraversal(source, relation) {
@@ -827,7 +892,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         uses_result: [],
                     };
                     node.__relations = relations || [];
-                    return __attachRelationMethods(__planEffect(node, true), relations || []);
+                    return __attachPlanSourceMethods(__planEffect(node, true), relations || []);
                 },
                 create(input) {
                     const expr = entity + ".create" + __callArgs(input || {});
@@ -1022,6 +1087,61 @@ mod tests {
             assert_eq!(v["nodes"][0]["qualified_entity"]["entry_id"], "acme");
             assert_eq!(v["return"]["kind"], "node");
             assert_eq!(v["return"]["node"], "n1");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plasm_plan_get_select_projects_read_source() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Repository = makeEntity('github', 'Repository'); \
+                 Plan.return(Repository.get('joshrieken/plasm').select('full_name', 'pushed_at'))",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["kind"], "get");
+            assert_eq!(
+                v["nodes"][0]["expr"],
+                "Repository(\"joshrieken/plasm\")[full_name,pushed_at]"
+            );
+            assert_eq!(v["nodes"][0]["projection"][0], "full_name");
+            assert_eq!(v["return"]["kind"], "node");
+            assert_eq!(v["return"]["node"], "return");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plasm_plan_singleton_accepts_projected_get_source() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Repository = makeEntity('github', 'Repository'); \
+                 Plan.return(Plan.singleton(Repository.get('joshrieken/plasm').select('full_name')))",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["kind"], "get");
+            assert_eq!(
+                v["nodes"][0]["expr"],
+                "Repository(\"joshrieken/plasm\")[full_name]"
+            );
+            assert_eq!(v["nodes"][0]["projection"][0], "full_name");
+            assert_eq!(v["return"]["node"], "return");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
