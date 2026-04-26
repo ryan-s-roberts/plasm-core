@@ -506,6 +506,32 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 }
                 const item = __symbol(binding);
                 const value = fn(item);
+                if (__isPlanSource(value)) {
+                    return __planBuilder({
+                        __toPlanHandle(id) {
+                            const sourcePlan = __sourcePlan(source, id);
+                            const sourceId = sourcePlan.sourceId;
+                            const nodes = sourcePlan.nodes.slice();
+                            const staged = __planSourceTemplateNode(value);
+                            nodes.push({
+                                id,
+                                kind: "for_each",
+                                effect_class: staged.effect_class,
+                                result_shape: staged.result_shape || "list",
+                                source: sourceId,
+                                item_binding: binding,
+                                effect_template: staged.effect_template,
+                                projection: staged.projection || [],
+                                predicates: staged.predicates || [],
+                                depends_on: [sourceId].concat((staged.uses_result || []).map(u => u.node)),
+                                uses_result: [{ node: sourceId, as: binding }].concat(staged.uses_result || []),
+                            });
+                            const handle = __nodeHandle(id, nodes[nodes.length - 1]);
+                            handle.__planNodes = nodes;
+                            return handle;
+                        }
+                    }, true);
+                }
                 const valueMeta = __valueMeta(value);
                 const inputs = __nodeInputsFromValueMeta(valueMeta);
                 return __planBuilder({
@@ -729,6 +755,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             const out = [];
             function visit(v, path) {
                 if (v && v.__bindingPath) out.push({ from: v.__bindingPath, to: path });
+                const symbolic = __symbolicStringParts(v);
+                if (symbolic) out.push({ from: symbolic.binding + (symbolic.path.length ? "." + symbolic.path.join(".") : ""), to: path });
                 if (v && v.__planValue && v.__planValue.kind === "node_symbol") {
                     const display = __displayPlanValue(v.__planValue);
                     out.push({ from: display, to: path, node: v.__planValue.node, alias: v.__planValue.alias, cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
@@ -765,6 +793,37 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return out;
         }
 
+        function __planSourceTemplateNode(source) {
+            const node = source && source.yield ? source.yield() : source;
+            if (!node || !node.kind || !node.qualified_entity) {
+                throw new Error("Plan.map callback returned a Plasm source that could not be staged");
+            }
+            const irTemplate = node.ir_template || node.ir;
+            if (!irTemplate) {
+                throw new Error("Plan.map callback returned a Plasm source without executable IR");
+            }
+            return {
+                effect_class: node.effect_class || "read",
+                result_shape: node.result_shape || "list",
+                projection: node.projection || [],
+                predicates: node.predicates || [],
+                uses_result: node.uses_result || [],
+                effect_template: {
+                    kind: node.kind,
+                    qualified_entity: node.qualified_entity,
+                    expr_template: node.expr_template || node.expr || (irTemplate.display_expr || "<ir>"),
+                    ir_template: Object.assign({
+                        input_bindings: node.input_bindings || (node.ir_template && node.ir_template.input_bindings) || [],
+                    }, irTemplate),
+                    effect_class: node.effect_class || "read",
+                    result_shape: node.result_shape || "list",
+                    projection: node.projection || [],
+                    predicates: node.predicates || [],
+                    input_bindings: node.input_bindings || (node.ir_template && node.ir_template.input_bindings) || [],
+                },
+            };
+        }
+
         function __callArgs(input) {
             const keys = Object.keys(input || {});
             if (keys.length === 0) return "";
@@ -779,10 +838,19 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return { __plasm_hole: Object.assign({ kind }, data || {}) };
         }
 
+        function __symbolicStringParts(v) {
+            if (typeof v !== "string") return null;
+            const m = /^\$\{([A-Za-z_$][A-Za-z0-9_$]*)(?:\.([^}]+))?\}$/.exec(v);
+            if (!m) return null;
+            return { binding: m[1], path: m[2] ? m[2].split(".").filter(Boolean) : [] };
+        }
+
         function __irValue(v) {
             if (v && v.__bindingPath) {
                 return __irHole("binding", { binding: v.__bindingName || String(v.__bindingPath).split(".")[0], path: v.__bindingFieldPath || [] });
             }
+            const symbolic = __symbolicStringParts(v);
+            if (symbolic) return __irHole("binding", symbolic);
             if (v && v.__planValue && v.__planValue.kind === "node_symbol") {
                 return __irHole("node_input", { node: v.__planValue.node, alias: v.__planValue.alias || v.__planValue.node, path: v.__planValue.path || [], cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
             }
@@ -873,6 +941,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     const irFilters = Object.assign({}, baseFilters || {});
                     if (kind === "search") irFilters[searchParam || "q"] = searchText;
                     const predicate = __irPredicates(irFilters, extraPredicates);
+                    const input_bindings = __bindingsFromInput(irFilters);
+                    const uses_result = __usesFromBindings(input_bindings);
                     const irExpr = {
                         op: "query",
                         entity,
@@ -881,17 +951,20 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         capability_name: cap.name || undefined,
                     };
                     const ir = __planIr(irExpr, projection, expr);
+                    const templated = __hasIrHole(irExpr);
                     const node = {
                         kind,
                         qualified_entity: { entry_id, entity },
                         expr,
-                        ir,
+                        ir: templated ? undefined : ir,
+                        ir_template: templated ? Object.assign({ input_bindings }, ir) : undefined,
+                        input_bindings,
                         effect_class: "read",
                         result_shape: "list",
                         projection,
                         predicates,
-                        depends_on: [],
-                        uses_result: [],
+                        depends_on: uses_result.map(u => u.node),
+                        uses_result,
                     };
                     node.__relations = relations || [];
                     return __attachPlanSourceMethods(__planEffect(node, true), relations || []);
@@ -986,18 +1059,24 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 },
                 get(id) {
                     const display = entity + "(" + __quote(id) + ")";
-                    const ir = __planIr({ op: "get", ref: { entity_type: entity, key: String(id) } }, [], display);
+                    const input_bindings = __bindingsFromInput({ id });
+                    const uses_result = __usesFromBindings(input_bindings);
+                    const irExpr = { op: "get", ref: { entity_type: entity, key: __irValue(id) } };
+                    const ir = __planIr(irExpr, [], display);
+                    const templated = __hasIrHole(irExpr);
                     const node = {
                         kind: "get",
                         qualified_entity: { entry_id, entity },
                         expr: display,
-                        ir,
+                        ir: templated ? undefined : ir,
+                        ir_template: templated ? Object.assign({ input_bindings }, ir) : undefined,
                         effect_class: "read",
                         result_shape: "single",
                         projection: [],
                         predicates: [],
-                        depends_on: [],
-                        uses_result: [],
+                        input_bindings,
+                        depends_on: uses_result.map(u => u.node),
+                        uses_result,
                     };
                     node.__relations = relations || [];
                     return __attachPlanSourceMethods(__planEffect(node, true), relations || []);
@@ -1032,6 +1111,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             const expr_template = entity + "(" + __quote(id) + ")." + method + __callArgs(input || {});
                             const input_bindings = __bindingsFromInput(input || {});
                             if (id && id.__bindingPath) input_bindings.push({ from: id.__bindingPath, to: "id" });
+                            const symbolicId = __symbolicStringParts(id);
+                            if (symbolicId) input_bindings.push({ from: symbolicId.binding + (symbolicId.path.length ? "." + symbolicId.path.join(".") : ""), to: "id" });
                             const uses_result = __usesFromBindings(input_bindings);
                             const targetKey = __irValue(id);
                             const irExpr = {
@@ -1526,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_map_preserves_symbolic_string_get_template() -> QjResult<()> {
+    fn plan_map_source_callback_becomes_staged_ir_fanout() -> QjResult<()> {
         let runtime = Runtime::new()?;
         let context = Context::full(&runtime)?;
         let js = quickjs_runtime_module_bootstrap();
@@ -1543,15 +1624,18 @@ mod tests {
                  Plan.return(mapped)",
             )?;
             let v: serde_json::Value = serde_json::from_str(&s).expect("json");
-            let template = v["nodes"][1]["derive_template"]["value"]["template"]
-                .as_str()
-                .expect("template");
-            assert!(template.contains("${item.id}"), "{template}");
-            assert!(!template.contains("[object Object]"), "{template}");
+            assert_eq!(v["nodes"][1]["kind"], "for_each");
+            assert_eq!(v["nodes"][1]["effect_class"], "read");
+            assert_eq!(v["nodes"][1]["effect_template"]["kind"], "get");
             assert_eq!(
-                v["nodes"][1]["derive_template"]["value"]["kind"],
-                "template"
+                v["nodes"][1]["effect_template"]["ir_template"]["expr"]["ref"]["key"]["__plasm_hole"]["binding"],
+                "item"
             );
+            assert_eq!(
+                v["nodes"][1]["effect_template"]["ir_template"]["expr"]["ref"]["key"]["__plasm_hole"]["path"][0],
+                "id"
+            );
+            assert!(!v.to_string().contains("[object Object]"), "{v}");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

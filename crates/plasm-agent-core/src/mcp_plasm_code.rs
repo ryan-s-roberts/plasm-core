@@ -197,6 +197,7 @@ pub struct DryCodeModePlanEvaluation {
     pub topological_order: Vec<String>,
     pub node_results: Vec<serde_json::Value>,
     pub can_batch_run: bool,
+    pub staged_nodes: Vec<String>,
     pub execution_unsupported: Vec<String>,
     pub graph_summary: serde_json::Value,
 }
@@ -278,6 +279,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
     let version = serde_json::json!(plan.version);
     let mut out = Vec::new();
     let mut can_batch_run = true;
+    let mut staged_nodes = Vec::new();
     let mut execution_unsupported = Vec::new();
     for node_id in validated.topological_order() {
         let i = validated
@@ -298,11 +300,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
         if n.depends_on().is_empty() && n.uses_result().is_empty() {
             let Some(surface) = n.as_surface() else {
                 can_batch_run = false;
-                execution_unsupported.push(format!(
-                    "node {:?} ({}) requires staged execution",
-                    n.kind(),
-                    n.id()
-                ));
+                staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
                 out.push(dry_stage_result(i, n));
                 continue;
             };
@@ -329,6 +327,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
                 "ok": true,
                 "id": n.id().as_str(),
                 "kind": n.kind(),
+                "operation": render_node_operation(n),
                 "qualified_entity": surface.qualified_entity,
                 "effect_class": n.effect_class(),
                 "result_shape": n.result_shape(),
@@ -357,11 +356,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
         }
 
         can_batch_run = false;
-        execution_unsupported.push(format!(
-            "node {:?} ({}) requires staged execution",
-            n.kind(),
-            n.id()
-        ));
+        staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(i, n));
     }
     Ok(DryCodeModePlanEvaluation {
@@ -375,6 +370,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
             .collect(),
         node_results: out,
         can_batch_run,
+        staged_nodes,
         execution_unsupported,
         graph_summary: graph_summary(plan),
     })
@@ -402,7 +398,7 @@ pub fn render_code_mode_plan_dry_text(
     let writes = json_string_array(summary.get("write_or_side_effect_nodes")).len();
     let warnings = json_string_array(summary.get("warnings"));
     let boundedness_facts = json_string_array(summary.get("boundedness_facts"));
-    let staged = dry.execution_unsupported.len();
+    let staged = dry.staged_nodes.len();
 
     let _ = writeln!(out, "code-plan dry-run");
     let _ = writeln!(out, "name: {name}");
@@ -616,12 +612,15 @@ fn render_node_operation(node: &ValidatedPlanNode) -> String {
                 "{}.{}",
                 n.relation.target.entry_id, n.relation.target.entity
             );
-            format!("relation {source}.{relation} -> {target}")
+            format!(
+                "relation {source}.{relation} -> {target} <= {}",
+                render_plan_expr_ir(&n.relation.ir)
+            )
         }
         ValidatedPlanNode::ForEach(n) => {
             let source = n.source.as_str();
             let binding = n.item_binding.as_str();
-            let template = n.effect_template.expr_template.as_str();
+            let template = render_effect_template_expr(&n.effect_template);
             format!("for_each {source} as {binding} => {template}")
         }
     }
@@ -636,15 +635,38 @@ fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
     let expr = node
         .ir
         .as_ref()
-        .and_then(|ir| ir.display_expr.as_deref())
-        .or_else(|| {
-            node.ir_template
-                .as_ref()
-                .and_then(|ir| ir.display_expr.as_deref())
-        })
-        .or(node.display_expr.as_deref())
-        .unwrap_or("<ir>");
+        .map(render_plan_expr_ir)
+        .or_else(|| node.ir_template.as_ref().map(render_plan_expr_template))
+        .or_else(|| node.display_expr.clone())
+        .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     format!("{} {} <= {}", render_kind(node.kind), entity, expr)
+}
+
+fn render_plan_expr_ir(ir: &crate::code_mode_plan::ValidatedPlanExprIr) -> String {
+    ir.display_expr
+        .clone()
+        .unwrap_or_else(|| crate::expr_display::expr_display(&ir.expr))
+}
+
+fn render_plan_expr_template(
+    template: &crate::code_mode_plan::ValidatedPlanExprTemplate,
+) -> String {
+    template
+        .display_expr
+        .clone()
+        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+}
+
+fn render_effect_template_expr(template: &crate::code_mode_plan::EffectTemplate) -> String {
+    if !template.expr_template.trim().is_empty() {
+        template.expr_template.clone()
+    } else {
+        template
+            .ir_template
+            .display_expr
+            .clone()
+            .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+    }
 }
 
 fn render_derive_template(template: &ValidatedDeriveNode) -> String {
@@ -804,6 +826,9 @@ fn render_plan_value(value: &PlanValue) -> String {
         }
         PlanValue::Template { template, .. } => format!("template`{template}`"),
         PlanValue::Array { items } => {
+            if items.is_empty() {
+                return "[0 items]".to_string();
+            }
             let mut rendered = items
                 .iter()
                 .take(5)
@@ -815,6 +840,9 @@ fn render_plan_value(value: &PlanValue) -> String {
             format!("[{}]", rendered.join(", "))
         }
         PlanValue::Object { fields } => {
+            if fields.is_empty() {
+                return "{0 fields}".to_string();
+            }
             let mut rendered = fields
                 .iter()
                 .take(8)
@@ -832,6 +860,9 @@ fn render_json_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => format!("{s:?}"),
         serde_json::Value::Array(items) => {
+            if items.is_empty() {
+                return "[0 items]".to_string();
+            }
             let mut rendered = items
                 .iter()
                 .take(5)
@@ -843,6 +874,9 @@ fn render_json_value(value: &serde_json::Value) -> String {
             format!("[{}]", rendered.join(", "))
         }
         serde_json::Value::Object(obj) => {
+            if obj.is_empty() {
+                return "{0 fields}".to_string();
+            }
             let mut rendered = obj
                 .iter()
                 .take(8)
@@ -1058,11 +1092,16 @@ fn inferred_template_approval(node: &ValidatedForEachNode) -> Option<serde_json:
     if !node_requires_approval(node.effect_template.kind, node.effect_template.effect_class) {
         return None;
     }
+    let action_name = if node.effect_template.kind == PlanNodeKind::Action {
+        action_name_from_template(node.effect_template.expr_template.as_str())
+    } else {
+        None
+    };
     Some(approval_gate_json(
         node.id.as_str(),
         &node.effect_template.qualified_entity,
         node.effect_template.kind,
-        action_name_from_template(node.effect_template.expr_template.as_str()).as_deref(),
+        action_name.as_deref(),
         node.approval.as_deref(),
     ))
 }
@@ -1283,6 +1322,7 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "ok": true,
             "id": n.id().as_str(),
             "kind": n.kind(),
+            "operation": render_node_operation(n),
             "effect_class": n.effect_class(),
             "result_shape": n.result_shape(),
             "projection": for_each.projection,
@@ -1308,6 +1348,7 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "ok": true,
             "id": n.id().as_str(),
             "kind": n.kind(),
+            "operation": render_node_operation(n),
             "effect_class": n.effect_class(),
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
@@ -1324,6 +1365,7 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "ok": true,
             "id": n.id().as_str(),
             "kind": n.kind(),
+            "operation": render_node_operation(n),
             "effect_class": n.effect_class(),
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
@@ -1343,6 +1385,7 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "ok": true,
             "id": n.id().as_str(),
             "kind": n.kind(),
+            "operation": render_node_operation(n),
             "effect_class": n.effect_class(),
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
@@ -1359,6 +1402,7 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "ok": true,
             "id": n.id().as_str(),
             "kind": n.kind(),
+            "operation": render_node_operation(n),
             "effect_class": n.effect_class(),
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
@@ -1390,6 +1434,7 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
             "ok": true,
             "id": n.id().as_str(),
             "kind": n.kind(),
+            "operation": render_node_operation(n),
             "effect_class": n.effect_class(),
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
@@ -3119,7 +3164,7 @@ warnings:
 - summary computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed
 
 dag:
-01. products -> query acme.Product <= Product [read; list]
+01. products -> query acme.Product <= Query(Product all) [read; list]
 02. summary <- products -> project products -> {name=name, sku=id} [artifact_read; list]
 03. cards <- summary -> map summary as product => {title: template`${product.name}`} [artifact_read; artifact]
     uses: summary as product
@@ -3340,6 +3385,141 @@ returns:
             expressions,
             vec!["Product(\"p1\").label(label=\"stale\")".to_string()]
         );
+    }
+
+    #[test]
+    fn dry_run_text_renders_staged_read_map_body() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "dependent-product-read",
+            "nodes": [
+                {
+                    "id": "products",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
+                    "effect_class": "read",
+                    "result_shape": "list"
+                },
+                {
+                    "id": "details",
+                    "kind": "for_each",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "source": "products",
+                    "item_binding": "product",
+                    "depends_on": ["products"],
+                    "uses_result": [{ "node": "products", "as": "product" }],
+                    "effect_template": {
+                        "kind": "get",
+                        "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                        "expr_template": "Product(${product.id})",
+                        "ir_template": {
+                            "expr": {
+                                "op": "get",
+                                "ref": {
+                                    "entity_type": "Product",
+                                    "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } }
+                                }
+                            },
+                            "input_bindings": [{ "from": "product.id", "to": "id" }]
+                        },
+                        "effect_class": "read",
+                        "result_shape": "single"
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "details" }
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        assert_eq!(dry.staged_nodes, vec!["details (ForEach)"]);
+        assert!(dry.execution_unsupported.is_empty());
+        let text = render_code_mode_plan_dry_text(&dry, None);
+        assert!(
+            text.contains("for_each products as product => Product(${product.id})"),
+            "{text}"
+        );
+        assert!(!text.contains("=> {}"), "{text}");
+        assert!(text.contains("approvals: none"), "{text}");
+    }
+
+    #[test]
+    fn dry_run_text_renders_empty_literals_explicitly() {
+        let plan = parse_plan_value(&serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "empty",
+                "kind": "data",
+                "effect_class": "artifact_read",
+                "result_shape": "artifact",
+                "data": { "kind": "object", "fields": {} }
+            }],
+            "return": { "kind": "node", "node": "empty" }
+        }))
+        .expect("parse plan");
+        let validated = validate_plan_artifact(&plan).expect("validate");
+        let operation = render_node_operation(&validated.nodes()[0]);
+        assert_eq!(operation, "data {0 fields}");
+        assert!(!operation.contains("{}"), "{operation}");
+    }
+
+    #[test]
+    fn create_template_approval_uses_create_operation_not_description_text() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "create-report",
+            "nodes": [
+                {
+                    "id": "products",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
+                    "effect_class": "read",
+                    "result_shape": "list"
+                },
+                {
+                    "id": "createIssue",
+                    "kind": "for_each",
+                    "effect_class": "write",
+                    "result_shape": "mutation_result",
+                    "source": "products",
+                    "item_binding": "product",
+                    "depends_on": ["products"],
+                    "uses_result": [{ "node": "products", "as": "product" }],
+                    "effect_template": {
+                        "kind": "create",
+                        "qualified_entity": { "entry_id": "linear", "entity": "Issue" },
+                        "expr_template": "Issue.create(title=\"Report\", description=\"1.) text that looks like member syntax\")",
+                        "ir_template": {
+                            "expr": {
+                                "op": "create",
+                                "capability": "issue_create",
+                                "entity": "Issue",
+                                "input": {
+                                    "title": "Report",
+                                    "description": "1.) text that looks like member syntax"
+                                }
+                            },
+                            "input_bindings": []
+                        },
+                        "effect_class": "write",
+                        "result_shape": "mutation_result"
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "createIssue" }
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let text = render_code_mode_plan_dry_text(&dry, None);
+        assert!(text.contains("approval: linear.Issue.create"), "{text}");
+        assert!(!text.contains("approval: linear.Issue.\n"), "{text}");
     }
 
     #[test]
