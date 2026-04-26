@@ -382,7 +382,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 get(target, prop) {
                     if (prop in target) return target[prop];
                     if (typeof prop === "symbol") return target[prop];
-                    if (prop === "__planValue" || prop === "__toPlanHandle" || prop === "toJSON") return undefined;
+                    if (prop === "__planValue" || prop === "__toPlanHandle" || prop === "__cardinality" || prop === "toJSON") return undefined;
                     if (prop === "select") return function(...fields) { return __projectPlanSource(target, fields); };
                     const rel = (target.__relations || []).find(r => String(r.name) === String(prop));
                     if (rel) return function() { return __relationTraversal(target, rel); };
@@ -690,6 +690,12 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         export function template(strings, ...values) {
+            if (strings.length === 2 && strings[0] === "" && strings[1] === "" && values.length === 1) {
+                const only = values[0];
+                if (only && only.__planNodeId) {
+                    return __nodeRef(only, String(only.__planNodeId), "", only.__cardinality || "auto");
+                }
+            }
             let raw = "";
             const input_bindings = [];
             for (let i = 0; i < strings.length; i++) {
@@ -703,6 +709,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         const display = __displayPlanValue(v.__planValue);
                         raw += "${" + display + "}";
                         input_bindings.push({ from: display, to: "", node: v.__planValue.node, alias: v.__planValue.alias, cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
+                    } else if (v && v.__planNodeId) {
+                        const node = String(v.__planNodeId);
+                        raw += "${" + node + "}";
+                        input_bindings.push({ from: node, to: "", node, alias: node, cardinality: v.__cardinality || "auto" });
                     } else {
                         raw += String(v);
                     }
@@ -717,11 +727,40 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
 
         function __bindingsFromInput(input) {
             const out = [];
-            for (const [k, v] of Object.entries(input || {})) {
-                if (v && v.__bindingPath) out.push({ from: v.__bindingPath, to: k });
-                if (v && v.__planValue && v.__planValue.kind === "template") {
-                    for (const b of (v.__planValue.input_bindings || [])) out.push({ from: b.from, to: k });
+            function visit(v, path) {
+                if (v && v.__bindingPath) out.push({ from: v.__bindingPath, to: path });
+                if (v && v.__planValue && v.__planValue.kind === "node_symbol") {
+                    const display = __displayPlanValue(v.__planValue);
+                    out.push({ from: display, to: path, node: v.__planValue.node, alias: v.__planValue.alias, cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
                 }
+                if (v && v.__planValue && v.__planValue.kind === "template") {
+                    for (const b of (v.__planValue.input_bindings || [])) out.push(Object.assign({}, b, { to: b.to || path }));
+                }
+                if (Array.isArray(v)) {
+                    for (let i = 0; i < v.length; i++) visit(v[i], path ? path + "." + i : String(i));
+                    return;
+                }
+                if (v && typeof v === "object" && !__isSpecial(v)) {
+                    for (const [k, child] of Object.entries(v)) visit(child, path ? path + "." + k : k);
+                }
+            }
+            for (const [k, v] of Object.entries(input || {})) {
+                visit(v, k);
+            }
+            return out;
+        }
+
+        function __usesFromBindings(bindings) {
+            const seen = {};
+            const out = [];
+            for (const b of (bindings || [])) {
+                if (!b.node) continue;
+                const node = String(b.node);
+                const alias = String(b.alias || b.node);
+                const key = node + "\u0000" + alias;
+                if (seen[key]) continue;
+                seen[key] = true;
+                out.push({ node, as: alias });
             }
             return out;
         }
@@ -730,6 +769,57 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             const keys = Object.keys(input || {});
             if (keys.length === 0) return "";
             return "(" + keys.map(k => k + "=" + __quote(input[k])).join(", ") + ")";
+        }
+
+        function __capability(capabilities, kind) {
+            return (capabilities || []).find(c => c.kind === kind) || {};
+        }
+
+        function __irHole(kind, data) {
+            return { __plasm_hole: Object.assign({ kind }, data || {}) };
+        }
+
+        function __irValue(v) {
+            if (v && v.__bindingPath) {
+                return __irHole("binding", { binding: v.__bindingName || String(v.__bindingPath).split(".")[0], path: v.__bindingFieldPath || [] });
+            }
+            if (v && v.__planValue && v.__planValue.kind === "node_symbol") {
+                return __irHole("node_input", { node: v.__planValue.node, alias: v.__planValue.alias || v.__planValue.node, path: v.__planValue.path || [], cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
+            }
+            if (Array.isArray(v)) return v.map(__irValue);
+            if (v && typeof v === "object" && !__isSpecial(v)) {
+                const out = {};
+                for (const [k, child] of Object.entries(v)) out[k] = __irValue(child);
+                return out;
+            }
+            return v == null ? null : v;
+        }
+
+        function __hasIrHole(v) {
+            if (!v || typeof v !== "object") return false;
+            if (v.__plasm_hole) return true;
+            if (Array.isArray(v)) return v.some(__hasIrHole);
+            return Object.values(v).some(__hasIrHole);
+        }
+
+        function __irPredicateFromPlan(p) {
+            const op = { eq: "=", ne: "!=", lt: "<", lte: "<=", gt: ">", gte: ">=", contains: "contains", in: "in", exists: "exists" }[p.op] || "=";
+            return { type: "comparison", field: (p.field_path || []).join("."), op, value: __irValue((p.value || {}).value) };
+        }
+
+        function __irPredicates(filters, predicates) {
+            const out = [];
+            for (const [k, v] of Object.entries(filters || {})) {
+                out.push({ type: "comparison", field: k, op: "=", value: __irValue(v) });
+            }
+            for (const p of (predicates || [])) out.push(__irPredicateFromPlan(p));
+            if (out.length === 0) return null;
+            if (out.length === 1) return out[0];
+            return { type: "and", args: out };
+        }
+
+        function __planIr(expr, projection, displayExpr) {
+            return { expr, projection: projection && projection.length ? projection : undefined, display_expr: displayExpr };
         }
 
         const __plasmRelations = {};
@@ -752,7 +842,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return { text: input, filters: {} };
         }
 
-        function __surfaceBuilder(entry_id, entity, kind, input, relations, searchParam) {
+        function __surfaceBuilder(entry_id, entity, kind, input, relations, searchParam, capabilities) {
             let projection = [];
             let baseFilters = {};
             let searchText = null;
@@ -779,10 +869,23 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         ? entity + "~" + __quote(searchText) + __filters(baseFilters || {}, extraPredicates)
                         : entity + __filters(baseFilters || {}, extraPredicates);
                     const expr = projection.length ? exprBase + "[" + projection.join(",") + "]" : exprBase;
+                    const cap = __capability(capabilities, kind);
+                    const irFilters = Object.assign({}, baseFilters || {});
+                    if (kind === "search") irFilters[searchParam || "q"] = searchText;
+                    const predicate = __irPredicates(irFilters, extraPredicates);
+                    const irExpr = {
+                        op: "query",
+                        entity,
+                        predicate: predicate || undefined,
+                        projection: projection.length ? projection : undefined,
+                        capability_name: cap.name || undefined,
+                    };
+                    const ir = __planIr(irExpr, projection, expr);
                     const node = {
                         kind,
                         qualified_entity: { entry_id, entity },
                         expr,
+                        ir,
                         effect_class: "read",
                         result_shape: "list",
                         projection,
@@ -834,10 +937,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     const sourceId = sourcePlan.sourceId;
                     const nodes = sourcePlan.nodes.slice();
                     const sourceNode = nodes[nodes.length - 1];
-                    if (!sourceNode || !sourceNode.expr) {
-                        throw new Error("Relation traversal requires a source node with a Plasm expression");
+                    if (!sourceNode || !sourceNode.ir) {
+                        throw new Error("Relation traversal requires a source node with Plasm IR");
                     }
                     const expr = sourceNode.expr + "." + relation.name;
+                    const ir = __planIr({ op: "chain", source: sourceNode.ir.expr, selector: relation.name, step: { type: "auto_get" } }, [], expr);
                     const sourceCardinality = source.__cardinality === "singleton"
                         ? "runtime_checked_singleton"
                         : (sourceNode.result_shape === "single" ? "single" : "many");
@@ -855,6 +959,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             cardinality: relation.cardinality,
                             source_cardinality: sourceCardinality,
                             expr,
+                            ir,
                         },
                         qualified_entity: target,
                         projection: [],
@@ -871,19 +976,22 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             }, true);
         }
 
-        export function makeEntity(entry_id, entity, relations, searchParam) {
+        export function makeEntity(entry_id, entity, relations, searchParam, capabilities) {
             return {
                 query(filters) {
-                    return __surfaceBuilder(entry_id, entity, "query", filters, relations || [], null);
+                    return __surfaceBuilder(entry_id, entity, "query", filters, relations || [], null, capabilities || []);
                 },
                 search(input) {
-                    return __surfaceBuilder(entry_id, entity, "search", input, relations || [], searchParam || "q");
+                    return __surfaceBuilder(entry_id, entity, "search", input, relations || [], searchParam || "q", capabilities || []);
                 },
                 get(id) {
+                    const display = entity + "(" + __quote(id) + ")";
+                    const ir = __planIr({ op: "get", ref: { entity_type: entity, key: String(id) } }, [], display);
                     const node = {
                         kind: "get",
                         qualified_entity: { entry_id, entity },
-                        expr: entity + "(" + __quote(id) + ")",
+                        expr: display,
+                        ir,
                         effect_class: "read",
                         result_shape: "single",
                         projection: [],
@@ -896,17 +1004,25 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 },
                 create(input) {
                     const expr = entity + ".create" + __callArgs(input || {});
+                    const input_bindings = __bindingsFromInput(input || {});
+                    const uses_result = __usesFromBindings(input_bindings);
+                    const cap = __capability(capabilities || [], "create");
+                    const irExpr = { op: "create", capability: cap.name || (entity.toLowerCase() + "_create"), entity, input: __irValue(input || {}) };
+                    const irContract = __planIr(irExpr, [], expr);
+                    const templated = __hasIrHole(irExpr);
                     return __planEffect({
                         kind: "create",
                         qualified_entity: { entry_id, entity },
                         expr,
+                        ir: templated ? undefined : irContract,
+                        ir_template: templated ? Object.assign({ input_bindings }, irContract) : undefined,
                         effect_class: "write",
                         result_shape: "mutation_result",
                         projection: [],
                         predicates: [],
-                        input_bindings: __bindingsFromInput(input || {}),
-                        depends_on: [],
-                        uses_result: [],
+                        input_bindings,
+                        depends_on: uses_result.map(u => u.node),
+                        uses_result,
                     }, false);
                 },
                 ref(id) {
@@ -916,14 +1032,28 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             const expr_template = entity + "(" + __quote(id) + ")." + method + __callArgs(input || {});
                             const input_bindings = __bindingsFromInput(input || {});
                             if (id && id.__bindingPath) input_bindings.push({ from: id.__bindingPath, to: "id" });
+                            const uses_result = __usesFromBindings(input_bindings);
+                            const targetKey = __irValue(id);
+                            const irExpr = {
+                                op: "invoke",
+                                capability: method,
+                                target: { entity_type: entity, key: targetKey },
+                                input: input == null ? undefined : __irValue(input),
+                            };
+                            const irContract = __planIr(irExpr, [], expr_template);
+                            const templated = __hasIrHole(irExpr);
                             return __planEffect({
                                 kind: "action",
                                 qualified_entity: { entry_id, entity },
                                 expr_template,
+                                ir: templated ? undefined : irContract,
+                                ir_template: templated ? Object.assign({ input_bindings }, irContract) : undefined,
                                 effect_class: "side_effect",
                                 result_shape: "side_effect_ack",
                                 projection: [],
                                 input_bindings,
+                                depends_on: uses_result.map(u => u.node),
+                                uses_result,
                             }, false);
                         },
                     };
@@ -958,6 +1088,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             kind: effect.kind,
                             qualified_entity: effect.qualified_entity,
                             expr_template: effect.expr_template || effect.expr,
+                            ir_template: effect.ir_template || effect.ir,
                             effect_class: effect.effect_class,
                             result_shape: effect.result_shape,
                             projection: effect.projection || [],
@@ -1035,12 +1166,14 @@ pub fn quickjs_runtime_from_facade_delta(delta: &FacadeDeltaV1) -> String {
             })
             .unwrap_or_else(|| "q".to_string());
         let search_param = serde_json::Value::String(search_param).to_string();
+        let capabilities_json =
+            serde_json::to_string(&q.capabilities).unwrap_or_else(|_| "[]".to_string());
         let _ = writeln!(
             &mut out,
             "globalThis.plasm[{alias}] = globalThis.plasm[{alias}] || {{}};\n\
              __plasmRelations[{entry_id}] = __plasmRelations[{entry_id}] || {{}};\n\
              __plasmRelations[{entry_id}][{entity}] = {relations_json};\n\
-             globalThis.plasm[{alias}][{entity}] = makeEntity({entry_id}, {entity}, {relations_json}, {search_param});"
+             globalThis.plasm[{alias}][{entity}] = makeEntity({entry_id}, {entity}, {relations_json}, {search_param}, {capabilities_json});"
         );
     }
     out
@@ -1419,6 +1552,49 @@ mod tests {
                 v["nodes"][1]["derive_template"]["value"]["kind"],
                 "template"
             );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn bare_template_of_singleton_node_supports_field_access() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Team = makeEntity('acme', 'Team'); \
+                   const Issue = makeEntity('acme', 'Issue'); \
+                   const firstTeam = __plasmBind(Plan.singleton(Plan.limit(Team.query({}), 1)), 'firstTeam'); \
+                   const issue = __plasmBind(Issue.create({ team: { api: 'linear', entity: 'Team', key: template`${firstTeam}`.id } }), 'issue'); \
+                   out = JSON.parse(Plan.return(issue)); \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            let create_node = v["nodes"]
+                .as_array()
+                .and_then(|nodes| {
+                    nodes
+                        .iter()
+                        .find(|node| node["kind"].as_str() == Some("create"))
+                })
+                .unwrap_or_else(|| panic!("create node missing: {v}"));
+            let expr = create_node["expr"]
+                .as_str()
+                .unwrap_or_else(|| panic!("create expr missing: {v}"));
+            assert!(expr.contains("${firstTeam.id}"), "{expr}");
+            assert!(!expr.contains("[object Object]"), "{expr}");
+            assert_eq!(create_node["depends_on"][0], "firstTeam");
+            assert_eq!(create_node["uses_result"][0]["node"], "firstTeam");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

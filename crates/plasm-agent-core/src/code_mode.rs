@@ -28,7 +28,37 @@ fn format_oxc_diagnostics(errors: Vec<OxcDiagnostic>, source: &str) -> String {
         let m = d.with_source_code(source.to_string());
         let _ = writeln!(&mut s, "{m}");
     }
+    if let Some(guidance) = code_mode_syntax_guidance(source) {
+        let _ = writeln!(&mut s, "\nCode Mode syntax guidance: {guidance}");
+    }
     s
+}
+
+fn code_mode_syntax_guidance(source: &str) -> Option<&'static str> {
+    if has_dangling_template_member_access(source) {
+        return Some(
+            "a tagged template is followed by a dangling `.`. Use a real field access such as `template`${node}`.id` / `template`${node}`.full_name`, or remove the dot. For Plan node fields, prefer direct AST-visible access like `node.id` inside a template.",
+        );
+    }
+    None
+}
+
+fn has_dangling_template_member_access(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'`' && bytes[i + 1] == b'.' {
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j >= bytes.len() || matches!(bytes[j], b'}' | b')' | b',' | b';' | b']') {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Transpile a TypeScript (or TSX) string to ECMAScript using Oxc’s semantic + transformer
@@ -465,6 +495,19 @@ mod tests {
             out.contains("version") && out.contains("Product") && !out.contains(": { version"),
             "expected stripped type annotations, got: {out}"
         );
+    }
+
+    #[test]
+    fn parse_errors_explain_dangling_template_member_access() {
+        let err = inject_plan_symbol_hints_typescript(
+            "plan.ts",
+            "const key = template`${oneRepo}`. } as any;",
+        )
+        .expect_err("dangling template member access should not parse");
+
+        assert!(err.contains("Code Mode syntax guidance"), "{err}");
+        assert!(err.contains("dangling `.`"), "{err}");
+        assert!(err.contains("template`${node}`.id"), "{err}");
     }
 
     #[test]

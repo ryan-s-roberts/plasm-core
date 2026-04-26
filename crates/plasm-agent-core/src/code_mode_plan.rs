@@ -3,6 +3,7 @@
 //! Agents author one program-shaped `Plan` in TypeScript; hosts deserialize that JSON into these
 //! Rust types, validate the DAG, then expose only dry-run / execution results to the agent.
 
+use plasm_core::Expr;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
@@ -261,6 +262,44 @@ pub enum PlanValue {
     },
 }
 
+/// Executable Plasm IR for a Code Mode node. `display_expr` is inert provenance only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanExprIr {
+    pub expr: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_expr: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedPlanExprIr {
+    pub(crate) expr: Expr,
+    pub(crate) projection: Option<Vec<String>>,
+    pub(crate) display_expr: Option<String>,
+}
+
+/// IR template with value holes. The `expr` JSON must become `plasm_core::Expr`
+/// after holes are instantiated; strings are never reparsed as Plasm.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanExprTemplate {
+    pub expr: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_expr: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_bindings: Vec<PlanInputBinding>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedPlanExprTemplate {
+    pub(crate) expr: serde_json::Value,
+    pub(crate) projection: Option<Vec<String>>,
+    pub(crate) display_expr: Option<String>,
+    pub(crate) input_bindings: Vec<PlanInputBinding>,
+}
+
 /// Root `Plan` kind. We accept omission on the wire, but the canonical form is always a program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -373,7 +412,9 @@ pub struct ValidatedSurfaceNode {
     pub(crate) id: PlanNodeId,
     pub(crate) kind: PlanNodeKind,
     pub(crate) qualified_entity: Option<QualifiedEntityKey>,
-    pub(crate) expr: String,
+    pub(crate) ir: Option<ValidatedPlanExprIr>,
+    pub(crate) ir_template: Option<ValidatedPlanExprTemplate>,
+    pub(crate) display_expr: Option<String>,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,
     pub(crate) projection: Vec<String>,
@@ -448,7 +489,7 @@ pub struct ValidatedPlanRelationTraversal {
     pub(crate) target: QualifiedEntityKey,
     pub(crate) cardinality: RelationCardinality,
     pub(crate) source_cardinality: RelationSourceCardinality,
-    pub(crate) expr: String,
+    pub(crate) ir: ValidatedPlanExprIr,
 }
 
 impl ValidatedPlanNode {
@@ -615,6 +656,10 @@ pub struct PlanNode {
     pub qualified_entity: Option<QualifiedEntityKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ir: Option<PlanExprIr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ir_template: Option<PlanExprTemplate>,
     pub effect_class: EffectClass,
     pub result_shape: ResultShape,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -651,6 +696,7 @@ pub struct PlanRelationTraversal {
     pub cardinality: RelationCardinality,
     pub source_cardinality: RelationSourceCardinality,
     pub expr: String,
+    pub ir: PlanExprIr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -673,6 +719,7 @@ pub struct EffectTemplate {
     pub kind: PlanNodeKind,
     pub qualified_entity: QualifiedEntityKey,
     pub expr_template: String,
+    pub ir_template: PlanExprTemplate,
     pub effect_class: EffectClass,
     pub result_shape: ResultShape,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -861,14 +908,26 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
 
     for (i, n) in plan.nodes.iter().enumerate() {
         if n.kind.has_surface_expr() {
-            let expr = n
-                .expr
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{i}].expr is required for {:?}", n.kind))?;
-            if expr.trim().is_empty() {
-                return Err(format!("plan.nodes[{i}].expr is empty"));
+            if n.ir.is_none() && n.ir_template.is_none() {
+                return Err(format!(
+                    "plan.nodes[{i}].ir or ir_template is required for executable node {:?}",
+                    n.kind
+                ));
             }
-            validate_no_js_object_coercion(expr, i, "expr")?;
+            if n.ir.is_some() && n.ir_template.is_some() {
+                return Err(format!(
+                    "plan.nodes[{i}] must not carry both ir and ir_template"
+                ));
+            }
+            if let Some(expr) = &n.expr {
+                validate_no_js_object_coercion(expr, i, "expr")?;
+            }
+            if let Some(ir) = &n.ir {
+                validate_plan_expr_ir(ir, i, "ir")?;
+            }
+            if let Some(template) = &n.ir_template {
+                validate_plan_expr_template(template, i, "ir_template")?;
+            }
             if n.qualified_entity.is_none() {
                 return Err(format!(
                     "plan.nodes[{i}].qualified_entity is required for executable node {:?}",
@@ -884,15 +943,21 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 }
             }
         }
-        if n.kind == PlanNodeKind::Derive && n.expr.is_some() {
-            return Err(format!("plan.nodes[{i}].derive must not carry expr"));
+        if n.kind == PlanNodeKind::Derive
+            && (n.expr.is_some() || n.ir.is_some() || n.ir_template.is_some())
+        {
+            return Err(format!(
+                "plan.nodes[{i}].derive must not carry expr, ir, or ir_template"
+            ));
         }
         if n.kind == PlanNodeKind::Data {
             if n.data.is_none() {
                 return Err(format!("plan.nodes[{i}].data is required for data nodes"));
             }
-            if n.expr.is_some() {
-                return Err(format!("plan.nodes[{i}].data must not carry expr"));
+            if n.expr.is_some() || n.ir.is_some() || n.ir_template.is_some() {
+                return Err(format!(
+                    "plan.nodes[{i}].data must not carry expr, ir, or ir_template"
+                ));
             }
         }
         if n.kind == PlanNodeKind::Compute {
@@ -901,12 +966,14 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 .as_ref()
                 .ok_or_else(|| format!("plan.nodes[{i}].compute is required for compute nodes"))?;
             if n.expr.is_some()
+                || n.ir.is_some()
+                || n.ir_template.is_some()
                 || n.data.is_some()
                 || n.effect_template.is_some()
                 || n.relation.is_some()
             {
                 return Err(format!(
-                    "plan.nodes[{i}].compute must not carry expr, data, effect_template, or relation"
+                    "plan.nodes[{i}].compute must not carry expr, ir, ir_template, data, effect_template, or relation"
                 ));
             }
             validate_compute_template(compute, i, &by_id)?;
@@ -930,12 +997,14 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 ));
             }
             if n.expr.is_some()
+                || n.ir.is_some()
+                || n.ir_template.is_some()
                 || n.data.is_some()
                 || n.effect_template.is_some()
                 || n.compute.is_some()
             {
                 return Err(format!(
-                    "plan.nodes[{i}].relation must not carry expr, data, effect_template, or compute"
+                    "plan.nodes[{i}].relation must not carry expr, ir, ir_template, data, effect_template, or compute"
                 ));
             }
             validate_relation_traversal(plan, relation, i, &by_id)?;
@@ -1150,22 +1219,33 @@ fn validated_node_from_raw(
         | PlanNodeKind::Create
         | PlanNodeKind::Update
         | PlanNodeKind::Delete
-        | PlanNodeKind::Action) => Ok(ValidatedPlanNode::Surface(ValidatedSurfaceNode {
-            id,
-            kind,
-            qualified_entity: node.qualified_entity.clone(),
-            expr: node
-                .expr
-                .clone()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].expr is required"))?,
-            effect_class: node.effect_class,
-            result_shape: node.result_shape,
-            projection: node.projection.clone(),
-            predicates: node.predicates.clone(),
-            depends_on,
-            uses_result,
-            approval: node.approval.clone(),
-        })),
+        | PlanNodeKind::Action) => {
+            let ir = node
+                .ir
+                .as_ref()
+                .map(|ir| validated_plan_expr_ir(ir, node_index, "ir"))
+                .transpose()?;
+            let ir_template = node
+                .ir_template
+                .as_ref()
+                .map(|template| validated_plan_expr_template(template, node_index, "ir_template"))
+                .transpose()?;
+            Ok(ValidatedPlanNode::Surface(ValidatedSurfaceNode {
+                id,
+                kind,
+                qualified_entity: node.qualified_entity.clone(),
+                ir,
+                ir_template,
+                display_expr: node.expr.clone(),
+                effect_class: node.effect_class,
+                result_shape: node.result_shape,
+                projection: node.projection.clone(),
+                predicates: node.predicates.clone(),
+                depends_on,
+                uses_result,
+                approval: node.approval.clone(),
+            }))
+        }
         PlanNodeKind::Data => Ok(ValidatedPlanNode::Data(ValidatedDataNode {
             id,
             effect_class: node.effect_class,
@@ -1240,7 +1320,7 @@ fn validated_node_from_raw(
                         target: relation.target.clone(),
                         cardinality: relation.cardinality,
                         source_cardinality: relation.source_cardinality,
-                        expr: relation.expr.clone(),
+                        ir: validated_plan_expr_ir(&relation.ir, node_index, "relation.ir")?,
                     },
                     depends_on,
                     uses_result,
@@ -1261,10 +1341,12 @@ fn validated_node_from_raw(
                 .as_ref()
                 .ok_or_else(|| format!("plan.nodes[{node_index}].item_binding is required"))
                 .and_then(|s| BindingName::new(s.clone()))?,
-            effect_template: node
-                .effect_template
-                .clone()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].effect_template is required"))?,
+            effect_template: validated_effect_template(
+                node.effect_template.as_ref().ok_or_else(|| {
+                    format!("plan.nodes[{node_index}].effect_template is required")
+                })?,
+                node_index,
+            )?,
             projection: node.projection.clone(),
             predicates: node.predicates.clone(),
             depends_on,
@@ -1304,6 +1386,43 @@ fn validated_data_input(
     })
 }
 
+fn validated_plan_expr_ir(
+    ir: &PlanExprIr,
+    node_index: usize,
+    path: &str,
+) -> Result<ValidatedPlanExprIr, String> {
+    validate_plan_expr_ir(ir, node_index, path)?;
+    let expr = serde_json::from_value::<Expr>(ir.expr.clone())
+        .map_err(|e| format!("plan.nodes[{node_index}].{path}.expr is invalid Plasm IR: {e}"))?;
+    Ok(ValidatedPlanExprIr {
+        expr,
+        projection: ir.projection.clone(),
+        display_expr: ir.display_expr.clone(),
+    })
+}
+
+fn validated_plan_expr_template(
+    template: &PlanExprTemplate,
+    node_index: usize,
+    path: &str,
+) -> Result<ValidatedPlanExprTemplate, String> {
+    validate_plan_expr_template(template, node_index, path)?;
+    Ok(ValidatedPlanExprTemplate {
+        expr: template.expr.clone(),
+        projection: template.projection.clone(),
+        display_expr: template.display_expr.clone(),
+        input_bindings: template.input_bindings.clone(),
+    })
+}
+
+fn validated_effect_template(
+    template: &EffectTemplate,
+    node_index: usize,
+) -> Result<EffectTemplate, String> {
+    validate_effect_template(template, node_index)?;
+    Ok(template.clone())
+}
+
 fn validate_effect_template(t: &EffectTemplate, node_index: usize) -> Result<(), String> {
     if !t.kind.is_template_allowed() {
         return Err(format!(
@@ -1321,6 +1440,7 @@ fn validate_effect_template(t: &EffectTemplate, node_index: usize) -> Result<(),
         node_index,
         "effect_template.expr_template",
     )?;
+    validate_plan_expr_template(&t.ir_template, node_index, "effect_template.ir_template")?;
     for b in &t.input_bindings {
         if b.from.trim().is_empty() || b.to.trim().is_empty() {
             return Err(format!(
@@ -1329,6 +1449,64 @@ fn validate_effect_template(t: &EffectTemplate, node_index: usize) -> Result<(),
         }
     }
     Ok(())
+}
+
+fn validate_plan_expr_ir(ir: &PlanExprIr, node_index: usize, path: &str) -> Result<(), String> {
+    if let Some(display) = &ir.display_expr {
+        validate_no_js_object_coercion(display, node_index, path)?;
+    }
+    serde_json::from_value::<Expr>(ir.expr.clone())
+        .map_err(|e| format!("plan.nodes[{node_index}].{path}.expr is invalid Plasm IR: {e}"))?;
+    Ok(())
+}
+
+fn validate_plan_expr_template(
+    template: &PlanExprTemplate,
+    node_index: usize,
+    path: &str,
+) -> Result<(), String> {
+    if let Some(display) = &template.display_expr {
+        validate_no_js_object_coercion(display, node_index, path)?;
+    }
+    let concrete = instantiate_template_holes_for_validation(&template.expr);
+    serde_json::from_value::<Expr>(concrete).map_err(|e| {
+        format!("plan.nodes[{node_index}].{path}.expr is invalid templated Plasm IR: {e}")
+    })?;
+    for b in &template.input_bindings {
+        if b.from.trim().is_empty() {
+            return Err(format!(
+                "plan.nodes[{node_index}].{path}.input_bindings must have non-empty from"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn instantiate_template_holes_for_validation(value: &serde_json::Value) -> serde_json::Value {
+    if is_ir_hole(value) {
+        return serde_json::Value::String("__plasm_hole__".to_string());
+    }
+    match value {
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .map(instantiate_template_holes_for_validation)
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), instantiate_template_holes_for_validation(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+pub(crate) fn is_ir_hole(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|obj| obj.get("__plasm_hole"))
+        .is_some()
 }
 
 fn validate_plan_data_input(
@@ -1635,10 +1813,7 @@ fn validate_relation_traversal(
             "plan.nodes[{node_index}].relation.target must include non-empty entry_id and entity"
         ));
     }
-    if relation.expr.trim().is_empty() {
-        return Err(format!("plan.nodes[{node_index}].relation.expr is empty"));
-    }
-    validate_no_js_object_coercion(&relation.expr, node_index, "relation.expr")?;
+    validate_plan_expr_ir(&relation.ir, node_index, "relation.ir")?;
     if relation.cardinality == RelationCardinality::One
         && relation.source_cardinality == RelationSourceCardinality::Many
     {
@@ -1909,6 +2084,7 @@ mod tests {
                 "kind": "query",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                 "expr": "Product",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
                 "effect_class": "read",
                 "result_shape": "list",
                 "projection": [],
@@ -1932,6 +2108,25 @@ mod tests {
         });
         let err = parse_plan_value(&v).expect_err("legacy expression list rejected");
         assert!(err.contains("missing field"), "{err}");
+    }
+
+    #[test]
+    fn executable_text_without_ir_is_rejected() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "n1",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product",
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "n1" }
+        });
+        let err = validate_plan_value(&v).expect_err("text-only executable rejected");
+        assert!(err.contains("ir or ir_template is required"), "{err}");
     }
 
     #[test]
@@ -1995,6 +2190,7 @@ mod tests {
                 "id": "n1",
                 "kind": "query",
                 "expr": "Product",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
                 "effect_class": "read",
                 "result_shape": "list"
             }],
@@ -2014,6 +2210,7 @@ mod tests {
                     "kind": "query",
                     "qualified_entity": { "entry_id": "github", "entity": "Issue" },
                     "expr": "Issue{state=open}",
+                    "ir": { "expr": { "op": "query", "entity": "Issue", "predicate": { "type": "comparison", "field": "state", "op": "=", "value": "open" } } },
                     "effect_class": "read",
                     "result_shape": "list"
                 },
@@ -2030,6 +2227,15 @@ mod tests {
                         "kind": "action",
                         "qualified_entity": { "entry_id": "github", "entity": "Issue" },
                         "expr_template": "Issue(${issue.id}).add-label(label=\"stale\")",
+                        "ir_template": {
+                            "expr": {
+                                "op": "invoke",
+                                "capability": "add_label",
+                                "target": { "entity_type": "Issue", "key": { "__plasm_hole": { "kind": "binding", "binding": "issue", "path": ["id"] } } },
+                                "input": { "label": "stale" }
+                            },
+                            "input_bindings": [{ "from": "issue.id", "to": "id" }]
+                        },
                         "effect_class": "side_effect",
                         "result_shape": "side_effect_ack"
                     }
@@ -2050,6 +2256,7 @@ mod tests {
                 "kind": "get",
                 "qualified_entity": { "entry_id": "acme", "entity": "Item" },
                 "expr": "Item(\"[object Object]\")",
+                "ir": { "expr": { "op": "get", "ref": { "entity_type": "Item", "key": "x" } } },
                 "effect_class": "read",
                 "result_shape": "single"
             }],
@@ -2184,6 +2391,7 @@ mod tests {
                 "kind": "search",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                 "expr": "Product~\"bolt\"",
+                "ir": { "expr": { "op": "query", "entity": "Product", "predicate": { "type": "comparison", "field": "q", "op": "=", "value": "bolt" }, "capability_name": "product_search" } },
                 "effect_class": "read",
                 "result_shape": "single"
             }],
@@ -2204,6 +2412,7 @@ mod tests {
                     "kind": "get",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
                     "effect_class": "read",
                     "result_shape": "single"
                 },
@@ -2218,7 +2427,8 @@ mod tests {
                         "target": { "entry_id": "acme", "entity": "Category" },
                         "cardinality": "one",
                         "source_cardinality": "single",
-                        "expr": "Product(\"p1\").category"
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
                     },
                     "depends_on": ["product"],
                     "uses_result": [{ "node": "product", "as": "source" }]
@@ -2248,6 +2458,7 @@ mod tests {
                     "kind": "query",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
                     "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
                     "effect_class": "read",
                     "result_shape": "list"
                 },
@@ -2262,7 +2473,8 @@ mod tests {
                         "target": { "entry_id": "acme", "entity": "Category" },
                         "cardinality": "one",
                         "source_cardinality": "many",
-                        "expr": "Product.category"
+                        "expr": "Product.category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "query", "entity": "Product" }, "selector": "category", "step": { "type": "auto_get" } } }
                     },
                     "depends_on": ["products"]
                 }
