@@ -20,6 +20,12 @@ macro_rules! plan_string_atom {
                 if value.trim().is_empty() {
                     return Err(format!("{} must be non-empty", stringify!($name)));
                 }
+                if value.contains("[object Object]") {
+                    return Err(format!(
+                        "{} contains JavaScript object string coercion ([object Object])",
+                        stringify!($name)
+                    ));
+                }
                 Ok(Self(value))
             }
 
@@ -862,6 +868,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             if expr.trim().is_empty() {
                 return Err(format!("plan.nodes[{i}].expr is empty"));
             }
+            validate_no_js_object_coercion(expr, i, "expr")?;
             if n.qualified_entity.is_none() {
                 return Err(format!(
                     "plan.nodes[{i}].qualified_entity is required for executable node {:?}",
@@ -1309,6 +1316,11 @@ fn validate_effect_template(t: &EffectTemplate, node_index: usize) -> Result<(),
             "plan.nodes[{node_index}].effect_template.expr_template is empty"
         ));
     }
+    validate_no_js_object_coercion(
+        &t.expr_template,
+        node_index,
+        "effect_template.expr_template",
+    )?;
     for b in &t.input_bindings {
         if b.from.trim().is_empty() || b.to.trim().is_empty() {
             return Err(format!(
@@ -1626,6 +1638,7 @@ fn validate_relation_traversal(
     if relation.expr.trim().is_empty() {
         return Err(format!("plan.nodes[{node_index}].relation.expr is empty"));
     }
+    validate_no_js_object_coercion(&relation.expr, node_index, "relation.expr")?;
     if relation.cardinality == RelationCardinality::One
         && relation.source_cardinality == RelationSourceCardinality::Many
     {
@@ -1725,6 +1738,11 @@ fn validate_predicate(
             "plan.nodes[{node_index}].predicates[{pred_index}].field_path must be non-empty"
         ));
     }
+    validate_plan_value_expr(
+        &p.value,
+        node_index,
+        &format!("predicates[{pred_index}].value"),
+    )?;
     Ok(())
 }
 
@@ -1734,12 +1752,52 @@ fn validate_plan_value_expr(
     path: &str,
 ) -> Result<(), String> {
     match value {
-        PlanValue::Literal { .. }
-        | PlanValue::Helper { .. }
-        | PlanValue::Symbol { .. }
-        | PlanValue::BindingSymbol { .. }
-        | PlanValue::NodeSymbol { .. } => Ok(()),
-        PlanValue::Template { input_bindings, .. } => {
+        PlanValue::Literal { value } => {
+            validate_json_value_no_js_object_coercion(value, node_index, path)
+        }
+        PlanValue::Helper { display, args, .. } => {
+            if let Some(display) = display {
+                validate_no_js_object_coercion(display, node_index, path)?;
+            }
+            for (i, arg) in args.iter().enumerate() {
+                validate_json_value_no_js_object_coercion(
+                    arg,
+                    node_index,
+                    &format!("{path}.args[{i}]"),
+                )?;
+            }
+            Ok(())
+        }
+        PlanValue::Symbol { path: symbol_path } => {
+            validate_no_js_object_coercion(symbol_path, node_index, path)
+        }
+        PlanValue::BindingSymbol {
+            binding,
+            path: segments,
+        } => {
+            validate_no_js_object_coercion(binding, node_index, path)?;
+            for (i, segment) in segments.iter().enumerate() {
+                validate_no_js_object_coercion(segment, node_index, &format!("{path}.path[{i}]"))?;
+            }
+            Ok(())
+        }
+        PlanValue::NodeSymbol {
+            node,
+            alias,
+            path: segments,
+        } => {
+            validate_no_js_object_coercion(node, node_index, path)?;
+            validate_no_js_object_coercion(alias, node_index, path)?;
+            for (i, segment) in segments.iter().enumerate() {
+                validate_no_js_object_coercion(segment, node_index, &format!("{path}.path[{i}]"))?;
+            }
+            Ok(())
+        }
+        PlanValue::Template {
+            template,
+            input_bindings,
+        } => {
+            validate_template_text(template, node_index, path)?;
             for b in input_bindings {
                 if b.from.trim().is_empty() {
                     return Err(format!(
@@ -1767,6 +1825,66 @@ fn validate_plan_value_expr(
             Ok(())
         }
     }
+}
+
+fn validate_template_text(template: &str, node_index: usize, path: &str) -> Result<(), String> {
+    validate_no_js_object_coercion(template, node_index, path)?;
+    let mut rest = template;
+    while let Some(start) = rest.find("${") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            return Err(format!(
+                "plan.nodes[{node_index}].{path} contains an unterminated template substitution"
+            ));
+        };
+        if after[..end].trim().is_empty() {
+            return Err(format!(
+                "plan.nodes[{node_index}].{path} contains an empty template substitution"
+            ));
+        }
+        rest = &after[end + 1..];
+    }
+    Ok(())
+}
+
+fn validate_json_value_no_js_object_coercion(
+    value: &serde_json::Value,
+    node_index: usize,
+    path: &str,
+) -> Result<(), String> {
+    match value {
+        serde_json::Value::String(s) => validate_no_js_object_coercion(s, node_index, path),
+        serde_json::Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                validate_json_value_no_js_object_coercion(
+                    item,
+                    node_index,
+                    &format!("{path}[{i}]"),
+                )?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Object(fields) => {
+            for (k, field) in fields {
+                validate_json_value_no_js_object_coercion(
+                    field,
+                    node_index,
+                    &format!("{path}.{k}"),
+                )?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_no_js_object_coercion(text: &str, node_index: usize, path: &str) -> Result<(), String> {
+    if text.contains("[object Object]") {
+        return Err(format!(
+            "plan.nodes[{node_index}].{path} contains JavaScript object string coercion ([object Object]); use a symbolic field/template value instead"
+        ));
+    }
+    Ok(())
 }
 
 /// Parse and validate Plan JSON.
@@ -1894,6 +2012,92 @@ mod tests {
             "return": { "sourceIssues": "find", "labeledIssues": "label" }
         });
         validate_plan_value(&v).expect("host infers approval gates during dry-run");
+    }
+
+    #[test]
+    fn reject_js_object_coercion_in_surface_and_templates() {
+        let bad_surface = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "n1",
+                "kind": "get",
+                "qualified_entity": { "entry_id": "acme", "entity": "Item" },
+                "expr": "Item(\"[object Object]\")",
+                "effect_class": "read",
+                "result_shape": "single"
+            }],
+            "return": "n1"
+        });
+        let err = validate_plan_value(&bad_surface).expect_err("object coercion rejected");
+        assert!(err.contains("[object Object]"), "{err}");
+
+        let bad_template = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "rows",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "artifact",
+                    "data": { "kind": "literal", "value": [{ "id": "i1" }] }
+                },
+                {
+                    "id": "mapped",
+                    "kind": "derive",
+                    "effect_class": "artifact_read",
+                    "result_shape": "artifact",
+                    "depends_on": ["rows"],
+                    "uses_result": [{ "node": "rows", "as": "item" }],
+                    "derive_template": {
+                        "kind": "map",
+                        "source": "rows",
+                        "item_binding": "item",
+                        "inputs": [],
+                        "value": { "kind": "template", "template": "Item(\"[object Object]\")" }
+                    }
+                }
+            ],
+            "return": "mapped"
+        });
+        let err = validate_plan_value(&bad_template).expect_err("bad template rejected");
+        assert!(err.contains("[object Object]"), "{err}");
+    }
+
+    #[test]
+    fn reject_malformed_template_substitutions() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "rows",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "artifact",
+                    "data": { "kind": "literal", "value": [{ "id": "i1" }] }
+                },
+                {
+                    "id": "mapped",
+                    "kind": "derive",
+                    "effect_class": "artifact_read",
+                    "result_shape": "artifact",
+                    "depends_on": ["rows"],
+                    "uses_result": [{ "node": "rows", "as": "item" }],
+                    "derive_template": {
+                        "kind": "map",
+                        "source": "rows",
+                        "item_binding": "item",
+                        "inputs": [],
+                        "value": { "kind": "template", "template": "Item(${})" }
+                    }
+                }
+            ],
+            "return": "mapped"
+        });
+        let err = validate_plan_value(&v).expect_err("empty substitution rejected");
+        assert!(err.contains("empty template substitution"), "{err}");
     }
 
     #[test]
