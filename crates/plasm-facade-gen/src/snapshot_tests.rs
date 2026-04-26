@@ -75,7 +75,10 @@ fn snapshot_code_facade_prelude_emitted() {
         .contains("query(filters: ProductQueryInput): ProductQueryBuilder;"));
     assert!(ts
         .agent_namespace_body
-        .contains("interface ProductNodeHandle extends Plasm.PlanNodeHandle"));
+        .contains("interface ProductReadSource<C extends Plasm.SourceCardinality"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("interface ProductNodeHandle<C extends Plasm.SourceCardinality"));
     assert!(ts
         .agent_namespace_body
         .contains("select(...fields: Array<keyof ProductRow & string>): this;"));
@@ -120,6 +123,7 @@ fn snapshot_code_facade_prelude_emitted() {
     assert!(ts.agent_prelude.contains("PlanDataInput"));
     assert!(ts.agent_prelude.contains("PlanReturnable"));
     assert!(ts.agent_prelude.contains("ProjectionValue"));
+    assert!(ts.agent_prelude.contains("RuntimeSingleton"));
     assert!(ts.agent_prelude.contains("binding_symbol"));
     assert!(ts.agent_prelude.contains("node_symbol"));
     assert!(ts.agent_prelude.contains("static singleton"));

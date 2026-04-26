@@ -12,7 +12,11 @@
 //! One MCP transport may host **many** logical sessions; `MCP-Session-Id` is transport correlation only.
 //! If the server-side execute session expires while the MCP transport stays open, the next
 //! `add_capabilities` opens a **new** `(prompt_hash, session_id)` and refreshes the binding.
-//! `add_capabilities` replaces that binding when opening a new catalog entry or session. Tenant MCP policy
+//! For an active binding, `add_capabilities` / `add_code_capabilities` are **additive**: call them
+//! with the same `logical_session_ref` to append more `{api, entity}` seeds to the existing symbol
+//! space. Do not reinitialize or open a smaller seed set to "narrow" the session; that creates a new
+//! symbol space only when the prior binding is gone or the primary open truly changes.
+//! Tenant MCP policy
 //! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
 //! Tool text includes
 //! the full Plasm instructions body only when the session is newly created server-side (`reused: false`); repeated
@@ -109,9 +113,9 @@ pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** Plasm lines (`expre
 
 /// MCP `initialize` `instructions` field: tool flow (LLM-facing; transport auth is host-owned).
 pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_session_init` first** on each MCP connection (before `discover_capabilities`, `add_capabilities`, or `plasm`): pass **`client_session_key`** -- **the host’s stable agent-context id** (same value for the same window, subagent, or other isolation boundary the host defines); use **one key per context you want to share one Plasm logical session**, not a new random id every message. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). **Idempotent:** same transport + same `client_session_key` + tenant => **reuse** the same logical session and ref. \
-     **Session reuse (required default):** After the first successful **`add_capabilities`** open for that ref, **most subsequent user requests should be `plasm` only** with the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`** or repeat **`add_capabilities`** with the same catalog just to \"re-initialize\" -- that wastes tokens and breaks continuity. Call **`add_capabilities`** again **only** when you must **append** new **`api` / `entity`** seeds (another API, more entities) you have **not** already added. \
+     **Session reuse is mandatory by default:** after the first successful **`add_capabilities`** or **`add_code_capabilities`** for that ref, keep using the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`**, do not open a fresh logical session, and do not call capabilities again with a smaller seed set to \"re-initialize\", \"reload\", or \"narrow\" the symbol space. Capability loading is **append-only** for a live logical session: call **`add_capabilities`** / **`add_code_capabilities`** again **only** to add missing **new** **`api` / `entity`** seeds to the existing session; otherwise call **`plasm`** or evaluate/execute the existing Code Mode plan. \
      Optional **`discover_capabilities`** with `query` — **one string** (plain-language or keywords) **or** a string array (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
-     **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
+     **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to **append** to the session; this never intentionally narrows or replaces already-loaded symbols. If you need several entities/APIs for one task, send them together in one call when known, or append missing seeds later on the same ref. Responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
      **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
     **Code Mode:** prefer **`plasm`** for one simple expression, one-shot reads/writes, and simple follow-ups. Use Code Mode only when the user intent is best satisfied by synthesizing a **program** with multiple operations needing coordination, transformation, compute, fan-out/fan-in, or reusable logic; it is **not a query interface**. Flow: **`add_code_capabilities`** -> write a complete TypeScript program -> **`evaluate_code_plan(name, code)`** -> inspect the dry-run execution plan -> **`execute_code_plan(plan_handle)`** once the plan satisfies the user's intent and risk. If the dry-run reveals a defect, missing capability, excessive output, or unacceptable risk, revise and re-evaluate instead of executing. Reuse the **`plan_handle`**; resend TypeScript only when changing the program or symbol space. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** publish only final answer nodes, never intermediates.";
 
@@ -765,9 +769,9 @@ impl PlasmMcpHandler {
                 name: "add_capabilities".into(),
                 title: None,
                 description: Some(
-                    "**Append** catalog surface to an **existing** session: reuse **`logical_session_ref`** from **`plasm_session_init`**. Call when you need **new** **`api`/`entity`** pairs; **do not** repeat this with identical seeds before every **`plasm`** call. \
+                    "**Append** catalog surface to an **existing** session: reuse **`logical_session_ref`** from **`plasm_session_init`**. This is additive, not a replacement or narrowing operation. Call when you need **new** **`api`/`entity`** pairs; **do not** repeat this with identical seeds before every **`plasm`** call, and **do not** reinitialize or resend a smaller seed set to narrow the symbol space. \
                      Set `seeds` as JSON objects (`{\"api\":\"...\",\"entity\":\"...\"}`), one object per entity (`entry_id` accepted instead of `api`). \
-                     Example: `[{\"api\":\"pokeapi\",\"entity\":\"Pokemon\"},{\"api\":\"pokeapi\",\"entity\":\"Move\"}]`. \
+                     Example: `[{\"api\":\"pokeapi\",\"entity\":\"Pokemon\"},{\"api\":\"pokeapi\",\"entity\":\"Move\"}]`. If a task needs multiple entities/APIs, include all known required seeds in one call; if you discover another needed entity later, append it on the same **`logical_session_ref`**. \
                      First distinct **`api`** is the primary open; additional **`api`** values federate into the **same** Plasm language session. \
                      Legacy top-level `{entry_id, entities}` input is invalid; always send one seed object per entity. \
                      Unknown or disallowed catalog ids fail the whole call. \
@@ -823,7 +827,7 @@ impl PlasmMcpHandler {
                 name: "add_code_capabilities".into(),
                 title: None,
                 description: Some(
-                    "Open capabilities for Code Mode program authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Use only when synthesizing a program with multiple coordinated operations, transformations, compute, fan-out/fan-in, or reuse; prefer **`plasm`** for one simple expression. Code Mode is **not a query interface**. Keep output minimal with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only.".into(),
+                    "Open or append capabilities for Code Mode program authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Reuse the same **`logical_session_ref`**; this is additive, not a replacement or narrowing operation. If the program needs several entities/APIs, include all known required seeds in one call; append newly discovered missing seeds later on the same ref. Do not reinitialize or resend a smaller seed set to narrow the symbol space. Use only when synthesizing a program with multiple coordinated operations, transformations, compute, fan-out/fan-in, or reuse; prefer **`plasm`** for one simple expression. Code Mode is **not a query interface**. Keep output minimal with **`.select(...)`**, **`Plan.project`**, and a narrow **`Plan.return(...)`** containing final answer nodes only.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -3282,7 +3286,9 @@ mod tests {
                 && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("reused")
                 && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("_meta.plasm.paging")
                 && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("Session reuse")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("plasm` only")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("append-only")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("smaller seed set")
+                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("otherwise call")
                 && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS
                     .contains("_meta.plasm.tsv_static_frontmatter",),
             "initialize instructions: {}",
@@ -3316,6 +3322,36 @@ mod tests {
             assert!(!names.iter().any(|n| n == "execute"));
         }
         assert!(names.iter().any(|n| n == "plasm"));
+    }
+
+    #[test]
+    fn capability_tool_descriptions_require_additive_reuse() {
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let add = tools
+            .iter()
+            .find(|t| t.name == "add_capabilities")
+            .and_then(|t| t.description.as_deref())
+            .expect("add_capabilities description");
+        assert!(add.contains("additive"), "{add}");
+        assert!(add.contains("not a replacement or narrowing"), "{add}");
+        assert!(add.contains("same **`logical_session_ref`**"), "{add}");
+        #[cfg(feature = "code_mode")]
+        {
+            let add_code = tools
+                .iter()
+                .find(|t| t.name == "add_code_capabilities")
+                .and_then(|t| t.description.as_deref())
+                .expect("add_code_capabilities description");
+            assert!(add_code.contains("additive"), "{add_code}");
+            assert!(
+                add_code.contains("not a replacement or narrowing"),
+                "{add_code}"
+            );
+            assert!(
+                add_code.contains("same **`logical_session_ref`**"),
+                "{add_code}"
+            );
+        }
     }
 
     /// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema

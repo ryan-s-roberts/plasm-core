@@ -612,6 +612,9 @@ pub(crate) fn format_add_capabilities_wave_line(entry_id: &str, entities: &[Stri
     format!("Added capabilities from {entry_id}: {}", v.join(", "))
 }
 
+pub(crate) const ADD_CAPABILITIES_SESSION_REUSE_HINT: &str =
+    "_Session discipline: capability loading is additive for this logical_session_ref. Reuse the same ref; do not reinitialize or call with a smaller seed set to narrow the symbol space. Add all known required seeds together, or append missing seeds later._";
+
 /// MCP `add_code_capabilities` text body: wave summaries plus the actual incremental TypeScript
 /// declaration fragments from `plasm_facade_gen::build_code_facade`.
 #[cfg(feature = "code_mode")]
@@ -677,6 +680,8 @@ pub(crate) fn mcp_add_code_capabilities_markdown(
             s.push_str("\n\n");
         }
     }
+    s.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
+    s.push_str("\n\n");
     append_code_mode_typescript_fragment(&mut s, "Code Mode prelude", &ts.agent_prelude);
     append_code_mode_typescript_fragment(
         &mut s,
@@ -1384,6 +1389,8 @@ pub async fn apply_capability_seeds(
                 &created.entry_id,
                 &primary_entities,
             ));
+            open_md.push_str("\n\n");
+            open_md.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
             let mut tsv_meta: Option<String> = None;
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
@@ -4608,6 +4615,9 @@ mod mcp_add_code_capabilities_markdown_tests {
             md.contains("hackernews") && md.contains("Item"),
             "md:\n{md}"
         );
+        assert!(md.contains("capability loading is additive"), "md:\n{md}");
+        assert!(md.contains("Reuse the same ref"), "md:\n{md}");
+        assert!(md.contains("smaller seed set"), "md:\n{md}");
         assert!(md.contains("```typescript"), "md:\n{md}");
         assert!(md.contains("interface ItemRow"), "md:\n{md}");
     }

@@ -2864,6 +2864,32 @@ mod tests {
         )
     }
 
+    fn github_repository_commit_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Repository".into(), "Commit".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+        )
+    }
+
     #[test]
     fn entry_scoped_surface_parse_preserves_typed_catalog_create() {
         let s = duplicate_product_create_session();
@@ -3068,6 +3094,127 @@ mod tests {
             dry.node_results[1]["simulation"]["kind"],
             "relation_traversal"
         );
+    }
+
+    #[test]
+    fn evaluate_code_mode_plan_dry_accepts_runtime_checked_singleton_relation() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "products",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
+                    "effect_class": "read",
+                    "result_shape": "list"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "relation": {
+                        "source": "products",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "runtime_checked_singleton",
+                        "expr": "Product.category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "query", "entity": "Product" }, "selector": "category", "step": { "type": "auto_get" } } }
+                    },
+                    "depends_on": ["products"],
+                    "uses_result": [{ "node": "products", "as": "source" }]
+                }
+            ],
+            "return": { "kind": "node", "node": "category" }
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        assert_eq!(
+            dry.node_results[1]["simulation"]["kind"],
+            "relation_traversal"
+        );
+    }
+
+    #[test]
+    fn evaluate_code_mode_plan_dry_accepts_github_relation_limit_aggregate() {
+        let s = github_repository_commit_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "github-repo-commits-aggregate",
+            "nodes": [
+                {
+                    "id": "repo",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "github", "entity": "Repository" },
+                    "expr": "Repository({owner=\"ryan-s-roberts\", repo=\"plasm-core\"})",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Repository", "key": { "owner": "ryan-s-roberts", "repo": "plasm-core" } } } },
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "commits",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "relation": {
+                        "source": "repo",
+                        "relation": "commits",
+                        "target": { "entry_id": "github", "entity": "Commit" },
+                        "cardinality": "many",
+                        "source_cardinality": "single",
+                        "expr": "Repository({owner=\"ryan-s-roberts\", repo=\"plasm-core\"}).commits[sha,message]",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Repository", "key": { "owner": "ryan-s-roberts", "repo": "plasm-core" } } }, "selector": "commits", "step": { "type": "auto_get" } }, "projection": ["sha", "message"] }
+                    },
+                    "qualified_entity": { "entry_id": "github", "entity": "Commit" },
+                    "projection": ["sha", "message"],
+                    "depends_on": ["repo"],
+                    "uses_result": [{ "node": "repo", "as": "source" }]
+                },
+                {
+                    "id": "limited",
+                    "kind": "compute",
+                    "effect_class": "artifact_read",
+                    "result_shape": "list",
+                    "compute": {
+                        "source": "commits",
+                        "op": { "kind": "limit", "count": 2000 },
+                        "schema": {
+                            "entity": "PlanLimit",
+                            "fields": [
+                                { "name": "sha", "value_kind": "string", "source": ["sha"] },
+                                { "name": "message", "value_kind": "string", "source": ["message"] }
+                            ]
+                        }
+                    },
+                    "depends_on": ["commits"]
+                },
+                {
+                    "id": "n_commits",
+                    "kind": "compute",
+                    "effect_class": "artifact_read",
+                    "result_shape": "list",
+                    "compute": {
+                        "source": "limited",
+                        "op": { "kind": "aggregate", "aggregates": [{ "name": "n", "function": "count" }] },
+                        "schema": { "entity": "PlanAggregate", "fields": [{ "name": "n", "value_kind": "integer" }] }
+                    },
+                    "depends_on": ["limited"]
+                }
+            ],
+            "return": { "kind": "node", "node": "n_commits" }
+        });
+        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        assert_eq!(
+            dry.node_results[1]["simulation"]["kind"],
+            "relation_traversal"
+        );
+        assert_eq!(dry.node_results[2]["kind"], "compute");
+        assert_eq!(dry.node_results[3]["kind"], "compute");
     }
 
     #[test]

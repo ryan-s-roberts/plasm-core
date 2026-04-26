@@ -543,10 +543,22 @@ fn relation_methods_ts(
         .filter(|rel| available_entities.contains(rel.target.as_str()))
         .map(|rel| {
             let name = to_js_identifier(rel.name.as_str());
-            format!(
-                "    /** Follow relation `{}` to `{}` ({}). */\n    {}(): {}NodeHandle;\n",
-                rel.name, rel.target, rel.cardinality, name, rel.target
-            )
+            if rel.cardinality == "one" {
+                format!(
+                    "    /** Follow relation `{}` to `{}` ({}). */\n    {}(this: {source}ReadSource<\"single\"> | {source}ReadSource<\"runtime_checked_singleton\">): {}ReadSource<\"single\"> & Plasm.PlanBuilder;\n",
+                    rel.name,
+                    rel.target,
+                    rel.cardinality,
+                    name,
+                    rel.target,
+                    source = entity.entity
+                )
+            } else {
+                format!(
+                    "    /** Follow relation `{}` to `{}` ({}). */\n    {}(): {}ReadSource<\"collection\"> & Plasm.PlanBuilder;\n",
+                    rel.name, rel.target, rel.cardinality, name, rel.target
+                )
+            }
         })
         .collect::<String>()
 }
@@ -588,6 +600,11 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
   export type BoundPlanHandle = PlanSource & PlanBrand<"BoundPlanHandle">;
   export type PlanValueExpr = PlanBrand<"PlanValueExpr">;
   export type PlanNodeHandle = BoundPlanHandle & { readonly __planNodeId: string };
+  export type SourceCardinality = "collection" | "single" | "runtime_checked_singleton";
+  export type CardinalSource<C extends SourceCardinality> = { readonly __plasmReadCardinality?: C };
+  export type RuntimeSingleton<T> = T extends CardinalSource<SourceCardinality>
+    ? Omit<T, "__plasmReadCardinality"> & CardinalSource<"runtime_checked_singleton">
+    : T;
   export type PlanValue<T = unknown> =
     | { readonly kind: "literal"; readonly value: T }
     | { readonly kind: "helper"; readonly name: string; readonly args?: readonly unknown[]; readonly display?: string }
@@ -675,7 +692,7 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
 declare class Plan {
   static return(value: Plasm.PlanReturnable): string;
   static data(value: unknown): Plasm.PlanNodeHandle;
-  static singleton<T extends Plasm.PlanNodeHandle>(source: T): T;
+  static singleton<T extends Plasm.PlanSource>(source: T): Plasm.RuntimeSingleton<T>;
   static map<T, R>(source: Plasm.PlanSource, fn: (item: Plasm.Symbolic<T>) => R): Plasm.PlanNodeHandle;
   static project<T>(source: Plasm.PlanSource, spec: Record<string, (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue> | readonly string[]): Plasm.PlanNodeHandle;
   static filter<T>(source: Plasm.PlanSource, ...predicates: readonly Plasm.PlanPredicate[]): Plasm.PlanNodeHandle;
@@ -857,7 +874,7 @@ pub fn build_code_facade(
         let relation_methods = relation_methods_ts(r, &available_entities);
         let _ = writeln!(
             &mut namespace_body,
-            "  interface {e}NodeHandle extends Plasm.PlanNodeHandle {{\n{relation_methods}    /** Select fields to include in typed projection metadata. */\n    select(...fields: Array<keyof {e}Row & string>): this;\n  }}\n  interface {e}QueryBuilder extends {e}NodeHandle {{\n    /** Add structured predicates that the host preserves for dry-run and execution reports. */\n    where(...predicates: Plasm.PlanPredicate[]): this;\n  }}",
+            "  interface {e}ReadSource<C extends Plasm.SourceCardinality = Plasm.SourceCardinality> extends Plasm.PlanSource, Plasm.CardinalSource<C> {{\n{relation_methods}    /** Select fields to include in typed projection metadata. */\n    select(...fields: Array<keyof {e}Row & string>): this;\n  }}\n  interface {e}NodeHandle<C extends Plasm.SourceCardinality = Plasm.SourceCardinality> extends Plasm.PlanNodeHandle, {e}ReadSource<C> {{}}\n  interface {e}QueryBuilder extends Plasm.PlanBuilder, {e}ReadSource<\"collection\"> {{\n    /** Add structured predicates that the host preserves for dry-run and execution reports. */\n    where(...predicates: Plasm.PlanPredicate[]): this;\n  }}",
             e = r.entity
         );
         if r.capabilities.iter().any(|c| c.kind == "search") {
@@ -935,13 +952,13 @@ pub fn build_code_facade(
         }
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "get") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
+            let _ = writeln!(
+                &mut namespace_body,
+                "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: {key_type}): {e}ReadSource<\"single\"> & Plasm.PlanEffect;",
+                e = r.entity,
+                key_type = entity_get_key_type_ts(r)
+            );
         }
-        let _ = writeln!(
-            &mut namespace_body,
-            "    /** Single-row detail read when this catalog models a get capability; nested fields may still be nullable if the upstream API omits them. */\n    get(id: {key_type}): {e}NodeHandle;",
-            e = r.entity,
-            key_type = entity_get_key_type_ts(r)
-        );
         if let Some(cap) = r.capabilities.iter().find(|c| c.kind == "create") {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
             let create_input_type = if cap.input_parameters.is_empty() {
@@ -956,11 +973,6 @@ pub fn build_code_facade(
                 optional = optional,
                 create_input_type = create_input_type
             );
-        } else {
-            let _ = writeln!(
-                &mut namespace_body,
-                "    create(input?: Record<string, unknown>): Plasm.PlanEffect;"
-            );
         }
         let action_caps = r
             .capabilities
@@ -970,11 +982,13 @@ pub fn build_code_facade(
         for cap in &action_caps {
             namespace_body.push_str(&jsdoc_comment(&cap.description, "    "));
         }
-        let action_methods = action_method_overloads_ts(r, &action_caps);
-        let _ = writeln!(
-            &mut namespace_body,
-            "    ref(id: unknown): {{ {action_methods} }};"
-        );
+        if !action_caps.is_empty() {
+            let action_methods = action_method_overloads_ts(r, &action_caps);
+            let _ = writeln!(
+                &mut namespace_body,
+                "    ref(id: unknown): {{ {action_methods} }};"
+            );
+        }
         let _ = writeln!(&mut namespace_body, "  }}\n}}\n");
     }
     // LoadedApis: shallow merge

@@ -116,7 +116,24 @@ fn snapshot_search_and_relation_surface() {
     assert!(ts.agent_namespace_body.contains("active?: boolean;"));
     assert!(ts
         .agent_namespace_body
-        .contains("category(): CategoryNodeHandle;"));
+        .contains("category(this: ProductReadSource<\"single\"> | ProductReadSource<\"runtime_checked_singleton\">): CategoryReadSource<\"single\"> & Plasm.PlanBuilder;"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("interface ProductReadSource<C extends Plasm.SourceCardinality"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("get(id: string): ProductReadSource<\"single\"> & Plasm.PlanEffect;"));
+    assert!(ts.agent_prelude.contains(
+        "static singleton<T extends Plasm.PlanSource>(source: T): Plasm.RuntimeSingleton<T>;"
+    ));
+    let category_entity = ts
+        .agent_namespace_body
+        .split("interface CategoryEntity {")
+        .nth(1)
+        .and_then(|s| s.split("\n  }\n").next())
+        .expect("CategoryEntity section");
+    assert!(!category_entity.contains("create("), "{category_entity}");
+    assert!(!category_entity.contains("ref("), "{category_entity}");
 
     let runtime = quickjs_runtime_from_facade_delta(&facade_delta);
     assert!(runtime.contains("search(input)"));
@@ -137,7 +154,7 @@ fn relation_methods_resolve_targets_from_prior_waves() {
     let (_facade_delta, ts) = build_code_facade(&req, &exp, &ctxs);
     assert!(ts
         .agent_namespace_body
-        .contains("category(): CategoryNodeHandle;"));
+        .contains("category(this: ProductReadSource<\"single\"> | ProductReadSource<\"runtime_checked_singleton\">): CategoryReadSource<\"single\"> & Plasm.PlanBuilder;"));
 }
 
 #[test]

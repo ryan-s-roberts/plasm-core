@@ -173,6 +173,17 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __projectedPlanNode(node, fields) {
+            if (node && node.relation && node.relation.ir) {
+                const projection = __projectionFields(fields);
+                const relation = Object.assign({}, node.relation, {
+                    expr: __replaceProjection(node.relation.expr, projection),
+                    ir: Object.assign({}, node.relation.ir, { projection }),
+                });
+                return Object.assign({}, node, {
+                    relation,
+                    projection,
+                });
+            }
             if (!node || typeof node.expr !== "string") {
                 throw new Error("Code Mode DSL error: select(...) requires a Plasm read source with an expression");
             }
@@ -1154,20 +1165,29 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __relationTraversal(source, relation) {
-            return __planBuilder({
+            let projection = [];
+            const targetRelations = __relationsFor(relation.entry_id, relation.target);
+            const builder = {
                 __toPlanHandle(id) {
                     return this.as(id);
+                },
+                select(...fields) {
+                    projection = __projectionFields(fields);
+                    return this;
                 },
                 as(id) {
                     const sourcePlan = __sourcePlan(source, id);
                     const sourceId = sourcePlan.sourceId;
                     const nodes = sourcePlan.nodes.slice();
                     const sourceNode = nodes[nodes.length - 1];
-                    if (!sourceNode || !sourceNode.ir) {
+                    const sourceIr = sourceNode && (sourceNode.ir || (sourceNode.relation && sourceNode.relation.ir));
+                    const sourceExpr = sourceNode && (sourceNode.expr || (sourceNode.relation && sourceNode.relation.expr));
+                    if (!sourceNode || !sourceIr) {
                         throw new Error("Relation traversal requires a source node with Plasm IR");
                     }
-                    const expr = sourceNode.expr + "." + relation.name;
-                    const ir = __planIr({ op: "chain", source: sourceNode.ir.expr, selector: relation.name, step: { type: "auto_get" } }, [], expr);
+                    const expr = __replaceProjection(sourceExpr + "." + relation.name, projection);
+                    const irExpr = { op: "chain", source: sourceIr.expr, selector: relation.name, step: { type: "auto_get" }, projection: projection.length ? projection : undefined };
+                    const ir = __planIr(irExpr, projection, expr);
                     const sourceCardinality = source.__cardinality === "singleton"
                         ? "runtime_checked_singleton"
                         : (sourceNode.result_shape === "single" ? "single" : "many");
@@ -1188,18 +1208,19 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             ir,
                         },
                         qualified_entity: target,
-                        projection: [],
+                        projection,
                         predicates: [],
                         depends_on: [sourceId],
                         uses_result: [{ node: sourceId, as: "source" }],
                     };
-                    node.__relations = __relationsFor(relation.entry_id, relation.target);
+                    node.__relations = targetRelations;
                     nodes.push(node);
                     const handle = __nodeHandle(id, node);
                     handle.__planNodes = nodes;
                     return handle;
                 }
-            }, true);
+            };
+            return __attachPlanSourceMethods(__planBuilder(builder, true), targetRelations);
         }
 
         export function makeEntity(entry_id, entity, relations, searchParam, capabilities, keyVars) {
@@ -1610,6 +1631,107 @@ mod tests {
             assert_eq!(v["nodes"][1]["kind"], "relation");
             assert_eq!(v["nodes"][1]["relation"]["relation"], "category");
             assert_eq!(v["nodes"][1]["relation"]["expr"], "Product(\"p1\").category");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn relation_read_source_supports_select_and_limit() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _v: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx
+                .eval("const rels = [{ name: 'category', target: 'Category', cardinality: 'one', entry_id: 'acme' }]; const Product = makeEntity('acme', 'Product', rels); const limited = __plasmBind(Plan.limit(Product.get('p1').category().select('name'), 10), 'limited'); Plan.return(limited)")
+                .expect("plan");
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][1]["kind"], "relation");
+            assert_eq!(v["nodes"][1]["relation"]["expr"], "Product(\"p1\").category[name]");
+            assert_eq!(v["nodes"][1]["relation"]["ir"]["projection"][0], "name");
+            assert_eq!(v["nodes"][2]["compute"]["op"]["kind"], "limit");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn relation_read_source_exposes_target_relations() -> QjResult<()> {
+        let delta = FacadeDeltaV1 {
+            version: 1,
+            catalog_entry_ids: vec!["acme".to_string()],
+            catalog_aliases: vec![],
+            qualified_entities: vec![
+                crate::delta::QualifiedEntitySurface {
+                    entry_id: "acme".to_string(),
+                    catalog_alias: "acme".to_string(),
+                    entity: "Product".to_string(),
+                    description: None,
+                    e_index: Some(1),
+                    key_vars: vec![],
+                    fields: vec![],
+                    relations: vec![crate::delta::FacadeRelation {
+                        name: "category".to_string(),
+                        description: None,
+                        target: "Category".to_string(),
+                        cardinality: "one".to_string(),
+                        materialize: None,
+                    }],
+                    capabilities: vec![],
+                },
+                crate::delta::QualifiedEntitySurface {
+                    entry_id: "acme".to_string(),
+                    catalog_alias: "acme".to_string(),
+                    entity: "Category".to_string(),
+                    description: None,
+                    e_index: Some(2),
+                    key_vars: vec![],
+                    fields: vec![],
+                    relations: vec![crate::delta::FacadeRelation {
+                        name: "department".to_string(),
+                        description: None,
+                        target: "Department".to_string(),
+                        cardinality: "one".to_string(),
+                        materialize: None,
+                    }],
+                    capabilities: vec![],
+                },
+                crate::delta::QualifiedEntitySurface {
+                    entry_id: "acme".to_string(),
+                    catalog_alias: "acme".to_string(),
+                    entity: "Department".to_string(),
+                    description: None,
+                    e_index: Some(3),
+                    key_vars: vec![],
+                    fields: vec![],
+                    relations: vec![],
+                    capabilities: vec![],
+                },
+            ],
+            collision_notes: vec![],
+        };
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_from_facade_delta(&delta);
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "try { const d = __plasmBind(plasm.acme.Product.get('p1').category().department().select('name'), 'd'); Plan.return(d) } catch (e) { JSON.stringify({ error: String((e && e.message) || e) }) }",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert!(v.get("error").is_none(), "error: {v}");
+            assert_eq!(v["nodes"][2]["kind"], "relation");
+            assert_eq!(
+                v["nodes"][2]["relation"]["expr"],
+                "Product(\"p1\").category.department[name]"
+            );
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
