@@ -67,6 +67,9 @@ fn snapshot_code_facade_prelude_emitted() {
         .agent_namespace_body
         .contains("search(input: ProductSearchInput)"));
     assert!(ts.agent_namespace_body.contains("interface ProductRow"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("category_id?: Plasm.EntityRef<\"acme\", \"Category\">;"));
     assert!(ts.agent_loaded_apis.contains("Product: Acme.ProductEntity"));
     assert!(ts
         .agent_loaded_apis

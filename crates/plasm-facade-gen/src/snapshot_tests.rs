@@ -1,8 +1,8 @@
 //! `insta` coverage for `build_code_facade` (TypeScript + JSON `facade_delta`).
 use indexmap::IndexMap;
+use plasm_core::load_schema;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
-use plasm_core::load_schema;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -59,53 +59,43 @@ fn snapshot_code_facade_prelude_emitted() {
     assert!(!ts.agent_prelude.contains("stage("));
     assert!(!ts.agent_prelude.contains("derive("));
     assert!(ts.agent_namespace_body.contains("/**"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("Minimal fixture product for TS facade snapshot tests")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("Minimal fixture product for TS facade snapshot tests"));
     assert!(ts.agent_namespace_body.contains("Fetch a product by id"));
     assert!(ts.agent_namespace_body.contains("interface ProductRow"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("type ProductQueryInput = Partial<ProductRow> & {")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("type ProductQueryInput = Partial<ProductRow> & {"));
     assert!(ts.agent_namespace_body.contains("    owner: string;"));
     assert!(ts.agent_namespace_body.contains("    repo: string;"));
     assert!(ts.agent_namespace_body.contains("    active?: boolean;"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("query(filters: ProductQueryInput): ProductQueryBuilder;")
-    );
-    assert!(
-        ts.agent_namespace_body
-            .contains("interface ProductNodeHandle extends Plasm.PlanNodeHandle")
-    );
-    assert!(
-        ts.agent_namespace_body
-            .contains("select(...fields: Array<keyof ProductRow & string>): this;")
-    );
-    assert!(
-        ts.agent_namespace_body
-            .contains("type ProductSearchInput = string | {")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("query(filters: ProductQueryInput): ProductQueryBuilder;"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("interface ProductNodeHandle extends Plasm.PlanNodeHandle"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("select(...fields: Array<keyof ProductRow & string>): this;"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("type ProductSearchInput = string | {"));
     assert!(ts.agent_namespace_body.contains("    q: string;"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("type ProductCreateInput = {")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("type ProductCreateInput = {"));
     assert!(ts.agent_namespace_body.contains("    name: string;"));
-    assert!(
-        ts.agent_namespace_body
-            .contains("    category_id?: string;")
-    );
-    assert!(
-        ts.agent_namespace_body
-            .contains("create(input: ProductCreateInput): Plasm.PlanEffect;")
-    );
-    assert!(
-        ts.agent_namespace_body
-            .contains("type ProductProductLabelInput = {")
-    );
+    assert!(ts
+        .agent_namespace_body
+        .contains("    category_id?: Plasm.EntityRef<\"acme\", \"Category\">;"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("create(input: ProductCreateInput): Plasm.PlanEffect;"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("type ProductProductLabelInput = {"));
     assert!(ts.agent_namespace_body.contains("    label: string;"));
     assert!(ts.agent_namespace_body.contains("    notify?: boolean;"));
     assert!(ts.agent_namespace_body.contains(
@@ -118,10 +108,9 @@ fn snapshot_code_facade_prelude_emitted() {
         ts.agent_namespace_body
     );
     assert!(ts.agent_loaded_apis.contains("Product: Acme.ProductEntity"));
-    assert!(
-        ts.agent_loaded_apis
-            .contains("declare const plasm: LoadedApis")
-    );
+    assert!(ts
+        .agent_loaded_apis
+        .contains("declare const plasm: LoadedApis"));
     assert!(
         !ts.agent_loaded_apis.contains("default:"),
         "{}",

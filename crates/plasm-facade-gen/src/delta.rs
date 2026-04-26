@@ -101,6 +101,8 @@ pub struct FacadeInputParameter {
     pub r#type: FieldTypeName,
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_ref_target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     /// Enum-like select literals when the CGS lists them.
     #[serde(skip_serializing_if = "Option::is_none")]

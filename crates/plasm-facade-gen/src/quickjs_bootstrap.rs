@@ -75,6 +75,15 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return v && typeof v === "object" && (v.__plasmExpr || v.__planValue || v.__bindingPath || v.__planNodeId || v.__toPlanHandle || __isPlanEffect(v));
         }
 
+        function __isEntityRefWrapper(v) {
+            return v
+                && typeof v === "object"
+                && !Array.isArray(v)
+                && Object.prototype.hasOwnProperty.call(v, "api")
+                && Object.prototype.hasOwnProperty.call(v, "entity")
+                && Object.prototype.hasOwnProperty.call(v, "key");
+        }
+
         function __valueMeta(v) {
             if (v && v.__planValue) return v.__planValue;
             if (v && v.__bindingPath) return { kind: "binding_symbol", binding: v.__bindingName || String(v.__bindingPath).split(".")[0], path: v.__bindingFieldPath || [] };
@@ -95,6 +104,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             if (v && v.__bindingPath) return "${" + v.__bindingPath + "}";
             if (typeof v === "number" || typeof v === "boolean") return String(v);
             if (Array.isArray(v)) return "[" + v.map(__quote).join(",") + "]";
+            if (__isEntityRefWrapper(v)) return __quote(v.key);
             if (v && typeof v === "object") {
                 return "{" + Object.keys(v).map(k => k + "=" + __quote(v[k])).join(", ") + "}";
             }
@@ -768,6 +778,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     for (let i = 0; i < v.length; i++) visit(v[i], path ? path + "." + i : String(i));
                     return;
                 }
+                if (__isEntityRefWrapper(v)) {
+                    visit(v.key, path);
+                    return;
+                }
                 if (v && typeof v === "object" && !__isSpecial(v)) {
                     for (const [k, child] of Object.entries(v)) visit(child, path ? path + "." + k : k);
                 }
@@ -855,6 +869,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return __irHole("node_input", { node: v.__planValue.node, alias: v.__planValue.alias || v.__planValue.node, path: v.__planValue.path || [], cardinality: v.__nodeInput ? v.__nodeInput.cardinality : "auto" });
             }
             if (Array.isArray(v)) return v.map(__irValue);
+            if (__isEntityRefWrapper(v)) return __irValue(v.key);
             if (v && typeof v === "object" && !__isSpecial(v)) {
                 const out = {};
                 for (const [k, child] of Object.entries(v)) out[k] = __irValue(child);
@@ -1628,11 +1643,13 @@ mod tests {
             assert_eq!(v["nodes"][1]["effect_class"], "read");
             assert_eq!(v["nodes"][1]["effect_template"]["kind"], "get");
             assert_eq!(
-                v["nodes"][1]["effect_template"]["ir_template"]["expr"]["ref"]["key"]["__plasm_hole"]["binding"],
+                v["nodes"][1]["effect_template"]["ir_template"]["expr"]["ref"]["key"]
+                    ["__plasm_hole"]["binding"],
                 "item"
             );
             assert_eq!(
-                v["nodes"][1]["effect_template"]["ir_template"]["expr"]["ref"]["key"]["__plasm_hole"]["path"][0],
+                v["nodes"][1]["effect_template"]["ir_template"]["expr"]["ref"]["key"]
+                    ["__plasm_hole"]["path"][0],
                 "id"
             );
             assert!(!v.to_string().contains("[object Object]"), "{v}");
@@ -1677,8 +1694,53 @@ mod tests {
                 .unwrap_or_else(|| panic!("create expr missing: {v}"));
             assert!(expr.contains("${firstTeam.id}"), "{expr}");
             assert!(!expr.contains("[object Object]"), "{expr}");
+            assert_eq!(
+                create_node["ir_template"]["expr"]["input"]["team"]["__plasm_hole"]["node"],
+                "firstTeam"
+            );
+            assert!(
+                create_node["ir_template"]["expr"]["input"]["team"]
+                    .get("key")
+                    .is_none(),
+                "{create_node}"
+            );
             assert_eq!(create_node["depends_on"][0], "firstTeam");
             assert_eq!(create_node["uses_result"][0]["node"], "firstTeam");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ref_wrappers_lower_to_cml_entity_ref_payloads() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Commit = makeEntity('github', 'Commit', [], null, [{ kind: 'query', name: 'commit_query' }]); \
+                 const commits = __plasmBind(Commit.query({ repository: { api: 'github', entity: 'Repository', key: 'ryan-s-roberts/plasm-core' } }), 'commits'); \
+                 Plan.return(commits)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][0]["kind"], "query");
+            assert_eq!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"],
+                "ryan-s-roberts/plasm-core"
+            );
+            assert!(v["nodes"][0]["expr"]
+                .as_str()
+                .is_some_and(|expr| expr.contains("repository=\"ryan-s-roberts/plasm-core\"")), "{v}");
+            assert!(
+                v["nodes"][0]["ir"]["expr"]["predicate"]["value"]
+                    .get("key")
+                    .is_none(),
+                "{v}"
+            );
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

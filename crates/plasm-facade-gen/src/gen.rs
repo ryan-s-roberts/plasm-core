@@ -4,15 +4,15 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
-use plasm_core::CGS;
+use plasm_core::schema::CapabilityKind;
+use plasm_core::value::FieldType;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
 use plasm_core::FieldSchema;
 use plasm_core::InputFieldSchema;
 use plasm_core::InputType;
 use plasm_core::OutputType;
-use plasm_core::schema::CapabilityKind;
-use plasm_core::value::FieldType;
+use plasm_core::CGS;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -233,6 +233,10 @@ fn input_field_to_param(f: &InputFieldSchema) -> FacadeInputParameter {
         name: f.name.clone(),
         r#type: field_type_name_for_value(&f.field_type),
         required: f.required,
+        entity_ref_target: match &f.field_type {
+            FieldType::EntityRef { target } => Some(target.to_string()),
+            _ => None,
+        },
         role: f.role.map(|r| format!("{r:?}")),
         allowed_values: f.allowed_values.clone(),
         array_item_type,
@@ -408,7 +412,10 @@ fn field_type_to_ts(f: &FacadeField, cat_alias: &str) -> String {
         FieldTypeName::Blob => "unknown /* blob / attachment */".to_string(),
         FieldTypeName::MultiSelect => "readonly string[]".to_string(),
         FieldTypeName::Array => "unknown[]".to_string(),
-        FieldTypeName::EntityRef => format!(r#"Plasm.EntityRef<"{cat}", string>"#, cat = cat_alias),
+        FieldTypeName::EntityRef => {
+            let target = f.entity_ref_target.as_deref().unwrap_or("string");
+            format!(r#"Plasm.EntityRef<"{cat}", "{target}">"#, cat = cat_alias)
+        }
         FieldTypeName::Unknown => "unknown".to_string(),
     }
 }
@@ -444,7 +451,7 @@ fn input_param_type_to_ts(param: &FacadeInputParameter, cat_alias: &str) -> Stri
         required: param.required,
         value_format: None,
         select_values: param.allowed_values.clone(),
-        entity_ref_target: None,
+        entity_ref_target: param.entity_ref_target.clone(),
     };
     field_type_to_ts(&field, cat_alias)
 }
@@ -500,7 +507,11 @@ fn has_required_input(params: &[FacadeInputParameter]) -> bool {
 }
 
 fn input_arg_optional(params: &[FacadeInputParameter]) -> &'static str {
-    if has_required_input(params) { "" } else { "?" }
+    if has_required_input(params) {
+        ""
+    } else {
+        "?"
+    }
 }
 
 fn capability_suffix(cap: &FacadeCapability) -> String {
