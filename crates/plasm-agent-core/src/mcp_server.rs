@@ -2379,6 +2379,7 @@ impl ServerHandler for PlasmMcpHandler {
                             "node_results": dry.node_results,
                             "graph_summary": dry.graph_summary,
                             "can_batch_run": dry.can_batch_run,
+                            "staged_nodes": dry.staged_nodes,
                             "execution_unsupported": dry.execution_unsupported
                         }
                     });
@@ -2402,6 +2403,7 @@ impl ServerHandler for PlasmMcpHandler {
                                 "dry_run": {
                                     "graph_summary": root_value["dry_run"]["graph_summary"],
                                     "can_batch_run": root_value["dry_run"]["can_batch_run"],
+                                    "staged_nodes": root_value["dry_run"]["staged_nodes"],
                                     "execution_unsupported": root_value["dry_run"]["execution_unsupported"],
                                 }
                             }
