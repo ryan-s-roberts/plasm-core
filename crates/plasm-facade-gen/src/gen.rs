@@ -490,7 +490,13 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
     readonly entity: E;
     readonly key: K;
   };
-  export type PlanNodeHandle = { readonly __planNodeId: string };
+  export type PlanBrand<Name extends string> = { readonly __plasmPlanBrands?: readonly Name[] };
+  export type PlanSource = PlanBrand<"PlanSource">;
+  export type PlanEffect = PlanStep & PlanBrand<"PlanEffect">;
+  export type PlanBuilder = PlanSource & PlanBrand<"PlanBuilder">;
+  export type BoundPlanHandle = PlanSource & PlanBrand<"BoundPlanHandle">;
+  export type PlanValueExpr = PlanBrand<"PlanValueExpr">;
+  export type PlanNodeHandle = BoundPlanHandle & { readonly __planNodeId: string };
   export type PlanValue<T = unknown> =
     | { readonly kind: "literal"; readonly value: T }
     | { readonly kind: "helper"; readonly name: string; readonly args?: readonly unknown[]; readonly display?: string }
@@ -569,8 +575,8 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
     contains(value: T): PlanPredicate;
     in(value: readonly T[]): PlanPredicate;
   };
-  export type Symbolic<T = unknown> = T & { readonly __bindingPath: string; readonly __plasmExpr: string };
-  export type TemplateValue = { readonly __plasmExpr: string; readonly __planValue: PlanValue; readonly input_bindings: readonly PlanInputBinding[] };
+  export type Symbolic<T = unknown> = T & PlanValueExpr & { readonly __bindingPath: string; readonly __plasmExpr: string };
+  export type TemplateValue = PlanValueExpr & { readonly __plasmExpr: string; readonly __planValue: PlanValue; readonly input_bindings: readonly PlanInputBinding[] };
   export type ProjectionValue = Symbolic<unknown>;
   export type PlanReturnable = PlanNodeHandle | Record<string, PlanNodeHandle>;
 }
@@ -578,22 +584,22 @@ declare class Plan {
   static return(value: Plasm.PlanReturnable): string;
   static data(value: unknown): Plasm.PlanNodeHandle;
   static singleton<T extends Plasm.PlanNodeHandle>(source: T): T;
-  static map<T, R>(source: Plasm.PlanNodeHandle, fn: (item: Plasm.Symbolic<T>) => R): Plasm.PlanNodeHandle;
-  static project<T>(source: Plasm.PlanNodeHandle, spec: Record<string, (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue> | readonly string[]): Plasm.PlanNodeHandle;
-  static filter<T>(source: Plasm.PlanNodeHandle, ...predicates: readonly Plasm.PlanPredicate[]): Plasm.PlanNodeHandle;
+  static map<T, R>(source: Plasm.PlanSource, fn: (item: Plasm.Symbolic<T>) => R): Plasm.PlanNodeHandle;
+  static project<T>(source: Plasm.PlanSource, spec: Record<string, (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue> | readonly string[]): Plasm.PlanNodeHandle;
+  static filter<T>(source: Plasm.PlanSource, ...predicates: readonly Plasm.PlanPredicate[]): Plasm.PlanNodeHandle;
   /** Aggregates over the full logical source collection. Returned result views may be paged. */
-  static aggregate(source: Plasm.PlanNodeHandle, aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle;
+  static aggregate(source: Plasm.PlanSource, aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle;
   /** Groups the full logical source collection. Returned result views may be paged. */
-  static groupBy<T>(source: Plasm.PlanNodeHandle, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue): { count(name?: string): Plasm.PlanNodeHandle; aggregate(aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle };
-  static sort<T>(source: Plasm.PlanNodeHandle, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue, direction?: "asc" | "desc"): Plasm.PlanNodeHandle;
+  static groupBy<T>(source: Plasm.PlanSource, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue): { count(name?: string): Plasm.PlanNodeHandle; aggregate(aggregates: readonly Plasm.AggregateSpec[]): Plasm.PlanNodeHandle };
+  static sort<T>(source: Plasm.PlanSource, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue, direction?: "asc" | "desc"): Plasm.PlanNodeHandle;
   /** Semantic truncation of the DAG collection, not ordinary result pagination. */
-  static limit(source: Plasm.PlanNodeHandle, count: number): Plasm.PlanNodeHandle;
-  static table(source: Plasm.PlanNodeHandle, spec: { readonly columns: readonly string[]; readonly hasHeader?: boolean }): Plasm.PlanNodeHandle;
+  static limit(source: Plasm.PlanSource, count: number): Plasm.PlanNodeHandle;
+  static table(source: Plasm.PlanSource, spec: { readonly columns: readonly string[]; readonly hasHeader?: boolean }): Plasm.PlanNodeHandle;
 }
 declare function field<T = unknown>(name: string): Plasm.FieldPredicateBuilder<T>;
-declare function daysAgo(days: number): { readonly __plasmExpr: string; readonly __planValue: Plasm.PlanValue<string> };
+declare function daysAgo(days: number): Plasm.PlanValueExpr & { readonly __plasmExpr: string; readonly __planValue: Plasm.PlanValue<string> };
 declare function template(strings: TemplateStringsArray, ...values: readonly unknown[]): Plasm.TemplateValue;
-declare function forEach<T>(source: Plasm.PlanNodeHandle, fn: (item: Plasm.Symbolic<T>) => Plasm.PlanStep): Plasm.PlanNodeHandle;
+declare function forEach<T>(source: Plasm.PlanSource, fn: (item: Plasm.Symbolic<T>) => Plasm.PlanEffect): Plasm.PlanNodeHandle;
 "#;
 
 /// Public entry: build `facade_delta` and TypeScript fragments.
@@ -804,7 +810,7 @@ pub fn build_code_facade(
         }
         let _ = writeln!(
             &mut namespace_body,
-            "    create(input?: Record<string, unknown>): Plasm.PlanStep;"
+            "    create(input?: Record<string, unknown>): Plasm.PlanEffect;"
         );
         let action_description = r
             .capabilities
@@ -814,7 +820,7 @@ pub fn build_code_facade(
         namespace_body.push_str(&jsdoc_comment(&action_description, "    "));
         let _ = writeln!(
             &mut namespace_body,
-            "    ref(id: unknown): {{ action(name: string, input?: Record<string, unknown>): Plasm.PlanStep }};"
+            "    ref(id: unknown): {{ action(name: string, input?: Record<string, unknown>): Plasm.PlanEffect }};"
         );
         let _ = writeln!(&mut namespace_body, "  }}\n}}\n");
     }

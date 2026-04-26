@@ -26,8 +26,49 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             return "__anon_" + __plasmAnonSeq;
         }
 
+        const __PLAN_BRANDS = "__plasmPlanBrands";
+        const __BRAND_EFFECT = "PlanEffect";
+        const __BRAND_SOURCE = "PlanSource";
+        const __BRAND_BUILDER = "PlanBuilder";
+        const __BRAND_HANDLE = "BoundPlanHandle";
+        const __BRAND_VALUE = "PlanValueExpr";
+
+        function __brand(target, ...brands) {
+            if (!target || typeof target !== "object") return target;
+            const current = Array.isArray(target[__PLAN_BRANDS]) ? target[__PLAN_BRANDS].slice() : [];
+            for (const brand of brands) {
+                if (!current.includes(brand)) current.push(brand);
+            }
+            Object.defineProperty(target, __PLAN_BRANDS, {
+                value: current,
+                enumerable: false,
+                configurable: true,
+            });
+            return target;
+        }
+
+        function __hasBrand(v, brand) {
+            return !!(v && typeof v === "object" && Array.isArray(v[__PLAN_BRANDS]) && v[__PLAN_BRANDS].includes(brand));
+        }
+
         function __isPlanEffect(v) {
-            return v && typeof v === "object" && v.kind && v.effect_class;
+            return __hasBrand(v, __BRAND_EFFECT);
+        }
+
+        function __isPlanSource(v) {
+            return __hasBrand(v, __BRAND_SOURCE);
+        }
+
+        function __planEffect(node, source) {
+            return source ? __brand(node, __BRAND_EFFECT, __BRAND_SOURCE) : __brand(node, __BRAND_EFFECT);
+        }
+
+        function __planBuilder(builder, source) {
+            return source ? __brand(builder, __BRAND_BUILDER, __BRAND_SOURCE) : __brand(builder, __BRAND_BUILDER);
+        }
+
+        function __planValueExpr(value) {
+            return __brand(value, __BRAND_VALUE);
         }
 
         function __isSpecial(v) {
@@ -168,7 +209,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
 
         function __sourcePlan(source, childId) {
             const nodes = [];
-            if (source && source.__planNodeId) {
+            if (__hasBrand(source, __BRAND_HANDLE) && source.__planNodeId) {
                 __collectNodes(source, nodes);
                 return { sourceId: __normalizeReturn(source), nodes };
             }
@@ -177,19 +218,18 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 nodes.push(Object.assign({}, source, { id: sourceId }));
                 return { sourceId, nodes };
             }
-            if (source && typeof source.yield === "function") {
+            if (__hasBrand(source, __BRAND_BUILDER) && typeof source.yield === "function") {
                 const sourceId = String(childId) + "_source";
                 nodes.push(Object.assign({}, source.yield(), { id: sourceId }));
                 return { sourceId, nodes };
             }
-            if (source && source.__toPlanHandle) {
+            if (__hasBrand(source, __BRAND_BUILDER) && source.__toPlanHandle) {
                 const sourceId = String(childId) + "_source";
                 const handle = source.__toPlanHandle(sourceId);
                 __collectNodes(handle, nodes);
                 return { sourceId: handle && handle.__planNodeId ? handle.__planNodeId : sourceId, nodes };
             }
-            __collectNodes(source, nodes);
-            return { sourceId: __normalizeReturn(source), nodes };
+            throw new Error("Plan source must be a branded PlanSource from a query/search/get/data/compute/map/relation handle");
         }
 
         function __nodeHandle(id, node) {
@@ -200,7 +240,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 h.__relations = node.__relations || [];
                 h.__resultShape = node.result_shape || "list";
             }
-            return __nodeHandleProxy(h);
+            return __nodeHandleProxy(__brand(h, __BRAND_HANDLE, __BRAND_SOURCE));
         }
 
         function __assignHandleId(h, id) {
@@ -213,14 +253,14 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         function __plasmBind(value, id) {
             if (value && value.__toPlanHandle) return value.__toPlanHandle(String(id));
             if (value && value.__planNodeId) return __assignHandleId(value, String(id));
-            if (value && value.kind && value.effect_class) return __nodeHandle(String(id), value);
+            if (__isPlanEffect(value)) return __nodeHandle(String(id), value);
             return value;
         }
 
         function __symbol(path) {
             const parts = String(path).split(".").filter(Boolean);
             const binding = parts.shift() || String(path);
-            return new Proxy({ __bindingPath: path, __bindingName: binding, __bindingFieldPath: parts, __plasmExpr: "${" + path + "}" }, {
+            return new Proxy(__planValueExpr({ __bindingPath: path, __bindingName: binding, __bindingFieldPath: parts, __plasmExpr: "${" + path + "}" }), {
                 get(target, prop) {
                     if (prop in target) return target[prop];
                     if (prop === Symbol.toPrimitive) return function() { return __symbolString(path); };
@@ -239,7 +279,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 get(target, prop) {
                     if (prop in target) return target[prop];
                     if (typeof prop === "symbol") return target[prop];
-                    if (prop === "__planValue" || prop === "__toPlanHandle") return undefined;
+                    if (prop === "__planValue" || prop === "__toPlanHandle" || prop === "toJSON") return undefined;
                     const rel = (target.__relations || []).find(r => String(r.name) === String(prop));
                     if (rel) return function() { return __relationTraversal(target, rel); };
                     const node = String(target.__planNodeId);
@@ -254,19 +294,19 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         function __nodeRef(handle, node, path, cardinality) {
             const parts = String(path).split(".").filter(Boolean);
             const value = { kind: "node_symbol", node, alias: node, path: parts, cardinality: cardinality || "auto" };
-            const ref = {
+            const ref = __planValueExpr({
                 __planValue: value,
                 __planNodes: handle && handle.__planNodes ? handle.__planNodes : undefined,
                 __plasmExpr: "${" + [node].concat(parts).join(".") + "}",
                 __nodeInput: { node, alias: node, cardinality: cardinality || "auto" },
-            };
+            });
             return new Proxy(ref, {
                 get(target, prop) {
                     if (prop in target) return target[prop];
                     if (prop === Symbol.toPrimitive) return function() { return target.__plasmExpr; };
                     if (prop === "toString") return function() { return target.__plasmExpr; };
                     if (typeof prop === "symbol") return target[prop];
-                    if (prop === "__bindingPath" || prop === "__bindingName" || prop === "__bindingFieldPath" || prop === "__planNodeId" || prop === "__toPlanHandle") return undefined;
+                    if (prop === "__bindingPath" || prop === "__bindingName" || prop === "__bindingFieldPath" || prop === "__planNodeId" || prop === "__toPlanHandle" || prop === "toJSON") return undefined;
                     return __nodeRef(handle, node, parts.concat(String(prop)).join("."), cardinality || "auto");
                 }
             });
@@ -325,14 +365,14 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             static read(idOrEffect, maybeEffect) {
                 if (typeof idOrEffect === "string") return __nodeHandle(idOrEffect, maybeEffect);
                 const effect = idOrEffect;
-                return {
+                return __planBuilder({
                     __toPlanHandle(id) {
                         return __nodeHandle(id, effect);
                     }
-                };
+                }, true);
             }
             static data(value) {
-                return {
+                return __planBuilder({
                     __toPlanHandle(id) {
                         return __nodeHandle(id, {
                             kind: "data",
@@ -343,7 +383,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             uses_result: [],
                         });
                     }
-                };
+                }, true);
             }
             static map(source, fn) {
                 return Plan._map.apply(null, arguments);
@@ -361,7 +401,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 const value = fn(item);
                 const valueMeta = __valueMeta(value);
                 const inputs = __nodeInputsFromValueMeta(valueMeta);
-                return {
+                return __planBuilder({
                     __toPlanHandle(id) {
                         const sourcePlan = __sourcePlan(source, id);
                         const sourceId = sourcePlan.sourceId;
@@ -388,7 +428,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         handle.__planNodes = nodes;
                         return handle;
                     }
-                };
+                }, true);
             }
             static project(source, spec) {
                 const binding = "item";
@@ -450,7 +490,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return Plan._compute(source, { kind: "table_from_matrix", columns, has_header: !!(spec && spec.hasHeader) }, __schemaFromFields("PlanTable", columns, []));
             }
             static _compute(source, op, schema) {
-                return {
+                return __planBuilder({
                     __toPlanHandle(id) {
                         const sourcePlan = __sourcePlan(source, id);
                         const sourceId = sourcePlan.sourceId;
@@ -473,7 +513,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         handle.__planNodes = nodes;
                         return handle;
                     }
-                };
+                }, true);
             }
             stage(id, effect) {
                 const node = Object.assign({}, effect, { id });
@@ -534,10 +574,10 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         export function daysAgo(days) {
-            return {
+            return __planValueExpr({
                 __plasmExpr: JSON.stringify(String(days) + "d"),
                 __planValue: { kind: "helper", name: "daysAgo", args: [days], display: String(days) + "d" },
-            };
+            });
         }
 
         export function repo(owner, repo) {
@@ -567,11 +607,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     }
                 }
             }
-            return {
+            return __planValueExpr({
                 __plasmExpr: "template(" + JSON.stringify(raw) + ")",
                 __planValue: { kind: "template", template: raw, input_bindings },
                 input_bindings,
-            };
+            });
         }
 
         function __bindingsFromInput(input) {
@@ -650,7 +690,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         uses_result: [],
                     };
                     node.__relations = relations || [];
-                    return __attachRelationMethods(node, relations || []);
+                    return __attachRelationMethods(__planEffect(node, true), relations || []);
                 },
                 as(id) {
                     return __nodeHandle(id, Object.assign(this.yield(), { id }));
@@ -659,7 +699,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     return __nodeHandle(id, this.yield());
                 },
             };
-            return __attachRelationMethods(builder, relations || []);
+            return __attachRelationMethods(__planBuilder(builder, true), relations || []);
         }
 
         function __attachRelationMethods(target, relations) {
@@ -675,7 +715,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
         }
 
         function __relationTraversal(source, relation) {
-            return {
+            return __planBuilder({
                 __toPlanHandle(id) {
                     return this.as(id);
                 },
@@ -718,7 +758,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     handle.__planNodes = nodes;
                     return handle;
                 }
-            };
+            }, true);
         }
 
         export function makeEntity(entry_id, entity, relations, searchParam) {
@@ -742,11 +782,11 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         uses_result: [],
                     };
                     node.__relations = relations || [];
-                    return node;
+                    return __attachRelationMethods(__planEffect(node, true), relations || []);
                 },
                 create(input) {
                     const expr = entity + ".create" + __callArgs(input || {});
-                    return {
+                    return __planEffect({
                         kind: "create",
                         qualified_entity: { entry_id, entity },
                         expr,
@@ -757,7 +797,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                         input_bindings: __bindingsFromInput(input || {}),
                         depends_on: [],
                         uses_result: [],
-                    };
+                    }, false);
                 },
                 ref(id) {
                     return {
@@ -766,7 +806,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                             const expr_template = entity + "(" + __quote(id) + ")." + method + __callArgs(input || {});
                             const input_bindings = __bindingsFromInput(input || {});
                             if (id && id.__bindingPath) input_bindings.push({ from: id.__bindingPath, to: "id" });
-                            return {
+                            return __planEffect({
                                 kind: "action",
                                 qualified_entity: { entry_id, entity },
                                 expr_template,
@@ -774,7 +814,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                                 result_shape: "side_effect_ack",
                                 projection: [],
                                 input_bindings,
-                            };
+                            }, false);
                         },
                     };
                 },
@@ -789,7 +829,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             }
             const item = __symbol(binding);
             const effect = fn(item);
-            return {
+            return __planBuilder({
                 __toPlanHandle(id) {
                     return this.as(id);
                 },
@@ -821,7 +861,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     handle.__planNodes = nodes;
                     return handle;
                 }
-            };
+            }, false);
         }
 
         export function derive(id, uses) {
@@ -1062,6 +1102,45 @@ mod tests {
             assert_eq!(v["nodes"][1]["compute"]["source"], "p_source");
             assert_eq!(v["nodes"][1]["compute"]["op"]["kind"], "limit");
             assert_eq!(v["nodes"][1]["depends_on"][0], "p_source");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_sources_are_branded_and_unbranded_sources_rejected() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let report: String = ctx.eval(
+                "let out; \
+                 try { \
+                   const Pokemon = makeEntity('acme', 'Pokemon'); \
+                   const q = Pokemon.query({}); \
+                   const h = __plasmBind(q, 'q'); \
+                   let msg = ''; \
+                   try { __plasmBind(Plan.limit({ __planNodeId: 'raw' }, 1), 'bad'); } catch (e) { msg = String(e && e.message || e); } \
+                   out = { \
+                     querySource: Array.isArray(q.__plasmPlanBrands) && q.__plasmPlanBrands.includes('PlanSource'), \
+                     handleBrand: Array.isArray(h.__plasmPlanBrands) && h.__plasmPlanBrands.includes('BoundPlanHandle'), \
+                     hiddenInJson: !JSON.stringify(h).includes('__plasmPlanBrands'), \
+                     rejected: msg.includes('branded PlanSource'), \
+                     msg \
+                   }; \
+                 } catch (e) { out = { fatal: String(e && e.message || e) }; } \
+                 JSON.stringify(out)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&report).expect("json");
+            assert!(v.get("fatal").is_none(), "{v}");
+            assert_eq!(v["querySource"], true);
+            assert_eq!(v["handleBrand"], true);
+            assert_eq!(v["hiddenInJson"], true);
+            assert_eq!(v["rejected"], true);
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
