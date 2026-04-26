@@ -111,7 +111,7 @@ pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** Plasm lines (`expre
 /// MCP `initialize` `instructions` field: tool flow (LLM-facing; transport auth is host-owned).
 pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_session_init` first** on each MCP connection (before `discover_capabilities`, `add_capabilities`, or `plasm`): pass **`client_session_key`** -- **the host’s stable agent-context id** (same value for the same window, subagent, or other isolation boundary the host defines); use **one key per context you want to share one Plasm logical session**, not a new random id every message. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). **Idempotent:** same transport + same `client_session_key` + tenant => **reuse** the same logical session and ref. \
      **Session reuse (required default):** After the first successful **`add_capabilities`** open for that ref, **most subsequent user requests should be `plasm` only** with the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`** or repeat **`add_capabilities`** with the same catalog just to \"re-initialize\" -- that wastes tokens and breaks continuity. Call **`add_capabilities`** again **only** when you must **append** new **`api` / `entity`** seeds (another API, more entities) you have **not** already added. \
-     Optional **`discover_capabilities`** with `query` (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
+     Optional **`discover_capabilities`** with `query` — **one string** (plain-language or keywords) **or** a string array (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to extend the session; responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
      **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
     **Code Mode:** prefer **`plasm`** for one simple expression, one-shot reads/writes, and simple follow-ups. Use Code Mode only when the user intent is best satisfied by synthesizing a **program** with multiple operations needing coordination, transformation, compute, fan-out/fan-in, or reusable logic; it is **not a query interface**. Flow: **`add_code_capabilities`** -> write a complete TypeScript program -> **`evaluate_code_plan(name, code)`** -> inspect the dry-run execution plan -> **`execute_code_plan(plan_handle)`** once the plan satisfies the user's intent and risk. If the dry-run reveals a defect, missing capability, excessive output, or unacceptable risk, revise and re-evaluate instead of executing. Reuse the **`plan_handle`**; resend TypeScript only when changing the program or symbol space. Start uncertain plans small with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** publish only final answer nodes, never intermediates.";
@@ -676,8 +676,8 @@ impl PlasmMcpHandler {
         let mut discover_props = BTreeMap::new();
         discover_props.insert(
             "query".into(),
-            json_schema_string_array(
-                "Search strings (tokenized); scored against capabilities and entity domains. TSV lists matching entities with descriptions.",
+            json_schema_string_or_string_array(
+                "What to find: one string (plain-language or keyword intent) is tokenized; or a non-empty array of strings. Scored against capabilities and entity text; the reply is a TSV of `api` / `entity` / `description` rows.",
             ),
         );
         let mut add_props = BTreeMap::new();
@@ -746,7 +746,7 @@ impl PlasmMcpHandler {
                 name: "discover_capabilities".into(),
                 title: None,
                 description: Some(
-                    "**Requires `plasm_session_init` first** (same connection). **Keyword-search the catalog** with `query` (matches capability text and entity domains; **rows are entities**). **Skip** if you already know catalog **`api`** ids and entity names. \
+                    "**Requires `plasm_session_init` first** (same connection). **Search the catalog** with `query` — a **single string** (natural language or keywords) or an **array of strings**; each is tokenized and scored against capabilities and entity domains; **rows are entities**. **Skip** if you already know catalog **`api`** ids and entity names. \
                      Reply: **TSV in a fenced block** — `api`, `entity`, `description` (entity blurb). Use **`api`** + **`entity`** for each `add_capabilities` seed (`entry_id` is accepted as a legacy alias in JSON).".into(),
                 ),
                 input_schema: ToolInputSchema::new(vec![], Some(discover_props), None),
@@ -938,6 +938,29 @@ fn json_schema_string_array(description: &str) -> serde_json::Map<String, serde_
     m
 }
 
+fn json_schema_string_or_string_array(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let v = serde_json::json!({
+        "description": description,
+        "oneOf": [
+            {
+                "type": "string",
+                "minLength": 1,
+                "description": "One intent or keyword phrase; tokenized for search."
+            },
+            {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string" },
+                "description": "Multiple search strings (each tokenized; OR-style coverage via shared token set)."
+            }
+        ]
+    });
+    match v {
+        serde_json::Value::Object(m) => m,
+        _ => unreachable!(),
+    }
+}
+
 fn json_schema_non_empty_string_array(
     description: &str,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -988,17 +1011,47 @@ fn args_value(params: &CallToolRequestParams) -> serde_json::Value {
     serde_json::Value::Object(params.arguments.clone().unwrap_or_default())
 }
 
-/// MCP `discover_capabilities` accepts `query` only: strings are fed into [`CapabilityQuery::tokens`]
-/// (same indexing as the former separate `tokens` / `phrases` fields).
+/// MCP `discover_capabilities` accepts `query` as one string (intent / keywords) or a string array.
+/// Each entry is fed into [`CapabilityQuery::tokens`] and tokenized the same as HTTP discovery.
 fn mcp_discover_query_from_arguments(v: &serde_json::Value) -> Result<CapabilityQuery, String> {
-    #[derive(serde::Deserialize)]
-    struct McpDiscoverArgs {
-        #[serde(default)]
-        query: Vec<String>,
-    }
-    let a: McpDiscoverArgs = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+    let Some(obj) = v.as_object() else {
+        return Err("discover_capabilities arguments must be a JSON object".to_string());
+    };
+    let q = obj.get("query");
+    let tokens: Vec<String> = match q {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                Vec::new()
+            } else {
+                vec![s.clone()]
+            }
+        }
+        Some(serde_json::Value::Array(arr)) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                match item {
+                    serde_json::Value::String(s) if !s.is_empty() => out.push(s.clone()),
+                    serde_json::Value::String(_) => {}
+                    _ => {
+                        return Err(
+                            "discover_capabilities `query` array must contain only strings"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            out
+        }
+        Some(_) => {
+            return Err(
+                "discover_capabilities `query` must be a string or an array of strings"
+                    .to_string(),
+            );
+        }
+    };
     Ok(CapabilityQuery {
-        tokens: a.query,
+        tokens,
         phrases: vec![],
         ..CapabilityQuery::default()
     })
@@ -3191,6 +3244,18 @@ mod tests {
     }
 
     #[test]
+    fn mcp_discover_query_accepts_single_intent_string() {
+        let v = serde_json::json!({
+            "query": "github repository commits git linear issue",
+        });
+        let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
+        assert_eq!(
+            q.tokens,
+            vec!["github repository commits git linear issue"]
+        );
+    }
+
+    #[test]
     fn plasm_invocation_char_count_includes_tsv_static_frontmatter() {
         let e = vec!["a".to_string()];
         assert_eq!(super::plasm_invocation_char_count(&e, None, None), 1);
@@ -3252,6 +3317,30 @@ mod tests {
             assert!(!names.iter().any(|n| n == "execute"));
         }
         assert!(names.iter().any(|n| n == "plasm"));
+    }
+
+    /// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema
+    /// from `tools/list`. `query` must allow a single string so intent-style searches are not
+    /// rejected as "expected a sequence" before the request reaches the server.
+    #[test]
+    fn discover_capabilities_input_schema_advertises_string_or_array_query() {
+        use serde_json::json;
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let discover = tools
+            .iter()
+            .find(|t| t.name == "discover_capabilities")
+            .expect("discover_capabilities tool");
+        let v = serde_json::to_value(&discover.input_schema).expect("input_schema json");
+        let q = v
+            .get("properties")
+            .and_then(|p| p.get("query"))
+            .expect("query property in input_schema");
+        let one_of = q.get("oneOf").and_then(|x| x.as_array()).expect("query.oneOf array");
+        assert!(
+            one_of.len() >= 2,
+            "query schema should oneOf string and array, got: {}",
+            json!(q)
+        );
     }
 
     /// Code-mode plan tools document the archive handle flow.
