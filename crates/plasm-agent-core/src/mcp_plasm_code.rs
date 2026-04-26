@@ -289,6 +289,12 @@ pub fn evaluate_validated_code_mode_plan_dry(
                     "expr": pe.expr,
                     "projection": pe.projection
                 },
+                "execution_contract": {
+                    "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
+                    "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
+                    "expr": expr,
+                    "projection": pe.projection
+                },
                 "type_check": "ok",
                 "simulation": {
                     "intent": intent,
@@ -344,6 +350,7 @@ pub fn render_code_mode_plan_dry_text(
     let reads = json_string_array(summary.get("read_nodes")).len();
     let writes = json_string_array(summary.get("write_or_side_effect_nodes")).len();
     let warnings = json_string_array(summary.get("warnings"));
+    let boundedness_facts = json_string_array(summary.get("boundedness_facts"));
     let staged = dry.execution_unsupported.len();
 
     let _ = writeln!(out, "code-plan dry-run");
@@ -393,6 +400,13 @@ pub fn render_code_mode_plan_dry_text(
         let _ = writeln!(out, "warnings:");
         for warning in warnings {
             let _ = writeln!(out, "- {warning}");
+        }
+        let _ = writeln!(out);
+    }
+    if !boundedness_facts.is_empty() {
+        let _ = writeln!(out, "boundedness:");
+        for fact in boundedness_facts {
+            let _ = writeln!(out, "- {fact}");
         }
         let _ = writeln!(out);
     }
@@ -866,6 +880,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
     let mut approval_gates = Vec::new();
     let mut parallelizable_roots = Vec::new();
     let mut warnings = Vec::new();
+    let mut boundedness_facts = Vec::new();
 
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
@@ -888,23 +903,48 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
             && n.effect_class() == EffectClass::Read
             && node_dependencies(n).is_empty()
         {
-            warnings.push(format!(
-                "{} is an unbounded read root; first evaluate small plans with Plan.limit(...) when cost or latency is uncertain",
-                n.id().as_str()
-            ));
+            match n {
+                ValidatedPlanNode::Surface(surface)
+                    if surface.kind == PlanNodeKind::Search || !surface.predicates.is_empty() =>
+                {
+                    boundedness_facts.push(format!(
+                        "{} has API-side narrowing via {}",
+                        n.id().as_str(),
+                        if surface.kind == PlanNodeKind::Search {
+                            "search text"
+                        } else {
+                            "filters"
+                        }
+                    ));
+                }
+                _ => warnings.push(format!(
+                    "{} is an unbounded read root; add API filters/search text or Plan.limit(...) when cost or latency is uncertain",
+                    n.id().as_str()
+                )),
+            }
         }
         if matches!(n, ValidatedPlanNode::Compute(_)) {
             let op = render_node_operation(n);
-            warnings.push(format!(
-                "{} computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed",
-                n.id().as_str()
-            ));
             if op.contains("limit ") {
-                warnings.push(format!(
+                boundedness_facts.push(format!(
                     "{} uses Plan.limit for explicit semantic truncation",
                     n.id().as_str()
                 ));
+            } else {
+                warnings.push(format!(
+                    "{} computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed",
+                    n.id().as_str()
+                ));
             }
+        }
+        if let ValidatedPlanNode::RelationTraversal(relation) = n {
+            boundedness_facts.push(format!(
+                "{} traverses {} relation {} from a {:?} source",
+                n.id().as_str(),
+                render_relation_cardinality(relation.relation.cardinality),
+                relation.relation.relation.as_str(),
+                relation.relation.source_cardinality
+            ));
         }
         if matches!(n, ValidatedPlanNode::ForEach(_)) {
             warnings.push(format!(
@@ -923,7 +963,17 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
         "approval_gates": approval_gates,
         "parallelizable_roots": parallelizable_roots,
         "warnings": warnings,
+        "boundedness_facts": boundedness_facts,
     })
+}
+
+fn render_relation_cardinality(
+    cardinality: crate::code_mode_plan::RelationCardinality,
+) -> &'static str {
+    match cardinality {
+        crate::code_mode_plan::RelationCardinality::One => "one",
+        crate::code_mode_plan::RelationCardinality::Many => "many",
+    }
 }
 
 fn inferred_node_approval(node: &ValidatedPlanNode) -> Option<serde_json::Value> {
@@ -1261,6 +1311,13 @@ fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
                 "source_cardinality": relation.relation.source_cardinality,
                 "expr": relation.relation.expr,
             },
+            "execution_contract": {
+                "entry_id": relation.relation.target.entry_id.as_str(),
+                "entity": relation.relation.target.entity.as_str(),
+                "expr": relation.relation.expr.as_str(),
+                "source": relation.relation.source.as_str(),
+                "relation": relation.relation.relation.as_str(),
+            },
             "simulation": {
                 "kind": "relation_traversal",
                 "execution": "lowers through the typed Plasm chain relation path after the source node is materialized"
@@ -1343,6 +1400,8 @@ pub async fn run_validated_code_mode_plan(
 
 #[derive(Debug, Clone)]
 struct MaterializedNode {
+    entry_id: String,
+    entity: String,
     result: ExecutionResult,
     /// Complete logical rows for downstream DAG semantics. `result.entities` may be a paged view for
     /// display/publication, but compute/project/group/map must consume the full materialized collection.
@@ -1358,6 +1417,26 @@ struct MaterializedInputRow {
     row: serde_json::Value,
 }
 
+fn dry_execution_contracts(
+    dry: &DryCodeModePlanEvaluation,
+) -> Result<BTreeMap<PlanNodeId, String>, String> {
+    let mut out = BTreeMap::new();
+    for node in &dry.node_results {
+        let Some(id) = node.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(expr) = node
+            .get("execution_contract")
+            .and_then(|v| v.get("expr"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        out.insert(PlanNodeId::new(id.to_string())?, expr.to_string());
+    }
+    Ok(out)
+}
+
 async fn run_validated_plan_phased(
     es: &ExecuteSession,
     st: &PlasmHostState,
@@ -1369,6 +1448,7 @@ async fn run_validated_plan_phased(
 ) -> Result<CodeModePlanRunResult, String> {
     let _ = prompt_hash;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
+    let execution_contracts = dry_execution_contracts(&dry)?;
     let approval_policy = CodeModeApprovalPolicy::automatic();
     let mut approval_receipts: Vec<CodeModeApprovalReceipt> = Vec::new();
     let mut trace = None;
@@ -1392,27 +1472,33 @@ async fn run_validated_plan_phased(
         }
         let mat = match node {
             ValidatedPlanNode::Surface(surface) => {
+                let expr = execution_contracts
+                    .get(&surface.id)
+                    .map(String::as_str)
+                    .unwrap_or(surface.expr.as_str());
                 let (parsed, result, artifact) = execute_code_mode_plasm_line(
                     st,
                     es,
                     session_id,
-                    &surface.expr,
+                    expr,
                     trace.as_ref(),
                     idx as i64,
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_code_mode_plasm_line(
-                        sink,
-                        idx,
-                        &surface.expr,
-                        &parsed,
-                        &result,
-                        es,
-                    )
-                    .await;
+                    trace_record_code_mode_plasm_line(sink, idx, expr, &parsed, &result, es).await;
                 }
                 MaterializedNode {
+                    entry_id: surface
+                        .qualified_entity
+                        .as_ref()
+                        .map(|q| q.entry_id.clone())
+                        .unwrap_or_else(|| es.entry_id.clone()),
+                    entity: surface
+                        .qualified_entity
+                        .as_ref()
+                        .map(|q| q.entity.clone())
+                        .unwrap_or_else(|| node.id().as_str().to_string()),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
                     all_entities: result.entities.clone(),
@@ -1426,12 +1512,18 @@ async fn run_validated_plan_phased(
                     es,
                     session_id,
                     node,
+                    es.entry_id.as_str(),
+                    None,
                     plan_value_to_rows(&data.data)?,
                     trace.as_ref(),
                 )
                 .await?
             }
             ValidatedPlanNode::Derive(derive) => {
+                let owner_entry_id = materialized
+                    .get(&derive.source)
+                    .map(|m| m.entry_id.clone())
+                    .unwrap_or_else(|| es.entry_id.clone());
                 let source_rows = materialized_rows(&materialized, &derive.source)?;
                 let input_rows = materialized_singleton_inputs(&materialized, &derive.inputs)?;
                 let mut rows = Vec::with_capacity(source_rows.len());
@@ -1444,35 +1536,57 @@ async fn run_validated_plan_phased(
                     let env = PlanEvalEnv { scope, inputs };
                     rows.push(eval_plan_value(&derive.value, &env)?);
                 }
-                materialize_synthetic_node(st, es, session_id, node, rows, trace.as_ref()).await?
+                materialize_synthetic_node(
+                    st,
+                    es,
+                    session_id,
+                    node,
+                    owner_entry_id.as_str(),
+                    None,
+                    rows,
+                    trace.as_ref(),
+                )
+                .await?
             }
             ValidatedPlanNode::Compute(compute) => {
+                let owner_entry_id = PlanNodeId::new(compute.compute.source.clone())
+                    .ok()
+                    .and_then(|source| materialized.get(&source).map(|m| m.entry_id.clone()))
+                    .unwrap_or_else(|| es.entry_id.clone());
                 let rows = eval_compute(&compute.compute, &materialized)?;
-                materialize_synthetic_node(st, es, session_id, node, rows, trace.as_ref()).await?
+                materialize_synthetic_node(
+                    st,
+                    es,
+                    session_id,
+                    node,
+                    owner_entry_id.as_str(),
+                    compute.compute.schema.entity.as_deref(),
+                    rows,
+                    trace.as_ref(),
+                )
+                .await?
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
                 let _ = materialized_rows(&materialized, &relation.relation.source)?;
+                let expr = execution_contracts
+                    .get(&relation.id)
+                    .map(String::as_str)
+                    .unwrap_or(relation.relation.expr.as_str());
                 let (parsed, result, artifact) = execute_code_mode_plasm_line(
                     st,
                     es,
                     session_id,
-                    &relation.relation.expr,
+                    expr,
                     trace.as_ref(),
                     idx as i64,
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_code_mode_plasm_line(
-                        sink,
-                        idx,
-                        &relation.relation.expr,
-                        &parsed,
-                        &result,
-                        es,
-                    )
-                    .await;
+                    trace_record_code_mode_plasm_line(sink, idx, expr, &parsed, &result, es).await;
                 }
                 MaterializedNode {
+                    entry_id: relation.relation.target.entry_id.clone(),
+                    entity: relation.relation.target.entity.clone(),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
                     all_entities: result.entities.clone(),
@@ -1492,7 +1606,8 @@ async fn run_validated_plan_phased(
 
     let return_refs = validated.return_value().refs();
     let mut steps = Vec::new();
-    for node_ref in return_refs {
+    let return_names = validated_return_names(validated.return_value());
+    for (i, node_ref) in return_refs.into_iter().enumerate() {
         let mat = materialized.get(node_ref).ok_or_else(|| {
             format!(
                 "plan.return materialized node {:?} missing",
@@ -1500,6 +1615,14 @@ async fn run_validated_plan_phased(
             )
         })?;
         steps.push(PublishedResultStep {
+            name: return_names.get(i).cloned().flatten(),
+            node_id: Some(node_ref.as_str().to_string()),
+            entry_id: Some(mat.entry_id.clone()),
+            entity: Some(mat.entity.clone()),
+            cgs: es
+                .contexts_by_entry
+                .get(&mat.entry_id)
+                .map(|ctx| ctx.cgs.clone()),
             display: mat.display.clone(),
             projection: mat.projection.clone(),
             result: mat.result.clone(),
@@ -1545,23 +1668,42 @@ fn graph_summary_with_approval_receipts(
     graph_summary
 }
 
+fn validated_return_names(ret: &ValidatedPlanReturn) -> Vec<Option<String>> {
+    match ret {
+        ValidatedPlanReturn::Node(id) => vec![Some(id.as_str().to_string())],
+        ValidatedPlanReturn::Parallel { parallel } => parallel
+            .iter()
+            .enumerate()
+            .map(|(i, _)| Some(format!("parallel[{i}]")))
+            .collect(),
+        ValidatedPlanReturn::Record(map) => map
+            .keys()
+            .map(|name| Some(name.as_str().to_string()))
+            .collect(),
+    }
+}
+
 async fn materialize_synthetic_node(
     st: &PlasmHostState,
     es: &ExecuteSession,
     session_id: &str,
     node: &ValidatedPlanNode,
+    entry_id: &str,
+    entity_override: Option<&str>,
     rows: Vec<serde_json::Value>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
-    let entity = match node {
-        ValidatedPlanNode::Compute(compute) => compute
-            .compute
-            .schema
-            .entity
-            .clone()
-            .unwrap_or_else(|| format!("PlanComputed_{}", node.id().as_str())),
-        _ => format!("PlanComputed_{}", node.id().as_str()),
-    };
+    let entity = entity_override
+        .map(str::to_string)
+        .unwrap_or_else(|| match node {
+            ValidatedPlanNode::Compute(compute) => compute
+                .compute
+                .schema
+                .entity
+                .clone()
+                .unwrap_or_else(|| format!("PlanComputed_{}", node.id().as_str())),
+            _ => format!("PlanComputed_{}", node.id().as_str()),
+        });
     let full_entities = json_rows_to_entities(&entity, &rows);
     let request_fingerprints = vec![compute_fingerprint(node, &rows)];
     let full_result = ExecutionResult {
@@ -1583,6 +1725,7 @@ async fn materialize_synthetic_node(
         st,
         es,
         session_id,
+        Some(entry_id),
         vec![format!("plan.compute({})", node.id().as_str())],
         &full_result,
         trace,
@@ -1610,6 +1753,8 @@ async fn materialize_synthetic_node(
         (full_result.entities.clone(), false, None)
     };
     Ok(MaterializedNode {
+        entry_id: entry_id.to_string(),
+        entity: entity.clone(),
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
         all_entities: full_result.entities.clone(),
@@ -2274,7 +2419,7 @@ mod tests {
                 "effect_class": "read",
                 "result_shape": "list"
             }],
-            "return": "n0"
+            "return": { "kind": "node", "node": "n0" }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 1);
@@ -2296,7 +2441,7 @@ mod tests {
                 "effect_class": "read",
                 "result_shape": "list"
             }],
-            "return": "search"
+            "return": { "kind": "node", "node": "search" }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert!(dry.can_batch_run);
@@ -2335,7 +2480,7 @@ mod tests {
                     "uses_result": [{ "node": "product", "as": "source" }]
                 }
             ],
-            "return": "bad_relation"
+            "return": { "kind": "node", "node": "bad_relation" }
         });
         let err =
             evaluate_code_mode_plan_dry(&s, &plan).expect_err("relation target mismatch rejected");
@@ -2374,7 +2519,7 @@ mod tests {
                     "uses_result": [{ "node": "product", "as": "source" }]
                 }
             ],
-            "return": "category"
+            "return": { "kind": "node", "node": "category" }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert!(!dry.can_batch_run);
@@ -2437,7 +2582,7 @@ mod tests {
                     "uses_result": [{ "node": "summary", "as": "product" }]
                 }
             ],
-            "return": { "summary": "summary", "cards": "cards" }
+            "return": { "kind": "record", "fields": { "summary": "summary", "cards": "cards" } }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         let dag = code_mode_plan_dag_json(&dry);
@@ -2567,7 +2712,7 @@ returns:
                     }
                 }
             ],
-            "return": "cards"
+            "return": { "kind": "node", "node": "cards" }
         });
         let err = crate::code_mode_plan::validate_plan_value(&plan).expect_err("ambiguous input");
         assert!(err.contains("not statically singleton"), "{err}");
@@ -2608,7 +2753,7 @@ returns:
                     }
                 }
             ],
-            "return": { "products": "find", "labeled": "label" }
+            "return": { "kind": "record", "fields": { "products": "find", "labeled": "label" } }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert!(!dry.can_batch_run);
@@ -2654,7 +2799,7 @@ returns:
                     }
                 }
             ],
-            "return": { "products": "find", "labeled": "label" }
+            "return": { "kind": "record", "fields": { "products": "find", "labeled": "label" } }
         });
         let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
         assert_eq!(
@@ -2676,7 +2821,7 @@ returns:
                 "effect_class": "write",
                 "result_shape": "single"
             }],
-            "return": "c1"
+            "return": { "kind": "node", "node": "c1" }
         });
         let typed = parse_plan_value(&plan).expect("parse plan");
         let validated = validate_plan_artifact(&typed).expect("validate");

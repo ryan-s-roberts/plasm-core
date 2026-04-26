@@ -14,26 +14,26 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::future::join_all;
-use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
-use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
+use plasm_core::error_render::{FeedbackStyle, render_parse_error_with_feedback};
 use plasm_core::{
+    AuthScheme, CGS, CgsContext, PagingHandle, PromptRenderMode, SymbolMap,
     entity_slices_for_render,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     split_tsv_domain_contract_and_table, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog,
     symbol_tuning::FocusSpec,
-    AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
 #[cfg(feature = "code_mode")]
 use plasm_facade_gen::TypeScriptCodeArtifacts;
 use plasm_runtime::{
-    auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, ExecutionSource,
-    ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError, StreamConsumeOpts,
+    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
+    ExecutionResult, ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData,
+    RuntimeError, StreamConsumeOpts, auth_resolution_mode_from_env, validate_principal_for_mode,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -43,13 +43,13 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::run_artifacts::{
+    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
     artifact_http_path, document_from_run, plasm_run_resource_uri,
     plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
 };
 use crate::trace_hub::{
-    trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
-    TraceSegment,
+    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent, TraceSegment,
+    trace_id_for_http_execute_session,
 };
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
 
@@ -136,24 +136,24 @@ where
     }
 }
 
-use crate::batch_scheduler::{build_batch_stages, line_may_share_parallel_query_stage, BatchStage};
+use crate::batch_scheduler::{BatchStage, build_batch_stages, line_may_share_parallel_query_stage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
-    incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
+    IncomingPrincipal, incoming_auth_problem, session_allows_principal, tenant_scope,
 };
-use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
+use crate::mcp_plasm_meta::{PlasmMetaIndex, PlasmPagingStepMeta, plasm_paging_json_value};
 use crate::mcp_run_markdown::{
-    execute_expression_preview, mcp_compact_markdown_batch, mcp_compact_markdown_single,
-    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
-    mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
-    merge_snapshot_column_hints, OmittedReferenceOnlyFields,
+    OmittedReferenceOnlyFields, execute_expression_preview, mcp_compact_markdown_batch,
+    mcp_compact_markdown_single, mcp_format_execute_result_table_or_tsv,
+    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
+    mcp_preview_markdown_needed, merge_snapshot_column_hints,
 };
 use crate::output::{
-    apply_projection, format_result_with_cgs, http_execute_results_value,
-    reference_only_omitted_field_names, InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
+    InBandSummaryReport, LossySummaryFieldNames, OutputFormat, apply_projection,
+    format_result_with_cgs, http_execute_results_value, reference_only_omitted_field_names,
 };
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
@@ -172,6 +172,11 @@ pub struct ExecuteRunToolOutput {
 #[cfg(feature = "code_mode")]
 #[derive(Debug, Clone)]
 pub struct PublishedResultStep {
+    pub name: Option<String>,
+    pub node_id: Option<String>,
+    pub entry_id: Option<String>,
+    pub entity: Option<String>,
+    pub cgs: Option<Arc<CGS>>,
     pub display: String,
     pub projection: Option<Vec<String>>,
     pub result: ExecutionResult,
@@ -1989,6 +1994,7 @@ pub async fn archive_code_mode_result_snapshot(
     st: &PlasmHostState,
     sess: &ExecuteSession,
     session_id: &str,
+    entry_id_override: Option<&str>,
     expressions: Vec<String>,
     result: &ExecutionResult,
     trace: Option<&PlasmTraceContext>,
@@ -1999,7 +2005,7 @@ pub async fn archive_code_mode_result_snapshot(
         run_id,
         prompt_hash: sess.prompt_hash.as_str(),
         session_id,
-        entry_id: sess.entry_id.as_str(),
+        entry_id: entry_id_override.unwrap_or(sess.entry_id.as_str()),
         principal: sess.principal.clone(),
         expressions,
         result,
@@ -2085,6 +2091,26 @@ pub fn publish_code_mode_result_steps(
         if total > 1 {
             markdown.push_str(&format!("## Step {} of {}\n\n", i + 1, total));
         }
+        if let Some(name) = &step.name {
+            markdown.push_str("output: ");
+            markdown.push_str(name);
+            if let Some(node_id) = &step.node_id {
+                markdown.push_str(" -> ");
+                markdown.push_str(node_id);
+            }
+            markdown.push('\n');
+        } else if let Some(node_id) = &step.node_id {
+            markdown.push_str("output: ");
+            markdown.push_str(node_id);
+            markdown.push('\n');
+        }
+        if let (Some(entry_id), Some(entity)) = (&step.entry_id, &step.entity) {
+            markdown.push_str("  owner: ");
+            markdown.push_str(entry_id);
+            markdown.push('.');
+            markdown.push_str(entity);
+            markdown.push('\n');
+        }
         markdown.push_str("→ ");
         markdown.push_str(&step.display);
         markdown.push('\n');
@@ -2094,7 +2120,8 @@ pub fn publish_code_mode_result_steps(
             markdown.push_str("]\n");
         }
         markdown.push('\n');
-        let formatted = mcp_format_execute_result_table_or_tsv(&step.result, cgs);
+        let formatted =
+            mcp_format_execute_result_table_or_tsv(&step.result, step.cgs.as_deref().or(cgs));
         omitted_union.extend(formatted.reference_only_omitted.as_ref().iter().cloned());
         markdown.push_str(&formatted.block.into_mcp_result_markdown());
         if let Some(handle) = &step.artifact {
@@ -3989,10 +4016,10 @@ mod tests {
     use super::*;
     use crate::http;
     use crate::incoming_auth::IncomingPrincipal;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
     use axum::http::Request;
-    use axum::Router;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -4047,6 +4074,42 @@ mod tests {
             a.process_order,
             vec!["alpha".to_string(), "zeta".to_string()]
         );
+    }
+
+    #[cfg(feature = "code_mode")]
+    #[test]
+    fn code_mode_publication_renders_named_output_owner() {
+        let out = publish_code_mode_result_steps(
+            None,
+            None,
+            &[PublishedResultStep {
+                name: Some("sorted".to_string()),
+                node_id: Some("p1".to_string()),
+                entry_id: Some("pokemon".to_string()),
+                entity: Some("Pokemon".to_string()),
+                cgs: None,
+                display: "Pokemon[id,name]".to_string(),
+                projection: Some(vec!["id".to_string(), "name".to_string()]),
+                result: ExecutionResult {
+                    count: 0,
+                    entities: vec![],
+                    has_more: false,
+                    pagination_resume: None,
+                    paging_handle: None,
+                    source: ExecutionSource::Cache,
+                    stats: ExecutionStats {
+                        duration_ms: 0,
+                        network_requests: 0,
+                        cache_hits: 0,
+                        cache_misses: 0,
+                    },
+                    request_fingerprints: vec![],
+                },
+                artifact: None,
+            }],
+        );
+        assert!(out.markdown.contains("output: sorted -> p1"));
+        assert!(out.markdown.contains("owner: pokemon.Pokemon"));
     }
 
     fn test_state_with_registry() -> PlasmHostState {

@@ -232,6 +232,57 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             throw new Error("Plan source must be a branded PlanSource from a query/search/get/data/compute/map/relation handle");
         }
 
+        function __dedupeNodes(nodes) {
+            const seen = new Set();
+            return nodes.filter(n => {
+                if (!n || !n.id) return false;
+                if (seen.has(n.id)) return false;
+                seen.add(n.id);
+                return true;
+            });
+        }
+
+        function __returnNodeId(value, suggestedId, nodes) {
+            if (__hasBrand(value, __BRAND_HANDLE) && value.__planNodeId) {
+                __collectNodes(value, nodes);
+                return value.__planNodeId;
+            }
+            if (__isPlanEffect(value) || __hasBrand(value, __BRAND_BUILDER)) {
+                const id = suggestedId || __anonId();
+                if (__isPlanEffect(value)) {
+                    nodes.push(Object.assign({}, value, { id }));
+                    return id;
+                }
+                if (value.__toPlanHandle) {
+                    const handle = value.__toPlanHandle(id);
+                    __collectNodes(handle, nodes);
+                    return handle && handle.__planNodeId ? handle.__planNodeId : id;
+                }
+            }
+            throw new Error("Plan.return values must be branded Plan nodes or buildable Plan sources");
+        }
+
+        function __returnPlan(value, nodes, suggestedId) {
+            if (Array.isArray(value)) {
+                if (value.length === 0) throw new Error("Plan.return parallel arrays must not be empty");
+                return {
+                    kind: "parallel",
+                    nodes: value.map((item, i) => __returnNodeId(item, (suggestedId || "return") + "_" + (i + 1), nodes)),
+                };
+            }
+            if (value && typeof value === "object" && !__isPlanSource(value) && !__isPlanEffect(value) && !__hasBrand(value, __BRAND_BUILDER)) {
+                const fields = {};
+                const keys = Object.keys(value);
+                if (keys.length === 0) throw new Error("Plan.return record objects must not be empty");
+                for (const key of keys) {
+                    if (!String(key).trim()) throw new Error("Plan.return record names must be non-empty");
+                    fields[key] = __returnNodeId(value[key], key, nodes);
+                }
+                return { kind: "record", fields };
+            }
+            return { kind: "node", node: __returnNodeId(value, suggestedId || "return", nodes) };
+        }
+
         function __nodeHandle(id, node) {
             const nid = id || __anonId();
             const h = { __planNodeId: nid };
@@ -527,7 +578,7 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                     else __collectNodes(e, this.nodes);
                     return nid;
                 });
-                this._return = { parallel: ids };
+                this._return = { kind: "parallel", nodes: ids };
                 return __nodeHandle(id);
             }
             dependsOn(nodeId, dependencyId) {
@@ -539,14 +590,8 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
                 return this;
             }
             return(value) {
-                __collectNodes(value, this.nodes);
-                const seen = new Set();
-                this.nodes = this.nodes.filter(n => {
-                    if (seen.has(n.id)) return false;
-                    seen.add(n.id);
-                    return true;
-                });
-                this._return = __normalizeReturn(value);
+                this._return = __returnPlan(value, this.nodes, "return");
+                this.nodes = __dedupeNodes(this.nodes);
                 const out = {
                     version: this.version,
                     kind: this.kind,
@@ -975,6 +1020,61 @@ mod tests {
             assert_eq!(v["version"], 1);
             assert_eq!(v["kind"], "program");
             assert_eq!(v["nodes"][0]["qualified_entity"]["entry_id"], "acme");
+            assert_eq!(v["return"]["kind"], "node");
+            assert_eq!(v["return"]["node"], "n1");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plasm_plan_return_emits_tagged_record_and_parallel() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js.replace("export function", "function").replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let record: String = ctx.eval(
+                "const Product = makeEntity('acme', 'Product'); \
+                 Plan.return({ sorted: Plan.sort(Product.query({}), row => row.name), detail: Product.get('p1') })",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&record).expect("json");
+            assert_eq!(v["return"]["kind"], "record");
+            assert_eq!(v["return"]["fields"]["sorted"], "sorted");
+            assert_eq!(v["return"]["fields"]["detail"], "detail");
+            assert_eq!(v["nodes"][0]["id"], "sorted_source");
+            assert_eq!(v["nodes"][2]["id"], "detail");
+
+            let parallel: String = ctx.eval(
+                "const Product2 = makeEntity('acme', 'Product'); \
+                 const a = __plasmBind(Product2.get('a'), 'a'); \
+                 const b = __plasmBind(Product2.get('b'), 'b'); \
+                 Plan.return([a, b])",
+            )?;
+            let p: serde_json::Value = serde_json::from_str(&parallel).expect("json");
+            assert_eq!(p["return"]["kind"], "parallel");
+            assert_eq!(p["return"]["nodes"][0], "a");
+            assert_eq!(p["return"]["nodes"][1], "b");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plasm_plan_return_rejects_arbitrary_nested_maps() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js.replace("export function", "function").replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "let msg = ''; \
+                 try { Plan.return({ invalid: { node: 'n1' } }); } catch (e) { msg = String(e && e.message || e); } \
+                 msg",
+            )?;
+            assert!(msg.contains("Plan.return values must be branded"), "{msg}");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
@@ -1256,6 +1356,36 @@ mod tests {
             assert_eq!(v["nodes"][1]["kind"], "relation");
             assert_eq!(v["nodes"][1]["relation"]["source"], "cat_source");
             assert_eq!(v["nodes"][1]["depends_on"][0], "cat_source");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn relation_preserves_get_and_singleton_source_cardinality() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Product = makeEntity('acme', 'Product', [{ name: 'category', entry_id: 'acme', target: 'Category', cardinality: 'one' }]); \
+                 const fromGet = Product.get('p1').category(); \
+                 const getNode = __plasmBind(Product.get('p2'), 'p'); \
+                 const fromSingleton = Plan.singleton(getNode).category(); \
+                 Plan.return({ fromGet, fromSingleton })",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][1]["relation"]["source_cardinality"], "single");
+            assert_eq!(
+                v["nodes"][3]["relation"]["source_cardinality"],
+                "runtime_checked_singleton"
+            );
+            assert_eq!(v["nodes"][1]["result_shape"], "single");
+            assert_eq!(v["nodes"][3]["result_shape"], "single");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())
