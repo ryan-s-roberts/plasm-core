@@ -410,7 +410,7 @@ fn field_type_to_ts(f: &FacadeField, cat_alias: &str) -> String {
         FieldTypeName::Json => "unknown".to_string(),
         FieldTypeName::Number | FieldTypeName::Integer => "number".to_string(),
         FieldTypeName::Boolean => "boolean".to_string(),
-        FieldTypeName::Blob => "unknown /* blob / attachment */".to_string(),
+        FieldTypeName::Blob => "string | Plasm.PlanValueExpr | Plasm.PlanAttachment".to_string(),
         FieldTypeName::MultiSelect => "readonly string[]".to_string(),
         FieldTypeName::Array => "unknown[]".to_string(),
         FieldTypeName::EntityRef => {
@@ -617,6 +617,16 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
   export type RuntimeSingleton<T> = T extends CardinalSource<SourceCardinality>
     ? Omit<T, "__plasmReadCardinality"> & CardinalSource<"runtime_checked_singleton">
     : T;
+  export type PlanAttachment = {
+    readonly __plasm_attachment: {
+      readonly bytes_base64?: string;
+      readonly content_type?: string;
+      readonly filename?: string;
+    };
+  };
+  export type PlanRenderHandle = PlanNodeHandle & {
+    readonly content: PlanValueExpr & { readonly __planValue: PlanValue<string> };
+  };
   export type PlanValue<T = unknown> =
     | { readonly kind: "literal"; readonly value: T }
     | { readonly kind: "helper"; readonly name: string; readonly args?: readonly unknown[]; readonly display?: string }
@@ -688,7 +698,7 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
     | { readonly kind: "aggregate"; readonly aggregates: NonEmptyArray<AggregateSpec> }
     | { readonly kind: "sort"; readonly key: readonly string[]; readonly descending?: boolean }
     | { readonly kind: "limit"; readonly count: number }
-    | { readonly kind: "table_from_matrix"; readonly columns: readonly string[]; readonly has_header?: boolean };
+    | { readonly kind: "render"; readonly columns: readonly string[]; readonly template: string };
   export type PredicateScalar = string | number | boolean | null;
   export type EntityRefPredicateValue = PlanValueExpr & {
     readonly __plasmEntityRef: true;
@@ -731,7 +741,7 @@ declare class Plan {
   static sort<T>(source: Plasm.PlanSource, keyFn: (item: Plasm.Symbolic<T>) => Plasm.ProjectionValue, direction?: "asc" | "desc"): Plasm.PlanNodeHandle;
   /** Semantic truncation of the DAG collection, not ordinary result pagination. */
   static limit(source: Plasm.PlanSource, count: number): Plasm.PlanNodeHandle;
-  static table(source: Plasm.PlanSource, spec: { readonly columns: readonly string[]; readonly hasHeader?: boolean }): Plasm.PlanNodeHandle;
+  static render(source: Plasm.PlanSource, spec: { readonly columns: readonly string[]; readonly template: string }): Plasm.PlanRenderHandle;
 }
 declare function field<T = unknown>(name: string): Plasm.FieldPredicateBuilder<T>;
 declare function daysAgo(days: number): Plasm.PlanValueExpr & { readonly __plasmExpr: string; readonly __planValue: Plasm.PlanValue<string> };

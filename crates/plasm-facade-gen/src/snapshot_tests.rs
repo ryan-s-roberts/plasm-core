@@ -132,6 +132,15 @@ fn snapshot_code_facade_prelude_emitted() {
         .agent_prelude
         .contains("export type Symbolic<T = unknown> = T &"));
     assert!(ts.agent_prelude.contains("RuntimeSingleton"));
+    assert!(ts.agent_prelude.contains("PlanRenderHandle"));
+    assert!(ts.agent_prelude.contains("static render"));
+    assert!(ts.agent_prelude.contains("PlanAttachment"));
+    assert!(ts
+        .agent_prelude
+        .contains("readonly kind: \"render\"; readonly columns"));
+    assert!(ts
+        .agent_namespace_body
+        .contains("payload?: string | Plasm.PlanValueExpr | Plasm.PlanAttachment;"));
     assert!(ts.agent_prelude.contains("binding_symbol"));
     assert!(ts.agent_prelude.contains("node_symbol"));
     assert!(ts.agent_prelude.contains("static singleton"));

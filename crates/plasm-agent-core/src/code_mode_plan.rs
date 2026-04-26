@@ -302,6 +302,7 @@ pub struct ValidatedPlanExprTemplate {
     pub(crate) expr: serde_json::Value,
     pub(crate) projection: Option<Vec<String>>,
     pub(crate) display_expr: Option<String>,
+    #[allow(dead_code)]
     pub(crate) input_bindings: Vec<PlanInputBinding>,
 }
 
@@ -789,10 +790,9 @@ pub enum ComputeOp {
     Limit {
         count: usize,
     },
-    TableFromMatrix {
+    Render {
         columns: Vec<OutputName>,
-        #[serde(default)]
-        has_header: bool,
+        template: String,
     },
 }
 
@@ -841,6 +841,10 @@ pub enum SyntheticValueKind {
     Object,
     Unknown,
 }
+
+pub const PLAN_RENDER_MAX_TEMPLATE_CHARS: usize = 64 * 1024;
+pub const PLAN_RENDER_MAX_ROWS: usize = 10_000;
+pub const PLAN_RENDER_MAX_OUTPUT_CHARS: usize = 1024 * 1024;
 
 fn has_cycle(adj: &[Vec<usize>]) -> bool {
     let n = adj.len();
@@ -1688,13 +1692,12 @@ fn analyze_static_cardinality(
                 .compute
                 .as_ref()
                 .map(|compute| match &compute.op {
-                    ComputeOp::Aggregate { .. } => CardinalityAnalysis::StaticSingleton,
+                    ComputeOp::Aggregate { .. } | ComputeOp::Render { .. } => {
+                        CardinalityAnalysis::StaticSingleton
+                    }
                     ComputeOp::Project { .. }
                     | ComputeOp::Filter { .. }
-                    | ComputeOp::Sort { .. }
-                    | ComputeOp::TableFromMatrix { .. } => {
-                        inner(plan, by_id, &compute.source, memo)
-                    }
+                    | ComputeOp::Sort { .. } => inner(plan, by_id, &compute.source, memo),
                     ComputeOp::Limit { count } if *count <= 1 => {
                         CardinalityAnalysis::StaticSingleton
                     }
@@ -1793,12 +1796,58 @@ fn validate_compute_template(
                 "plan.nodes[{node_index}].compute.limit.count must be greater than zero"
             ));
         }
-        ComputeOp::TableFromMatrix { columns, .. } if columns.is_empty() => {
-            return Err(format!(
-                "plan.nodes[{node_index}].compute.table_from_matrix.columns must be non-empty"
-            ));
+        ComputeOp::Render { columns, template } => {
+            validate_render_compute_template(t, columns, template, node_index)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_render_compute_template(
+    t: &ComputeTemplate,
+    columns: &[OutputName],
+    template: &str,
+    node_index: usize,
+) -> Result<(), String> {
+    if columns.is_empty() {
+        return Err(format!(
+            "plan.nodes[{node_index}].compute.render.columns must be non-empty"
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for column in columns {
+        OutputName::new(column.as_str().to_string())
+            .map_err(|e| format!("plan.nodes[{node_index}].compute.render.columns: {e}"))?;
+        if !seen.insert(column.as_str().to_string()) {
+            return Err(format!(
+                "plan.nodes[{node_index}].compute.render.columns has duplicate {:?}",
+                column.as_str()
+            ));
+        }
+    }
+    if template.trim().is_empty() {
+        return Err(format!(
+            "plan.nodes[{node_index}].compute.render.template must be non-empty"
+        ));
+    }
+    if template.chars().count() > PLAN_RENDER_MAX_TEMPLATE_CHARS {
+        return Err(format!(
+            "plan.nodes[{node_index}].compute.render.template exceeds {PLAN_RENDER_MAX_TEMPLATE_CHARS} characters"
+        ));
+    }
+    let mut env = minijinja::Environment::new();
+    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+    env.add_template("plan_render", template)
+        .map_err(|e| format!("plan.nodes[{node_index}].compute.render.template: {e}"))?;
+    if t.schema.entity.as_deref() != Some("PlanRender")
+        || t.schema.fields.len() != 1
+        || t.schema.fields[0].name.as_str() != "content"
+        || t.schema.fields[0].value_kind != SyntheticValueKind::String
+    {
+        return Err(format!(
+            "plan.nodes[{node_index}].compute.render.schema must be entity PlanRender with a single string field named 'content'"
+        ));
     }
     Ok(())
 }
@@ -2810,5 +2859,125 @@ mod tests {
         assert_eq!(validated.topological_order()[0].as_str(), "rows");
         assert_eq!(validated.topological_order()[1].as_str(), "limited");
         assert_eq!(validated.return_value().refs()[0].as_str(), "limited");
+    }
+
+    fn render_plan(columns: serde_json::Value, template: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "rows",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "artifact",
+                    "data": { "kind": "literal", "value": [{ "name": "bolt" }] }
+                },
+                {
+                    "id": "doc",
+                    "kind": "compute",
+                    "effect_class": "artifact_read",
+                    "result_shape": "list",
+                    "compute": {
+                        "source": "rows",
+                        "op": { "kind": "render", "columns": columns, "template": template },
+                        "schema": {
+                            "entity": "PlanRender",
+                            "fields": [{ "name": "content", "value_kind": "string" }]
+                        }
+                    },
+                    "depends_on": ["rows"],
+                    "uses_result": [{ "node": "rows", "as": "source" }]
+                }
+            ],
+            "return": { "kind": "node", "node": "doc" }
+        })
+    }
+
+    #[test]
+    fn validate_render_rejects_empty_columns() {
+        let err = validate_plan_value(&render_plan(serde_json::json!([]), serde_json::json!("ok")))
+            .expect_err("empty columns rejected");
+        assert!(
+            err.contains("compute.render.columns must be non-empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_render_rejects_empty_template() {
+        let err = validate_plan_value(&render_plan(
+            serde_json::json!(["name"]),
+            serde_json::json!(" "),
+        ))
+        .expect_err("empty template rejected");
+        assert!(
+            err.contains("compute.render.template must be non-empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_render_rejects_duplicate_columns() {
+        let err = validate_plan_value(&render_plan(
+            serde_json::json!(["name", "name"]),
+            serde_json::json!("{{ rows }}"),
+        ))
+        .expect_err("duplicate columns rejected");
+        assert!(
+            err.contains("compute.render.columns has duplicate"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_render_rejects_empty_column_name() {
+        let err = validate_plan_value(&render_plan(
+            serde_json::json!([""]),
+            serde_json::json!("{{ rows }}"),
+        ))
+        .expect_err("empty column name rejected");
+        assert!(err.contains("OutputName must be non-empty"), "{err}");
+    }
+
+    #[test]
+    fn validate_render_rejects_non_content_schema() {
+        let mut plan = render_plan(serde_json::json!(["name"]), serde_json::json!("{{ rows }}"));
+        plan["nodes"][1]["compute"]["schema"] = serde_json::json!({
+            "entity": "PlanRender",
+            "fields": [{ "name": "body", "value_kind": "string" }]
+        });
+        let err = validate_plan_value(&plan).expect_err("bad schema rejected");
+        assert!(err.contains("single string field named 'content'"), "{err}");
+    }
+
+    #[test]
+    fn validate_render_rejects_template_syntax_errors() {
+        let err = validate_plan_value(&render_plan(
+            serde_json::json!(["name"]),
+            serde_json::json!("{{"),
+        ))
+        .expect_err("bad minijinja syntax rejected");
+        assert!(err.contains("compute.render.template"), "{err}");
+    }
+
+    #[test]
+    fn analyze_static_cardinality_render_is_static_singleton() {
+        let plan = parse_plan_value(&render_plan(
+            serde_json::json!(["name"]),
+            serde_json::json!("{{ rows }}"),
+        ))
+        .expect("parse");
+        let by_id = plan
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, node)| (node.id.clone(), idx))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            analyze_static_cardinality(&plan, &by_id, "doc"),
+            CardinalityAnalysis::StaticSingleton
+        );
     }
 }

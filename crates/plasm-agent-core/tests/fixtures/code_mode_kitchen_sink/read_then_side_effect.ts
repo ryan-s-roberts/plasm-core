@@ -1,5 +1,5 @@
 const stale = plasm.acme.Product.query({ name: "KitchenSink" })
-  .where(field("id").eq(daysAgo(30)))
+  .where(field("id").eq("stale-product"))
   .select("id", "name");
 
 const labelStale = forEach(stale, (product) =>

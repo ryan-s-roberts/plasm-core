@@ -647,9 +647,20 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             static limit(source, count) {
                 return Plan._compute(source, { kind: "limit", count: Number(count) }, { entity: "PlanLimit", fields: [{ name: "value", value_kind: "unknown" }] });
             }
-            static table(source, spec) {
-                const columns = (spec && spec.columns) || [];
-                return Plan._compute(source, { kind: "table_from_matrix", columns, has_header: !!(spec && spec.hasHeader) }, __schemaFromFields("PlanTable", columns, []));
+            static render(source, spec) {
+                const columns = ((spec && spec.columns) || []).map(String);
+                const template = String((spec && spec.template) || "");
+                if (columns.length === 0) {
+                    throw new Error("Plan.render: spec.columns must be a non-empty string array");
+                }
+                if (!template.trim()) {
+                    throw new Error("Plan.render: spec.template must be a non-empty string");
+                }
+                return Plan._compute(
+                    source,
+                    { kind: "render", columns, template },
+                    { entity: "PlanRender", fields: [{ name: "content", value_kind: "string" }] }
+                );
             }
             static _compute(source, op, schema) {
                 return __planBuilder({
@@ -858,9 +869,16 @@ pub fn quickjs_runtime_module_bootstrap() -> String {
             };
         }
 
+        function __rejectWholePlanInput(key, value) {
+            if (value && !value.__planValue && (__isPlanSource(value) || __isPlanEffect(value) || __hasBrand(value, __BRAND_BUILDER))) {
+                throw new Error("Action input `" + key + "` received a whole Plan node; pass a scalar field such as node.content instead");
+            }
+        }
+
         function __callArgs(input) {
             const keys = Object.keys(input || {});
             if (keys.length === 0) return "";
+            for (const k of keys) __rejectWholePlanInput(k, input[k]);
             return "(" + keys.map(k => k + "=" + __quote(input[k])).join(", ") + ")";
         }
 
@@ -1852,6 +1870,107 @@ mod tests {
             assert_eq!(v["nodes"][1]["compute"]["source"], "p_source");
             assert_eq!(v["nodes"][1]["compute"]["op"]["kind"], "limit");
             assert_eq!(v["nodes"][1]["depends_on"][0], "p_source");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_render_lowers_to_compute_node_with_render_op() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "const Label = makeEntity('github', 'Label'); \
+                 const rows = __plasmBind(Label.query({}), 'rows'); \
+                 const limited = __plasmBind(Plan.limit(rows, 5), 'limited'); \
+                 const doc = __plasmBind(Plan.render(limited, { columns: ['name'], template: '{% for r in rows %}- {{ r.name }}\\n{% endfor %}' }), 'doc'); \
+                 Plan.return(doc)",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            assert_eq!(v["nodes"][2]["kind"], "compute");
+            assert_eq!(v["nodes"][2]["compute"]["source"], "limited");
+            assert_eq!(v["nodes"][2]["compute"]["op"]["kind"], "render");
+            assert_eq!(v["nodes"][2]["compute"]["op"]["columns"][0], "name");
+            assert_eq!(v["nodes"][2]["compute"]["schema"]["entity"], "PlanRender");
+            assert_eq!(v["nodes"][2]["compute"]["schema"]["fields"][0]["name"], "content");
+            assert_eq!(
+                v["nodes"][2]["compute"]["schema"]["fields"][0]["value_kind"],
+                "string"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_render_action_input_uses_node_input_for_content() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let s: String = ctx.eval(
+                "__plasmSetAstHints({ node_ids: ['doc'] }); \
+                 const Label = makeEntity('github', 'Label'); \
+                 const Repository = makeEntity('github', 'Repository'); \
+                 const rows = __plasmBind(Label.query({}), 'rows'); \
+                 const limited = __plasmBind(Plan.limit(rows, 5), 'limited'); \
+                 const doc = __plasmBind(Plan.render(limited, { columns: ['name'], template: '{% for r in rows %}- {{ r.name }}\\n{% endfor %}' }), 'doc'); \
+                 const put = __plasmBind(Repository.ref('owner/repo').action('repo_content_put', { content: doc.content, message: 'sync labels' }), 'put'); \
+                 Plan.return([doc, put])",
+            )?;
+            let v: serde_json::Value = serde_json::from_str(&s).expect("json");
+            let put = v["nodes"]
+                .as_array()
+                .expect("nodes")
+                .iter()
+                .find(|node| node["id"] == "put")
+                .expect("put node");
+            assert_eq!(put["kind"], "action");
+            assert_eq!(put["input_bindings"][0]["node"], "doc");
+            assert_eq!(put["input_bindings"][0]["alias"], "doc");
+            assert_eq!(put["input_bindings"][0]["from"], "doc.content");
+            assert_eq!(put["input_bindings"][0]["to"], "content");
+            assert_eq!(put["input_bindings"][0]["cardinality"], "auto");
+            let expr = put["expr_template"].as_str().expect("expr template");
+            assert!(expr.contains("${doc.content}"), "{expr}");
+            assert!(!expr.contains("[object Object]"), "{expr}");
+            Ok::<(), rquickjs::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_render_rejects_passing_whole_handle_as_blob() -> QjResult<()> {
+        let runtime = Runtime::new()?;
+        let context = Context::full(&runtime)?;
+        let js = quickjs_runtime_module_bootstrap();
+        context.with(|ctx| {
+            let flat = js
+                .replace("export function", "function")
+                .replace("export class", "class");
+            let _: () = ctx.eval(flat.as_str())?;
+            let msg: String = ctx.eval(
+                "try { \
+                   const Label = makeEntity('github', 'Label'); \
+                   const Repository = makeEntity('github', 'Repository'); \
+                   const rows = __plasmBind(Label.query({}), 'rows'); \
+                   const doc = __plasmBind(Plan.render(rows, { columns: ['name'], template: '{{ rows }}' }), 'doc'); \
+                   Repository.ref('owner/repo').action('repo_content_put', { content: doc, message: 'sync labels' }); \
+                   'NO_ERROR'; \
+                 } catch (e) { String(e && e.message || e); }",
+            )?;
+            assert_ne!(msg, "NO_ERROR");
+            assert!(msg.contains("whole Plan node"), "{msg}");
             Ok::<(), rquickjs::Error>(())
         })?;
         Ok(())

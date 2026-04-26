@@ -202,8 +202,8 @@ fn code_plan_session_mismatch(
 fn code_plan_run_artifacts_from_meta(
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> (Vec<String>, Vec<CodePlanRunArtifactRef>) {
-    fn dict_string<'a>(
-        index_delta: Option<&'a serde_json::Value>,
+    fn dict_string(
+        index_delta: Option<&serde_json::Value>,
         dict_name: &str,
         id: Option<u64>,
     ) -> Option<String> {
@@ -238,7 +238,7 @@ fn code_plan_run_artifacts_from_meta(
     let plasm = meta.and_then(|m| m.get("plasm"));
     let index_delta = plasm.and_then(|v| v.get("index_delta"));
     let Some(steps) = meta
-        .and_then(|_| plasm)
+        .and(plasm)
         .and_then(|v| v.get("steps"))
         .and_then(|v| v.as_array())
     else {
@@ -850,7 +850,7 @@ impl PlasmMcpHandler {
                 name: "evaluate_code_plan".into(),
                 title: None,
                 description: Some(
-                    format!("Evaluate a complete named TypeScript Code Mode program, create an archived validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run execution DAG. This is whole-program validation and review, not a query endpoint, not a field probe, and usually not the final answer. The expected use is one dry-run for the full user goal, then execution of that reviewed handle. Do not create many tiny plans to count rows, inspect fields, test refs, or check whether a write might work; fold those assumptions into one bounded program or use **`plasm`** for one-off reads. If the dry-run program satisfies the user's intent with acceptable risk and minimal output, follow with **`execute_code_plan(plan_handle)`**. Revise and re-evaluate only when the dry run shows a defect, missing capability, excessive output, or unacceptable risk. Do not send TypeScript again once a handle exists unless changing the complete program or symbol space. Start uncertain list/feed branches inside the complete plan with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs. {CODE_MODE_PROGRAM_DISCIPLINE_HINT}").into(),
+                    format!("Evaluate a complete named TypeScript Code Mode program, create an archived validated Plan permanently, and return a small **`plan_handle`** plus compact dry-run execution DAG. This is whole-program validation and review, not a query endpoint, not a field probe, and usually not the final answer. The expected use is one dry-run for the full user goal, then execution of that reviewed handle. Do not create many tiny plans to count rows, inspect fields, test refs, or check whether a write might work; fold those assumptions into one bounded program or use **`plasm`** for one-off reads. If the dry-run program satisfies the user's intent with acceptable risk and minimal output, follow with **`execute_code_plan(plan_handle)`**. Revise and re-evaluate only when the dry run shows a defect, missing capability, excessive output, or unacceptable risk. Do not send TypeScript again once a handle exists unless changing the complete program or symbol space. Start uncertain list/feed branches inside the complete plan with **`Plan.limit(...)`** before widening. Author for minimal output: project/select source fields and **`Plan.return(...)`** only the final nodes the user needs. {CODE_MODE_PROGRAM_DISCIPLINE_HINT}"),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "name".into(), "code".into()],

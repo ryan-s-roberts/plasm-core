@@ -244,6 +244,7 @@ pub struct SyntheticPageCursor {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum PagingResume {
     Query(QueryPaginationResumeData),
     Synthetic(SyntheticPageCursor),

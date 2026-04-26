@@ -13,10 +13,11 @@ use plasm_core::CGS;
 
 use crate::code_mode_plan::{
     parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
-    ComputeTemplate, EffectClass, FieldPath, InputAlias, Plan, PlanExprTemplate, PlanNodeId,
-    PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
+    ComputeTemplate, EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate,
+    PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
     ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
     ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
+    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
@@ -280,7 +281,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
     let mut out = Vec::new();
     let mut can_batch_run = true;
     let mut staged_nodes = Vec::new();
-    let mut execution_unsupported = Vec::new();
+    let execution_unsupported = Vec::new();
     for node_id in validated.topological_order() {
         let i = validated
             .node_index(node_id)
@@ -747,17 +748,15 @@ fn render_compute_template(compute: &ComputeTemplate) -> String {
             if *descending { "desc" } else { "asc" }
         ),
         ComputeOp::Limit { count } => format!("limit {} count={count}", compute.source),
-        ComputeOp::TableFromMatrix {
-            columns,
-            has_header,
-        } => format!(
-            "table {} columns=[{}] header={has_header}",
+        ComputeOp::Render { columns, template } => format!(
+            "render {} columns=[{}] template_chars={}",
             compute.source,
             columns
                 .iter()
                 .map(|c| c.as_str())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            template.chars().count()
         ),
     }
 }
@@ -1464,6 +1463,7 @@ fn validated_inputs_json(inputs: &[ValidatedPlanDataInput]) -> Vec<serde_json::V
 
 /// Raw MCP ingress wrapper. Validation happens once, then execution proceeds through the
 /// proof-bearing [`ValidatedPlan`] core.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_code_mode_plan(
     es: &ExecuteSession,
     st: &PlasmHostState,
@@ -1805,6 +1805,7 @@ fn validated_return_names(ret: &ValidatedPlanReturn) -> Vec<Option<String>> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn materialize_synthetic_node(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -2125,6 +2126,7 @@ fn instantiate_ir_hole(
     }
 }
 
+#[cfg(test)]
 fn render_for_each_expressions(
     for_each: &ValidatedForEachNode,
     source_rows: &[serde_json::Value],
@@ -2144,6 +2146,7 @@ fn render_for_each_expressions(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn materialize_for_each_node(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -2333,10 +2336,7 @@ fn eval_compute(
             Ok(sorted)
         }
         ComputeOp::Limit { count } => Ok(rows.into_iter().take(*count).collect()),
-        ComputeOp::TableFromMatrix {
-            columns,
-            has_header,
-        } => table_from_matrix(&rows, columns, *has_header),
+        ComputeOp::Render { columns, template } => render_compute(&rows, columns, template),
     }
 }
 
@@ -2462,6 +2462,7 @@ fn render_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, Stri
     render_template_with(template, env, json_scalar_display)
 }
 
+#[cfg(test)]
 fn render_expr_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, String> {
     render_template_with(template, env, json_plasm_literal_display)
 }
@@ -2654,32 +2655,58 @@ fn aggregate_numbers(rows: &[&serde_json::Value], field: Option<&FieldPath>) -> 
         .collect()
 }
 
-fn table_from_matrix(
+fn render_compute(
     rows: &[serde_json::Value],
-    columns: &[crate::code_mode_plan::OutputName],
-    has_header: bool,
+    columns: &[OutputName],
+    template: &str,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let matrix = rows
-        .first()
-        .and_then(|row| row.get("value").or_else(|| row.get("values")))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "table_from_matrix source must contain a value/values array".to_string())?;
-    let start = usize::from(has_header);
-    Ok(matrix
+    if rows.len() > PLAN_RENDER_MAX_ROWS {
+        return Err(format!(
+            "Plan.render source has {} rows; use Plan.limit(...) to stay at or below {PLAN_RENDER_MAX_ROWS}",
+            rows.len()
+        ));
+    }
+    let projected = rows
         .iter()
-        .skip(start)
-        .filter_map(|row| row.as_array())
-        .map(|cells| {
+        .enumerate()
+        .map(|(row_index, row)| {
             let mut obj = serde_json::Map::new();
-            for (idx, col) in columns.iter().enumerate() {
+            for column in columns {
                 obj.insert(
-                    col.as_str().to_string(),
-                    cells.get(idx).cloned().unwrap_or(serde_json::Value::Null),
+                    column.as_str().to_string(),
+                    value_at_dotted(row, column.as_str())
+                        .cloned()
+                        .ok_or_else(|| {
+                            format!(
+                                "Plan.render column {:?} did not resolve in source row {}",
+                                column.as_str(),
+                                row_index
+                            )
+                        })?,
                 );
             }
-            serde_json::Value::Object(obj)
+            Ok(serde_json::Value::Object(obj))
         })
-        .collect())
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let mut env = minijinja::Environment::new();
+    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    env.add_template("plan_render", template)
+        .map_err(|e| format!("Plan.render template compile error: {e}"))?;
+    let tmpl = env
+        .get_template("plan_render")
+        .map_err(|e| format!("Plan.render template load error: {e}"))?;
+    let rendered = tmpl
+        .render(minijinja::context!(rows => projected))
+        .map_err(|e| format!("Plan.render template render error: {e}"))?;
+    if rendered.chars().count() > PLAN_RENDER_MAX_OUTPUT_CHARS {
+        return Err(format!(
+            "Plan.render output exceeds {PLAN_RENDER_MAX_OUTPUT_CHARS} characters"
+        ));
+    }
+
+    Ok(vec![serde_json::json!({ "content": rendered })])
 }
 
 fn json_number(v: &serde_json::Value) -> Option<f64> {
@@ -2696,6 +2723,7 @@ fn json_scalar_display(v: &serde_json::Value) -> String {
     }
 }
 
+#[cfg(test)]
 fn json_plasm_literal_display(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => serde_json::to_string(s)
@@ -3364,6 +3392,87 @@ returns:
         let out = eval_plan_value(&value, &env).expect("eval");
         assert_eq!(out["title"], "pikachu uses thunderbolt");
         assert_eq!(out["power"], 90);
+    }
+
+    #[test]
+    fn render_compute_emits_single_content_row() {
+        let rows = vec![
+            serde_json::json!({ "name": "a" }),
+            serde_json::json!({ "name": "b" }),
+        ];
+        let columns = vec![OutputName::new("name").expect("column")];
+        let out = render_compute(
+            &rows,
+            &columns,
+            "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
+        )
+        .expect("render");
+
+        assert_eq!(out, vec![serde_json::json!({ "content": "- a\n- b\n" })]);
+    }
+
+    #[test]
+    fn render_compute_propagates_minijinja_errors() {
+        let rows = vec![serde_json::json!({ "name": "a" })];
+        let columns = vec![OutputName::new("name").expect("column")];
+        let err = render_compute(&rows, &columns, "{{ missing }}")
+            .expect_err("strict undefined is rejected");
+
+        assert!(err.contains("Plan.render template render error"), "{err}");
+    }
+
+    #[test]
+    fn render_compute_rejects_missing_columns() {
+        let rows = vec![serde_json::json!({ "name": "a" })];
+        let columns = vec![OutputName::new("missing").expect("column")];
+        let err =
+            render_compute(&rows, &columns, "{{ rows }}").expect_err("missing column rejected");
+
+        assert!(err.contains("did not resolve in source row 0"), "{err}");
+    }
+
+    #[test]
+    fn render_compute_feeds_node_input_for_action_content() {
+        let rows = vec![
+            serde_json::json!({ "name": "a" }),
+            serde_json::json!({ "name": "b" }),
+        ];
+        let columns = vec![OutputName::new("name").expect("column")];
+        let rendered = render_compute(
+            &rows,
+            &columns,
+            "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
+        )
+        .expect("render");
+        let input = rendered.into_iter().next().expect("singleton row");
+        let value = PlanValue::Object {
+            fields: BTreeMap::from([(
+                "content".to_string(),
+                PlanValue::NodeSymbol {
+                    node: "doc".to_string(),
+                    alias: "doc".to_string(),
+                    path: vec!["content".to_string()],
+                },
+            )]),
+        };
+        let inputs = BTreeMap::from([(
+            InputAlias::new("doc".to_string()).expect("alias"),
+            MaterializedInputRow {
+                node: PlanNodeId::new("doc".to_string()).expect("node id"),
+                proof: crate::code_mode_plan::InputCardinalityProof::StaticSingleton,
+                row: input,
+            },
+        )]);
+        let scope = EvalScope::Root {
+            row: &serde_json::Value::Null,
+        };
+        let env = PlanEvalEnv {
+            scope,
+            inputs: InputEnv { rows: &inputs },
+        };
+        let out = eval_plan_value(&value, &env).expect("eval");
+
+        assert_eq!(out["content"], "- a\n- b\n");
     }
 
     #[test]

@@ -221,7 +221,7 @@ fn optional_nonempty_str(env: &CmlEnv, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     #[test]
     fn gmail_reply_send_body_uses_parent_headers() {

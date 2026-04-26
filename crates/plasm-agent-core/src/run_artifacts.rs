@@ -1445,6 +1445,7 @@ mod tests {
 
     /// `PLASM_RUN_ARTIFACTS_URL` must win over `PLASM_RUN_ARTIFACTS_DIR` (hosted/SaaS invariant).
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn init_from_env_url_precedes_dir() {
         let _lock = PLASM_RUN_ARTIFACTS_ENV_TEST_LOCK
             .lock()

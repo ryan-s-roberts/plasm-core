@@ -22,6 +22,9 @@ entities:
         field_type: entity_ref
         target: Category
         required: false
+      payload:
+        field_type: blob
+        required: false
     relations:
       category:
         description: Category this product belongs to

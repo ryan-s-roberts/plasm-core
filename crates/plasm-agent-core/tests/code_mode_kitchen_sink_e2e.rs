@@ -294,7 +294,6 @@ fn kitchen_sink_positive_fixtures_dry_run() {
         "linear_issue_grouping.ts",
         "slack_thread_rollup.ts",
         "github_progress_projection.ts",
-        "google_sheets_table.ts",
     ] {
         let plan = eval_fixture_plan(&es, fixture);
         let plan_typed = parse_plan_value(&plan)
@@ -349,10 +348,7 @@ fn kitchen_sink_positive_fixtures_dry_run() {
         }
         if matches!(
             fixture,
-            "linear_issue_grouping.ts"
-                | "slack_thread_rollup.ts"
-                | "github_progress_projection.ts"
-                | "google_sheets_table.ts"
+            "linear_issue_grouping.ts" | "slack_thread_rollup.ts" | "github_progress_projection.ts"
         ) {
             assert!(
                 dry.node_results
@@ -516,16 +512,15 @@ fn federated_name_clash_fixture_synthesizes_qualified_nodes() {
 #[test]
 fn kitchen_sink_negative_fixtures_reject_invalid_plans() {
     let es = test_execute_session();
-    for fixture in ["negative_unknown_return.ts"] {
-        let plan = eval_fixture_plan(&es, fixture);
-        let dry_result = parse_plan_value(&plan)
-            .and_then(|plan_typed| validate_plan_artifact(&plan_typed))
-            .and_then(|validated| evaluate_validated_code_mode_plan_dry(&es, &validated));
-        assert!(
-            dry_result.is_err(),
-            "{fixture} should be rejected, got {plan:#}"
-        );
-    }
+    let fixture = "negative_unknown_return.ts";
+    let plan = eval_fixture_plan(&es, fixture);
+    let dry_result = parse_plan_value(&plan)
+        .and_then(|plan_typed| validate_plan_artifact(&plan_typed))
+        .and_then(|validated| evaluate_validated_code_mode_plan_dry(&es, &validated));
+    assert!(
+        dry_result.is_err(),
+        "{fixture} should be rejected, got {plan:#}"
+    );
 }
 
 #[test]

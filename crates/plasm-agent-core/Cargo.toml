@@ -65,6 +65,7 @@ opentelemetry = { workspace = true }
 # Optional: enabled by `code_mode` (Oxc TS transform + QuickJS embedder).
 oxc = { workspace = true, optional = true }
 rquickjs = { workspace = true, optional = true }
+minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
