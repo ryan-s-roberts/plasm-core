@@ -323,11 +323,11 @@ pub type RawPlanArtifact = Plan<RawPlanState>;
 
 /// Agent-visible return shape: a single node, a parallel set, or named outputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PlanReturn {
-    Parallel { parallel: Vec<String> },
-    Record(BTreeMap<String, String>),
-    Node(String),
+    Node { node: String },
+    Parallel { nodes: Vec<String> },
+    Record { fields: BTreeMap<String, String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -821,9 +821,9 @@ fn has_cycle(adj: &[Vec<usize>]) -> bool {
 
 fn return_refs(ret: &PlanReturn) -> Vec<&str> {
     match ret {
-        PlanReturn::Node(id) => vec![id.as_str()],
-        PlanReturn::Parallel { parallel } => parallel.iter().map(String::as_str).collect(),
-        PlanReturn::Record(map) => map.values().map(String::as_str).collect(),
+        PlanReturn::Node { node } => vec![node.as_str()],
+        PlanReturn::Parallel { nodes } => nodes.iter().map(String::as_str).collect(),
+        PlanReturn::Record { fields } => fields.values().map(String::as_str).collect(),
     }
 }
 
@@ -1664,14 +1664,14 @@ fn validate_return_refs(
     by_id: &HashMap<String, usize>,
 ) -> Result<ValidatedPlanReturn, String> {
     match ret {
-        PlanReturn::Node(id) if id.trim().is_empty() => {
+        PlanReturn::Node { node } if node.trim().is_empty() => {
             return Err("plan.return node id must be non-empty".to_string());
         }
-        PlanReturn::Parallel { parallel } if parallel.is_empty() => {
-            return Err("plan.return.parallel must contain at least one node".to_string());
+        PlanReturn::Parallel { nodes } if nodes.is_empty() => {
+            return Err("plan.return.nodes must contain at least one node".to_string());
         }
-        PlanReturn::Record(map) if map.is_empty() => {
-            return Err("plan.return record must contain at least one named node".to_string());
+        PlanReturn::Record { fields } if fields.is_empty() => {
+            return Err("plan.return.fields must contain at least one named node".to_string());
         }
         _ => {}
     }
@@ -1681,16 +1681,17 @@ fn validate_return_refs(
         }
     }
     match ret {
-        PlanReturn::Node(id) => Ok(ValidatedPlanReturn::Node(PlanNodeId::new(id.clone())?)),
-        PlanReturn::Parallel { parallel } => Ok(ValidatedPlanReturn::Parallel {
-            parallel: parallel
+        PlanReturn::Node { node } => Ok(ValidatedPlanReturn::Node(PlanNodeId::new(node.clone())?)),
+        PlanReturn::Parallel { nodes } => Ok(ValidatedPlanReturn::Parallel {
+            parallel: nodes
                 .iter()
                 .cloned()
                 .map(PlanNodeId::new)
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        PlanReturn::Record(map) => Ok(ValidatedPlanReturn::Record(
-            map.iter()
+        PlanReturn::Record { fields } => Ok(ValidatedPlanReturn::Record(
+            fields
+                .iter()
                 .map(|(k, v)| Ok((OutputName::new(k.clone())?, PlanNodeId::new(v.clone())?)))
                 .collect::<Result<BTreeMap<_, _>, String>>()?,
         )),
@@ -1919,7 +1920,7 @@ mod tests {
                 "depends_on": [],
                 "uses_result": []
             }],
-            "return": "n1"
+            "return": { "kind": "node", "node": "n1" }
         });
         validate_plan_value(&v).expect("ok");
     }
@@ -1931,6 +1932,31 @@ mod tests {
         });
         let err = parse_plan_value(&v).expect_err("legacy expression list rejected");
         assert!(err.contains("missing field"), "{err}");
+    }
+
+    #[test]
+    fn legacy_untagged_returns_are_rejected() {
+        let base_nodes = serde_json::json!([{
+            "id": "n1",
+            "kind": "data",
+            "effect_class": "artifact_read",
+            "result_shape": "artifact",
+            "data": { "kind": "literal", "value": [{ "id": "i1" }] }
+        }]);
+        for return_value in [
+            serde_json::json!("n1"),
+            serde_json::json!({ "parallel": ["n1"] }),
+            serde_json::json!({ "name": "n1" }),
+        ] {
+            let v = serde_json::json!({
+                "version": 1,
+                "kind": "program",
+                "nodes": base_nodes.clone(),
+                "return": return_value
+            });
+            let err = parse_plan_value(&v).expect_err("untagged return rejected");
+            assert!(err.contains("tag") || err.contains("kind"), "{err}");
+        }
     }
 
     #[test]
@@ -1955,7 +1981,7 @@ mod tests {
                     "depends_on": ["a"]
                 }
             ],
-            "return": "a"
+            "return": { "kind": "node", "node": "a" }
         });
         assert!(validate_plan_value(&v).is_err());
     }
@@ -1972,7 +1998,7 @@ mod tests {
                 "effect_class": "read",
                 "result_shape": "list"
             }],
-            "return": "n1"
+            "return": { "kind": "node", "node": "n1" }
         });
         assert!(validate_plan_value(&v).is_err());
     }
@@ -2009,7 +2035,7 @@ mod tests {
                     }
                 }
             ],
-            "return": { "sourceIssues": "find", "labeledIssues": "label" }
+            "return": { "kind": "record", "fields": { "sourceIssues": "find", "labeledIssues": "label" } }
         });
         validate_plan_value(&v).expect("host infers approval gates during dry-run");
     }
@@ -2027,7 +2053,7 @@ mod tests {
                 "effect_class": "read",
                 "result_shape": "single"
             }],
-            "return": "n1"
+            "return": { "kind": "node", "node": "n1" }
         });
         let err = validate_plan_value(&bad_surface).expect_err("object coercion rejected");
         assert!(err.contains("[object Object]"), "{err}");
@@ -2059,7 +2085,7 @@ mod tests {
                     }
                 }
             ],
-            "return": "mapped"
+            "return": { "kind": "node", "node": "mapped" }
         });
         let err = validate_plan_value(&bad_template).expect_err("bad template rejected");
         assert!(err.contains("[object Object]"), "{err}");
@@ -2094,7 +2120,7 @@ mod tests {
                     }
                 }
             ],
-            "return": "mapped"
+            "return": { "kind": "node", "node": "mapped" }
         });
         let err = validate_plan_value(&v).expect_err("empty substitution rejected");
         assert!(err.contains("empty template substitution"), "{err}");
@@ -2116,7 +2142,7 @@ mod tests {
                     "schema": { "fields": [{ "name": "key", "value_kind": "string" }, { "name": "count", "value_kind": "integer" }] }
                 }
             }],
-            "return": "by_state"
+            "return": { "kind": "node", "node": "by_state" }
         });
         assert!(validate_plan_value(&unknown_source).is_err());
 
@@ -2143,7 +2169,7 @@ mod tests {
                     }
                 }
             ],
-            "return": "totals"
+            "return": { "kind": "node", "node": "totals" }
         });
         assert!(validate_plan_value(&bad_aggregate).is_err());
     }
@@ -2161,7 +2187,7 @@ mod tests {
                 "effect_class": "read",
                 "result_shape": "single"
             }],
-            "return": "search"
+            "return": { "kind": "node", "node": "search" }
         });
         let err = validate_plan_value(&bad_shape).expect_err("bad search shape rejected");
         assert!(err.contains("search result_shape must be list"), "{err}");
@@ -2198,7 +2224,7 @@ mod tests {
                     "uses_result": [{ "node": "product", "as": "source" }]
                 }
             ],
-            "return": "category"
+            "return": { "kind": "node", "node": "category" }
         });
         let plan = parse_plan_value(&v).expect("parse");
         let validated = validate_plan_artifact(&plan).expect("validate");
@@ -2241,7 +2267,7 @@ mod tests {
                     "depends_on": ["products"]
                 }
             ],
-            "return": "category"
+            "return": { "kind": "node", "node": "category" }
         });
         let err = validate_plan_value(&v).expect_err("plural one relation rejected");
         assert!(err.contains("requires a singleton source"), "{err}");
@@ -2273,7 +2299,7 @@ mod tests {
                     }
                 }
             ],
-            "return": { "limited": "limited" }
+            "return": { "kind": "record", "fields": { "limited": "limited" } }
         });
         let plan = parse_plan_value(&v).expect("parse");
         let validated = validate_plan_artifact(&plan).expect("validate");

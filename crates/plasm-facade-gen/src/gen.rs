@@ -4,15 +4,15 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
-use plasm_core::schema::CapabilityKind;
-use plasm_core::value::FieldType;
+use plasm_core::CGS;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
 use plasm_core::FieldSchema;
 use plasm_core::InputFieldSchema;
 use plasm_core::InputType;
 use plasm_core::OutputType;
-use plasm_core::CGS;
+use plasm_core::schema::CapabilityKind;
+use plasm_core::value::FieldType;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -578,7 +578,8 @@ const TS_PRELUDE: &str = r#"declare namespace Plasm {
   export type Symbolic<T = unknown> = T & PlanValueExpr & { readonly __bindingPath: string; readonly __plasmExpr: string };
   export type TemplateValue = PlanValueExpr & { readonly __plasmExpr: string; readonly __planValue: PlanValue; readonly input_bindings: readonly PlanInputBinding[] };
   export type ProjectionValue = Symbolic<unknown>;
-  export type PlanReturnable = PlanNodeHandle | Record<string, PlanNodeHandle>;
+  export type PlanReturnSource = PlanNodeHandle | PlanBuilder | PlanEffect;
+  export type PlanReturnable = PlanReturnSource | readonly PlanReturnSource[] | Record<string, PlanReturnSource>;
 }
 declare class Plan {
   static return(value: Plasm.PlanReturnable): string;
