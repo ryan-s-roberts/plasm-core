@@ -1,7 +1,7 @@
-//! Conservative batch staging for HTTP/MCP execute: only consecutive pure [`plasm_core::Expr::Query`]
+//! Staged execute scheduling for HTTP/MCP: only consecutive pure [`plasm_core::Expr::Query`]
 //! lines without top-level projection enrichment may share a parallel stage (fork snapshot +
-//! `join_all` + ordered `merge_from_graph`). Everything else runs sequentially so same-batch
-//! cache dependencies remain observable.
+//! `join_all` + ordered `merge_from_graph`). Everything else runs sequentially so
+//! in-request cache dependencies remain observable.
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::Expr;
@@ -16,11 +16,11 @@ pub fn line_may_share_parallel_query_stage(parsed: &ParsedExpr) -> bool {
     matches!(parsed.expr, Expr::Query(_))
 }
 
-/// Group consecutive parallel-safe line indices into [`BatchStage::Parallel`] when the group has
-/// at least two lines; single parallel-safe lines use [`BatchStage::Sequential`] (same semantics,
+/// Group consecutive parallel-safe line indices into [`ExecuteStage::Parallel`] when the group has
+/// at least two lines; single parallel-safe lines use [`ExecuteStage::Sequential`] (same semantics,
 /// simpler execution path).
 #[must_use]
-pub fn build_batch_stages(parallel_safe: &[bool]) -> Vec<BatchStage> {
+pub fn build_execute_stages(parallel_safe: &[bool]) -> Vec<ExecuteStage> {
     let n = parallel_safe.len();
     let mut out = Vec::new();
     let mut i = 0;
@@ -32,12 +32,12 @@ pub fn build_batch_stages(parallel_safe: &[bool]) -> Vec<BatchStage> {
             }
             let idxs: Vec<usize> = (start..i).collect();
             if idxs.len() >= 2 {
-                out.push(BatchStage::Parallel(idxs));
+                out.push(ExecuteStage::Parallel(idxs));
             } else {
-                out.push(BatchStage::Sequential(idxs[0]));
+                out.push(ExecuteStage::Sequential(idxs[0]));
             }
         } else {
-            out.push(BatchStage::Sequential(i));
+            out.push(ExecuteStage::Sequential(i));
             i += 1;
         }
     }
@@ -46,7 +46,7 @@ pub fn build_batch_stages(parallel_safe: &[bool]) -> Vec<BatchStage> {
 
 /// One execution unit: either a single line index or a parallel group (fork-merge).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BatchStage {
+pub enum ExecuteStage {
     Sequential(usize),
     Parallel(Vec<usize>),
 }
@@ -57,38 +57,38 @@ mod tests {
 
     #[test]
     fn build_stages_all_sequential_flags_yield_sequential_stages() {
-        let s = build_batch_stages(&[false, false, false]);
+        let s = build_execute_stages(&[false, false, false]);
         assert_eq!(
             s,
             vec![
-                BatchStage::Sequential(0),
-                BatchStage::Sequential(1),
-                BatchStage::Sequential(2),
+                ExecuteStage::Sequential(0),
+                ExecuteStage::Sequential(1),
+                ExecuteStage::Sequential(2),
             ]
         );
     }
 
     #[test]
     fn build_stages_two_parallel_merges() {
-        let s = build_batch_stages(&[true, true]);
-        assert_eq!(s, vec![BatchStage::Parallel(vec![0, 1])]);
+        let s = build_execute_stages(&[true, true]);
+        assert_eq!(s, vec![ExecuteStage::Parallel(vec![0, 1])]);
     }
 
     #[test]
     fn build_stages_single_parallel_safe_is_sequential() {
-        let s = build_batch_stages(&[true]);
-        assert_eq!(s, vec![BatchStage::Sequential(0)]);
+        let s = build_execute_stages(&[true]);
+        assert_eq!(s, vec![ExecuteStage::Sequential(0)]);
     }
 
     #[test]
     fn build_stages_mixed_parallel_runs_and_barriers() {
-        let s = build_batch_stages(&[true, true, false, true, true]);
+        let s = build_execute_stages(&[true, true, false, true, true]);
         assert_eq!(
             s,
             vec![
-                BatchStage::Parallel(vec![0, 1]),
-                BatchStage::Sequential(2),
-                BatchStage::Parallel(vec![3, 4]),
+                ExecuteStage::Parallel(vec![0, 1]),
+                ExecuteStage::Sequential(2),
+                ExecuteStage::Parallel(vec![3, 4]),
             ]
         );
     }
@@ -135,12 +135,12 @@ mod property_tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn flatten_stage_indices_in_order(stages: &[BatchStage]) -> Vec<usize> {
+    fn flatten_stage_indices_in_order(stages: &[ExecuteStage]) -> Vec<usize> {
         let mut out = Vec::new();
         for s in stages {
             match s {
-                BatchStage::Sequential(i) => out.push(*i),
-                BatchStage::Parallel(v) => out.extend_from_slice(v),
+                ExecuteStage::Sequential(i) => out.push(*i),
+                ExecuteStage::Parallel(v) => out.extend_from_slice(v),
             }
         }
         out
@@ -148,10 +148,10 @@ mod property_tests {
 
     proptest! {
         #[test]
-        fn build_batch_stages_partition_ordered_and_parallel_arity(
+        fn build_execute_stages_partition_ordered_and_parallel_arity(
             flags in prop::collection::vec(any::<bool>(), 0..=128)
         ) {
-            let stages = build_batch_stages(&flags);
+            let stages = build_execute_stages(&flags);
             let n = flags.len();
             if n == 0 {
                 prop_assert!(stages.is_empty());
@@ -162,7 +162,7 @@ mod property_tests {
             prop_assert_eq!(ordered, expected);
 
             for s in &stages {
-                if let BatchStage::Parallel(v) = s {
+                if let ExecuteStage::Parallel(v) = s {
                     prop_assert!(v.len() >= 2);
                 }
             }

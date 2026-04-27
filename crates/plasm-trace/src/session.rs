@@ -23,7 +23,7 @@ pub struct SessionTraceData {
     #[serde(default)]
     pub aggregate_plasm_expressions: u64,
     #[serde(default)]
-    pub aggregate_batched_plasm_invocations: u64,
+    pub aggregate_multi_line_plasm_invocations: u64,
     #[serde(default)]
     pub aggregate_expression_lines: u64,
     #[serde(default)]
@@ -67,7 +67,7 @@ pub struct SessionTraceCountersSnapshot {
     pub mcp_resource_read_chars: u64,
     pub plasm_call_count: u64,
     pub aggregate_plasm_expressions: u64,
-    pub aggregate_batched_plasm_invocations: u64,
+    pub aggregate_multi_line_plasm_invocations: u64,
     pub aggregate_expression_lines: u64,
     pub aggregate_total_duration_ms: u64,
     pub aggregate_network_requests: u64,
@@ -95,7 +95,7 @@ impl From<&SessionTraceData> for SessionTraceCountersSnapshot {
             mcp_resource_read_chars: d.mcp_resource_read_chars,
             plasm_call_count: d.plasm_call_count,
             aggregate_plasm_expressions: d.aggregate_plasm_expressions,
-            aggregate_batched_plasm_invocations: d.aggregate_batched_plasm_invocations,
+            aggregate_multi_line_plasm_invocations: d.aggregate_multi_line_plasm_invocations,
             aggregate_expression_lines: d.aggregate_expression_lines,
             aggregate_total_duration_ms: d.aggregate_total_duration_ms,
             aggregate_network_requests: d.aggregate_network_requests,
@@ -122,7 +122,7 @@ impl SessionTraceCountersSnapshot {
             mcp_resource_read_chars: self.mcp_resource_read_chars,
             plasm_call_count: self.plasm_call_count,
             aggregate_plasm_expressions: self.aggregate_plasm_expressions,
-            aggregate_batched_plasm_invocations: self.aggregate_batched_plasm_invocations,
+            aggregate_multi_line_plasm_invocations: self.aggregate_multi_line_plasm_invocations,
             aggregate_expression_lines: self.aggregate_expression_lines,
             aggregate_total_duration_ms: self.aggregate_total_duration_ms,
             aggregate_network_requests: self.aggregate_network_requests,
@@ -150,7 +150,7 @@ impl Default for SessionTraceData {
             mcp_resource_read_chars: 0,
             plasm_call_count: 0,
             aggregate_plasm_expressions: 0,
-            aggregate_batched_plasm_invocations: 0,
+            aggregate_multi_line_plasm_invocations: 0,
             aggregate_expression_lines: 0,
             aggregate_total_duration_ms: 0,
             aggregate_network_requests: 0,
@@ -201,7 +201,7 @@ impl SessionTraceData {
                     .saturating_add(*domain_prompt_chars_added);
             }
             TraceSegment::PlasmInvocation {
-                batch,
+                multi_line,
                 expression_count,
                 plasm_invocation_chars_added,
                 ..
@@ -213,9 +213,9 @@ impl SessionTraceData {
                 self.aggregate_plasm_expressions = self
                     .aggregate_plasm_expressions
                     .saturating_add(*expression_count as u64);
-                if *batch {
-                    self.aggregate_batched_plasm_invocations =
-                        self.aggregate_batched_plasm_invocations.saturating_add(1);
+                if *multi_line {
+                    self.aggregate_multi_line_plasm_invocations =
+                        self.aggregate_multi_line_plasm_invocations.saturating_add(1);
                 }
             }
             TraceSegment::DomainPromptCharsDelta { chars_added } => {

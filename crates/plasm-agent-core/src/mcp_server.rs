@@ -29,7 +29,7 @@
 //!
 //! Plasm language / instructions body (first wave on `plasm_context` open plus append-only delta waves from
 //! `plasm_context` `seeds`) is counted in Unicode scalar values per MCP transport session.
-//! Each `plasm` call also accumulates invocation text (`expression` plus optional `reasoning` and
+//! Each `plasm` call also accumulates invocation text (`program` plus optional `reasoning` and
 //! optional TSV `tsv_static_frontmatter`) and,
 //! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
@@ -101,10 +101,11 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
 
 /// Model-facing `plasm` tool description: plan-first program construction (session setup is in initialize instructions).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan / execute** Plasm with **`expression`** and **`logical_session_ref`** from **`plasm_context`**. \
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan / execute** Plasm with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
      Default: each call returns a **reviewable dry-run program plan** (topology + expected shapes)—**no live API execution** until you set **`execute: true`** after the plan matches your intent. \
      Use the Plasm syntax guide in initialize instructions and the active TSV rows from **`plasm_context`**. \
      Simple goal: one taught `plasm_expr` still compiles as a one-node plan—use when row-level output is already the answer. Multi-step / analytical goal: one **`plasm_program`** that binds, narrows, aggregates, renders, and returns compact final roots—avoid broad probe-and-dump call chains. \
+     For a **`plasm_program`**, the JSON **`program`** string should contain **real newline characters** (U+000A): **one physical line per** `ident = …` **binding**, then **final bare roots** on their own line(s)—do **not** collapse the whole program into one line. Tagged **`<<TAG`** heredocs inside args require a newline after the tag opener, body lines, then a closing line whose trimmed text is **`TAG`**. \
      Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append new **`api`/`entity`** seeds.";
 
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
@@ -112,7 +113,7 @@ pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Workflow: **`plasm_cont
      **`discover_capabilities`** is optional search. It accepts one query string or an array of strings and returns TSV entity rows. Use row columns **`api`** + **`entity`** as seeds. Skip it when you already know the seeds. \
      **`plasm_context`**: pass a stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** array of `{ \"api\": catalog_id, \"entity\": entity_name }` objects (`entry_id` is accepted per object as a legacy alias). The response gives **`logical_session_ref`** (`s0`, `s1`, ...). Loading is **append-only** for a live logical session: call again only for new seeds; do not resend identical seeds every turn, and do not send a smaller set to narrow or reset. Multiple APIs federate into one Plasm language; the primary catalog is the lexicographically first distinct `api`. \
      On a new TSV open, read the teaching table from **`plasm_context`**; it binds the syntax guide below to the current catalogue symbols. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`expression`** string. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports or analysis, prefer **one composed `plasm_program`** over many sequential exploratory **`plasm`** calls. For simple goals, send one taught `plasm_expr` (still a one-node plan). For multi-step work, send one `plasm_program` whose **final roots are bare** comma-separated lines (never prefix with `return`). Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string (JSON allows **multiline** strings with literal newlines). For a **`plasm_program`**, use **one line per binding** and **roots on their own line**—not a single concatenated line; heredocs need hard newlines after **`<<TAG`**. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports or analysis, prefer **one composed `plasm_program`** over many sequential exploratory **`plasm`** calls. For simple goals, send one taught `plasm_expr` (still a one-node plan). For multi-step work, send one `plasm_program` whose **final roots are bare** comma-separated lines (never prefix with `return`). Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
      **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
 
@@ -205,7 +206,7 @@ struct PlasmExecBinding {
 pub(crate) struct McpSessionPlasmStats {
     /// Plasm instructions body from `plasm_context` tool results.
     domain_prompt_chars: u64,
-    /// `plasm` tool payloads: expression lines plus optional `reasoning`.
+    /// `plasm` tool payloads: program string plus optional `reasoning`.
     plasm_invocation_chars: u64,
     /// Successful `plasm` tool Markdown bodies.
     plasm_response_chars: u64,
@@ -249,13 +250,13 @@ fn mcp_chars_to_token_est(chars: u64) -> u64 {
     chars.saturating_add(3) / 4
 }
 
-/// Per `plasm` call: count expression + reasoning + optional TSV static frontmatter for invocation telemetry.
+/// Per `plasm` call: count program + reasoning + optional TSV static frontmatter for invocation telemetry.
 fn plasm_invocation_char_count(
-    expression: &str,
+    program: &str,
     reasoning: Option<&str>,
     tsv_static_frontmatter: Option<&str>,
 ) -> u64 {
-    let mut n = expression.chars().count() as u64;
+    let mut n = program.chars().count() as u64;
     if let Some(r) = reasoning {
         n = n.saturating_add(r.chars().count() as u64);
     }
@@ -536,9 +537,9 @@ impl PlasmMcpHandler {
             ),
         );
         run_props.insert(
-            "expression".into(),
+            "program".into(),
             json_schema_string_type(
-                "One Plasm expression/program string. Use the syntax guide from initialize instructions and the active TSV rows from `plasm_context`.",
+                "One Plasm line, full `plasm_program`, or bare comma-separated final roots. JSON strings may contain literal newline characters (U+000A): for programs with bindings, use one line per `ident = …` and put final bare roots on their own line(s); do not send the whole program as a single long line. Tagged heredocs (`<<TAG` … `TAG`) require newlines after the opener and before the closing tag line. Use the syntax guide from initialize instructions and the active TSV rows from `plasm_context`.",
             ),
         );
         run_props.insert(
@@ -608,7 +609,7 @@ impl PlasmMcpHandler {
             title: None,
             description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
-                vec!["logical_session_ref".into(), "expression".into()],
+                vec!["logical_session_ref".into(), "program".into()],
                 Some(run_props),
                 None,
             ),
@@ -1674,8 +1675,8 @@ impl ServerHandler for PlasmMcpHandler {
                         g.binding = Some(b);
                     }
                 }
-                let Some(expression) = v
-                    .get("expression")
+                let Some(program) = v
+                    .get("program")
                     .and_then(|x| x.as_str())
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
@@ -1691,12 +1692,12 @@ impl ServerHandler for PlasmMcpHandler {
                     return Ok(CallToolResult::with_error(
                         CallToolError::invalid_arguments(
                             "plasm",
-                            Some("missing or invalid `expression`: non-empty string".into()),
+                            Some("missing or invalid `program`: non-empty string".into()),
                         ),
                     ));
                 };
-                let mut expressions = vec![expression.clone()];
-                if let Some(expanded) = split_bare_plasm_roots(&expression) {
+                let mut expressions = vec![program.clone()];
+                if let Some(expanded) = split_bare_plasm_roots(&program) {
                     expressions = expanded;
                 }
                 let execute = v.get("execute").and_then(|x| x.as_bool()).unwrap_or(false);
@@ -1724,8 +1725,8 @@ impl ServerHandler for PlasmMcpHandler {
                         ));
                     }
                 }
-                let batch_count = expressions.len();
-                if batch_count > 1 && !execute {
+                let line_count = expressions.len();
+                if line_count > 1 && !execute {
                     crate::metrics::record_mcp_tool(
                         "plasm",
                         Some(true),
@@ -1744,15 +1745,15 @@ impl ServerHandler for PlasmMcpHandler {
                     ));
                 }
                 let plasm_tool_span = crate::spans::mcp_tool_plasm(
-                    batch_count > 1,
-                    batch_count as u64,
+                    line_count > 1,
+                    line_count as u64,
                     session_ref.as_str(),
                 );
                 let (binding, this_invocation_chars, mut idx, call_count) = {
                     let mut g = state.lock().await;
                     let binding = g.binding.clone();
                     let this_invocation_chars =
-                        plasm_invocation_char_count(&expression, reasoning, tsv_static_frontmatter);
+                        plasm_invocation_char_count(&program, reasoning, tsv_static_frontmatter);
                     g.stats.plasm_invocation_chars = g
                         .stats
                         .plasm_invocation_chars
@@ -1765,7 +1766,7 @@ impl ServerHandler for PlasmMcpHandler {
                 let Some(b) = binding else {
                     crate::metrics::record_mcp_tool(
                         "plasm",
-                        Some(batch_count > 1),
+                        Some(line_count > 1),
                         "error",
                         "no_session",
                         started.elapsed(),
@@ -1792,7 +1793,7 @@ impl ServerHandler for PlasmMcpHandler {
                     }
                     crate::metrics::record_mcp_tool(
                         "plasm",
-                        Some(batch_count > 1),
+                        Some(line_count > 1),
                         "error",
                         "session_expired",
                         started.elapsed(),
@@ -1821,8 +1822,8 @@ impl ServerHandler for PlasmMcpHandler {
                     .trace_hub
                     .trace_record_plasm_invocation(
                         &ls_key,
-                        batch_count > 1,
-                        batch_count,
+                        line_count > 1,
+                        line_count,
                         reasoning_chars,
                         this_invocation_chars,
                         reasoning.map(str::to_string),
@@ -2033,8 +2034,8 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                                     response_chars,
                                     "plasm",
                                     call_index,
-                                    batch_count > 1,
-                                    batch_count,
+                                    line_count > 1,
+                                    line_count,
                                 )
                                 .await;
                         }
@@ -2043,8 +2044,8 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                         tracing::info!(
                             target: "plasm_agent::mcp",
                             tool = "plasm",
-                            batch_count,
-                            batch = batch_count > 1,
+                            line_count,
+                            multi_line = line_count > 1,
                             ok = true,
                             tokens_est_prompt = tok_prompt,
                             tokens_est_invocation = tok_inv,
@@ -2054,7 +2055,7 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                         );
                         crate::metrics::record_mcp_tool(
                             "plasm",
-                            Some(batch_count > 1),
+                            Some(line_count > 1),
                             "success",
                             "none",
                             started.elapsed(),
@@ -2080,8 +2081,8 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                         tracing::error!(
                             target: "plasm_agent::mcp",
                             tool = "plasm",
-                            batch_count,
-                            batch = batch_count > 1,
+                            line_count,
+                            multi_line = line_count > 1,
                             tokens_est_prompt = tok_prompt,
                             tokens_est_invocation = tok_inv,
                             tokens_est_tool_response = tok_resp,
@@ -2091,7 +2092,7 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                         );
                         crate::metrics::record_mcp_tool(
                             "plasm",
-                            Some(batch_count > 1),
+                            Some(line_count > 1),
                             "error",
                             "execute_failed",
                             started.elapsed(),
@@ -2391,7 +2392,7 @@ mod tests {
     }
 
     #[test]
-    fn plasm_input_schema_advertises_single_expression_string() {
+    fn plasm_input_schema_advertises_single_program_string() {
         let tools = super::PlasmMcpHandler::plasm_tools();
         let plasm = tools
             .iter()
@@ -2402,7 +2403,7 @@ mod tests {
             .get("required")
             .and_then(|x| x.as_array())
             .expect("required array");
-        assert!(required.iter().any(|x| x.as_str() == Some("expression")));
+        assert!(required.iter().any(|x| x.as_str() == Some("program")));
         assert!(!required.iter().any(|x| x.as_str() == Some("expressions")));
         let props = v
             .get("properties")
@@ -2410,7 +2411,7 @@ mod tests {
             .expect("properties object");
         assert_eq!(
             props
-                .get("expression")
+                .get("program")
                 .and_then(|x| x.get("type"))
                 .and_then(|x| x.as_str()),
             Some("string")

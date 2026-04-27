@@ -2889,6 +2889,7 @@ Program construction discipline:\n\
   - Return at most small final roots unless the user explicitly asks for raw rows.\n\
   - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
   - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
+  - MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—never one concatenated line. Tagged heredocs (`<<TAG` newline body newline `TAG`) require those hard newlines.\n\
 \n\
 Catalogue rules:\n\
   - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.\n\

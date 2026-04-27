@@ -4,7 +4,7 @@
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;
 pub mod backend_normalize;
-mod batch_scheduler;
+mod execute_staging;
 pub mod bootstrap_secrets;
 pub mod catalog_runtime;
 pub mod cli_builder;

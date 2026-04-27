@@ -14,8 +14,8 @@ pub const DESC_RUN_SNAPSHOT: &str = "Plasm execute run snapshot (application/jso
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlasmPagingStepMeta {
     Next {
-        /// 1-based index within the `expressions` batch (always `1` for a single-line `plasm` call).
-        batch_step: usize,
+        /// 1-based step within this run (always `1` for a single-line `plasm` call).
+        run_step: usize,
         returned_count: usize,
         next_page_handle: PagingHandle,
     },
@@ -26,12 +26,12 @@ pub(crate) fn plasm_paging_json_value(paging: &[PlasmPagingStepMeta]) -> Option<
         .iter()
         .map(|p| match p {
             PlasmPagingStepMeta::Next {
-                batch_step,
+                run_step,
                 returned_count,
                 next_page_handle,
             } => {
                 json!({
-                    "batch_step": batch_step,
+                    "run_step": run_step,
                     "has_more": true,
                     "count": returned_count,
                     "next_page_handle": next_page_handle.as_str(),
@@ -121,8 +121,8 @@ impl PlasmMetaIndex {
     /// Build `_meta.plasm` with `index_delta`, compact `steps`, and optional `omitted_from_summary`.
     /// Returns `(plasm_meta, desc_id_per_handle)` (desc ids are unused when no `resource_link` rows).
     ///
-    /// When `batch_steps` is `Some`, it must be the same length as `handles`; each value is the
-    /// 1-based batch step index for that snapshot (only truncated steps are included upstream).
+    /// When `run_step_numbers` is `Some`, it must be the same length as `handles`; each value is
+    /// the 1-based run step index for that snapshot (only truncated steps are included upstream).
     ///
     /// When `lossy_per_step` is `Some`, it must be the same length as `handles`; each entry lists
     /// field names summarized with a lossy cap for that step (same shape as non-compact `plasm` meta).
@@ -132,7 +132,7 @@ impl PlasmMetaIndex {
         omitted_from_summary: &[String],
         lossy_per_step: Option<&[LossySummaryFieldNames]>,
         expr_previews: &[String],
-        batch_steps: Option<&[usize]>,
+        run_step_numbers: Option<&[usize]>,
         paging: Option<&[PlasmPagingStepMeta]>,
     ) -> (Map<String, Value>, Vec<u32>) {
         self.index_id = self.index_id.saturating_add(1);
@@ -184,9 +184,9 @@ impl PlasmMetaIndex {
                 }),
             );
             step.insert("expr_preview".into(), json!(preview));
-            if let Some(bs) = batch_steps {
-                if let Some(&batch_step) = bs.get(i) {
-                    step.insert("batch_step".into(), json!(batch_step));
+            if let Some(rs) = run_step_numbers {
+                if let Some(&run_step) = rs.get(i) {
+                    step.insert("run_step".into(), json!(run_step));
                 }
             }
             if let Some(ls) = lossy_per_step {
@@ -309,7 +309,7 @@ mod tests {
         let step = steps[0].as_object().expect("step object");
         assert!(step.contains_key("dict_ref"));
         assert_eq!(step.get("run_id"), Some(&json!(id.to_string())));
-        assert_eq!(step.get("batch_step"), Some(&json!(1)));
+        assert_eq!(step.get("run_step"), Some(&json!(1)));
         assert_eq!(desc_ids.len(), 1);
     }
 
@@ -346,7 +346,7 @@ mod tests {
         let h = sample_handle(id, &ph, &sid);
         let mut idx = PlasmMetaIndex::new();
         let paging = [PlasmPagingStepMeta::Next {
-            batch_step: 1,
+            run_step: 1,
             returned_count: 20,
             next_page_handle: PagingHandle::mint_namespaced("s0", 1),
         }];

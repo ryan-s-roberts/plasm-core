@@ -1,5 +1,5 @@
 //! Execute-session protocol (shared by **Axum** and **MCP**): after [`crate::http_discovery`],
-//! clients open a session with `entry_id` + entity seeds, then run expressions.
+//! clients open a session with `entry_id` + entity seeds, then run one or more Plasm lines.
 //!
 //! HTTP: `POST /execute` → `GET /execute/:prompt_hash/:session` → `POST` that path (default `Accept`:
 //! **text/toon**, entity rows only); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses the same
@@ -131,7 +131,7 @@ where
     }
 }
 
-use crate::batch_scheduler::{build_batch_stages, line_may_share_parallel_query_stage, BatchStage};
+use crate::execute_staging::{build_execute_stages, line_may_share_parallel_query_stage, ExecuteStage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
 use crate::http_problem_util::problem_response;
@@ -141,7 +141,7 @@ use crate::incoming_auth::{
 };
 use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
 use crate::mcp_run_markdown::{
-    execute_expression_preview, mcp_compact_markdown_batch, mcp_compact_markdown_single,
+    execute_expression_preview, mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
     mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
     mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
     merge_snapshot_column_hints, OmittedReferenceOnlyFields,
@@ -181,7 +181,7 @@ fn plasm_meta_object(
     handles: &[RunArtifactHandle],
     omitted_from_summary: &[String],
     lossy_per_step: Option<&[LossySummaryFieldNames]>,
-    batch_steps: Option<&[usize]>,
+    run_step_numbers: Option<&[usize]>,
     paging: Option<&[PlasmPagingStepMeta]>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
@@ -197,10 +197,10 @@ fn plasm_meta_object(
                     "artifact_path": h.http_path,
                     "request_fingerprints": h.request_fingerprints,
                 });
-                if let Some(bs) = batch_steps {
-                    if let Some(&batch_step) = bs.get(i) {
+                if let Some(rs) = run_step_numbers {
+                    if let Some(&run_step) = rs.get(i) {
                         if let Some(obj) = step.as_object_mut() {
-                            obj.insert("batch_step".into(), serde_json::json!(batch_step));
+                            obj.insert("run_step".into(), serde_json::json!(run_step));
                         }
                     }
                 }
@@ -278,13 +278,13 @@ fn paging_followup_handle(parsed: &ParsedExpr, result: &ExecutionResult) -> Opti
 }
 
 fn paging_step_meta(
-    batch_step: usize,
+    run_step: usize,
     parsed: &ParsedExpr,
     result: &ExecutionResult,
 ) -> Option<PlasmPagingStepMeta> {
     let next_page_handle = paging_followup_handle(parsed, result)?;
     Some(PlasmPagingStepMeta::Next {
-        batch_step,
+        run_step,
         returned_count: result.count,
         next_page_handle,
     })
@@ -299,7 +299,7 @@ fn append_paging_hint_markdown(
         return markdown;
     };
     format!(
-        "{markdown}\n\n**More pages available:** use `page({})` for the next batch.",
+        "{markdown}\n\n**More pages available:** use `page({})` for the next page.",
         handle.as_str()
     )
 }
@@ -323,7 +323,7 @@ fn build_mcp_tool_meta(
     omitted_from_summary: &OmittedReferenceOnlyFields,
     lossy_per_handle: &[LossySummaryFieldNames],
     expr_previews: &[String],
-    batch_steps: Option<&[usize]>,
+    run_step_numbers: Option<&[usize]>,
     paging: Option<&[PlasmPagingStepMeta]>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     debug_assert!(
@@ -342,7 +342,7 @@ fn build_mcp_tool_meta(
                 omitted_from_summary.as_ref(),
                 lossy_arg,
                 expr_previews,
-                batch_steps,
+                run_step_numbers,
                 paging,
             );
             let mut meta = serde_json::Map::new();
@@ -354,7 +354,7 @@ fn build_mcp_tool_meta(
                 handles,
                 omitted_from_summary.as_ref(),
                 lossy_arg,
-                batch_steps,
+                run_step_numbers,
                 paging,
             );
             if plasm.is_empty() {
@@ -640,7 +640,7 @@ fn cgs_entity_names_sample(names: &[String], max_list: usize) -> String {
     }
 }
 
-const MAX_BATCH_EXPRESSIONS: usize = 64;
+const MAX_PLASM_LINES_PER_REQUEST: usize = 64;
 
 /// For tenant MCP: resolve `plasm:outbound:*` keys bound to each catalog `entry_id` via Phoenix tables.
 async fn tenant_outbound_hosted_kv_for_entries(
@@ -1466,7 +1466,7 @@ fn plasm_line_trace_meta(
     }
 }
 
-async fn trace_record_plasm_line_batch(
+async fn trace_emit_plasm_line(
     sink: &McpPlasmTraceSink,
     line_index: usize,
     line: &str,
@@ -1488,7 +1488,7 @@ async fn trace_record_plasm_line_batch(
         .await;
 }
 
-/// Run one or more expressions; Markdown for tools plus MCP `_meta` / resource link metadata.
+/// Run one or more Plasm lines; Markdown for tools plus MCP `_meta` / resource link metadata.
 ///
 /// When `meta_index` is [`Some`], `_meta.plasm` uses compact `dict_ref` + `index_delta`, and large
 /// markdown may be replaced by a preview (see [`MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS`]).
@@ -1520,19 +1520,20 @@ pub async fn execute_session_run_markdown(
 
     if expressions.is_empty() {
         return Err(
-            "no expressions to run: provide a non-empty expression or expressions array".into(),
+            "no lines to run: provide a non-empty line, a JSON array of line strings, or JSON {\"lines\":[\"...\"]}"
+                .into(),
         );
     }
-    if expressions.len() > MAX_BATCH_EXPRESSIONS {
+    if expressions.len() > MAX_PLASM_LINES_PER_REQUEST {
         return Err(format!(
-            "too many expressions in one request (max {MAX_BATCH_EXPRESSIONS}, got {})",
+            "too many lines in one request (max {MAX_PLASM_LINES_PER_REQUEST}, got {})",
             expressions.len()
         ));
     }
 
-    let batch_mode = expressions.len() > 1;
+    let multiple_lines = expressions.len() > 1;
 
-    if !batch_mode {
+    if !multiple_lines {
         let line = expressions[0].as_str();
         let mut cache = sess.graph_cache.lock().await;
         match run_single_plasm_line(
@@ -1616,7 +1617,7 @@ pub async fn execute_session_run_markdown(
                     &formatted.reference_only_omitted,
                 );
                 let markdown = append_paging_hint_markdown(markdown, &parsed, &result);
-                let batch_step_single = [1_usize];
+                let run_step_one = [1_usize];
                 let lossy_for_meta = if truncated {
                     vec![merge_snapshot_column_hints(
                         &formatted.lossy_summary_fields,
@@ -1635,7 +1636,7 @@ pub async fn execute_session_run_markdown(
                     lossy_for_meta.as_slice(),
                     &expr_previews,
                     if truncated {
-                        Some(batch_step_single.as_slice())
+                        Some(run_step_one.as_slice())
                     } else {
                         None
                     },
@@ -1657,7 +1658,7 @@ pub async fn execute_session_run_markdown(
             }
         }
     } else {
-        let steps = match execute_expression_batch(
+        let steps = match execute_staged_plasm_lines(
             &expressions,
             &sess,
             st,
@@ -1668,10 +1669,10 @@ pub async fn execute_session_run_markdown(
         .await
         {
             Ok(s) => s,
-            Err(e) => return Err(mcp_batch_execution_error(e)),
+            Err(e) => return Err(mcp_staged_execute_error(e)),
         };
         let total = steps.len();
-        let header = "# Batch run\n\n";
+        let header = "# Plasm run\n\n";
         let mut per_step_body: Vec<String> = Vec::with_capacity(total);
         let mut per_step_omitted: Vec<OmittedReferenceOnlyFields> = Vec::with_capacity(total);
         let mut per_step_lossy: Vec<LossySummaryFieldNames> = Vec::with_capacity(total);
@@ -1692,7 +1693,7 @@ pub async fn execute_session_run_markdown(
                     } => next_page_handle.as_str(),
                 };
                 paging_hints.push(format!(
-                    "- Step {}: more pages available — use `page({h})` for the next batch.",
+                    "- Step {}: more pages available — use `page({h})` for the next page.",
                     index + 1
                 ));
                 paging_step_metas.push(pm);
@@ -1726,7 +1727,7 @@ pub async fn execute_session_run_markdown(
             sec.push_str(&formatted.block.into_mcp_result_markdown());
             per_step_body.push(sec);
         }
-        let omitted_batch: OmittedReferenceOnlyFields = omitted_union.into();
+        let omitted_for_steps: OmittedReferenceOnlyFields = omitted_union.into();
         let mut full_sections = String::from(header);
         for (i, b) in per_step_body.iter().enumerate() {
             if i > 0 {
@@ -1751,7 +1752,7 @@ pub async fn execute_session_run_markdown(
         }
         let handles_meta: Vec<RunArtifactHandle> =
             truncated_steps.iter().map(|(_, h)| h.clone()).collect();
-        let batch_steps_vec: Vec<usize> = truncated_steps.iter().map(|(s, _)| *s).collect();
+        let run_step_vec: Vec<usize> = truncated_steps.iter().map(|(s, _)| *s).collect();
         let expr_previews_filtered: Vec<String> = truncated_steps
             .iter()
             .map(|(step_no, _)| execute_expression_preview(&expressions[step_no - 1]))
@@ -1783,11 +1784,11 @@ pub async fn execute_session_run_markdown(
             LossySummaryFieldNames::from_vec_sorted_dedup(lossy_union_set.into_iter().collect());
 
         let markdown = if preview {
-            mcp_compact_markdown_batch(
+            mcp_compact_markdown_multi_line(
                 total,
                 total_entity_rows,
                 &per_step_compact,
-                &omitted_batch,
+                &omitted_for_steps,
                 &lossy_preview_union,
                 &truncated_refs,
             )
@@ -1813,7 +1814,7 @@ pub async fn execute_session_run_markdown(
             markdown,
             meta_index.is_some(),
             &handles_meta,
-            &omitted_batch,
+            &omitted_for_steps,
         );
         if !paging_hints.is_empty() {
             markdown.push_str("\n\n### Paging\n\n");
@@ -1824,13 +1825,13 @@ pub async fn execute_session_run_markdown(
         let tool_meta = build_mcp_tool_meta(
             meta_index,
             &handles_meta,
-            &omitted_batch,
+            &omitted_for_steps,
             lossy_meta_truncated.as_slice(),
             &expr_previews_filtered,
-            if batch_steps_vec.is_empty() {
+            if run_step_vec.is_empty() {
                 None
             } else {
-                Some(batch_steps_vec.as_slice())
+                Some(run_step_vec.as_slice())
             },
             paging_for_meta,
         );
@@ -1899,7 +1900,7 @@ pub async fn trace_record_plasm_line(
     result: &ExecutionResult,
     sess: &ExecuteSession,
 ) {
-    trace_record_plasm_line_batch(sink, line_index, line, parsed, result, sess).await;
+    trace_emit_plasm_line(sink, line_index, line, parsed, result, sess).await;
 }
 
 pub async fn archive_plasm_result_snapshot(
@@ -1996,7 +1997,7 @@ pub fn publish_plasm_result_steps(
     let mut omitted_union: BTreeSet<String> = BTreeSet::new();
     let mut lossy = Vec::new();
     let mut expr_previews = Vec::new();
-    let mut batch_steps = Vec::new();
+    let mut run_step_markers = Vec::new();
     let mut paging = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         if total > 1 {
@@ -2038,7 +2039,7 @@ pub fn publish_plasm_result_steps(
         if let Some(handle) = &step.artifact {
             handles.push(handle.clone());
             expr_previews.push(step.display.clone());
-            batch_steps.push(i + 1);
+            run_step_markers.push(i + 1);
             lossy.push(merge_snapshot_column_hints(
                 &formatted.lossy_summary_fields,
                 &formatted.in_band_report,
@@ -2052,12 +2053,12 @@ pub fn publish_plasm_result_steps(
         }
         if let Some(handle) = &step.result.paging_handle {
             paging.push(PlasmPagingStepMeta::Next {
-                batch_step: i + 1,
+                run_step: i + 1,
                 returned_count: step.result.count,
                 next_page_handle: handle.clone(),
             });
             markdown.push_str(&format!(
-                "\n\nmore pages available - use `page({})` for the next batch.",
+                "\n\nmore pages available - use `page({})` for the next page.",
                 handle.as_str()
             ));
         }
@@ -2065,22 +2066,23 @@ pub fn publish_plasm_result_steps(
             markdown.push_str("\n\n");
         }
     }
-    let omitted_batch: OmittedReferenceOnlyFields = omitted_union.into();
+    let omitted_for_steps: OmittedReferenceOnlyFields = omitted_union.into();
     let markdown = mcp_prepend_artifact_followup_markdown(
         markdown,
         meta_index.is_some(),
         &handles,
-        &omitted_batch,
+        &omitted_for_steps,
     );
     let paging_for_meta = (!paging.is_empty()).then_some(paging.as_slice());
-    let batch_steps_for_meta = (!batch_steps.is_empty()).then_some(batch_steps.as_slice());
+    let run_step_numbers_for_meta =
+        (!run_step_markers.is_empty()).then_some(run_step_markers.as_slice());
     let tool_meta = build_mcp_tool_meta(
         meta_index,
         &handles,
-        &omitted_batch,
+        &omitted_for_steps,
         lossy.as_slice(),
         &expr_previews,
-        batch_steps_for_meta,
+        run_step_numbers_for_meta,
         paging_for_meta,
     );
     ExecuteRunToolOutput {
@@ -2097,7 +2099,7 @@ fn split_expression_lines(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_execute_expressions_body(
+fn parse_execute_lines_body(
     content_type: Option<&str>,
     raw: &[u8],
 ) -> Result<Vec<String>, String> {
@@ -2118,13 +2120,13 @@ fn parse_execute_expressions_body(
                 .map(|(i, x)| {
                     x.as_str()
                         .map(str::to_string)
-                        .ok_or_else(|| format!("expressions[{i}] must be a JSON string"))
+                        .ok_or_else(|| format!("lines[{i}] must be a JSON string"))
                 })
                 .collect::<Result<Vec<_>, _>>()?
         } else if let Some(obj) = v.as_object() {
-            let Some(arr) = obj.get("expressions").and_then(|x| x.as_array()) else {
+            let Some(arr) = obj.get("lines").and_then(|x| x.as_array()) else {
                 return Err(
-                    "JSON body must be a JSON array of strings or {\"expressions\": [\"...\"]}"
+                    "JSON body must be a JSON array of strings or {\"lines\": [\"...\"]}"
                         .into(),
                 );
             };
@@ -2133,12 +2135,12 @@ fn parse_execute_expressions_body(
                 .map(|(i, x)| {
                     x.as_str()
                         .map(str::to_string)
-                        .ok_or_else(|| format!("expressions[{i}] must be a JSON string"))
+                        .ok_or_else(|| format!("lines[{i}] must be a JSON string"))
                 })
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             return Err(
-                "JSON body must be a JSON array of strings or {\"expressions\": [\"...\"]}".into(),
+                "JSON body must be a JSON array of strings or {\"lines\": [\"...\"]}".into(),
             );
         };
         Ok(strings
@@ -2233,8 +2235,8 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
     }
 }
 
-/// Batch orchestration failure: per-step errors or ordered merge after a parallel query stage.
-enum BatchExecutionError {
+/// Staged multi-line run failure: per-line errors or ordered merge after a parallel query stage.
+enum StagedExecuteError {
     Step {
         index: usize,
         total: usize,
@@ -2246,56 +2248,56 @@ enum BatchExecutionError {
     },
 }
 
-fn mcp_batch_execution_error(e: BatchExecutionError) -> String {
+fn mcp_staged_execute_error(e: StagedExecuteError) -> String {
     match e {
-        BatchExecutionError::Step {
+        StagedExecuteError::Step {
             index,
             total,
             line,
             err,
         } => match err {
             RunLineError::Parse(d) | RunLineError::Normalize(d) => format!(
-                "batch step {} of {total}: {d}\nexpression: {}",
+                "line {} of {total}: {d}\nexpression: {}",
                 index + 1,
                 execute_expression_preview(&line)
             ),
             RunLineError::Projection(d) => format!(
-                "batch step {} of {total}: projection enrichment failed: {d}\nexpression: {}",
+                "line {} of {total}: projection enrichment failed: {d}\nexpression: {}",
                 index + 1,
                 execute_expression_preview(&line)
             ),
             RunLineError::Runtime(e, src) => format!(
-                "batch step {} of {total}: {e}\nsource expression: {src}",
+                "line {} of {total}: {e}\nsource expression: {src}",
                 index + 1
             ),
             RunLineError::ArtifactSerialization(e) => format!(
-                "batch step {} of {total}: artifact serialization failed: {e}",
+                "line {} of {total}: artifact serialization failed: {e}",
                 index + 1
             ),
             RunLineError::ArtifactPersist(d) => format!(
-                "batch step {} of {total}: run artifact persist failed: {d}",
+                "line {} of {total}: run artifact persist failed: {d}",
                 index + 1
             ),
         },
-        BatchExecutionError::Merge { err } => format!("batch merge failed: {err}"),
+        StagedExecuteError::Merge { err } => format!("graph merge after parallel stage failed: {err}"),
     }
 }
 
-fn http_batch_execution_error(
-    e: BatchExecutionError,
+fn http_staged_execute_error(
+    e: StagedExecuteError,
     sess: &ExecuteSession,
     prompt_hash: &PromptHashHex,
     session_id: &ExecuteSessionId,
 ) -> Response {
     match e {
-        BatchExecutionError::Step {
+        StagedExecuteError::Step {
             index,
             total,
             line,
             err,
         } => match err {
             RunLineError::Parse(d) | RunLineError::Normalize(d) => {
-                batch_step_bad_request(index, total, &line, d)
+                plasm_line_step_bad_request(index, total, &line, d)
             }
             RunLineError::Projection(d) => problem_response(
                 Problem::custom(
@@ -2304,7 +2306,7 @@ fn http_batch_execution_error(
                 )
                 .with_title("Internal Server Error")
                 .with_detail(format!(
-                    "batch step {} of {total}: projection enrichment failed: {d}\nexpression: {}",
+                    "line {} of {total}: projection enrichment failed: {d}\nexpression: {}",
                     index + 1,
                     execute_expression_preview(&line)
                 )),
@@ -2325,7 +2327,7 @@ fn http_batch_execution_error(
                 )
                 .with_title("Internal Server Error")
                 .with_detail(format!(
-                    "batch step {} of {total}: artifact serialization failed: {e}",
+                    "line {} of {total}: artifact serialization failed: {e}",
                     index + 1
                 )),
             ),
@@ -2336,12 +2338,12 @@ fn http_batch_execution_error(
                 )
                 .with_title("Internal Server Error")
                 .with_detail(format!(
-                    "batch step {} of {total}: run artifact persist failed: {d}",
+                    "line {} of {total}: run artifact persist failed: {d}",
                     index + 1
                 )),
             ),
         },
-        BatchExecutionError::Merge { err } => problem_response(
+        StagedExecuteError::Merge { err } => problem_response(
             Problem::custom(
                 ProblemStatus::INTERNAL_SERVER_ERROR,
                 Uri::from_static(problem_types::EXECUTE_EXECUTION_FAILED),
@@ -2929,23 +2931,23 @@ async fn run_single_plasm_line(
     run_parsed_plasm_line(line, sess, st, cache, session_id, parsed, trace, line_index).await
 }
 
-/// Execute a multi-line batch using staged scheduling: consecutive parallel-safe root queries run in a
-/// fork-merge stage; all other lines run sequentially with a fully merged session cache between stages.
-async fn execute_expression_batch(
+/// Run multiple program lines with staged scheduling: consecutive parallel-safe root queries may
+/// run in a fork-merge stage; all other lines run sequentially with a fully merged session cache between stages.
+async fn execute_staged_plasm_lines(
     expressions: &[String],
     sess: &ExecuteSession,
     st: &PlasmHostState,
     session_id: &str,
     trace: Option<&PlasmTraceContext>,
     hub_sink: Option<&McpPlasmTraceSink>,
-) -> Result<Vec<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>)>, BatchExecutionError> {
+) -> Result<Vec<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>)>, StagedExecuteError> {
     let total = expressions.len();
     let mut parsed_exprs = Vec::with_capacity(total);
     for (index, line) in expressions.iter().enumerate() {
         match parse_plasm_line(line, sess, st) {
             Ok(p) => parsed_exprs.push(p),
             Err(err) => {
-                return Err(BatchExecutionError::Step {
+                return Err(StagedExecuteError::Step {
                     index,
                     total,
                     line: line.clone(),
@@ -2958,13 +2960,13 @@ async fn execute_expression_batch(
         .iter()
         .map(line_may_share_parallel_query_stage)
         .collect();
-    let stages = build_batch_stages(&flags);
+    let stages = build_execute_stages(&flags);
     let mut combined: Vec<Option<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>)>> =
         (0..total).map(|_| None).collect();
 
     for stage in stages {
         match stage {
-            BatchStage::Sequential(idx) => {
+            ExecuteStage::Sequential(idx) => {
                 let mut cache = sess.graph_cache.lock().await;
                 let r = run_parsed_plasm_line(
                     &expressions[idx],
@@ -2977,7 +2979,7 @@ async fn execute_expression_batch(
                     idx as i64,
                 )
                 .await
-                .map_err(|err| BatchExecutionError::Step {
+                .map_err(|err| StagedExecuteError::Step {
                     index: idx,
                     total,
                     line: expressions[idx].clone(),
@@ -2985,7 +2987,7 @@ async fn execute_expression_batch(
                 })?;
                 if let Some(sink) = hub_sink {
                     let (ref parsed, ref result, _) = r;
-                    trace_record_plasm_line_batch(
+                    trace_emit_plasm_line(
                         sink,
                         idx,
                         &expressions[idx],
@@ -2997,7 +2999,7 @@ async fn execute_expression_batch(
                 }
                 combined[idx] = Some(r);
             }
-            BatchStage::Parallel(idxs) => {
+            ExecuteStage::Parallel(idxs) => {
                 // `join_all` interleaves concurrent futures on one task; `Span::current()` inside
                 // `run_parsed_plasm_line` can be wrong on first poll without an explicit parent chain.
                 // Attach each branch under the current span (Tower HTTP / MCP handler) so OTLP traces
@@ -3016,7 +3018,7 @@ async fn execute_expression_batch(
                     let mut fork = base.clone();
                     let line_fork_span = tracing::trace_span!(
                         parent: parallel_parent.clone(),
-                        "plasm_agent.execute.batch_parallel_line",
+                        "plasm_agent.execute.parallel_plasm_line",
                         line_index = idx,
                     );
                     async move {
@@ -3036,7 +3038,7 @@ async fn execute_expression_batch(
                         Ok((triple, fork)) => {
                             if let Some(sink) = hub_sink {
                                 let (ref parsed, ref result, _) = triple;
-                                trace_record_plasm_line_batch(
+                                trace_emit_plasm_line(
                                     sink,
                                     idx,
                                     &expressions[idx],
@@ -3050,7 +3052,7 @@ async fn execute_expression_batch(
                             forks_ordered.push(fork);
                         }
                         Err(err) => {
-                            return Err(BatchExecutionError::Step {
+                            return Err(StagedExecuteError::Step {
                                 index: idx,
                                 total,
                                 line: expressions[idx].clone(),
@@ -3062,7 +3064,7 @@ async fn execute_expression_batch(
                 let mut g = sess.graph_cache.lock().await;
                 for fork in forks_ordered {
                     g.merge_from_graph(&fork)
-                        .map_err(|e| BatchExecutionError::Merge { err: e })?;
+                        .map_err(|e| StagedExecuteError::Merge { err: e })?;
                 }
             }
         }
@@ -3070,7 +3072,7 @@ async fn execute_expression_batch(
 
     Ok(combined
         .into_iter()
-        .map(|o| o.expect("batch planner invariant: each expression index runs exactly once"))
+        .map(|o| o.expect("staged line planner: each line index runs exactly once"))
         .collect())
 }
 
@@ -3141,7 +3143,7 @@ fn respond_execute_result(
     }
 }
 
-fn respond_batch_execute_result(
+fn respond_staged_lines_execute_result(
     kind: ExecResponseKind,
     step_values: Vec<serde_json::Value>,
     step_tables: Option<Vec<String>>,
@@ -3207,7 +3209,7 @@ fn respond_batch_execute_result(
                         Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
                     )
                     .with_title("Internal Server Error")
-                    .with_detail("batch table response missing formatted steps"),
+                    .with_detail("multi-line table response missing formatted steps"),
                 );
             };
             let text = tables.join("\n\n---\n\n");
@@ -3227,8 +3229,8 @@ fn execution_failed_response(
     sess: &ExecuteSession,
     prompt_hash: &PromptHashHex,
     session_id: &ExecuteSessionId,
-    batch_step: Option<usize>,
-    batch_total: usize,
+    step_index0: Option<usize>,
+    step_total: usize,
 ) -> Response {
     let expr_preview = execute_expression_preview(line);
     let entity_names: Vec<String> = sess.cgs.entities.keys().map(|k| k.to_string()).collect();
@@ -3239,8 +3241,11 @@ fn execution_failed_response(
         entity_names.len(),
         cgs_entity_names_sample(&entity_names, 24),
     );
-    let batch_note = match batch_step {
-        Some(i) => format!("batch step {i} of {batch_total}: "),
+    let line_prefix = match step_index0 {
+        Some(i) => {
+            let line_no = i + 1;
+            format!("line {line_no} of {step_total}: ")
+        }
         None => String::new(),
     };
     tracing::error!(
@@ -3256,7 +3261,7 @@ fn execution_failed_response(
         cgs_ctx = %cgs_ctx,
         "expression execution failed (detail)"
     );
-    let detail = format!("{batch_note}{e}\n\n{cgs_ctx}");
+    let detail = format!("{line_prefix}{e}\n\n{cgs_ctx}");
     problem_response(
         Problem::custom(
             ProblemStatus::INTERNAL_SERVER_ERROR,
@@ -3267,15 +3272,16 @@ fn execution_failed_response(
     )
 }
 
-fn batch_step_bad_request(
+fn plasm_line_step_bad_request(
     step_index: usize,
     total: usize,
     line: &str,
     message: impl Into<String>,
 ) -> Response {
     let message = message.into();
+    let line_no = step_index + 1;
     let detail = format!(
-        "batch step {step_index} of {total}: {message}\nexpression: {}",
+        "line {line_no} of {total}: {message}\nexpression: {}",
         execute_expression_preview(line)
     );
     problem_response(
@@ -3577,13 +3583,13 @@ async fn post_run_execute_session(
 
     let content_type = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok());
 
-    let expressions = match parse_execute_expressions_body(content_type, &body) {
+    let expressions = match parse_execute_lines_body(content_type, &body) {
         Ok(v) => v,
         Err(msg) => {
             let type_uri = if msg.starts_with("invalid UTF-8:") {
                 problem_types::EXECUTE_INVALID_BODY_ENCODING
             } else {
-                problem_types::EXECUTE_INVALID_BATCH_REQUEST
+                problem_types::EXECUTE_INVALID_REQUEST_BODY
             };
             return problem_response(
                 Problem::custom(ProblemStatus::BAD_REQUEST, Uri::from_static(type_uri))
@@ -3601,26 +3607,26 @@ async fn post_run_execute_session(
             )
             .with_title("Bad Request")
             .with_detail(
-                "no expressions to run: send a non-empty text/plain body, newline-separated expressions, or JSON {\"expressions\":[\"...\"]}",
+                "no lines to run: send a non-empty text/plain body, newline-separated Plasm lines, or JSON {\"lines\":[\"...\"]}",
             ),
         );
     }
 
-    if expressions.len() > MAX_BATCH_EXPRESSIONS {
+    if expressions.len() > MAX_PLASM_LINES_PER_REQUEST {
         return problem_response(
             Problem::custom(
                 ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_INVALID_BATCH_REQUEST),
+                Uri::from_static(problem_types::EXECUTE_INVALID_REQUEST_BODY),
             )
             .with_title("Bad Request")
             .with_detail(format!(
-                "too many expressions in one request (max {MAX_BATCH_EXPRESSIONS}, got {})",
+                "too many lines in one request (max {MAX_PLASM_LINES_PER_REQUEST}, got {})",
                 expressions.len()
             )),
         );
     }
 
-    let batch_mode = expressions.len() > 1;
+    let multiple_lines = expressions.len() > 1;
 
     let http_trace = PlasmTraceContext {
         trace_id: trace_id_for_http_execute_session(
@@ -3634,7 +3640,7 @@ async fn post_run_execute_session(
         logical_session_ref: None,
     };
 
-    if !batch_mode {
+    if !multiple_lines {
         let line = expressions[0].as_str();
         let mut cache = sess.graph_cache.lock().await;
         return match run_single_plasm_line(
@@ -3710,7 +3716,7 @@ async fn post_run_execute_session(
         };
     }
 
-    let steps = match execute_expression_batch(
+    let steps = match execute_staged_plasm_lines(
         &expressions,
         &sess,
         &st,
@@ -3721,7 +3727,7 @@ async fn post_run_execute_session(
     .await
     {
         Ok(s) => s,
-        Err(e) => return http_batch_execution_error(e, &sess, &prompt_hash, &session_id),
+        Err(e) => return http_staged_execute_error(e, &sess, &prompt_hash, &session_id),
     };
     let total = steps.len();
     let mut step_values = Vec::with_capacity(total);
@@ -3730,12 +3736,12 @@ async fn post_run_execute_session(
     } else {
         None
     };
-    let mut batch_artifacts: Vec<RunArtifactHandle> = Vec::new();
+    let mut step_artifacts: Vec<RunArtifactHandle> = Vec::new();
     let mut omitted_union: BTreeSet<String> = BTreeSet::new();
     let cgs = Some(sess.cgs.as_ref());
     for (_parsed, result, artifact) in &steps {
         if let Some(h) = artifact {
-            batch_artifacts.push(h.clone());
+            step_artifacts.push(h.clone());
         }
         step_values.push(http_execute_results_value(result));
         if let Some(ref mut tabs) = step_tables {
@@ -3747,8 +3753,8 @@ async fn post_run_execute_session(
         }
     }
     let omitted_vec: Vec<String> = omitted_union.into_iter().collect();
-    let batch_meta = tool_meta_from_handles(&batch_artifacts, &omitted_vec);
-    respond_batch_execute_result(kind, step_values, step_tables, batch_meta)
+    let steps_response_meta = tool_meta_from_handles(&step_artifacts, &omitted_vec);
+    respond_staged_lines_execute_result(kind, step_values, step_tables, steps_response_meta)
 }
 
 #[cfg(test)]
@@ -3990,8 +3996,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn batch_table_response_joins_sections() {
-        let res = respond_batch_execute_result(
+    async fn staged_table_response_joins_sections() {
+        let res = respond_staged_lines_execute_result(
             ExecResponseKind::Table,
             vec![serde_json::json!([]), serde_json::json!([1, 2])],
             Some(vec!["first_table".to_string(), "second_table".to_string()]),
@@ -4013,13 +4019,13 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(
             text.contains("---"),
-            "expected batch table sections separated by ---: {text:?}"
+            "expected table sections separated by ---: {text:?}"
         );
     }
 
     #[tokio::test]
-    async fn batch_toon_response_is_outer_array() {
-        let res = respond_batch_execute_result(
+    async fn staged_toon_response_is_outer_array() {
+        let res = respond_staged_lines_execute_result(
             ExecResponseKind::Toon,
             vec![serde_json::json!(["a"]), serde_json::json!([])],
             None,
@@ -4038,7 +4044,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn batch_parse_error_names_step_index() {
+    async fn staged_parse_error_names_step_index() {
         let st = test_state_with_registry();
         let app = test_app_execute(st.clone());
         let create = Request::builder()
@@ -4073,8 +4079,8 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let detail = doc.get("detail").and_then(|d| d.as_str()).unwrap_or("");
         assert!(
-            detail.contains("batch step 0"),
-            "expected batch step in detail: {detail:?}"
+            detail.contains("line 1 of 2:"),
+            "expected line index in detail: {detail:?}"
         );
     }
 

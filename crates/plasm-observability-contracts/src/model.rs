@@ -21,7 +21,7 @@ pub struct AuditEvent {
     pub emitted_at: DateTime<Utc>,
     #[serde(skip_deserializing, default = "now_utc")]
     pub ingested_at: DateTime<Utc>,
-    /// Correlates all spans from one logical invocation (MCP `plasm` call or HTTP batch).
+    /// Correlates all spans from one logical invocation (MCP `plasm` call or a multi-line HTTP run).
     pub trace_id: Uuid,
     pub mcp_session_id: Option<String>,
     pub plasm_prompt_hash: Option<String>,
@@ -65,7 +65,7 @@ pub struct TraceTotals {
     pub plasm_tool_calls: u64,
     pub plasm_expressions: u64,
     pub expression_lines: u64,
-    pub batched_plasm_invocations: u64,
+    pub multi_line_plasm_invocations: u64,
     pub domain_prompt_chars: u64,
     pub plasm_invocation_chars: u64,
     pub plasm_response_chars: u64,

@@ -27,7 +27,7 @@ pub struct CodePlanRunArtifactRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub batch_step: Option<usize>,
+    pub run_step: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,7 +67,7 @@ pub enum TraceSegment {
     },
     PlasmInvocation {
         call_index: u64,
-        batch: bool,
+        multi_line: bool,
         expression_count: usize,
         /// Character weight of this invocation (for aggregate replay from durable rows).
         plasm_invocation_chars_added: u64,
@@ -112,7 +112,7 @@ pub enum TraceSegment {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         call_index: Option<u64>,
         #[serde(default, skip_serializing_if = "is_false")]
-        batch: bool,
+        multi_line: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expression_count: Option<usize>,
     },
@@ -226,7 +226,7 @@ mod tests {
                 artifact_uri: Some("plasm://session/s0/r/1".into()),
                 canonical_artifact_uri: Some("plasm://execute/p/s1/run/r1".into()),
                 artifact_path: Some("/execute/p/s1/artifacts/r1".into()),
-                batch_step: Some(1),
+                run_step: Some(1),
                 node_id: Some("n1".into()),
                 display: Some("query".into()),
                 request_fingerprints: vec!["fp".into()],

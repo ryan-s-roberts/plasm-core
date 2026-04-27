@@ -22,8 +22,8 @@ pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 12_000;
 /// Reserved after `## Result (preview)`; snapshot lines in the body carry the `resources/read` hint.
 pub(crate) const MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE: &str = "";
 
-/// Reserved after `# Batch run (preview)`; same as single preview.
-pub(crate) const MCP_MARKDOWN_PREVIEW_BATCH_PROLOGUE: &str = "";
+/// Reserved after `# Plasm run (preview)`; same as single preview.
+pub(crate) const MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE: &str = "";
 
 /// Sorted unique field names omitted from the in-band summary as `(in artifact)` (reference-only strings).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -193,7 +193,7 @@ pub(crate) fn mcp_compact_markdown_single(
     out
 }
 
-pub(crate) fn mcp_compact_markdown_batch(
+pub(crate) fn mcp_compact_markdown_multi_line(
     total_steps: usize,
     total_entity_rows: usize,
     per_step: &[(String, String, usize)],
@@ -201,8 +201,8 @@ pub(crate) fn mcp_compact_markdown_batch(
     lossy_summary_union: &LossySummaryFieldNames,
     truncated_step_uris: &[(usize, &RunArtifactHandle)],
 ) -> String {
-    let mut out = String::from("# Batch run (preview)\n\n");
-    out.push_str(MCP_MARKDOWN_PREVIEW_BATCH_PROLOGUE);
+    let mut out = String::from("# Plasm run (preview)\n\n");
+    out.push_str(MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE);
     out.push_str("**Steps:** ");
     out.push_str(&total_steps.to_string());
     out.push('\n');
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn mcp_markdown_preview_prologues_are_empty() {
         assert!(MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE.is_empty());
-        assert!(MCP_MARKDOWN_PREVIEW_BATCH_PROLOGUE.is_empty());
+        assert!(MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE.is_empty());
     }
 
     #[test]
@@ -290,10 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn mcp_compact_markdown_batch_preview_has_no_must_read_banner() {
+    fn mcp_compact_markdown_multi_line_preview_has_no_must_read_banner() {
         let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["commentBody".into()]);
         let h = sample_handle();
-        let s = mcp_compact_markdown_batch(
+        let s = mcp_compact_markdown_multi_line(
             2,
             5,
             &[
@@ -304,10 +304,10 @@ mod tests {
             &LossySummaryFieldNames::default(),
             &[(1, &h)],
         );
-        assert!(s.starts_with("# Batch run (preview)"));
-        assert!(!s.contains("MUST"), "batch preview: {s}");
-        assert!(!s.contains("Optional full JSON"), "batch preview: {s}");
-        assert!(s.contains("commentBody"), "batch preview: {s}");
+        assert!(s.starts_with("# Plasm run (preview)"));
+        assert!(!s.contains("MUST"), "multi-line preview: {s}");
+        assert!(!s.contains("Optional full JSON"), "multi-line preview: {s}");
+        assert!(s.contains("commentBody"), "multi-line preview: {s}");
         assert!(s.contains(&h.plasm_uri), "truncated step URI inline: {s}");
     }
 

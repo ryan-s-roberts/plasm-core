@@ -9,7 +9,7 @@ pub struct TraceTotals {
     pub plasm_tool_calls: u64,
     pub plasm_expressions: u64,
     pub expression_lines: u64,
-    pub batched_plasm_invocations: u64,
+    pub multi_line_plasm_invocations: u64,
     pub domain_prompt_chars: u64,
     pub plasm_invocation_chars: u64,
     pub plasm_response_chars: u64,
@@ -39,7 +39,7 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
             plasm_tool_calls: data.plasm_call_count,
             plasm_expressions: data.aggregate_plasm_expressions,
             expression_lines: data.aggregate_expression_lines,
-            batched_plasm_invocations: data.aggregate_batched_plasm_invocations,
+            multi_line_plasm_invocations: data.aggregate_multi_line_plasm_invocations,
             domain_prompt_chars: data.domain_prompt_chars,
             plasm_invocation_chars: data.plasm_invocation_chars,
             plasm_response_chars: data.plasm_response_chars,
@@ -74,13 +74,14 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
     for ev in data.records.iter() {
         match &ev.segment {
             TraceSegment::PlasmInvocation {
-                batch,
+                multi_line,
                 expression_count,
                 ..
             } => {
                 t.plasm_expressions = t.plasm_expressions.saturating_add(*expression_count as u64);
-                if *batch {
-                    t.batched_plasm_invocations = t.batched_plasm_invocations.saturating_add(1);
+                if *multi_line {
+                    t.multi_line_plasm_invocations =
+                        t.multi_line_plasm_invocations.saturating_add(1);
                 }
             }
             TraceSegment::PlasmLine {
@@ -138,7 +139,7 @@ impl From<TraceTotals> for plasm_observability_contracts::TraceTotals {
             plasm_tool_calls: t.plasm_tool_calls,
             plasm_expressions: t.plasm_expressions,
             expression_lines: t.expression_lines,
-            batched_plasm_invocations: t.batched_plasm_invocations,
+            multi_line_plasm_invocations: t.multi_line_plasm_invocations,
             domain_prompt_chars: t.domain_prompt_chars,
             plasm_invocation_chars: t.plasm_invocation_chars,
             plasm_response_chars: t.plasm_response_chars,

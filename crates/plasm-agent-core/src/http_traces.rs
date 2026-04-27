@@ -485,7 +485,7 @@ fn hub_totals_from_sink(
         plasm_tool_calls: t.plasm_tool_calls,
         plasm_expressions: t.plasm_expressions,
         expression_lines: t.expression_lines,
-        batched_plasm_invocations: t.batched_plasm_invocations,
+        multi_line_plasm_invocations: t.multi_line_plasm_invocations,
         domain_prompt_chars: t.domain_prompt_chars,
         plasm_invocation_chars: t.plasm_invocation_chars,
         plasm_response_chars: t.plasm_response_chars,

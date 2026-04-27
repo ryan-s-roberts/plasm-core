@@ -249,7 +249,9 @@ pub struct DryPlasmPlanEvaluation {
     plan: Plan<ValidatedPlanState>,
     pub topological_order: Vec<String>,
     pub node_results: Vec<serde_json::Value>,
-    pub can_batch_run: bool,
+    /// When `true`, every plan node is an independent root surface (no cross-line dependencies);
+    /// the host may run those roots in parallel. When `false`, the plan is ordered (DAG/staged nodes).
+    pub parallel_root_surfaces_only: bool,
     pub staged_nodes: Vec<String>,
     pub execution_unsupported: Vec<String>,
     pub graph_summary: serde_json::Value,
@@ -332,7 +334,7 @@ pub fn evaluate_validated_plasm_plan_dry(
     let plan = validated.artifact();
     let version = serde_json::json!(plan.version);
     let mut out = Vec::new();
-    let mut can_batch_run = true;
+    let mut parallel_root_surfaces_only = true;
     let mut staged_nodes = Vec::new();
     let execution_unsupported = Vec::new();
     for node_id in validated.topological_order() {
@@ -353,7 +355,7 @@ pub fn evaluate_validated_plasm_plan_dry(
         let inferred_approval = inferred_node_approval(n);
         if n.depends_on().is_empty() && n.uses_result().is_empty() {
             let Some(surface) = n.as_surface() else {
-                can_batch_run = false;
+                parallel_root_surfaces_only = false;
                 staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
                 out.push(dry_stage_result(i, n));
                 continue;
@@ -409,7 +411,7 @@ pub fn evaluate_validated_plasm_plan_dry(
             continue;
         }
 
-        can_batch_run = false;
+        parallel_root_surfaces_only = false;
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(i, n));
     }
@@ -423,7 +425,7 @@ pub fn evaluate_validated_plasm_plan_dry(
             .map(|id| id.as_str().to_string())
             .collect(),
         node_results: out,
-        can_batch_run,
+        parallel_root_surfaces_only,
         staged_nodes,
         execution_unsupported,
         graph_summary: graph_summary(plan),
@@ -472,10 +474,10 @@ pub fn render_plasm_plan_dry_text(
     let _ = writeln!(
         out,
         "execution: {}",
-        if dry.can_batch_run {
-            "batchable"
+        if dry.parallel_root_surfaces_only {
+            "parallel roots (no inter-node dependencies)"
         } else {
-            "staged"
+            "ordered (dependencies or non-root/staged nodes)"
         }
     );
     let _ = writeln!(
@@ -3136,7 +3138,7 @@ mod tests {
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 1);
-        assert!(dry.can_batch_run);
+        assert!(dry.parallel_root_surfaces_only);
     }
 
     #[test]
@@ -3158,7 +3160,7 @@ mod tests {
             "return": { "kind": "node", "node": "search" }
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-        assert!(dry.can_batch_run);
+        assert!(dry.parallel_root_surfaces_only);
         assert_eq!(dry.node_results[0]["kind"], "search");
     }
 
@@ -3265,7 +3267,7 @@ mod tests {
             "return": { "kind": "node", "node": "category" }
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-        assert!(!dry.can_batch_run);
+        assert!(!dry.parallel_root_surfaces_only);
         assert_eq!(
             dry.node_results[1]["simulation"]["kind"],
             "relation_traversal"
@@ -3474,7 +3476,7 @@ handle: p7 (plasm://session/s0/p/7)
 archive: plasm://execute/ph/s/plan/uuid
 hash: abc123
 nodes: 3 total, 1 read, 0 write/side-effect, 2 staged
-execution: staged
+execution: ordered (dependencies or non-root/staged nodes)
 roots: products
 approvals: none
 
@@ -3717,7 +3719,7 @@ review:
             "return": { "kind": "parallel", "nodes": ["find", "label"] }
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-        assert!(!dry.can_batch_run);
+        assert!(!dry.parallel_root_surfaces_only);
         assert_eq!(dry.node_results.len(), 2);
         assert_eq!(dry.node_results[1]["simulation"]["kind"], "template_stage");
         assert_eq!(

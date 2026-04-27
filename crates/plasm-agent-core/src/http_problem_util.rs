@@ -38,8 +38,8 @@ pub mod problem_types {
         "https://plasm.invalid/problems/plasm-execute-invalid-body-encoding";
     pub const EXECUTE_EMPTY_EXPRESSION: &str =
         "https://plasm.invalid/problems/plasm-execute-empty-expression";
-    pub const EXECUTE_INVALID_BATCH_REQUEST: &str =
-        "https://plasm.invalid/problems/plasm-execute-invalid-batch-request";
+    pub const EXECUTE_INVALID_REQUEST_BODY: &str =
+        "https://plasm.invalid/problems/plasm-execute-invalid-request-body";
     pub const EXECUTE_INVALID_EXPRESSION: &str =
         "https://plasm.invalid/problems/plasm-execute-invalid-expression";
     pub const EXECUTE_PROJECTION_ENRICHMENT_FAILED: &str =

@@ -1161,7 +1161,7 @@ impl TraceHub {
     pub async fn trace_record_plasm_invocation(
         &self,
         mcp_key: &str,
-        batch: bool,
+        multi_line: bool,
         expression_count: usize,
         reasoning_chars: Option<u64>,
         plasm_invocation_chars_added: u64,
@@ -1181,7 +1181,7 @@ impl TraceHub {
                 now_ms(),
                 TraceSegment::PlasmInvocation {
                     call_index: next_call,
-                    batch,
+                    multi_line,
                     expression_count,
                     plasm_invocation_chars_added,
                     reasoning_chars,
@@ -1221,7 +1221,7 @@ impl TraceHub {
         chars: u64,
         tool: &str,
         call_index: u64,
-        batch: bool,
+        multi_line: bool,
         expression_count: usize,
     ) {
         if chars == 0 {
@@ -1233,7 +1233,7 @@ impl TraceHub {
                 chars_added: chars,
                 tool: tool.to_string(),
                 call_index: Some(call_index),
-                batch,
+                multi_line,
                 expression_count: Some(expression_count),
             },
         )

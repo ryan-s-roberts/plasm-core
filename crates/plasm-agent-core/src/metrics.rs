@@ -170,10 +170,10 @@ fn agent_metrics() -> &'static AgentMetrics {
     })
 }
 
-/// `batch`: `None` except for `plasm` (`Some(true)` / `Some(false)`).
+/// `multi_line`: `None` except for `plasm` (`Some(true)` / `Some(false)`).
 pub fn record_mcp_tool(
     tool: &'static str,
-    batch: Option<bool>,
+    multi_line: Option<bool>,
     result: &'static str,
     error_class: &'static str,
     duration: Duration,
@@ -184,10 +184,10 @@ pub fn record_mcp_tool(
         KeyValue::new("result", result),
         KeyValue::new("error_class", error_class),
     ];
-    if let Some(b) = batch {
+    if let Some(m) = multi_line {
         attrs.push(KeyValue::new(
-            "batch",
-            if b {
+            "multi_line",
+            if m {
                 "true".to_string()
             } else {
                 "false".to_string()

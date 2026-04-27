@@ -91,11 +91,11 @@ pub(crate) fn mcp_tool_plasm_context(logical_session_ref: &str) -> Span {
 }
 
 #[inline]
-pub(crate) fn mcp_tool_plasm(batch: bool, batch_count: u64, logical_session_ref: &str) -> Span {
+pub(crate) fn mcp_tool_plasm(multi_line: bool, line_count: u64, logical_session_ref: &str) -> Span {
     tracing::info_span!(
         "plasm_agent.mcp.tool.plasm",
-        batch = batch,
-        batch_count = batch_count,
+        multi_line = multi_line,
+        line_count = line_count,
         logical_session_ref = %logical_session_ref,
     )
 }

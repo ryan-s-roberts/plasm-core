@@ -1,12 +1,12 @@
 //! HTTP server mode: discovery ([`crate::http_discovery`]) + execute session ([`crate::http_execute`]).
 //!
 //! Flow: `POST /v1/discover` → use `entry_id` + `entity` from candidates → `POST /execute` → follow
-//! `Location` with `GET` (session JSON) → `POST` the same path with expressions.
+//! `Location` with `GET` (session JSON) → `POST` the same path with Plasm lines.
 //!
 //! - `GET /v1/health`, `GET /v1/auth/status` (liveness + capability probe: OSS returns `200` with `open_source: true` when no SaaS extension; hosted builds without `auth_framework` return `503`), `GET /v1/registry`, …, `POST /v1/discover`
 //! - `POST /execute` — JSON `{ entry_id, entities, principal? }` → `303` + `Location` only (no body); ids are in the URL (`principal` required when `PLASM_AUTH_RESOLUTION=delegated`)
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
-//! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON expressions (one or newline-separated / `expressions` array); `Accept`: json | ndjson | table | toon (**default** when omitted: **toon**, entity rows only; no duration/cache metadata)
+//! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON (`lines` array, or top-level array of line strings); `Accept`: json | ndjson | table | toon (**default** when omitted: **toon**, entity rows only; no duration/cache metadata)
 
 use axum::extract::Extension;
 use axum::routing::get;
@@ -180,7 +180,7 @@ pub async fn serve_http_listener(
         "  POST /execute — {{ entry_id, entities }} → 303 Location only → GET that URL for session JSON + DOMAIN prompt"
     );
     eprintln!(
-        "  POST /execute/:prompt_hash/:session — text/plain or JSON batch; default Accept: text/toon (results only); also json | x-ndjson | text/plain"
+        "  POST /execute/:prompt_hash/:session — text/plain or JSON lines; default Accept: text/toon (results only); also json | x-ndjson | text/plain"
     );
     eprintln!(
         "  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)"

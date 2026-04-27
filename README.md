@@ -88,7 +88,7 @@ For reference, the official `github-mcp-server` **v0.15.0** serialized `tools/li
 
 With more than one API in play, Plasm’s **intent-based catalog queries** (`discover_capabilities`) and **federated sessions** let the agent add only the relevant entities (GitHub, Linear, Slack, another catalog) and keep one typed symbol space—closer to a small query planner over API domains than a single fixed `tools/list`.
 
-That means the agent works with **entities, relations, projections, and capabilities** instead of a flat pile of tool names and argument objects. The runtime can reject impossible calls before they hit a backend, batch graph-shaped work, attach multiple APIs to one session, and keep prompt volume lower as the tool surface grows. The goal is not “more connectors”; it is a tighter tool layer where schema compliance stops being the model’s job.
+That means the agent works with **entities, relations, projections, and capabilities** instead of a flat pile of tool names and argument objects. The runtime can reject impossible calls before they hit a backend, run graph-shaped work in staged or parallel-safe slices, attach multiple APIs to one session, and keep prompt volume lower as the tool surface grows. The goal is not “more connectors”; it is a tighter tool layer where schema compliance stops being the model’s job.
 
 ## Federation
 
@@ -283,13 +283,15 @@ Large or lossy-presented results get the same treatment. Instead of stuffing eve
 
 The same normalization applies across catalogs in a federated session: refs remain typed, page handles remain runtime-owned, archive refs point to complete run snapshots, and projections stay attached to the entity that knows how to hydrate them.
 
-### Batching
+### Program inputs (HTTP vs MCP)
 
-Plasm can run several expressions in one call. HTTP execute accepts either newline-separated `text/plain` expressions or JSON bodies shaped as an array of strings / `{ "expressions": [...] }`. MCP uses the same execution path through the `plasm` tool's required `expressions` array.
+Each call executes a **Plasm program**—the grammar is the same; only how you pass it changes. The MCP **`plasm`** tool has one required JSON field **`program`**: a string that may be a **single** `plasm_expr`, a **full** `plasm_program` (bindings, transforms, then bare final roots, often multiline, including a real DAG if the host compiles a plan), or one line of **comma-separated** parallel roots. **HTTP** `POST /execute` accepts a body as **one or more line-separated Plasm program fragments** (newlines in `text/plain`, a JSON `lines` array, or a top-level JSON string array). That is the same program surface with a **line** as the unit of staging (dependency-sensitive steps stay in order; parallel-safe pure root queries can fork–merge in one request). A composed **`plasm_program` in one string** is a different way to hand the same engine a multi-node program, not a separate “mode.” Both routes use the same engine.
+
+Example: HTTP body with a `lines` array (one string per **step**):
 
 ```json
 {
-  "expressions": [
+  "lines": [
     "e5{p39=e17(p304=\"plasm\", p319=\"plasm\"), p42=\"open\"}",
     "e12{p137=e17(p304=\"plasm\", p319=\"plasm\"), p139=\"open\"}",
     "e18{p163=e17(p304=\"plasm\", p319=\"plasm\")}"
@@ -300,7 +302,7 @@ Plasm can run several expressions in one call. HTTP execute accepts either newli
 The result is still one normalized response, but it is organized by step:
 
 ```text
-# Batch run
+# Plasm run
 
 ## Step 1 of 3
 `e5{...}`
@@ -318,14 +320,14 @@ The result is still one normalized response, but it is organized by step:
 ...
 ```
 
-Batching is not just a loop hidden behind the API. The runtime stages the batch:
+The host does not treat this as a dumb loop: it **stages** the lines it receives.
 
-- Consecutive root `Query` expressions without top-level projection enrichment can run in parallel.
-- The parallel stage forks the session graph, executes branches concurrently, then merges results back in expression order.
-- Gets, writes, page continuations, projections, relation traversals that need cache state, and side effects run sequentially as barriers.
+- Consecutive root `Query` expressions without top-level projection enrichment can run in a parallel (fork–merge) stage.
+- The parallel stage forks the session graph, runs those branches concurrently, then merges in line order.
+- Gets, writes, page continuations, projections, relation traversals that need cache state, and side effects run as sequential barriers.
 - Each step still records its own run artifact, request fingerprints, paging hints, omitted fields, and trace metadata.
 
-That means an agent can ask for several independent slices of a repo in one `plasm` call, but dependency-sensitive workflows remain ordered:
+An agent can therefore issue several cache-independent reads in one `plasm` or HTTP `POST` while still preserving order where the graph or effects require it. Example lines:
 
 ```plasm
 e5{p39=e17(p304="plasm", p319="plasm"), p42="open"}
@@ -333,7 +335,7 @@ e5(p304="plasm", p319="plasm", p297=42)[p350,p237]
 e5(p304="plasm", p319="plasm", p297=42).m16(p47=123456)
 ```
 
-The first line can be scheduled with adjacent pure queries. The projection line may hydrate fields from the graph, and the mutation line is a side effect, so those are executed after prior cache-visible work. Current batch size is capped at 64 expressions per request.
+The first line can be scheduled with adjacent pure queries. The projection line may hydrate fields from the graph, and the mutation line is a side effect, so those are executed after prior cache-visible work. A single request is capped at 64 such lines.
 
 ## Dynamic CLI
 
