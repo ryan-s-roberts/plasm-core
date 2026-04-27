@@ -2313,67 +2313,21 @@ mod tests {
         );
     }
 
+    /// Model-facing copy; update with `INSTA_UPDATE=1 cargo test -p plasm-agent-core mcp_`.
     #[test]
-    fn mcp_plasm_tool_and_initialize_instructions_coherent() {
-        assert!(
-            super::MCP_PLASM_TOOL_DESCRIPTION.contains("plasm_context")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("initialize instructions")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("dry-run program plan")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("execute: true")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Simple goal")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Multi-step")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("logical_session_ref"),
-            "plasm tool description: {}",
+    fn mcp_plasm_tool_description_snapshot() {
+        insta::assert_snapshot!(
+            "mcp_plasm_tool_description",
             super::MCP_PLASM_TOOL_DESCRIPTION
         );
-        assert!(
-            !super::MCP_PLASM_TOOL_DESCRIPTION.contains("label.limit")
-                && !super::MCP_PLASM_TOOL_DESCRIPTION.contains("comma-separated roots")
-                && !super::MCP_PLASM_TOOL_DESCRIPTION.contains("name ="),
-            "plasm tool description should not duplicate Plasm grammar: {}",
-            super::MCP_PLASM_TOOL_DESCRIPTION
+    }
+
+    #[test]
+    fn mcp_server_initialize_instructions_snapshot() {
+        insta::assert_snapshot!(
+            "mcp_server_initialize_instructions",
+            super::mcp_server_initialize_instructions()
         );
-        for forbidden in [
-            "cached contract",
-            "model context",
-            "not executed",
-            "source of truth",
-        ] {
-            assert!(
-                !super::MCP_PLASM_TOOL_DESCRIPTION.contains(forbidden),
-                "plasm tool description should guide model behavior, not implementation details: {}",
-                super::MCP_PLASM_TOOL_DESCRIPTION
-            );
-        }
-        let init = super::mcp_server_initialize_instructions();
-        assert!(
-            init.contains("plasm_context")
-                && init.contains("logical_session_ref")
-                && init.contains("api")
-                && init.contains("read the teaching table")
-                && init.contains("_meta.plasm.paging")
-                && init.contains("append-only")
-                && init.contains("smaller set")
-                && init.contains("Plasm syntax guide")
-                && init.contains("dry-run program plan")
-                && init.contains("execute: true")
-                && init.contains("one composed `plasm_program`")
-                && init.contains("plasm_program ::= plasm_roots | binding+ plasm_roots"),
-            "initialize instructions: {}",
-            init
-        );
-        for forbidden in [
-            "cached contract",
-            "model context",
-            "not executed",
-            "source of truth",
-        ] {
-            assert!(
-                !init.contains(forbidden),
-                "initialize instructions should guide model behavior, not implementation details: {}",
-                init
-            );
-        }
     }
 
     #[test]
@@ -2398,19 +2352,15 @@ mod tests {
     }
 
     #[test]
-    fn capability_tool_descriptions_require_additive_reuse() {
+    fn plasm_context_tool_description_snapshot() {
         let tools = super::PlasmMcpHandler::plasm_tools();
         let context = tools
             .iter()
             .find(|t| t.name == "plasm_context")
-            .and_then(|t| t.description.as_deref())
-            .expect("plasm_context description");
-        assert!(context.contains("additive"), "{context}");
-        assert!(
-            context.contains("not a replacement or narrowing"),
-            "{context}"
-        );
-        assert!(context.contains("**`logical_session_ref`**"), "{context}");
+            .and_then(|t| t.description.as_ref())
+            .expect("plasm_context description")
+            .clone();
+        insta::assert_snapshot!("plasm_context_tool_description", context);
     }
 
     /// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema
@@ -2476,37 +2426,6 @@ mod tests {
         assert!(
             !required.iter().any(|x| x.as_str() == Some("execute")),
             "`execute` must be optional"
-        );
-    }
-
-    #[test]
-    fn initialize_instructions_document_plasm_dag_and_flow() {
-        let d = super::mcp_server_initialize_instructions();
-        for expected in [
-            "Plasm syntax guide",
-            "plasm_program ::= plasm_roots | binding+ plasm_roots",
-            "Use a single `plasm_expr`",
-            "Prefer a multi-line `plasm_program`",
-            "Program construction discipline",
-            "dry-run program plan",
-            "execute: true",
-            "Response order follows the final roots",
-            "execution order follows Plasm/runtime dependencies",
-            "resources/read",
-            "not Plasm expressions",
-        ] {
-            assert!(
-                d.contains(expected),
-                "initialize instructions missing {expected:?}: {d}"
-            );
-        }
-        assert!(
-            !d.contains("approval") && !d.contains("approved") && !d.contains("approve"),
-            "initialize instructions should not mention approval: {d}"
-        );
-        assert!(
-            !d.contains("[\"return\"]"),
-            "initialize instructions must not advertise optional return in EBNF: {d}"
         );
     }
 

@@ -1,0 +1,5 @@
+---
+source: crates/plasm-agent-core/src/mcp_server.rs
+expression: context
+---
+**Open or extend** a Plasm logical session by appending seed capabilities. Pass one stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** of `{ "api":"...", "entity":"..." }` objects (`entry_id` accepted per object as a legacy alias). Server reuses the logical session for that key + tenant and returns **`logical_session_ref`** (`s0`, …) for **`plasm`**. Loading is additive, not a replacement or narrowing operation; call again only for new **`api`/`entity`** pairs. Multiple APIs federate into one Plasm language; primary API is the lexicographically first distinct `api`.

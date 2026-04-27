@@ -3507,19 +3507,8 @@ mod tests {
             "full prompt should include the full projection list `{br}` (heading or primary get)"
         );
         assert!(
-            out.contains("Leading `p#` rows are metadata for slots")
-                && out.contains("All semantic symbols you use must be taught"),
-            "preamble should explain gloss/projection/args teaching (prompt len {})",
-            out.len()
-        );
-        assert!(
-            out.contains("non-empty scalar subset"),
-            "preamble should teach projection subsets (prompt len {})",
-            out.len()
-        );
-        assert!(
             out.len() > 8_000,
-            "full apis/github DOMAIN+legend should be substantial (got {}); rebuild plasm-eval if you see truncation in the terminal",
+            "full apis/github DOMAIN+legend should be substantial (got {}); see github_api_full_prompt_symbolic snapshot",
             out.len()
         );
     }
@@ -3874,8 +3863,9 @@ mod tests {
         );
     }
 
+    /// Full `apis/github` TSV teaching prompt (symbolic). Update: `INSTA_UPDATE=1 cargo test -p plasm-core github_api_full_prompt_symbolic_snapshot`.
     #[test]
-    fn compact_render_includes_contract_and_symbolic_rows() {
+    fn github_api_full_prompt_symbolic_snapshot() {
         let dir = std::path::Path::new("../../apis/github");
         if !dir.exists() {
             return;
@@ -3885,14 +3875,7 @@ mod tests {
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
-        assert!(
-            prompt.contains(DOMAIN_VALID_EXPR_MARKER),
-            "compact render includes the same DOMAIN contract preamble as eval markdown"
-        );
-        assert!(
-            prompt.contains("plasm_expr\tMeaning") && prompt.contains("e5("),
-            "compact alias should now render the TSV teaching surface with symbolic expression rows"
-        );
+        insta::assert_snapshot!("github_api_full_prompt_symbolic", prompt);
     }
 
     #[test]
@@ -3936,59 +3919,28 @@ mod tests {
         );
     }
 
+    /// Linear has structured string params; heredoc bullets appear in the language preamble.
     #[test]
-    fn preamble_includes_rich_string_guidance_when_slice_has_structured_string_semantics() {
+    fn linear_api_full_prompt_includes_rich_string_preamble_snapshot() {
         let dir = std::path::Path::new("../../apis/linear");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let tsv_via_default = render_prompt_with_config(
-            &cgs,
-            RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
-        );
-        assert!(
-            tsv_via_default.contains("tagged heredoc only"),
-            "Linear exposes structured string semantics; TSV preamble should add heredoc guidance"
-        );
-        let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        assert!(
-            tsv.contains("When `Meaning` marks a slot used in an input value as `markdown`, `html`, `document`, `json_text`, or `blob`"),
-            "TSV preamble should document structured string heredocs via Meaning-oriented wording"
-        );
-        assert!(
-            tsv.contains("<<TAG") && tsv.contains("<<TXT"),
-            "TSV preamble should show tagged-only rules and the `<<TXT` … `TXT` exemplar"
-        );
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        insta::assert_snapshot!("linear_api_full_prompt", prompt);
     }
 
+    /// Pokeapi `Type`-only slice: no rich-string heredoc block, no `~` search in preamble (snapshot documents absence).
     #[test]
-    fn preamble_omits_rich_string_guidance_for_slice_without_structured_semantics() {
+    fn pokeapi_type_only_slice_prompt_snapshot() {
         let dir = std::path::Path::new("../../apis/pokeapi");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
         let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
-        assert!(
-            !out.contains("tagged heredoc only"),
-            "Type-only slice should not add rich-string preamble without structured semantics in CGS"
-        );
-    }
-
-    /// `Type` has query/get only (no Search); focused slice must not advertise `~` in the preamble.
-    #[test]
-    fn preamble_omits_tilde_search_when_no_search_in_slice() {
-        let dir = std::path::Path::new("../../apis/pokeapi");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
-        assert!(
-            !out.contains("full-text search"),
-            "expected no ~ search bullet when slice has no Search capability"
-        );
+        insta::assert_snapshot!("pokeapi_type_only_slice_prompt", out);
     }
 
     #[test]

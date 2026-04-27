@@ -1,0 +1,5 @@
+---
+source: crates/plasm-agent-core/src/mcp_server.rs
+expression: "super::MCP_PLASM_TOOL_DESCRIPTION"
+---
+**Plan / execute** Plasm with **`expression`** and **`logical_session_ref`** from **`plasm_context`**. Default: each call returns a **reviewable dry-run program plan** (topology + expected shapes)—**no live API execution** until you set **`execute: true`** after the plan matches your intent. Use the Plasm syntax guide in initialize instructions and the active TSV rows from **`plasm_context`**. Simple goal: one taught `plasm_expr` still compiles as a one-node plan—use when row-level output is already the answer. Multi-step / analytical goal: one **`plasm_program`** that binds, narrows, aggregates, renders, and returns compact final roots—avoid broad probe-and-dump call chains. Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append new **`api`/`entity`** seeds.

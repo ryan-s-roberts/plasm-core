@@ -1,0 +1,78 @@
+---
+source: crates/plasm-core/src/prompt_render.rs
+expression: out
+---
+# This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
+#
+# Output choice:
+# - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.
+# - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.
+#
+# Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):
+# plasm_program ::= plasm_roots | binding+ plasm_roots
+# binding       ::= ident "=" plasm_node
+# plasm_roots   ::= plasm_return ("," plasm_return)*
+# plasm_return  ::= node_ref | plasm_expr
+# plasm_node    ::= plasm_expr | node_ref dag_suffix | node_ref "=>" plasm_value
+# plasm_expr    ::= entity_expr [projection]
+# entity_expr   ::= query_all | get | query | relation | method | create_action
+# query_all     ::= e#
+# get           ::= e#(id) or e#(p#=v, p#=v)
+# query         ::= e#{p#=v, …}
+# relation      ::= e#(id).p#
+# method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
+# create_action ::= e#.m#(args)
+# projection    ::= e#(id)[p#,…] | "[" fields "]"
+# dag_suffix    ::= transform | "[" fields "]" | "[" fields "]" heredoc
+# transform     ::= ".limit(" int ")" | ".sort(" field [", desc"] ")" | ".aggregate(" agg_spec ")" | ".group_by(" field "," agg_spec ")" | ".singleton()" | ".page_size(" int ")"
+# fields        ::= [p#,…]
+# plasm_value   ::= literal | node_ref.field | _.field | [v, …]
+# ident/node_ref/field ::= agent-chosen names for bound nodes and fields
+# literal      ::= quoted string | number | bool | null | heredoc
+#
+# Program construction discipline:
+# - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.
+# - Prefer `node[field,…]`, `.limit(n)`, `.sort(...)`, `.aggregate(...)`, `.group_by(...)`, `.singleton()`, `.page_size(n)`, and render heredocs over returning raw broad lists.
+# - Return at most small final roots unless the user explicitly asks for raw rows.
+# - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.
+# - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.
+#
+# Catalogue rules:
+# - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.
+# - Final program roots are **bare** comma-separated `plasm_expr` / `node_ref` lines (e.g. `e1, e2{...}`); do **not** prefix with `return` — that word is not Plasm syntax.
+# - Never paste `Meaning`. Compose taught atoms with bindings/final roots only when a program is needed.
+# - All semantic symbols you use must be taught in this prompt.
+# - Projection uses a minimal non-empty subset from `[p#,…]`; the identity row teaches the full set once.
+# - Leading `p#` rows are metadata for slots when `args:` on a method line is not enough.
+#
+#   - e#, m#, p# are session-local aliases. Use the aliases **exactly** as shown in expression cells.
+# - Pick rows by `Meaning`, then copy the `plasm_expr` shape. Bind args by keyed slot (`p12=value`), never by position or by renumbering.
+# - Aliases are session-local. If a new prompt teaches new aliases, discard older e#/m#/p# meanings.
+#   - e#(id) or e#(p#=v, p#=v) — get one entity by id or compound key (examples below use `v=$`, not concrete API values).
+#   - Use TSV `plasm_expr` shapes exactly, substituting concrete values for placeholders.
+#   - For compound-key forms such as `e#(id) or e#(p#=v, p#=v)`, keep keyed args (`p#=v` / `name=value`); never rewrite them as positional.
+#   - e#{p#=v, …} — list query; `e#` alone queries all.
+#   - e#(id).p# — relation. e#(id).m#() or e#(id).m#(p#=v,..) — method call.
+#   - For list/query goals, use brace predicates `e#{p#=v, …}`. Use dotted `e#(id).m#() or e#(id).m#(p#=v,..)` only when the goal asks to mutate or call a method.
+#   - e#.m#(args) — standalone create/action (no anchor id needed).
+#   - e#(id)[p#,…] — non-empty scalar subset. Dot after `e#(id)` means relations or taught `m#`, not scalar fields.
+#   - To list X scoped by parent Y, use `X{p#=AnchorEntity(id)}` from X's rows; do not invent `Y(id).p#`.
+#   - `[v, …]` — array value inside method args, e.g. `p#=[e#($)]`.
+#   - Plain `str` values use double quotes. In quoted strings only `\"` and `\\` are escapes.
+#   - `select` chooses one listed allowed value; `multiselect` chooses zero or more as `[v, …]`.
+#   - `p#`-only rows predeclare slots; they are metadata, not expressions to output.
+#   - `$` is only a fill-in cue. Substitute a real value; never send `$`.
+# - `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.
+#   - TSV rows are teaching rows. `plasm_expr` teaches syntax; `Meaning` teaches selection and argument semantics.
+#
+
+plasm_expr	Meaning
+p2	str · Type name (unique key)
+p1	int · Numeric type identifier
+p3	str · API resource URL
+e1($)[p2,p1,p3]	returns e1 · An elemental type (Fire, Water, etc.)
+e1	returns [e1] · List all elemental types
+e1($).p4	returns Generation · Generation this type was introduced
+e1($).p5	returns MoveDamageClass · Default damage class for this type
+e1($).p6	returns [Move] · Moves of this elemental type
+e1($).p7	returns [Pokemon] · Pokémon with this type

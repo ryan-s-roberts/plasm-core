@@ -1,0 +1,296 @@
+---
+source: crates/plasm-core/src/prompt_render.rs
+expression: prompt
+---
+# This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
+#
+# Output choice:
+# - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.
+# - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.
+#
+# Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):
+# plasm_program ::= plasm_roots | binding+ plasm_roots
+# binding       ::= ident "=" plasm_node
+# plasm_roots   ::= plasm_return ("," plasm_return)*
+# plasm_return  ::= node_ref | plasm_expr
+# plasm_node    ::= plasm_expr | node_ref dag_suffix | node_ref "=>" plasm_value
+# plasm_expr    ::= entity_expr [projection]
+# entity_expr   ::= query_all | get | query | relation | method | create_action | search
+# query_all     ::= e#
+# get           ::= e#(id) or e#(p#=v, p#=v)
+# query         ::= e#{p#=v, …}
+# relation      ::= e#(id).p#
+# method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
+# create_action ::= e#.m#(args)
+# projection    ::= e#(id)[p#,…] | "[" fields "]"
+# dag_suffix    ::= transform | "[" fields "]" | "[" fields "]" heredoc
+# transform     ::= ".limit(" int ")" | ".sort(" field [", desc"] ")" | ".aggregate(" agg_spec ")" | ".group_by(" field "," agg_spec ")" | ".singleton()" | ".page_size(" int ")"
+# fields        ::= [p#,…]
+# plasm_value   ::= literal | node_ref.field | _.field | [v, …]
+# ident/node_ref/field ::= agent-chosen names for bound nodes and fields
+# literal      ::= quoted string | number | bool | null | heredoc
+#
+# Program construction discipline:
+# - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.
+# - Prefer `node[field,…]`, `.limit(n)`, `.sort(...)`, `.aggregate(...)`, `.group_by(...)`, `.singleton()`, `.page_size(n)`, and render heredocs over returning raw broad lists.
+# - Return at most small final roots unless the user explicitly asks for raw rows.
+# - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.
+# - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.
+#
+# Catalogue rules:
+# - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.
+# - Final program roots are **bare** comma-separated `plasm_expr` / `node_ref` lines (e.g. `e1, e2{...}`); do **not** prefix with `return` — that word is not Plasm syntax.
+# - Never paste `Meaning`. Compose taught atoms with bindings/final roots only when a program is needed.
+# - All semantic symbols you use must be taught in this prompt.
+# - Projection uses a minimal non-empty subset from `[p#,…]`; the identity row teaches the full set once.
+# - Leading `p#` rows are metadata for slots when `args:` on a method line is not enough.
+#
+#   - e#, m#, p# are session-local aliases. Use the aliases **exactly** as shown in expression cells.
+# - Pick rows by `Meaning`, then copy the `plasm_expr` shape. Bind args by keyed slot (`p12=value`), never by position or by renumbering.
+# - Aliases are session-local. If a new prompt teaches new aliases, discard older e#/m#/p# meanings.
+#   - e#(id) or e#(p#=v, p#=v) — get one entity by id or compound key (examples below use `v=$`, not concrete API values).
+#   - Use TSV `plasm_expr` shapes exactly, substituting concrete values for placeholders.
+#   - For compound-key forms such as `e#(id) or e#(p#=v, p#=v)`, keep keyed args (`p#=v` / `name=value`); never rewrite them as positional.
+#   - e#{p#=v, …} — list query; `e#` alone queries all.
+#   - e#(id).p# — relation. e#(id).m#() or e#(id).m#(p#=v,..) — method call.
+#   - For list/query goals, use brace predicates `e#{p#=v, …}`. Use dotted `e#(id).m#() or e#(id).m#(p#=v,..)` only when the goal asks to mutate or call a method.
+#   - e#.m#(args) — standalone create/action (no anchor id needed).
+#   - e#(id)[p#,…] — non-empty scalar subset. Dot after `e#(id)` means relations or taught `m#`, not scalar fields.
+#   - To list X scoped by parent Y, use `X{p#=AnchorEntity(id)}` from X's rows; do not invent `Y(id).p#`.
+#   - `[v, …]` — array value inside method args, e.g. `p#=[e#($)]`.
+#   - Plain `str` values use double quotes. In quoted strings only `\"` and `\\` are escapes.
+#   - `select` chooses one listed allowed value; `multiselect` chooses zero or more as `[v, …]`.
+#   - When `Meaning` marks a slot used in an input value as `markdown`, `html`, `document`, `json_text`, or `blob`, use tagged heredoc only: `<<TAG` ... `TAG`.
+# - Example: `m#(..., p#=<<TXT` newline body newline `TXT` newline `)`.
+#   - e#~"text" — full-text search on entities whose teaching rows include a `~` example (same entities only).
+#   - `p#`-only rows predeclare slots; they are metadata, not expressions to output.
+#   - `$` is only a fill-in cue. Substitute a real value; never send `$`.
+# - `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.
+#   - TSV rows are teaching rows. `plasm_expr` teaches syntax; `Meaning` teaches selection and argument semantics.
+#
+
+plasm_expr	Meaning
+p304	str · owner
+p319	str · repo
+p295	str · name
+p244	str · commit_sha
+p310	bool · protected
+p272	str · html_url
+e1(p304=$, p319=$, p295=$)[p304,p319,p295,p244,p310,p272]	returns e1 · Git branch (owner, repo, branch name).
+e1{p1=e17(p304=$, p319=$)}	returns [e1] · args: p1 repository ref:e17 req · List branches in a repository.
+p328	str · sha
+p294	markdown · message
+e2(p304=$, p319=$, p328=$)[p304,p319,p328,p294,p272]	returns e2 · Repo commit (owner, repo, SHA); branch/tags resolve in get.
+e2{p4=e17(p304=$, p319=$), p5=$, p3=$, p2=$}	returns [e2] · args: p4 repository ref:e17 req; p5 sha str opt; p3 path str opt; p2 author str opt · List commits for a repository.
+e3{p7=e17(p304=$, p319=$), p6=$}	returns [e3] · Repository contributor with commit stats. · args: p7 repository ref:e17 req; p6 anon bool opt · List repo contributors with commit counts.
+p274	str · id
+p253	markdown · description
+p313	bool · public
+p242	int · comments
+p249	date · created_at
+p356	date · updated_at
+e4($)[p274,p253,p272,p313,p242,p249,p356]	returns e4 · A user gist.
+e4	returns [e4] · List gists for the authenticated user.
+e4($).p377	returns e19
+p273	int · id
+p297	int · number
+p350	str · title
+p237	markdown · body
+p339	select · allowed: open, closed
+p336	select · allowed: completed, reopened, not_planned, duplicate
+p278	int · issue_type_id
+p280	str · issue_type_name
+p277	select · allowed: gray, blue, green, yellow, orange, red, pink, purple
+p344	int · sub_issues_total
+p342	int · sub_issues_completed
+p343	float · sub_issues_percent_completed
+p287	bool · locked
+p238	date · closed_at
+e5(p304=$, p319=$, p297=$)[p273,p304,p319,p297,p350,p237,p339,p336,p278,p280,p277,p344,p342,p343,p287,p242,p249,p356,p238,p272]	returns e5 · A GitHub issue in a repository
+e5(p304=$, p319=$, p297=$).m12()	returns () · Delete an issue.
+e5(p304=$, p319=$, p297=$).m20()	returns e5 · args: p62 title str opt; p56 body markdown opt; p61 state sel[open,closed] opt; p60 state_reason sel[completed,reopened,not_planned,duplicate] opt; p57 labels ref:e8 opt; p55 assignees array[ref:e19] opt; p59 milestone ref:e9 opt; p58 locked bool opt · Update an issue.
+e5(p304=$, p319=$, p297=$).m8(p26=$, p22=$,..)	returns () · args: p26 target_repo str req; p22 base_branch str req; p24 custom_instructions markdown opt; p23 custom_agent str opt; p25 model str opt · Assign Copilot agent to an issue.
+e5(p304=$, p319=$, p297=$).m9(p27=[$])	returns () · args: p27 assignees array[ref:e19] req · Add assignees without replacing existing ones.
+e5(p304=$, p319=$, p297=$).m10(p28=[$])	returns () · args: p28 assignees array[ref:e19] req · Remove one or more assignees from an issue.
+e5.m11(p33=e17(p304=$, p319=$), p34=$,..)	returns e5 · [scope p33→e17] · args: p33 repository ref:e17 req; p34 title str req; p30 body markdown opt; p31 labels ref:e8 opt; p29 assignees array[ref:e19] opt; p32 milestone ref:e9 opt · Open a new issue in a repository.
+e5(p304=$, p319=$, p297=$).m16(p47=$,..)	returns () · args: p47 sub_issue_id int req; p46 replace_parent bool opt · Add an existing issue as a sub-issue of this issue.
+e5(p304=$, p319=$, p297=$).m18(p51=$)	returns () · args: p51 sub_issue_id int req · Remove a sub-issue from this parent issue.
+e5(p304=$, p319=$, p297=$).m19(p54=$,..)	returns () · args: p54 sub_issue_id int req; p52 after_id int opt; p53 before_id int opt · Reorder a sub-issue within this parent issue.
+e5{p39=e17(p304=$, p319=$), p42=$, p35=e19($), p37=$, p38=$, p40=$}	returns [e5] · args: p39 repository ref:e17 req; p42 state sel[open,closed] opt; p35 assignee ref:e19 opt; p37 labels ref:e8 opt; p38 milestone ref:e9 opt; p40 since date opt · List issues and pull requests in a repository.
+e5{p49=$, p50=$, p48=$}	returns [e5] · args: p49 owner str req; p50 repo str req; p48 issue_number int req · List sub-issues under a parent issue.
+e5~$	returns [e5] · Global issue/PR search.
+e5(p304=$, p319=$, p297=$).p375	returns e19
+e5(p304=$, p319=$, p297=$).p368	returns [e8]
+e5(p304=$, p319=$, p297=$).p369	returns e9
+e5(p304=$, p319=$, p297=$).p367	returns [e5]
+e5(p304=$, p319=$, p297=$).p380	returns e19
+e6($).p380	returns e19 · A comment on a GitHub issue or pull request
+e6.m21(p10=e17(p304=$, p319=$), p9=$, p8=$)	returns e6 · [scope p10→e17, p9] · args: p10 repository ref:e17 req; p9 issue_number int req; p8 body markdown req · Post a comment on an issue or pull request thread.
+e6($).m22(p11=e17(p304=$, p319=$))	returns () · [scope p11→e17] · args: p11 repository ref:e17 req · Delete an issue or pull request timeline comment.
+e6($).m24(p16=e17(p304=$, p319=$), p15=$)	returns e6 · [scope p16→e17] · args: p16 repository ref:e17 req; p15 body markdown req · Update an issue or pull request comment.
+e6{p13=e17(p304=$, p319=$), p12=$, p14=$}	returns [e6] · args: p13 repository ref:e17 req; p12 issue_number int req; p14 since date opt · List comments on an issue.
+e6{p18=e17(p304=$, p319=$), p19=$}	returns [e6] · args: p18 repository ref:e17 req; p19 since date opt · List issue comments in a repository.
+e7{p21=e11($)}	returns [e7] · Organization-scoped issue type. · args: p21 org str req · List org issue types.
+p241	str · color
+p251	bool · default
+e8(p304=$, p319=$, p295=$)[p295,p304,p319,p273,p253,p241,p251]	returns e8 · Label for issues and PRs
+e8(p304=$, p319=$, p295=$).m28()	returns () · Delete a label from a repository.
+e8(p304=$, p319=$, p295=$).m32()	returns e8 · args: p73 new_name str opt; p71 color str opt; p72 description markdown opt · Update a label (name, color, or description).
+e8.m27(p69=e17(p304=$, p319=$), p68=$,..)	returns e8 · [scope p69→e17] · args: p69 repository ref:e17 req; p68 name str req; p66 color str opt; p67 description markdown opt · Create a label in a repository.
+e8{p64=$, p65=$, p63=$}	returns [e8] · args: p64 owner str req; p65 repo str req; p63 issue_number int req · List labels on an issue.
+e8{p70=e17(p304=$, p319=$)}	returns [e8] · args: p70 repository ref:e17 req · List labels for a repository.
+p299	int · open_issues
+p239	int · closed_issues
+p257	date · due_on
+e9(p304=$, p319=$, p297=$)[p297,p304,p319,p273,p350,p253,p339,p299,p239,p257,p249,p356,p238,p272]	returns e9 · A milestone grouping issues and pull requests
+e9(p304=$, p319=$, p297=$).m34()	returns () · Delete a milestone from a repository.
+e9(p304=$, p319=$, p297=$).m37()	returns e9 · args: p86 title str opt; p83 description markdown opt; p85 state sel[open,closed] opt; p84 due_on date opt · Update milestone (title, state, description, due).
+e9.m33(p76=e17(p304=$, p319=$), p78=$,..)	returns e9 · [scope p76→e17] · args: p76 repository ref:e17 req; p78 title str req; p74 description markdown opt; p77 state sel[open,closed] opt; p75 due_on date opt · Create a milestone in a repository.
+e9{p80=e17(p304=$, p319=$), p82=$}	returns [e9] · args: p80 repository ref:e17 req; p82 state sel[open,closed] opt · List milestones for a repository.
+p355	bool · unread
+p317	str · reason
+p284	date · last_read_at
+p357	str · url
+p347	str · subscription_url
+e10($)[p274,p355,p317,p356,p284,p357,p347]	returns e10 · A notification.
+e10($).m39()	returns () · Mark a notification thread as read.
+e10{p87=$, p89=$, p90=$, p88=$}	returns [e10] · args: p87 all bool opt; p89 participating bool opt; p90 since date opt; p88 before date opt · List notification threads for the auth user.
+p288	str · login
+p236	str · blog
+p286	str · location
+p258	str · email
+p231	str · avatar_url
+p312	int · public_repos
+p311	int · public_gists
+p263	int · followers
+p264	int · following
+p352	str · type
+e11($)[p288,p273,p295,p253,p236,p286,p258,p231,p357,p312,p311,p263,p264,p352]	returns e11 · A GitHub organization.
+p256	bool · draft
+p293	date · merged_at
+e12(p304=$, p319=$, p297=$)[p273,p304,p319,p297,p350,p237,p339,p287,p256,p293,p249,p356,p238,p272]	returns e12 · A pull request in a repository.
+e12(p304=$, p319=$, p297=$).m44()	returns () · args: p128 commit_title str opt; p127 commit_message markdown opt; p129 merge_method sel[merge,squash,rebase] opt · Merge a pull request.
+e12(p304=$, p319=$, p297=$).m45()	returns e12 · args: p133 title str opt; p131 body markdown opt; p132 state sel[open,closed] opt; p130 base str opt · Update a pull request.
+e12(p304=$, p319=$, p297=$).m49()	returns () · args: p147 expected_head_sha str opt · Update a pull request branch from its base branch.
+e12.m42(p125=e17(p304=$, p319=$), p126=$, p122=$, p119=$,..)	returns e12 · [scope p125→e17] · args: p125 repository ref:e17 req; p126 title str req; p122 head str req; p119 base str req; p120 body markdown opt; p121 draft bool opt; p124 maintainer_can_modify bool opt; p123 issue int opt · Open a PR (head into base).
+e12{p137=e17(p304=$, p319=$), p139=$, p136=$, p134=$}	returns [e12] · args: p137 repository ref:e17 req; p139 state sel[open,closed] opt; p136 head str opt; p134 base str opt · List pull requests in a repository.
+e12{p145=e17(p304=$, p319=$), p144=$}	returns [e12] · args: p145 repository ref:e17 req; p144 q str req · Find PRs in a repo by path or file name substring.
+e12~$	returns [e12] · Search pull requests globally.
+e12(p304=$, p319=$, p297=$).p375	returns e19
+e12(p304=$, p319=$, p297=$).p370	returns [e13]
+e12(p304=$, p319=$, p297=$).p369	returns e9
+e12(p304=$, p319=$, p297=$).p371	returns [e15]
+e12(p304=$, p319=$, p297=$).p372	returns [e14]
+e12(p304=$, p319=$, p297=$).p380	returns e19
+e13{p91=$, p93=$, p92=$}	returns [e13] · A file entry in a pull request diff. · args: p91 owner str req; p93 repo str req; p92 pull_number int req · List files changed in a pull request.
+p315	int · pull_number
+p337	select · allowed: APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+p243	str · commit_id
+p346	date · submitted_at
+e14(p304=$, p319=$, p315=$, p273=$)[p273,p304,p319,p315,p337,p237,p243,p346,p272]	returns e14 · A review on a pull request
+e14(p304=$, p319=$, p315=$, p273=$).m52()	returns () · Delete a pending pull request review.
+e14.m51(p113=e17(p304=$, p319=$), p112=$,..)	returns e14 · [scope p113→e17, p112] · args: p113 repository ref:e17 req; p112 pull_number int req; p109 body markdown opt; p110 commit_id str opt; p111 event sel[APPROVE,REQUEST_CHANGES,COMMENT] opt · Create or submit a pull request review.
+e14(p304=$, p319=$, p315=$, p273=$).m55(p118=$,..)	returns () · args: p118 event sel[APPROVE,REQUEST_CHANGES,COMMENT] req; p117 body markdown opt · Submit an existing pending pull request review.
+e14{p114=$, p116=$, p115=$}	returns [e14] · args: p114 owner str req; p116 repo str req; p115 pull_number int req · List reviews on a pull request.
+e14(p304=$, p319=$, p315=$, p273=$).p373	returns e12
+e14(p304=$, p319=$, p315=$, p273=$).p380	returns e19
+p306	str · path
+p254	markdown · diff_hunk
+p320	int · review_id
+p285	int · line
+p329	select · allowed: LEFT, RIGHT
+p333	int · start_line
+p334	select · allowed: LEFT, RIGHT
+p345	select · allowed: line, file
+e15(p304=$, p319=$, p273=$)[p273,p304,p319,p237,p306,p254,p243,p315,p320,p285,p329,p333,p334,p345,p272,p249,p356]	returns e15 · Inline comment on a pull request review diff.
+e15.m56(p100=e17(p304=$, p319=$), p99=$, p94=$,..)	returns e15 · [scope p100→e17, p99] · args: p100 repository ref:e17 req; p99 pull_number int req; p94 body markdown req; p95 commit_id str opt; p98 path str opt; p97 line int opt; p101 side sel[LEFT,RIGHT] opt; p102 start_line int opt; p103 start_side sel[LEFT,RIGHT] opt; p104 subject_type sel[line,file] opt; p96 in_reply_to int opt · Add or reply to an inline review comment.
+e15{p105=$, p107=$, p106=$, p108=$}	returns [e15] · args: p105 owner str req; p107 repo str req; p106 pull_number int req; p108 since date opt · List inline review comments on a pull request.
+e15(p304=$, p319=$, p273=$).p380	returns e19
+p348	str · tag_name
+p308	bool · prerelease
+p314	date · published_at
+e16(p304=$, p319=$, p273=$)[p273,p304,p319,p348,p295,p237,p256,p308,p249,p314,p272]	returns e16 · A GitHub release with assets and release notes
+e16(p304=$, p319=$, p273=$).m60()	returns () · Delete a release by id in a repository.
+e16(p304=$, p319=$, p273=$).m63()	returns e16 · args: p161 tag_name str opt; p159 name str opt; p157 body markdown opt; p158 draft bool opt; p160 prerelease bool opt; p162 target_commitish str opt · Update an existing release.
+e16.m59(p153=e17(p304=$, p319=$), p154=$,..)	returns e16 · [scope p153→e17] · args: p153 repository ref:e17 req; p154 tag_name str req; p151 name str opt; p148 body markdown opt; p149 draft bool opt; p152 prerelease bool opt; p155 target_commitish str opt; p150 generate_release_notes bool opt · Create a GitHub release (tag).
+e16{p156=e17(p304=$, p319=$)}	returns [e16] · args: p156 repository ref:e17 req · List releases for a repository.
+e16(p304=$, p319=$, p273=$).p376	returns e19
+p267	str · full_name
+p309	bool · private
+p266	bool · fork
+p283	str · language
+p332	int · stargazers_count
+p265	int · forks_count
+p298	int · open_issues_count
+p250	str · default_branch
+p230	bool · archived
+p358	select · allowed: public, private, internal
+p316	date · pushed_at
+e17(p304=$, p319=$)[p273,p304,p319,p267,p253,p309,p266,p283,p332,p265,p298,p250,p230,p358,p249,p356,p316,p272]	returns e17 · A GitHub repository
+e17(p304=$, p319=$).m67(p179=e17(p304=$, p319=$), p178=$, p177=$, p180=$,..)	returns () · [scope p179→e17] · args: p179 repository ref:e17 req; p178 path str req; p177 message str req; p180 sha str req; p176 branch str opt · Delete a file from a repository.
+e17(p304=$, p319=$).m68(p185=e17(p304=$, p319=$), p184=$, p183=$, p182=$,..)	returns () · [scope p185→e17] · args: p185 repository ref:e17 req; p184 path str req; p183 message str req; p182 content blob req; p181 branch str opt; p186 sha str opt · Create or update a file in a repository.
+e17{p167=$, p164=$}	returns [e17] · args: p167 visibility sel[public,private,internal] opt; p164 affiliation str opt · List repos the auth user can access.
+e17{p169=e11($), p171=$}	returns [e17] · args: p169 org ref:e11 req; p171 visibility sel[public,private,internal] req · List an org's public repos.
+e17{p173=e11($), p175=$}	returns [e17] · args: p173 org ref:e11 req; p175 type sel[all,owner,member] opt · List repositories for an organization.
+e17{p187=e17(p304=$, p319=$)}	returns [e17] · args: p187 repository ref:e17 req · List forks of a repository.
+e17{p195=e19($), p194=$}	returns [e17] · args: p195 username ref:e19 req; p194 type sel[all,owner,member] opt · List repositories for a specific user.
+e17~$	returns [e17] · Search GitHub repositories using GitHub repository-search query syntax.
+e17(p304=$, p319=$).p363	returns [e1]
+e17(p304=$, p319=$).p364	returns [e2]
+e17(p304=$, p319=$).p365	returns [e3]
+e17(p304=$, p319=$).p378	returns e19
+e17(p304=$, p319=$).p385	returns [e23]
+e17(p304=$, p319=$).p386	returns [e20]
+e18{p163=e17(p304=$, p319=$)}	returns [e18] · Git tag in a repository (not a GitHub Release). · args: p163 repository ref:e17 req · List git tags in a repository.
+p245	str · company
+p235	markdown · bio
+p271	bool · hireable
+p330	bool · site_admin
+e19($)[p288,p273,p295,p245,p236,p286,p258,p235,p312,p311,p271,p330,p272,p231,p249]	returns e19 · A GitHub user account
+e19.m75()	returns e19 · Get the authenticated user.
+e19{p197=e11($), p196=$, p198=$}	returns [e19] · args: p197 org ref:e11 req; p196 filter sel[2fa_disabled,2fa_insecure,all] opt; p198 role sel[all,admin,member] opt · List members of a GitHub organization.
+e19{p200=e17(p304=$, p319=$), p199=$}	returns [e19] · args: p200 repository ref:e17 req; p199 affiliation sel[outside,direct,all] opt · List users with access to a repository.
+e19~$	returns [e19] · Search GitHub users.
+p296	str · node_id
+p338	select · allowed: active, deleted, disabled_fork, disabled_inactivity, disabled_manually
+p232	str · badge_url
+e20(p304=$, p319=$, p273=$)[p273,p304,p319,p296,p295,p306,p338,p249,p356,p272,p232]	returns e20 · A workflow in a repository
+e20(p304=$, p319=$, p273=$).m79(p224=$)	returns () · args: p224 ref str req · Trigger a workflow dispatch event for a workflow.
+e20{p225=$, p226=$}	returns [e20] · args: p225 owner str req; p226 repo str req · List workflows in a repository.
+e20(p304=$, p319=$, p273=$).p384	returns [e23]
+e21{p204=$, p205=$, p206=$}	returns [e21] · Downloadable artifact from a workflow run · args: p204 owner str req; p205 repo str req; p206 run_id int req · List artifacts produced by a workflow run.
+e22{p208=$, p209=$, p210=$, p207=$}	returns [e22] · A GitHub Actions job within a workflow run · args: p208 owner str req; p209 repo str req; p210 run_id int req; p207 filter sel[latest,all] opt · List jobs in a workflow run.
+p341	select · allowed: queued, in_progress, completed, waiting, requested, pending
+p247	select · allowed: success, failure, neutral, cancelled, skipped, timed_out, action_required, stale, startup_failure
+p259	str · event
+p361	int · workflow_id
+p324	int · run_number
+p321	int · run_attempt
+p255	str · display_title
+p268	str · head_branch
+p270	str · head_sha
+p227	str · actor_login
+p351	str · triggering_actor_login
+p325	date · run_started_at
+e23(p304=$, p319=$, p273=$)[p273,p304,p319,p295,p341,p247,p259,p361,p324,p321,p255,p268,p270,p306,p227,p351,p272,p325,p249,p356]	returns e23 · One workflow run for a repository
+e23(p304=$, p319=$, p273=$).m85()	returns () · Cancel an in-progress workflow run.
+e23(p304=$, p319=$, p273=$).m87()	returns () · Delete stored logs for a workflow run.
+e23(p304=$, p319=$, p273=$).m89()	returns () · Rerun all jobs in a workflow run.
+e23(p304=$, p319=$, p273=$).m90()	returns () · Rerun only failed jobs in a workflow run.
+e23{p213=$, p214=$, p216=$, p211=$, p212=$, p215=$}	returns [e23] · args: p213 owner str req; p214 repo str req; p216 workflow_id int req; p211 branch str opt; p212 event str opt; p215 status sel[queued,in_progress,completed,waiting,requested,pending] opt · List runs for one GitHub Actions workflow.
+e23{p221=$, p222=$, p218=$, p219=$, p223=$, p217=e19($), p220=$}	returns [e23] · args: p221 owner str req; p222 repo str req; p218 branch str opt; p219 event str opt; p223 status sel[queued,in_progress,completed,waiting,requested,pending] opt; p217 actor ref:e19 opt; p220 head_sha str opt · List workflow runs in a repository.
+e23(p304=$, p319=$, p273=$).p374	returns e19
+e23(p304=$, p319=$, p273=$).p381	returns [e21]
+e23(p304=$, p319=$, p273=$).p382	returns [e22]
+e23(p304=$, p319=$, p273=$).p379	returns e19
+e23(p304=$, p319=$, p273=$).p383	returns e24
+e23(p304=$, p319=$, p273=$).p387	returns e20
+p323	int · run_id
+p322	int · run_duration_ms
+p354	int · ubuntu_total_ms
+p353	int · ubuntu_jobs
+p290	int · macos_total_ms
+p289	int · macos_jobs
+p360	int · windows_total_ms
+p359	int · windows_jobs
+e24(p304=$, p319=$, p323=$)[p304,p319,p323,p322,p354,p353,p290,p289,p360,p359]	returns e24 · Per-job timing and billable usage for a run
