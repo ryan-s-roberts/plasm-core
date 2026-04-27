@@ -1,8 +1,163 @@
-# Plasm - Compiled tools for AI agents.
+# Plasm — a unified language for federated API interaction
 
-Most agent stacks hand the model a wall of JSON schemas, ask it to synthesize a valid payload, then pay again when malformed calls need validation, retries, and repair prompts. Plasm takes a different route: compile real API surfaces into a small, typed instruction layer that both the model and runtime understand.
+Agent stacks often hand the model a wall of JSON tools: many independent `inputSchema` blobs, no shared ontology, and repeated work when payloads are invalid. **Plasm** is a different bet: one **typed graph** of entities and capabilities (CGS), one **mapping and execution** layer to real transports (CML + runtime), one **surface language** the model learns from compact teaching tables (Plasm: `e#` / `m#` / `p#`), and one **planning and coordination** story (path expressions, multiline programs, and validated DAGs) for real multi-step work—**across API catalogs** without pretending unrelated vendors share one flat schema.
 
-For example, `dump_prompt apis/github` renders a TSV like the following. The **Expression** / **Meaning** lines below are **verbatim** `dump_prompt` output: an Issue-focused slice starting at the `p204` gloss row, then the `Repository` get and search rows from the same run (re-run the tool if you need an exact current snapshot; symbols drift when the schema changes):
+The subsections below are **ordered by dependency**: each layer assumes the previous is in place. Together they are why federation is not “more connectors in one MCP server,” but a **single language** with append-only, cross-catalog symbols and per-backend dispatch.
+
+## How the abstractions stack
+
+```mermaid
+flowchart TB
+  subgraph L1["1 · Schema"]
+    CGS["CGS — graph and ontology\nentities, relations, capabilities"]
+    CML["CML — executable mappings\nto HTTP, GraphQL, EVM, …"]
+  end
+  subgraph L2["2 · Runtime"]
+    RT["Cache, dispatch, hydration\ncomposable values, effects"]
+  end
+  subgraph L3["3 · Language"]
+    SYM["Plasm — path expressions\nsymbol-tuned, incremental DOMAIN"]
+  end
+  subgraph L4["4 · Coordination"]
+    DAG["Programs and DAGs\nstaged and parallel execution"]
+  end
+  CGS --> CML
+  CGS --> RT
+  CML --> RT
+  RT --> SYM
+  SYM --> DAG
+```
+
+### 1. CGS and CML: graph, ontology, normalized capabilities
+
+**Capability Graph Schema (CGS)** is the *domain* layer: **entities** (resources), **relations** (navigable edges, cardinalities), and **capabilities** (what the model may invoke). The graph is a compression of OpenAPI, GraphQL, or ABI ground truth. Capabilities are **normalized** into a small set of *families* so **get, list/query, full-text search, and writes** share the same **shape**—keyed args, entity refs, optional slots, and brace predicates—whether you are triaging an issue, paging a list, or opening a sub-issue. That sameness is what makes one prompt table teach many endpoints at once.
+
+**Capability Mapping Language (CML)** is the *wire* layer: per-capability templates, auth, pagination, and decoding, so the abstract capability compiles to concrete transport calls without changing the agent-facing contract.
+
+*Example — conceptual graph (one catalog):*
+
+```mermaid
+flowchart LR
+  Issue["Issue"] -->|repository| Repo["Repository"]
+  Issue -->|assignee| User["User"]
+  Repo --> Issue
+```
+
+*Example (same capability family, different verbs—list vs search vs update):* the DOMAIN rows use one pattern for filters and refs; the model never learns a one-off JSON blob per REST path.
+
+### 2. Runtime: what a real graph affords
+
+The **runtime** turns capabilities into **lawful, composable results**: `Get` and `Query` and `Page` with stable refs; **projections** that select fields; **relations** scoped from a parent ref; **side effects** with explicit domain meaning. A **graph cache** holds materialized nodes; **hydration** completes projections; **paging** is a **handle** the runtime owns, not a cursor string the model must copy from headers. Effects compose with reads in predictable ways; where the graph allows, the host can **parallelize** independent work and **merge** in line order, or **stage** lines when the cache, writes, or ordering require it. One engine serves one-off expressions, many lines, and compiled program plans.
+
+*Example (one line → one logical result; HTTP fan-out may be >1 under the hood):*
+
+```plasm
+e5{repository=e16(p217=plasm, p231=plasm), p34=open}
+```
+
+### 3. Plasm: symbol-tuned, incrementally defined grammar
+
+**Plasm** is the **language** over the graph: path expressions with session-local `e#` / `m#` / `p#` for entities, methods, and fields, so the prompt stays small. Teaching tables are **incremental**—`discover_capabilities` and `plasm_context` add entities in waves; symbols are monotonic. The *grammar* is the same for GitHub, Slack, or a toy API: federation **adds seeds**; it does not fork the language.
+
+*Example (read, then act, same token vocabulary):*
+
+```plasm
+e5(p304="acme", p319="purchasing", p297=42).m16(p47=1001)
+e16(p304="acme", p319="purchasing")[p201,p190]
+```
+
+### 4. Programs, DAGs, and staged execution
+
+**Multiline `plasm` programs** (bindings, bare final roots, or comma-separated roots) and **archived program plans** (typed `Plan` DAGs, dry-runs, approval policies) are how you coordinate **summarization, fan-out reads, dependent writes, and cross-entity workflows** without a second tool system. The host **stages** program lines when ordering matters and may **run parallel-fork** consecutive pure root queries. MCP passes a **program** string; HTTP may pass several **lines** in one `POST`—the same engine.
+
+**Deferred planning, not a single undifferentiated tool call.** A composed program is **compiled** into a **validated, proof-bearing `Plan` DAG** (see [`plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs) and the runner in [`plasm_plan_run.rs`](crates/plasm-agent-core/src/plasm_plan_run.rs)). The usual agent loop is **plan → review → edit or approve → run**: the host can return a **dry run** of that graph (node kinds, dependencies, and human-readable review text) *before* any live backend work, so the model (or a human) can **tighten queries, add limits, fix expressions**, and resubmit in the *same* Plasm surface using ordinary **correction and guidance**—rather than discarding a pile of one-off tool traces. In MCP, that split is the default **`execute: false`** path on the `plasm` tool (dry plan first; **`execute: true`** only after intent matches the plan). For **side effects and for-each stages**, the dry result carries **per-node `approval_gate` data** (policy key scoped by catalog, entity, and operation); the **phased** runner in [`plasm_agent_core::plasm_plan_run::run_plasm_plan`](crates/plasm-agent-core/src/plasm_plan_run.rs) walks nodes in order and can attach **host approval policy** to each mutating step, which is a better hook than a single all-or-nothing “tool” permission when the work spans reads, compute, and writes. The stock OSS default may **auto-approve** while a tenant-facing policy UI is added above that boundary, but the **gate and receipt shape** is already there for stricter runtimes.
+
+*Example (three **lines** on the same surface—queries, then projection, then a mutation after cache-visible work):*
+
+```plasm
+e5{p39=e17(p304="plasm", p319="plasm"), p42="open"}, e5(p304="plasm", p319="plasm", p297=42)[p350,p237],e5(p304="plasm", p319="plasm", p297=42).m16(p47=123456)
+```
+
+*Example (**`plasm-dag`** multiline program—the host compiles it with [`compile_plasm_dag_to_plan` in `plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs) into a typed `Plan` JSON artifact with `metadata: { "language": "plasm-dag" }` for the same runner; you author **bindings** and a **last line of bare roots**, not a hand-written plan):*
+
+- One **`name = …`** per line. Valid RHS shapes include surface Plasm leaves, **`node.limit(n)`** / **`.sort`**, **`.[field,…]`** projection, **`node[field,…] <<TAG` … `TAG`** render (Jinja-style `{{ … }}` in the heredoc body, as in the `compiles_bound_query_limit_render_dag_to_valid_plan` unit test), **`source => { … }`** derive (plan values, **`_.field`** = current row in a map), and **`source =>` …** for-each side effects when the right-hand side is a Plasm **write** / **action** (line comments: `;;` to end-of-line). **Do not** prefix the final line with `return`—it is a syntax error.
+
+The graph is: *filtered search* → *narrowed columns* → *per-row object map*; two **parallel** final roots (tabular `summary` and `cards`).
+
+```mermaid
+flowchart TB
+  search["search = Product~…  (read)"]
+  summary["summary = search id,name  (compute)"]
+  cards["cards = summary =&gt; { … }  (derive)"]
+  search --> summary --> cards
+  summary -.- r1[root]
+  cards -.- r2[root]
+  r1 ~~~ r2
+```
+
+```plasm
+search = Product~"bolt hardware"
+summary = search[id, name]
+cards = summary => { blurb: { id: _.id, name: _.name } }
+summary, cards
+```
+
+*Larger program (helpdesk-style: **a customer-visible reply** plus a **back-end update**):* read a **Category** and a scoped **Product** list, **minijinja**-render a **public thread message** from the rows (the `brief` node is the **body** of what you would paste into ZenDesk, Intercom, or your own case UI), then **post** that text as a **`product_add_support_reply` action** on a designated “case” product id (`p-helpline-case-1` here—stand-in for the row your CRM uses for the ticket). The render’s `content` field is wired in with `message=brief.content`. Separately, `source => Product(_.id).update(…)` **repoints** each listed row’s `category_id` to the `bucket` you resolved—data-plane fix while the customer sees the reply. For-each vs surface invoke is the same `looks_like_plasm_effect_template` / side-effect path as in [`plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs). The **last line** is **four** **parallel** roots: two digests, the **PATCH** stage, and the **thread comment**.
+
+```mermaid
+flowchart TB
+  bucket["read · Category id"]
+  header["compute · Jinja (category line)"]
+  matches["read · Product query scoped by owner, repo, …"]
+  top["limit(3)"]
+  brief["compute · Jinja = customer reply body"]
+  sync["for_each · Product =&gt; .update (PATCH)"]
+  post["invoke · add-support-reply (case thread)"]
+  bucket --> header
+  matches --> top
+  top --> brief
+  top --> sync
+  brief --> post
+```
+
+```plasm
+bucket = Category("c1")
+header = bucket[id, name] <<MD
+# **{% for r in rows %}{{ r.name }}{% endfor %}** (`{% for r in rows %}{{ r.id }}{% endfor %}`)
+MD
+matches = Product{owner="acme", repo="ingest", active=true}
+candidates = matches.limit(3)
+brief = candidates[id, name, category_id] <<MD
+Hi there — we’ve pulled **{{ rows | length }}** line item(s) in `acme/ingest` and matched them against the **category** we show in the other root. Here’s what we’re doing next:
+
+{% for r in rows %}
+- We’re reconciling **`{{ r.name }}`** (`{{ r.id }}`) to the category you asked us to use.
+{% endfor %}
+
+Thanks for your patience — the team
+MD
+synced = candidates => Product(_.id).update(category_id=bucket.id)
+posted = Product("p-helpline-case-1").add-support-reply(message=brief.content)
+header, brief, synced, posted
+```
+
+The fragment above is the **`scoped_create_tiny`** test fixture: same CGS with two entity types. In a **federated** execute session, `Category` and `Product` are often from **different** registry `entry_id`s; you still write one `plasm-dag` string—symbols resolve per exposure row as usual. The compiler test [`readme_plasm_dag_jinja_for_each_category_and_product_compiles`](crates/plasm-agent-core/src/plasm_dag.rs) locks this program. You can also wire **relation** follow-ups (e.g. from a `Product` get) as a separate binding on the right when the surface line parses in your session.
+
+Surface and binding rules above are **ground truth** in [`plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs) (`parse_statements`, `compile_node_expr`); the compiled `Plan` node array matches what you would get from a dry-run, not a separate ad hoc JSON shape.
+
+*Dry-run header (illustrative—line counts and `execution` depend on node kinds):*
+
+```text
+plasm-program dry-run
+name: product-brief
+handle: p1 (plasm://session/s0/p/1)
+nodes: 3 total, 1 read, 0 write/side-effect, 2 staged
+execution: ordered (dependencies or non-root/staged nodes)
+```
+
+---
+
+**Teaching table: verbatim `dump_prompt` (layers 1 and 3 in one catalog).** The **Expression** / **Meaning** lines below are **verbatim** `dump_prompt` output: an Issue-focused slice starting at the `p204` gloss row, then the `Repository` get and search rows from the same run (re-run the tool if you need an exact current snapshot; symbols drift when the schema changes):
 
 ```tsv
 Expression	Meaning
@@ -88,8 +243,6 @@ For reference, the official `github-mcp-server` **v0.15.0** serialized `tools/li
 
 With more than one API in play, Plasm’s **intent-based catalog queries** (`discover_capabilities`) and **federated sessions** let the agent add only the relevant entities (GitHub, Linear, Slack, another catalog) and keep one typed symbol space—closer to a small query planner over API domains than a single fixed `tools/list`.
 
-That means the agent works with **entities, relations, projections, and capabilities** instead of a flat pile of tool names and argument objects. The runtime can reject impossible calls before they hit a backend, run graph-shaped work in staged or parallel-safe slices, attach multiple APIs to one session, and keep prompt volume lower as the tool surface grows. The goal is not “more connectors”; it is a tighter tool layer where schema compliance stops being the model’s job.
-
 ## Federation
 
 Most MCP servers expose one fixed list of tools. Plasm exposes a catalog and lets the agent build a working set by intent.
@@ -119,30 +272,11 @@ This gives agents a few useful properties:
 
 The important constraint is that federation does **not** magically join unrelated APIs by shared field names. Cross-API workflows are composed by the agent and runtime over typed refs and returned values; each API catalog remains independently authored, validated, and executed.
 
-## Plasm program plans: declarative DAGs on the same runtime
-
-Single Plasm path expressions are the default: `Issue{...}`, `e5.m13(...)`, the parser type-checks against CGS, and the runtime compiles through CML into transport calls. For **multi-node dataflow** (bind names, limit, heredoc render, `return` with several roots, parallel outputs), the agent authors a **Plasm program** in the same string surface the DOMAIN teaches: the host parses and validates it into a `Plan` DAG, dry-runs it, archives it under stable `pN` handles, and executes it through the **same** dispatcher, graph cache, archive, and trace hub as one-shot `plasm` calls.
-
-A dry run is a review artifact, not a stat dump:
-
-```text
-plasm-program dry-run
-name: acme-inventory
-handle: p1 (plasm://session/s0/p/1)
-nodes: 3 total, 1 read, 0 write/side-effect, 2 staged
-execution: staged
-roots: products
-approvals: none
-```
-
-That supports:
-
-- **Dry runs** before side effects, **approval gates** for mutating nodes, and **provenance** via `pN` + `plasm://execute/.../plan/...` with trace rows tying results to the plan hash.
-- **Security:** the same CGS/CML capability boundary as ordinary Plasm; no second tool system and no host-language sandbox between the model and the typed runtime.
+**Program plans (archived DAGs, dry-runs, `pN` handles, trace provenance)** use the *same* CGS/CML boundary and runtime as one-line `plasm` calls (see [section 4 — Programs, DAGs, and staged execution](#4-programs-dags-and-staged-execution) above). The host may require **dry review** before mutating plan nodes, attach **approval gates** to side-effect classes, and record **provenance** (`plasm://execute/.../plan/...`, trace rows) without introducing a second tool system.
 
 ## Normalized results
 
-APIs do not agree on result shape. One endpoint returns a bare array, another wraps rows under `items`, another hides the next page in a cursor URL, and writes may return a resource, a status body, or nothing useful. Plasm normalizes those differences into a small monadic return value the agent can reason about: one expression in, one typed value out, with *projections*, refs, paging, and side effects represented consistently.
+This is the same **composable value** story as [section 2 — Runtime: what a real graph affords](#2-runtime-what-a-real-graph-affords) in concreter form. APIs do not agree on result shape. One endpoint returns a bare array, another wraps rows under `items`, another hides the next page in a cursor URL, and writes may return a resource, a status body, or nothing useful. Plasm normalizes those differences into a small monadic return value the agent can reason about: one expression in, one typed value out, with *projections*, refs, paging, and side effects represented consistently.
 
 One expression does **not** always mean one HTTP request. The expression is the semantic unit; the runtime may fan it out into the calls needed to satisfy it: relation traversal, scoped child queries, implicit get-after-query hydration, projection hydration, pagination, or cache reads. The agent still gets one normalized value or table back, plus execution stats showing how many backend calls were made.
 
@@ -452,12 +586,12 @@ cargo run -p plasm-eval -- coverage \
 
 That makes API authoring agent-friendly without pretending the semantic reduction from vendor RPCs to CGS is automatic.
 
-This repository contains the language/runtime pieces behind that layer:
+This repository contains the same stack as the [introduction](#how-the-abstractions-stack) above, shipped as crates:
 
-- **CGS** describes API domains as entities, relations, and capabilities.
-- **CML** describes executable transport mappings.
-- `**plasm-runtime`** validates and executes against real HTTP/EVM backends.
-- `**plasm-mcp` / HTTP** exposes discovery, execute sessions, traces, and MCP to agents.
+- **`plasm-core`**: CGS, prompt rendering, path parsing and Plasm type-checking over the graph.
+- **`plasm-cml` / `plasm-compile`**: CML (mappings) and compile-time checks from authored catalogs.
+- **`plasm-runtime`**: execute graph cache, transport dispatch, hydration, effects.
+- **`plasm-agent` / `plasm-mcp` (HTTP)**: execute sessions, discovery, traces, and MCP for agents.
 
 This workspace ships `plasm-agent` and `plasm-mcp` for local use: HTTP discovery, execute sessions, and unauthenticated Streamable HTTP MCP. The sections below target this workspace only.
 

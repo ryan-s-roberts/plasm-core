@@ -1277,7 +1277,15 @@ fn looks_like_data_literal(rhs: &str) -> bool {
 }
 
 fn looks_like_plasm_effect_template(rhs: &str) -> bool {
-    rhs.contains(".m") || rhs.contains("=>")
+    // Distinguish for-each side effects from `source => { … }` derive. `.m#` (DOMAIN methods) and
+    // all readable verbs must register here—`.label(`, `.update(`, etc.—not just `.m`.
+    rhs.contains(".m")
+        || rhs.contains("=>")
+        || rhs.contains(".update(")
+        || rhs.contains(".create(")
+        || rhs.contains(".delete(")
+        || rhs.contains(".label(")
+        || rhs.contains(".invoke(")
 }
 
 #[cfg(test)]
@@ -1292,6 +1300,36 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = Arc::new(
             load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "acme".into(),
+            Arc::new(CgsContext::entry("acme", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product", "Category"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "acme".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Product".into(), "Category".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+        )
+    }
+
+    /// `tests/fixtures/scoped_create_tiny` — `product_update` (PATCH) + `product_label` (action) + `product_query` + relations.
+    fn test_session_scoped_with_actions() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("tests/fixtures/scoped_create_tiny"))
+                .expect("load scoped_create_tiny"),
         );
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
@@ -1390,6 +1428,76 @@ doc"#;
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 3);
         assert_eq!(plan["nodes"].as_array().map(Vec::len), Some(3));
+    }
+
+    /// `plasm-oss/README.md` §4: search + project + `=>` map derive + parallel final roots.
+    #[test]
+    fn readme_plasm_dag_search_project_derive_parallel_roots_compiles() {
+        let session = test_session();
+        let source = r#"search = Product~"bolt hardware"
+summary = search[id, name]
+cards = summary => { blurb: { id: _.id, name: _.name } }
+summary, cards"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "readme",
+            source,
+        )
+        .expect("compile");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(dry.node_results.len(), 3, "{dry:?}");
+        assert_eq!(plan["return"], json!({ "kind": "parallel", "nodes": ["summary", "cards"] }));
+    }
+
+    /// `plasm-oss/README.md` §4 — complex: Jinja public reply + `for_each` **update** + **case comment**
+    /// (render `content` piped into `add_support_reply`). Same shape in federated sessions.
+    #[test]
+    fn readme_plasm_dag_jinja_for_each_category_and_product_compiles() {
+        let session = test_session_scoped_with_actions();
+        let source = r#"bucket = Category("c1")
+header = bucket[id, name] <<MD
+# **{% for r in rows %}{{ r.name }}{% endfor %}** (`{% for r in rows %}{{ r.id }}{% endfor %}`)
+MD
+matches = Product{owner="acme", repo="ingest", active=true}
+candidates = matches.limit(3)
+brief = candidates[id, name, category_id] <<MD
+Hi there — we’ve pulled **{{ rows | length }}** line item(s) in `acme/ingest` and matched them against the **category** we show in the other root. Here’s what we’re doing next:
+
+{% for r in rows %}
+- We’re reconciling **`{{ r.name }}`** (`{{ r.id }}`) to the category you asked us to use.
+{% endfor %}
+
+Thanks for your patience — the team
+MD
+synced = candidates => Product(_.id).update(category_id=bucket.id)
+posted = Product("p-helpline-case-1").add-support-reply(message=brief.content)
+header, brief, synced, posted"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "readme-complex",
+            source,
+        )
+        .expect("compile");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(plan["return"]["kind"], "parallel");
+        let kinds: Vec<_> = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .map(|n| n["kind"].as_str().unwrap_or(""))
+            .collect();
+        assert!(
+            kinds.contains(&"for_each"),
+            "expected a for_each side-effect node, got {kinds:?}\n{plan:#}"
+        );
+        assert!(
+            dry.node_results.len() >= 6,
+            "expected category +2 renders + query/limit + for_each + case reply, got {dry:?}"
+        );
     }
 
     #[test]

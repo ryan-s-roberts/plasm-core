@@ -49,6 +49,32 @@ product_label:
       - ["label", { type: var, name: label }]
       - ["notify", { type: var, name: notify }]
 
+product_update:
+  method: PATCH
+  path:
+    - type: literal
+      value: "/products"
+    - type: var
+      name: id
+  body:
+    type: object
+    fields:
+      - ["category_id", { type: var, name: category_id }]
+
+product_add_support_reply:
+  method: POST
+  path:
+    - type: literal
+      value: "/products"
+    - type: var
+      name: id
+    - type: literal
+      value: "/support-replies"
+  body:
+    type: object
+    fields:
+      - ["message", { type: var, name: message }]
+
 category_get:
   method: GET
   path:

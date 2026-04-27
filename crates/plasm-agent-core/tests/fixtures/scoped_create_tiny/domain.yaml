@@ -116,6 +116,31 @@ capabilities:
     output:
       type: side_effect
       description: Applies a label to the product.
+  product_update:
+    description: Update a product (e.g. repoint category)
+    kind: update
+    entity: Product
+    parameters:
+    - name: category_id
+      type: string
+      required: true
+      string_semantics: short
+    provides:
+    - id
+    - name
+    - category_id
+  product_add_support_reply:
+    description: Post a public reply on the helpdesk case thread
+    kind: action
+    entity: Product
+    parameters:
+    - name: message
+      type: string
+      required: true
+      string_semantics: markdown
+    output:
+      type: side_effect
+      description: Customer-visible thread comment; appears on the case timeline.
   category_get:
     description: Fetch a category by id
     kind: get
