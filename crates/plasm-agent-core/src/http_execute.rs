@@ -1275,10 +1275,6 @@ pub async fn apply_capability_seeds(
                 open_md.push_str(
                     "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or DOMAIN text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
                 );
-            } else if new_symbol_space {
-                open_md.push_str(
-                    "_New execute session: use `e#` / `m#` / `p#` from this open only._\n\n",
-                );
             }
             open_md.push_str(&format_plasm_context_wave_line(
                 &created.entry_id,

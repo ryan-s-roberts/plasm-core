@@ -1995,6 +1995,19 @@ impl DomainExposureSession {
     pub fn to_symbol_map(&self) -> SymbolMap {
         (*self.symbol_map_arc()).clone()
     }
+
+    /// Registry `entry_id` for an exposed **entity name** (aligned with `e#` / DOMAIN table order).
+    ///
+    /// In federated sessions, each exposed row is tied to one loaded catalog; this is the
+    /// authoritative owning id for that symbol row. Returns `None` if `entity` is not in
+    /// [`Self::entities`].
+    pub fn catalog_entry_id_for_entity(&self, entity: &str) -> Option<&str> {
+        self.entities
+            .iter()
+            .zip(self.entity_catalog_entry_ids.iter())
+            .find(|(e, _)| e.as_str() == entity)
+            .map(|(_, id)| id.as_str())
+    }
 }
 
 fn hash_exposure_session_rows(exposure: &DomainExposureSession) -> u64 {

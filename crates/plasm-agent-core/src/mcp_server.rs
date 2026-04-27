@@ -1537,18 +1537,17 @@ impl ServerHandler for PlasmMcpHandler {
                         );
                     }
                     plasm.insert("continuity".to_string(), serde_json::Value::Object(continuity));
-                    let body = serde_json::json!({
-                        "logical_session_ref": logical_session_ref,
-                        "client_session_key": rec.client_session_key.as_str(),
-                        "tenant_scope": rec.tenant_scope,
-                        "logical_session_id": rec.logical_session_id.to_string(),
-                        "execute_binding": execute_binding,
-                    })
-                    .to_string();
+                    plasm.insert(
+                        "logical_session_ref".to_string(),
+                        json!(logical_session_ref),
+                    );
+                    plasm.insert(
+                        "client_session_key".to_string(),
+                        json!(rec.client_session_key.as_str()),
+                    );
+                    plasm.insert("tenant_scope".to_string(), json!(rec.tenant_scope));
                     if text.is_empty() {
-                        text.push_str(&body);
-                    } else {
-                        text = format!("{body}\n\n{text}");
+                        text = format!("`{logical_session_ref}`\n");
                     }
                     let mut res = CallToolResult::text_content(vec![TextContent::new(
                         text, None, None,

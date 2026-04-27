@@ -1156,15 +1156,13 @@ fn infer_surface_contract(
             }
         }
     }
-    Ok((
-        kind,
-        QualifiedEntityKey {
-            entry_id: session.entry_id.clone(),
-            entity,
-        },
-        effect,
-        shape,
-    ))
+    let entry_id = session
+        .domain_exposure
+        .as_ref()
+        .and_then(|e| e.catalog_entry_id_for_entity(entity.as_str()))
+        .map(str::to_string)
+        .unwrap_or_else(|| session.entry_id.clone());
+    Ok((kind, QualifiedEntityKey { entry_id, entity }, effect, shape))
 }
 
 fn infer_surface_contract_from_expr(
@@ -1286,7 +1284,7 @@ fn looks_like_plasm_effect_template(rhs: &str) -> bool {
 mod tests {
     use super::*;
     use crate::plasm_plan_run::evaluate_plasm_plan_dry;
-    use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig};
+    use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig, CGS};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -1316,6 +1314,54 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
         )
+    }
+
+    /// Primary session `entry_id` is `github`, but `Category` was exposed from `linear` in DOMAIN
+    /// — plan `qualified_entity` must use the owning catalog, not the lexicographic primary.
+    #[test]
+    fn federated_surface_qualified_entity_matches_exposure_catalog() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Product"]);
+        exp.expose_entities(&layers, cgs.as_ref(), "linear", &["Category"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Product".into(), "Category".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+        );
+        let plan = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "t",
+            "Category",
+        )
+        .expect("compile");
+        let qe = &plan["nodes"][0]["qualified_entity"];
+        assert_eq!(qe["entry_id"], "linear", "{plan}");
+        assert_eq!(qe["entity"], "Category");
     }
 
     #[test]
