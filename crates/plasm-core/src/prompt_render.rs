@@ -2858,8 +2858,8 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     };
     let structure_lines = format!(
         "Output choice:\n\
-  - Use a single `plasm_expr` for one read, search, relation, method, or action.\n\
-  - Use a multi-line `plasm_program` only to bind intermediates, transform/project/render, or emit multiple ordered final roots.\n\
+  - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.\n\
+  - Prefer a multi-line `plasm_program` for analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.\n\
 \n\
 Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
   plasm_program ::= plasm_roots | binding+ plasm_roots\n\
@@ -2882,6 +2882,13 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   plasm_value   ::= literal | node_ref.field | _.field | [v, …]\n\
   ident/node_ref/field ::= agent-chosen names for bound nodes and fields\n\
   literal      ::= quoted string | number | bool | null | heredoc\n\
+\n\
+Program construction discipline:\n\
+  - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.\n\
+  - Prefer `node[field,…]`, `.limit(n)`, `.sort(...)`, `.aggregate(...)`, `.group_by(...)`, `.singleton()`, `.page_size(n)`, and render heredocs over returning raw broad lists.\n\
+  - Return at most small final roots unless the user explicitly asks for raw rows.\n\
+  - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
+  - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
 \n\
 Catalogue rules:\n\
   - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.\n\
@@ -3938,8 +3945,10 @@ mod tests {
             "TSV rows bind the catalogue-specific `plasm_expr` atoms",
             "plasm_program ::= plasm_roots | binding+ plasm_roots",
             "plasm_expr    ::= entity_expr [projection]",
-            "Use a single `plasm_expr` for one read, search, relation, method, or action.",
-            "Use a multi-line `plasm_program` only to bind intermediates",
+            "Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.",
+            "Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals",
+            "Program construction discipline:",
+            "Plan before executing: choose the final answer shape first",
             "do **not** prefix with `return`",
             "All semantic symbols you use must be taught in this prompt.",
             "standalone create/action",

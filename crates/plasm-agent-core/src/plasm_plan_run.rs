@@ -544,6 +544,70 @@ pub fn render_plasm_plan_dry_text(
     for line in render_return_lines(&plan.return_value) {
         let _ = writeln!(out, "- {line}");
     }
+    let guidance = plasm_plan_review_guidance_lines(dry);
+    if !guidance.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "review:");
+        for line in guidance {
+            let _ = writeln!(out, "- {line}");
+        }
+    }
+    out
+}
+
+fn surface_read_list_root_unbounded(s: &ValidatedSurfaceNode) -> bool {
+    matches!(s.result_shape, crate::plasm_plan::ResultShape::List)
+        && s.effect_class == EffectClass::Read
+        && s.depends_on.is_empty()
+        && s.page_size.is_none()
+        && s.kind != PlanNodeKind::Search
+        && s.predicates.is_empty()
+}
+
+fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) -> bool {
+    for id in plan.return_value.refs() {
+        let Some(node) = plan.nodes.iter().find(|n| n.id() == id) else {
+            continue;
+        };
+        if let ValidatedPlanNode::Surface(s) = node {
+            if surface_read_list_root_unbounded(s) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Short human-facing review bullets for agents (also surfaced under `_meta.plasm.guidance`).
+///
+/// Keeps to at most four lines: composition nudge when the plan looks like a broad list,
+/// optional single-node hint, and an execute-intent reminder.
+pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<String> {
+    let mut out = Vec::new();
+    let plan = dry.validated_plan();
+    let warnings = json_string_array(dry.graph_summary.get("warnings"));
+    let unbounded_warned = warnings.iter().any(|w| w.contains("unbounded read root"));
+    let return_unbounded = return_roots_include_unbounded_list_surface(plan);
+
+    if unbounded_warned || return_unbounded {
+        out.push(
+            "Result shape tends toward a broad list. Prefer node[field,…], .limit(n) / .page_size(n), .sort(...), .aggregate(...), .group_by(...), or render heredocs before execute.".into(),
+        );
+    } else if plan.nodes.len() == 1 {
+        if let Some(ValidatedPlanNode::Surface(s)) = plan.nodes.first() {
+            if matches!(s.result_shape, crate::plasm_plan::ResultShape::List)
+                && s.effect_class == EffectClass::Read
+            {
+                out.push(
+                    "Single-node list: use when row-level output is already the answer; for analysis, bind intermediates and return compact roots."
+                        .into(),
+                );
+            }
+        }
+    }
+
+    out.push("Execute only after this plan matches the answer shape you intend.".into());
+    out.truncate(4);
     out
 }
 
@@ -3427,6 +3491,10 @@ dag:
 returns:
 - parallel[0] -> summary
 - parallel[1] -> cards
+
+review:
+- Result shape tends toward a broad list. Prefer node[field,…], .limit(n) / .page_size(n), .sort(...), .aggregate(...), .group_by(...), or render heredocs before execute.
+- Execute only after this plan matches the answer shape you intend.
 "###
         );
         assert!(!text.contains("node_results"));
@@ -3720,6 +3788,66 @@ returns:
         assert_eq!(
             expressions,
             vec!["Product(\"p1\").label(label=\"stale\")".to_string()]
+        );
+    }
+
+    #[test]
+    fn dry_run_text_includes_review_for_unbounded_list_root() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "unbounded-products",
+            "nodes": [
+                {
+                    "id": "products",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
+                    "effect_class": "read",
+                    "result_shape": "list"
+                }
+            ],
+            "return": { "kind": "node", "node": "products" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let text = render_plasm_plan_dry_text(&dry, None);
+        assert!(text.contains("review:"), "{text}");
+        assert!(text.contains("broad list"), "{text}");
+        let g = plasm_plan_review_guidance_lines(&dry);
+        assert!(
+            g.iter().any(|l| l.contains("broad list")),
+            "expected broad-list guidance, got {g:?}"
+        );
+    }
+
+    #[test]
+    fn dry_run_text_review_omits_broad_list_nudge_for_bounded_single_get() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "one-product",
+            "nodes": [
+                {
+                    "id": "one",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+                    "effect_class": "read",
+                    "result_shape": "single"
+                }
+            ],
+            "return": { "kind": "node", "node": "one" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let text = render_plasm_plan_dry_text(&dry, None);
+        assert!(text.contains("review:"), "{text}");
+        assert!(
+            !text.contains("broad list"),
+            "bounded get should not get broad-list nudge: {text}"
         );
     }
 

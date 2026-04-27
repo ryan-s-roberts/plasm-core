@@ -1,6 +1,7 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
-//! Tool results use Markdown [`TextContent`]; `plasm` sets `CallToolResult._meta.plasm` (request
-//! fingerprints, artifact URIs, optional `lossy_summary_fields` per truncated step).
+//! Tool results use Markdown [`TextContent`]; `plasm` sets `CallToolResult._meta.plasm` (dry-run
+//! `plan` + `guidance` when `execute` is omitted/false; after `execute: true`, request fingerprints,
+//! artifact URIs, optional `lossy_summary_fields` per truncated step).
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
 //! (`s0`, `s1`, … per MCP transport; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
 //! canonical `plasm://execute/.../run/{uuid}` remains accepted on read.
@@ -77,7 +78,11 @@ use crate::plasm_dag::{
     compile_plasm_dag_to_plan, compile_plasm_surface_line_to_plan, is_plasm_dag_candidate,
     split_bare_plasm_roots,
 };
-use crate::plasm_plan_run::{run_plasm_plan, PlasmPlanRunHooks};
+use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
+use crate::plasm_plan_run::{
+    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines,
+    render_plasm_plan_dry_text, run_plasm_plan, PlasmPlanRunHooks, PlasmPlanRunResult,
+};
 use crate::run_artifacts::{
     parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri, ArtifactPayload,
     LogicalSessionUriSegment,
@@ -95,10 +100,11 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 /// Max Unicode scalars allowed for `plasm` `tsv_static_frontmatter` (the Plasm language contract block).
 const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
 
-/// Model-facing `plasm` tool description: run one Plasm expression/program (session setup is in initialize instructions).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** one Plasm expression/program with **`expression`** and the **`logical_session_ref`** from **`plasm_context`**. \
+/// Model-facing `plasm` tool description: plan-first program construction (session setup is in initialize instructions).
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan / execute** Plasm with **`expression`** and **`logical_session_ref`** from **`plasm_context`**. \
+     Default: each call returns a **reviewable dry-run program plan** (topology + expected shapes)—**no live API execution** until you set **`execute: true`** after the plan matches your intent. \
      Use the Plasm syntax guide in initialize instructions and the active TSV rows from **`plasm_context`**. \
-     Simple goal: send one taught `plasm_expr`. Multi-step goal: send one `plasm_program`. \
+     Simple goal: one taught `plasm_expr` still compiles as a one-node plan—use when row-level output is already the answer. Multi-step / analytical goal: one **`plasm_program`** that binds, narrows, aggregates, renders, and returns compact final roots—avoid broad probe-and-dump call chains. \
      Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append new **`api`/`entity`** seeds.";
 
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
@@ -106,7 +112,7 @@ pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Workflow: **`plasm_cont
      **`discover_capabilities`** is optional search. It accepts one query string or an array of strings and returns TSV entity rows. Use row columns **`api`** + **`entity`** as seeds. Skip it when you already know the seeds. \
      **`plasm_context`**: pass a stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** array of `{ \"api\": catalog_id, \"entity\": entity_name }` objects (`entry_id` is accepted per object as a legacy alias). The response gives **`logical_session_ref`** (`s0`, `s1`, ...). Loading is **append-only** for a live logical session: call again only for new seeds; do not resend identical seeds every turn, and do not send a smaller set to narrow or reset. Multiple APIs federate into one Plasm language; the primary catalog is the lexicographically first distinct `api`. \
      On a new TSV open, read the teaching table from **`plasm_context`**; it binds the syntax guide below to the current catalogue symbols. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`expression`** string. For simple goals, send one taught `plasm_expr`. For multi-step goals, send one `plasm_program` whose **final roots are bare** comma-separated lines (never prefix with `return`). Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **`plasm`**: pass **`logical_session_ref`** and one **`expression`** string. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports or analysis, prefer **one composed `plasm_program`** over many sequential exploratory **`plasm`** calls. For simple goals, send one taught `plasm_expr` (still a one-node plan). For multi-step work, send one `plasm_program` whose **final roots are bare** comma-separated lines (never prefix with `return`). Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
      **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
 
@@ -536,6 +542,12 @@ impl PlasmMcpHandler {
             ),
         );
         run_props.insert(
+            "execute".into(),
+            json_schema_boolean_type(
+                "When `false` (default), return a dry-run program plan only (no HTTP/API execution). When `true`, compile and run the program after you have reviewed the prior plan output.",
+            ),
+        );
+        run_props.insert(
             "reasoning".into(),
             json_schema_string_type("Optional short note explaining the intent of this call."),
         );
@@ -619,6 +631,16 @@ impl PlasmMcpHandler {
 fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("string"));
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
+fn json_schema_boolean_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("boolean"));
     m.insert(
         "description".into(),
         serde_json::Value::String(description.to_string()),
@@ -1677,6 +1699,7 @@ impl ServerHandler for PlasmMcpHandler {
                 if let Some(expanded) = split_bare_plasm_roots(&expression) {
                     expressions = expanded;
                 }
+                let execute = v.get("execute").and_then(|x| x.as_bool()).unwrap_or(false);
 
                 let reasoning = v
                     .get("reasoning")
@@ -1702,6 +1725,24 @@ impl ServerHandler for PlasmMcpHandler {
                     }
                 }
                 let batch_count = expressions.len();
+                if batch_count > 1 && !execute {
+                    crate::metrics::record_mcp_tool(
+                        "plasm",
+                        Some(true),
+                        "error",
+                        "invalid_arguments",
+                        started.elapsed(),
+                    );
+                    return Ok(CallToolResult::with_error(
+                        CallToolError::invalid_arguments(
+                            "plasm",
+                            Some(
+                                "comma-separated multi-root expressions require `execute: true` after review; default is plan-only. Prefer one composed `plasm_program` with bindings and a single root block, then call with `execute: true`."
+                                    .into(),
+                            ),
+                        ),
+                    ));
+                }
                 let plasm_tool_span = crate::spans::mcp_tool_plasm(
                     batch_count > 1,
                     batch_count as u64,
@@ -1827,21 +1868,77 @@ impl ServerHandler for PlasmMcpHandler {
                     };
                     let run_result = match compile {
                         Ok(plan) => {
-                            run_plasm_plan(
-                                &es,
-                                self.plasm.as_ref(),
-                                principal_incoming.as_ref(),
-                                &b.prompt_hash,
-                                &b.session_id,
-                                &plan,
-                                true,
-                                Some(PlasmPlanRunHooks {
-                                    meta_index: &mut idx,
-                                    trace: mcp_trace.clone(),
-                                    sink: sink.clone(),
-                                }),
-                            )
-                            .await
+                            if execute {
+                                run_plasm_plan(
+                                    &es,
+                                    self.plasm.as_ref(),
+                                    principal_incoming.as_ref(),
+                                    &b.prompt_hash,
+                                    &b.session_id,
+                                    &plan,
+                                    true,
+                                    Some(PlasmPlanRunHooks {
+                                        meta_index: &mut idx,
+                                        trace: mcp_trace.clone(),
+                                        sink: sink.clone(),
+                                    }),
+                                )
+                                .await
+                            } else {
+                                match parse_plan_value(&plan) {
+                                    Err(e) => Err(e),
+                                    Ok(plan_typed) => match validate_plan_artifact(&plan_typed) {
+                                        Err(e) => Err(e),
+                                        Ok(validated) => {
+                                            match evaluate_validated_plasm_plan_dry(&es, &validated)
+                                            {
+                                                Err(e) => Err(e),
+                                                Ok(dry) => {
+                                                    let dry_text =
+                                                        render_plasm_plan_dry_text(&dry, None);
+                                                    let guidance =
+                                                        plasm_plan_review_guidance_lines(&dry);
+                                                    let markdown = format!(
+                                                        "# Plasm program plan (dry-run)\n\n\
+Each default **`plasm`** call is **plan-only** (no live API execution). \
+Call again with **`execute: true`** after this topology and result shapes match your intent. \
+After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply.\n\n\
+```text\n{dry_text}\n```"
+                                                    );
+                                                    let plan_json = plasm_plan_dag_json(&dry);
+                                                    let mut plasm_obj = serde_json::Map::new();
+                                                    plasm_obj.insert(
+                                                        "dry_run".into(),
+                                                        serde_json::json!(true),
+                                                    );
+                                                    plasm_obj.insert("plan".into(), plan_json);
+                                                    plasm_obj.insert(
+                                                        "guidance".into(),
+                                                        serde_json::Value::Array(
+                                                            guidance
+                                                                .into_iter()
+                                                                .map(serde_json::Value::String)
+                                                                .collect(),
+                                                        ),
+                                                    );
+                                                    let mut meta = serde_json::Map::new();
+                                                    meta.insert(
+                                                        "plasm".into(),
+                                                        serde_json::Value::Object(plasm_obj),
+                                                    );
+                                                    Ok(PlasmPlanRunResult {
+                                                        version: dry.version,
+                                                        node_results: dry.node_results,
+                                                        graph_summary: dry.graph_summary,
+                                                        run_markdown: Some(markdown),
+                                                        run_plasm_meta: Some(meta),
+                                                    })
+                                                }
+                                            }
+                                        }
+                                    },
+                                }
+                            }
                         }
                         Err(e) => Err(e),
                     };
@@ -2221,8 +2318,10 @@ mod tests {
         assert!(
             super::MCP_PLASM_TOOL_DESCRIPTION.contains("plasm_context")
                 && super::MCP_PLASM_TOOL_DESCRIPTION.contains("initialize instructions")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("dry-run program plan")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("execute: true")
                 && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Simple goal")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Multi-step goal")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Multi-step")
                 && super::MCP_PLASM_TOOL_DESCRIPTION.contains("logical_session_ref"),
             "plasm tool description: {}",
             super::MCP_PLASM_TOOL_DESCRIPTION
@@ -2256,6 +2355,9 @@ mod tests {
                 && init.contains("append-only")
                 && init.contains("smaller set")
                 && init.contains("Plasm syntax guide")
+                && init.contains("dry-run program plan")
+                && init.contains("execute: true")
+                && init.contains("one composed `plasm_program`")
                 && init.contains("plasm_program ::= plasm_roots | binding+ plasm_roots"),
             "initialize instructions: {}",
             init
@@ -2364,6 +2466,17 @@ mod tests {
             Some("string")
         );
         assert!(!props.contains_key("expressions"));
+        let execute = props
+            .get("execute")
+            .expect("execute property in input_schema");
+        assert_eq!(
+            execute.get("type").and_then(|x| x.as_str()),
+            Some("boolean")
+        );
+        assert!(
+            !required.iter().any(|x| x.as_str() == Some("execute")),
+            "`execute` must be optional"
+        );
     }
 
     #[test]
@@ -2373,7 +2486,10 @@ mod tests {
             "Plasm syntax guide",
             "plasm_program ::= plasm_roots | binding+ plasm_roots",
             "Use a single `plasm_expr`",
-            "Use a multi-line `plasm_program`",
+            "Prefer a multi-line `plasm_program`",
+            "Program construction discipline",
+            "dry-run program plan",
+            "execute: true",
             "Response order follows the final roots",
             "execution order follows Plasm/runtime dependencies",
             "resources/read",
