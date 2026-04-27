@@ -106,8 +106,9 @@ pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Workflow: **`plasm_cont
      **`discover_capabilities`** is optional search. It accepts one query string or an array of strings and returns TSV entity rows. Use row columns **`api`** + **`entity`** as seeds. Skip it when you already know the seeds. \
      **`plasm_context`**: pass a stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** array of `{ \"api\": catalog_id, \"entity\": entity_name }` objects (`entry_id` is accepted per object as a legacy alias). The response gives **`logical_session_ref`** (`s0`, `s1`, ...). Loading is **append-only** for a live logical session: call again only for new seeds; do not resend identical seeds every turn, and do not send a smaller set to narrow or reset. Multiple APIs federate into one Plasm language; the primary catalog is the lexicographically first distinct `api`. \
      On a new TSV open, read the teaching table from **`plasm_context`**; it binds the syntax guide below to the current catalogue symbols. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`expression`** string. For simple goals, send one taught `plasm_expr`. For multi-step goals, send one `plasm_program`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
-     **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows.";
+     **`plasm`**: pass **`logical_session_ref`** and one **`expression`** string. For simple goals, send one taught `plasm_expr`. For multi-step goals, send one `plasm_program` whose **final roots are bare** comma-separated lines (never prefix with `return`). Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
+     **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
 
 fn mcp_server_initialize_instructions() -> String {
     format!(
@@ -1806,10 +1807,24 @@ impl ServerHandler for PlasmMcpHandler {
                         )));
                     };
                     let plan_name = format!("plasm_dag_call_{call_count}");
+                    let pipeline = self.plasm.engine.prompt_pipeline();
+                    let cross = self.plasm.sessions.symbol_map_cross_cache();
                     let compile = if is_plasm_dag_candidate(&expressions) {
-                        compile_plasm_dag_to_plan(&es, &plan_name, &expressions[0])
+                        compile_plasm_dag_to_plan(
+                            pipeline,
+                            Some(cross),
+                            &es,
+                            &plan_name,
+                            &expressions[0],
+                        )
                     } else {
-                        compile_plasm_surface_line_to_plan(&es, &plan_name, &expressions[0])
+                        compile_plasm_surface_line_to_plan(
+                            pipeline,
+                            Some(cross),
+                            &es,
+                            &plan_name,
+                            &expressions[0],
+                        )
                     };
                     let run_result = match compile {
                         Ok(plan) => {
@@ -2362,6 +2377,8 @@ mod tests {
             "Use a multi-line `plasm_program`",
             "Response order follows the final roots",
             "execution order follows Plasm/runtime dependencies",
+            "resources/read",
+            "not Plasm expressions",
         ] {
             assert!(
                 d.contains(expected),
@@ -2371,6 +2388,10 @@ mod tests {
         assert!(
             !d.contains("approval") && !d.contains("approved") && !d.contains("approve"),
             "initialize instructions should not mention approval: {d}"
+        );
+        assert!(
+            !d.contains("[\"return\"]"),
+            "initialize instructions must not advertise optional return in EBNF: {d}"
         );
     }
 

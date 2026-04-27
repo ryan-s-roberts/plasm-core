@@ -1,5 +1,0 @@
----
-source: crates/plasm-agent-core/src/expr_display.rs
-expression: res
----
-Query(Product all) cap=product_list

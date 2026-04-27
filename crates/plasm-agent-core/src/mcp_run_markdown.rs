@@ -3,6 +3,9 @@
 //! **Projection vs transport summary:** path-expression **projection** (which fields/rows the executor
 //! materializes) is separate from this module’s table/TSV/preview paths, which may still cap lossy
 //! or reference-only cells or defer full JSON to `resources/read`. See repository `docs/mcp-session-reuse.md` (section 5).
+//!
+//! **`plasm://…` run URIs** are MCP **`resources/read`** resource identifiers — they are **not** Plasm
+//! path expressions and cannot be executed via the `plasm` tool alone.
 
 use crate::output::{
     format_result_tsv_with_cgs, format_result_with_cgs, lossy_summary_field_names,
@@ -115,7 +118,7 @@ pub(crate) fn merge_snapshot_column_hints(
 /// One-line Markdown after an in-band result when the run snapshot must be fetched separately.
 pub(crate) fn mcp_inline_run_snapshot_line(handle: &RunArtifactHandle) -> String {
     format!(
-        "\n\n_Snapshot (`resources/read`):_ `{}`\n",
+        "\n\n_Snapshot (MCP `resources/read`, not a Plasm expression):_ `{}`\n",
         handle.plasm_uri
     )
 }
@@ -217,7 +220,7 @@ pub(crate) fn mcp_compact_markdown_batch(
         ));
         if let Some((_, h)) = truncated_step_uris.iter().find(|(s, _)| *s == step_no) {
             out.push_str(&format!(
-                "   _Snapshot (`resources/read`):_ `{}`\n",
+                "   _Snapshot (MCP `resources/read`, not a Plasm expression):_ `{}`\n",
                 h.plasm_uri
             ));
         }
@@ -318,6 +321,16 @@ mod tests {
             payload_len: 1,
             request_fingerprints: vec![],
         }
+    }
+
+    #[test]
+    fn mcp_inline_run_snapshot_line_labels_resources_read_not_plasm_expr() {
+        let h = sample_handle();
+        let line = mcp_inline_run_snapshot_line(&h);
+        assert!(
+            line.contains("resources/read") && line.contains("not a Plasm expression"),
+            "{line}"
+        );
     }
 
     #[test]

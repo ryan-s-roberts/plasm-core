@@ -900,7 +900,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
     }
     if plan.nodes.is_empty() {
         return Err(
-            "plan.nodes must be non-empty: a Plasm program must include at least one executable DAG node (taught `query` / `get` / search / relation forms per DOMAIN); a literal-only `return` is not executable alone"
+            "plan.nodes must be non-empty: a Plasm program must include at least one executable DAG node (taught `query` / `get` / search / relation forms per DOMAIN); a literal-only final roots line is not executable alone"
                 .to_string(),
         );
     }
@@ -937,7 +937,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             if let Some(template) = &n.ir_template {
                 validate_plan_expr_template(template, i, "ir_template")?;
             }
-            if n.qualified_entity.is_none() {
+            if n.qualified_entity.is_none() && n.result_shape != ResultShape::Page {
                 return Err(format!(
                     "plan.nodes[{i}].qualified_entity is required for executable node {:?}",
                     n.kind
@@ -2339,6 +2339,24 @@ mod tests {
             "return": { "kind": "node", "node": "n1" }
         });
         assert!(validate_plan_value(&v).is_err());
+    }
+
+    #[test]
+    fn page_surface_node_may_omit_qualified_entity() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "pg",
+                "kind": "query",
+                "expr": "page(s0_pg1)",
+                "ir": { "expr": { "op": "page", "handle": "s0_pg1" } },
+                "effect_class": "read",
+                "result_shape": "page"
+            }],
+            "return": { "kind": "node", "node": "pg" }
+        });
+        validate_plan_value(&v).expect("page node validates without CGS entity key");
     }
 
     #[test]

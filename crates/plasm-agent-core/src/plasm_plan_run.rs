@@ -6,11 +6,15 @@ use plasm_core::expr_parser::{parse_with_cgs_layers, ParseError, ParsedExpr};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
+use plasm_core::symbol_map_cache_key_federated;
+use plasm_core::symbol_map_cache_key_single_catalog;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
 use plasm_core::DomainExposureSession;
 use plasm_core::FocusSpec;
+use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMap;
+use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
@@ -42,16 +46,9 @@ use plasm_runtime::{
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// Parse a Plasm line to [`ParsedExpr`] (surface IR + optional projection) for the active session.
-///
-/// Uses the session [`plasm_core::DomainExposureSession`] symbol map when present (single- or
-/// multi-catalog) so `e#` / `p#` / `m#` DOMAIN symbols resolve. This must match
-/// [`crate::http_execute::parse_plasm_line`] (including optional pipeline expand) for non-DAG paths.
-pub fn parse_parsed_expr_for_session(
-    session: &ExecuteSession,
-    line: &str,
-) -> Result<ParsedExpr, ParseError> {
-    let layers: Vec<&CGS> = if session.contexts_by_entry.is_empty() {
+/// CGS layers for [`parse_with_cgs_layers`] (primary + federated contexts).
+pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
+    if session.contexts_by_entry.is_empty() {
         vec![session.cgs.as_ref()]
     } else {
         session
@@ -59,14 +56,62 @@ pub fn parse_parsed_expr_for_session(
             .values()
             .map(|c| c.cgs.as_ref())
             .collect()
-    };
-    let sym_map = if let Some(exp) = session.domain_exposure.as_ref() {
-        exp.to_symbol_map()
+    }
+}
+
+/// Symbol map aligned with [`PromptPipelineConfig::expand_expr_for_session_with_optional_exposure`]
+/// and HTTP execute (`symbol_map_cross_cache` when available).
+pub fn symbol_map_for_plasm_surface_parse(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+) -> SymbolMap {
+    let layers = session_cgs_layers(session);
+    if let Some(e) = session.domain_exposure.as_ref() {
+        let key = if symbol_map_cross_cache.is_some() {
+            if layers.len() <= 1 {
+                Some(symbol_map_cache_key_single_catalog(session.cgs.as_ref(), e))
+            } else {
+                Some(symbol_map_cache_key_federated(&layers, e))
+            }
+        } else {
+            None
+        };
+        (*e.symbol_map_arc_cross(symbol_map_cross_cache, key).0).clone()
     } else {
         let (full, _) = entity_slices_for_render(session.cgs.as_ref(), FocusSpec::All);
         SymbolMap::build(session.cgs.as_ref(), &full)
-    };
-    parse_with_cgs_layers(line, &layers, sym_map)
+    }
+}
+
+/// Parse one Plasm surface line: strip DOMAIN gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
+/// [`parse_with_cgs_layers`]. This is the single path for HTTP execute, Plasm-DAG compile, and MCP `plasm`.
+pub fn parse_plasm_surface_line(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    pipeline: &PromptPipelineConfig,
+    line: &str,
+) -> Result<ParsedExpr, ParseError> {
+    let expanded = pipeline.expand_expr_for_session_with_optional_exposure(
+        line,
+        session.cgs.as_ref(),
+        &session.entities,
+        session.domain_exposure.as_ref(),
+    );
+    let layers = session_cgs_layers(session);
+    let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
+    parse_with_cgs_layers(&expanded, &layers, sym_map)
+}
+
+/// Parse a Plasm line to [`ParsedExpr`] (surface IR + optional projection) for the active session.
+///
+/// Uses [`PromptPipelineConfig::default`] (TSV symbol tuning) and no cross-request symbol-map LRU.
+/// Prefer [`parse_plasm_surface_line`] from HTTP/MCP with the process [`PromptPipelineConfig`] +
+/// [`ExecuteSessionStore::symbol_map_cross_cache`].
+pub fn parse_parsed_expr_for_session(
+    session: &ExecuteSession,
+    line: &str,
+) -> Result<ParsedExpr, ParseError> {
+    parse_plasm_surface_line(session, None, &PromptPipelineConfig::default(), line)
 }
 
 /// Type-check a parsed line against the session CGS (federated when multiple catalogs are loaded).
@@ -1185,6 +1230,9 @@ fn ensure_node_dispatchable(
     let ValidatedPlanNode::Surface(surface) = node else {
         return Ok(());
     };
+    if surface.result_shape == crate::plasm_plan::ResultShape::Page {
+        return Ok(());
+    }
     let Some(q) = surface.qualified_entity.as_ref() else {
         return if es.contexts_by_entry.len() > 1 {
             Err(format!(

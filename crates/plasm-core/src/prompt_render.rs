@@ -2859,12 +2859,12 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     let structure_lines = format!(
         "Output choice:\n\
   - Use a single `plasm_expr` for one read, search, relation, method, or action.\n\
-  - Use a multi-line `plasm_program` only to bind intermediates, transform/project/render, or return multiple ordered roots.\n\
+  - Use a multi-line `plasm_program` only to bind intermediates, transform/project/render, or emit multiple ordered final roots.\n\
 \n\
 Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
   plasm_program ::= plasm_roots | binding+ plasm_roots\n\
   binding       ::= ident \"=\" plasm_node\n\
-  plasm_roots   ::= [\"return\"] plasm_return (\",\" plasm_return)*\n\
+  plasm_roots   ::= plasm_return (\",\" plasm_return)*\n\
   plasm_return  ::= node_ref | plasm_expr\n\
   plasm_node    ::= plasm_expr | node_ref dag_suffix | node_ref \"=>\" plasm_value\n\
   plasm_expr    ::= entity_expr [projection]\n\
@@ -2885,6 +2885,7 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
 \n\
 Catalogue rules:\n\
   - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.\n\
+  - Final program roots are **bare** comma-separated `plasm_expr` / `node_ref` lines (e.g. `e1, e2{{...}}`); do **not** prefix with `return` — that word is not Plasm syntax.\n\
   - Never paste `Meaning`. Compose taught atoms with bindings/final roots only when a program is needed.\n\
   - All semantic symbols you use must be taught in this prompt.\n\
   - Projection uses a minimal non-empty subset from `{projection}`; the identity row teaches the full set once.\n\
@@ -3939,6 +3940,7 @@ mod tests {
             "plasm_expr    ::= entity_expr [projection]",
             "Use a single `plasm_expr` for one read, search, relation, method, or action.",
             "Use a multi-line `plasm_program` only to bind intermediates",
+            "do **not** prefix with `return`",
             "All semantic symbols you use must be taught in this prompt.",
             "standalone create/action",
             "full-text search",
@@ -3954,6 +3956,10 @@ mod tests {
                 "TSV frontmatter should preserve the same semantics and include `{needle}`"
             );
         }
+        assert!(
+            !tsv.contains("[\"return\"]"),
+            "TSV syntax contract must not advertise optional `return` keyword"
+        );
         if tsv.contains("tagged heredoc only") {
             assert!(
                 tsv.contains("tagged heredoc only") && tsv.contains("`<<TAG`"),

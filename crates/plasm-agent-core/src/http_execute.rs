@@ -20,13 +20,10 @@ use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
 use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
-    entity_slices_for_render,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
-    split_tsv_domain_contract_and_table, symbol_map_cache_key_federated,
-    symbol_map_cache_key_single_catalog,
-    symbol_tuning::FocusSpec,
-    AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
+    split_tsv_domain_contract_and_table, AuthScheme, CgsContext, PagingHandle, PromptRenderMode,
+    SymbolMap, CGS,
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
@@ -2364,45 +2361,29 @@ fn parse_plasm_line(
     sess: &ExecuteSession,
     st: &PlasmHostState,
 ) -> Result<ParsedExpr, RunLineError> {
-    let expanded = st
-        .engine
-        .prompt_pipeline()
-        .expand_expr_for_session_with_optional_exposure(
+    let pipeline = st.engine.prompt_pipeline();
+    let mut parsed = crate::plasm_plan_run::parse_plasm_surface_line(
+        sess,
+        Some(st.sessions.symbol_map_cross_cache()),
+        pipeline,
+        line,
+    )
+    .map_err(|e| {
+        let expanded = pipeline.expand_expr_for_session_with_optional_exposure(
             line,
             sess.cgs.as_ref(),
             &sess.entities,
             sess.domain_exposure.as_ref(),
         );
-    let layers: Vec<&CGS> = sess
-        .contexts_by_entry
-        .values()
-        .map(|c| c.cgs.as_ref())
-        .collect();
-    let sym_map = if let Some(e) = sess.domain_exposure.as_ref() {
-        let cache = st.sessions.symbol_map_cross_cache();
-        let key = if layers.len() <= 1 {
-            symbol_map_cache_key_single_catalog(sess.cgs.as_ref(), e)
-        } else {
-            symbol_map_cache_key_federated(&layers, e)
-        };
-        (*e.symbol_map_arc_cross(Some(cache), Some(key)).0).clone()
-    } else {
-        let (full, _) = entity_slices_for_render(sess.cgs.as_ref(), FocusSpec::All);
-        SymbolMap::build(sess.cgs.as_ref(), &full)
-    };
-    let mut parsed = expr_parser::parse_with_cgs_layers(&expanded, &layers, sym_map.clone())
-        .map_err(|e| {
-            RunLineError::Parse(augment_unknown_entity_parse_error(
-                execute_session_parse_error_message(
-                    &e,
-                    &expanded,
-                    line,
-                    sess.cgs.as_ref(),
-                    &sym_map,
-                ),
-                sess,
-            ))
-        })?;
+        let sym_map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(
+            sess,
+            Some(st.sessions.symbol_map_cross_cache()),
+        );
+        RunLineError::Parse(augment_unknown_entity_parse_error(
+            execute_session_parse_error_message(&e, &expanded, line, sess.cgs.as_ref(), &sym_map),
+            sess,
+        ))
+    })?;
     if let Some(ref fed) = sess.federation_dispatch() {
         normalize_expr_query_capabilities_federated(
             &mut parsed.expr,

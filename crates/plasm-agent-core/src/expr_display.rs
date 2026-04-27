@@ -129,8 +129,8 @@ mod il_snapshots {
         let pe = parse("Product", &cgs).expect("parse");
         let raw = expr_display(&pe.expr);
         let res = expr_display_resolved(&pe.expr, &cgs);
-        insta::assert_snapshot!("il_query_product_raw", raw);
-        insta::assert_snapshot!("il_query_product_resolved", res);
+        assert_eq!(raw, "Query(Product all)");
+        assert_eq!(res, "Query(Product all) cap=product_list");
         assert!(res.contains("cap=product_list"), "{res}");
     }
 
@@ -138,7 +138,7 @@ mod il_snapshots {
     fn il_get_product() {
         let cgs = tiny_cgs();
         let pe = parse(r#"Product("p1")"#, &cgs).expect("parse");
-        insta::assert_snapshot!("il_get_product", expr_display_resolved(&pe.expr, &cgs));
+        assert_eq!(expr_display_resolved(&pe.expr, &cgs), "Get(Product:p1)");
     }
 
     #[test]
@@ -158,6 +158,6 @@ mod il_snapshots {
         let fed = FederationDispatch::from_contexts_and_exposure(ctxs, &exp);
         let pe = parse("Product", cgs.as_ref()).expect("parse");
         let s = expr_display_resolved_federated(&pe.expr, &fed, cgs.as_ref());
-        insta::assert_snapshot!("il_query_product_federated", s);
+        assert_eq!(s, "Query(Product all) cap=product_list");
     }
 }

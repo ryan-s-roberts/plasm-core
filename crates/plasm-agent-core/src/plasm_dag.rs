@@ -9,8 +9,10 @@ use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanNodeKind, PlanValue,
     QualifiedEntityKey, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
-use crate::plasm_plan_run::parse_parsed_expr_for_session;
+use crate::plasm_plan_run::parse_plasm_surface_line;
 use plasm_core::Expr;
+use plasm_core::PromptPipelineConfig;
+use plasm_core::SymbolMapCrossRequestCache;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -55,13 +57,27 @@ enum DagNodeSource {
     },
 }
 
-#[derive(Debug, Default)]
-struct CompileState {
+#[derive(Debug)]
+struct CompileState<'a> {
     nodes: Vec<DagNode>,
     labels: BTreeMap<String, usize>,
+    pipeline: &'a PromptPipelineConfig,
+    cross_cache: Option<&'a SymbolMapCrossRequestCache>,
 }
 
-impl CompileState {
+impl<'a> CompileState<'a> {
+    fn new(
+        pipeline: &'a PromptPipelineConfig,
+        cross_cache: Option<&'a SymbolMapCrossRequestCache>,
+    ) -> Self {
+        Self {
+            nodes: Vec::new(),
+            labels: BTreeMap::new(),
+            pipeline,
+            cross_cache,
+        }
+    }
+
     fn insert(&mut self, node: DagNode) -> Result<(), String> {
         if self.labels.contains_key(&node.id) {
             return Err(format!("duplicate Plasm-DAG node label {:?}", node.id));
@@ -114,11 +130,13 @@ pub fn split_bare_plasm_roots(src: &str) -> Option<Vec<String>> {
 }
 
 pub fn compile_plasm_dag_to_plan(
+    pipeline: &PromptPipelineConfig,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
     name: &str,
     source: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut state = CompileState::default();
+    let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     let statements = parse_statements(source)?;
     if statements.is_empty() {
         return Err("Plasm-DAG program is empty".to_string());
@@ -130,17 +148,22 @@ pub fn compile_plasm_dag_to_plan(
             let node = compile_node_expr(session, &state, id, rhs.trim())?;
             state.insert(node)?;
         } else {
-            final_roots = Some(split_return_list(
-                stmt.strip_prefix("return ").unwrap_or(stmt.as_str()),
-                &mut state,
-                session,
-            )?);
+            let stmt = stmt.trim();
+            if stmt.starts_with("return ") {
+                return Err(
+                    "return is not Plasm syntax; write bare comma-separated final roots (e.g. `a, b`, not `return a, b`)"
+                        .to_string(),
+                );
+            }
+            final_roots = Some(split_return_list(stmt, &mut state, session)?);
         }
     }
-    let roots =
-        final_roots.ok_or_else(|| "Plasm-DAG program needs a final return line".to_string())?;
+    let roots = final_roots.ok_or_else(|| {
+        "Plasm-DAG program needs a final line of bare roots (comma-separated expressions or node labels)"
+            .to_string()
+    })?;
     if roots.is_empty() {
-        return Err("Plasm-DAG final return list is empty".to_string());
+        return Err("Plasm-DAG final roots list is empty".to_string());
     }
     let nodes = state
         .nodes
@@ -162,17 +185,24 @@ pub fn compile_plasm_dag_to_plan(
     }))
 }
 
-/// One line of surface Plasm (or `a, b` at top level) as a one-`return` program plan — same shape as
+/// One line of surface Plasm (or `a, b` at top level) as a one-line program plan — same shape as
 /// [`compile_plasm_dag_to_plan`], so the MCP and HTTP runtimes can always execute through the plan runner.
 pub fn compile_plasm_surface_line_to_plan(
+    pipeline: &PromptPipelineConfig,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
     name: &str,
     line: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut state = CompileState::default();
+    let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     let trimmed = line.trim();
-    let as_return = trimmed.strip_prefix("return ").unwrap_or(trimmed);
-    let roots = split_return_list(as_return, &mut state, session)?;
+    if trimmed.starts_with("return ") {
+        return Err(
+            "return is not Plasm syntax; write bare comma-separated roots (e.g. `a, b`, not `return a, b`)"
+                .to_string(),
+        );
+    }
+    let roots = split_return_list(trimmed, &mut state, session)?;
     if roots.is_empty() {
         return Err("expression is empty".to_string());
     }
@@ -198,7 +228,7 @@ pub fn compile_plasm_surface_line_to_plan(
 
 fn compile_node_expr(
     session: &ExecuteSession,
-    state: &CompileState,
+    state: &CompileState<'_>,
     id: &str,
     rhs: &str,
 ) -> Result<DagNode, String> {
@@ -221,8 +251,13 @@ fn compile_node_expr(
         require_node(state, source)?;
         if looks_like_plasm_effect_template(right) {
             let (expr_for_parse, uses) = rewrite_template_expr(right.trim(), state, Some("_"))?;
-            let parsed = parse_parsed_expr_for_session(session, &expr_for_parse)
-                .map_err(|e| format!("Plasm-DAG `{id}` template parse: {e}"))?;
+            let parsed = parse_plasm_surface_line(
+                session,
+                state.cross_cache,
+                state.pipeline,
+                &expr_for_parse,
+            )
+            .map_err(|e| format!("Plasm-DAG `{id}` template parse: {e}"))?;
             let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
             if !matches!(
                 kind,
@@ -411,7 +446,7 @@ fn compile_node_expr(
 
 fn compile_surface_node(
     session: &ExecuteSession,
-    state: &CompileState,
+    state: &CompileState<'_>,
     id: &str,
     expr: &str,
 ) -> Result<DagNode, String> {
@@ -430,7 +465,7 @@ fn compile_surface_node(
         });
     }
     let (rewritten, uses) = rewrite_template_expr(expr, state, None)?;
-    let parsed = parse_parsed_expr_for_session(session, &rewritten)
+    let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &rewritten)
         .map_err(|e| format!("Plasm-DAG `{id}` expression parse: {e}"))?;
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
@@ -472,7 +507,6 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
             let mut obj = json!({
                 "id": node.id,
                 "kind": kind,
-                "qualified_entity": qualified_entity,
                 "expr": node.expr,
                 "effect_class": effect_class,
                 "result_shape": result_shape,
@@ -481,6 +515,11 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
                 "depends_on": uses_result.iter().filter_map(|u| u.get("node").and_then(|v| v.as_str()).map(str::to_string)).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
                 "uses_result": uses_result,
             });
+            if matches!(result_shape, crate::plasm_plan::ResultShape::Page) {
+                obj["qualified_entity"] = serde_json::Value::Null;
+            } else {
+                obj["qualified_entity"] = json!(qualified_entity);
+            }
             if uses_result.is_empty() {
                 obj["ir"] = ir;
             } else {
@@ -680,7 +719,7 @@ fn split_token_top_level<'a>(
 
 fn split_return_list(
     line: &str,
-    state: &mut CompileState,
+    state: &mut CompileState<'_>,
     session: &ExecuteSession,
 ) -> Result<Vec<String>, String> {
     let mut roots = Vec::new();
@@ -747,7 +786,7 @@ fn looks_like_domain_symbol(label: &str) -> bool {
         && chars.all(|c| c.is_ascii_digit())
 }
 
-fn require_node(state: &CompileState, node: &str) -> Result<(), String> {
+fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
     if state.contains(node) {
         Ok(())
     } else {
@@ -868,7 +907,7 @@ fn parse_aggregates(args: &str) -> Result<Vec<crate::plasm_plan::AggregateSpec>,
 
 fn parse_plan_value_expr(
     raw: &str,
-    state: &CompileState,
+    state: &CompileState<'_>,
     row_binding: Option<&str>,
 ) -> Result<(PlanValue, Vec<serde_json::Value>), String> {
     let raw = raw.trim();
@@ -960,7 +999,7 @@ fn parse_literal(raw: &str) -> Result<serde_json::Value, String> {
 
 fn rewrite_template_expr(
     expr: &str,
-    state: &CompileState,
+    state: &CompileState<'_>,
     row_binding: Option<&str>,
 ) -> Result<(String, Vec<serde_json::Value>), String> {
     let mut rewritten = expr.to_string();
@@ -1247,7 +1286,7 @@ fn looks_like_plasm_effect_template(rhs: &str) -> bool {
 mod tests {
     use super::*;
     use crate::plasm_plan_run::evaluate_plasm_plan_dry;
-    use plasm_core::{load_schema, CgsContext, DomainExposureSession};
+    use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -1294,17 +1333,65 @@ doc = top[id,name] <<MD
 {{ rows | length }} product
 MD
 doc"#;
-        let plan = compile_plasm_dag_to_plan(&session, "native", source).expect("compile");
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "native",
+            source,
+        )
+        .expect("compile");
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 3);
         assert_eq!(plan["nodes"].as_array().map(Vec::len), Some(3));
     }
 
     #[test]
+    fn rejects_return_prefixed_surface_line() {
+        let session = test_session();
+        let err = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "t",
+            "return Product, Category",
+        )
+        .expect_err("return prefix");
+        assert!(
+            err.contains("return is not Plasm syntax"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_return_prefixed_final_roots_in_dag() {
+        let session = test_session();
+        let source = "products = Product\nreturn products";
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "x",
+            source,
+        )
+        .expect_err("return");
+        assert!(
+            err.contains("return is not Plasm syntax"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
     fn surface_line_plan_compiles_e1_with_page_size() {
         let session = test_session();
-        let plan = compile_plasm_surface_line_to_plan(&session, "t", "e1.page_size(100)")
-            .expect("compile");
+        let plan = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "t",
+            "e1.page_size(100)",
+        )
+        .expect("compile");
         assert_eq!(plan["nodes"].as_array().map(|a| a.len()), Some(1));
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert!(!dry.node_results.is_empty());
