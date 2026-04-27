@@ -2670,7 +2670,8 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
 }
 
 /// Marker substring for tests; must appear once at the start of the rendered prompt contract.
-pub const DOMAIN_VALID_EXPR_MARKER: &str = "This defines the valid Plasm expression surface for this prompt; you MUST only reply with valid Plasm expressions:";
+pub const DOMAIN_VALID_EXPR_MARKER: &str =
+    "This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:";
 
 #[derive(Clone, Copy, Debug)]
 struct PromptContractSpec {
@@ -2832,8 +2833,8 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     let symbol_line = if spec.symbolic {
         Some(
             "  - e#, m#, p# are session-local aliases. Use the aliases **exactly** as shown in expression cells.\n\
-  - Choose by **Meaning** (and row `args: …`), not by symbol number: each row’s description picks the method (m#); `args: p# label type req|opt` maps inputs by wire label and type. Copy the **plasm_expr** pattern and bind with keyed slots: `p12=value` (never positional or renumbered slots).\n\
-  - When a prior prompt taught different aliases (e.g. `new_symbol_space` / new session or wave), **discard** earlier p#/m# bindings and re-read the current table.\n",
+  - Pick rows by `Meaning`, then copy the `plasm_expr` shape. Bind args by keyed slot (`p12=value`), never by position or by renumbering.\n\
+  - Aliases are session-local. If a new prompt teaches new aliases, discard older e#/m#/p# meanings.\n",
         )
     } else {
         Some(
@@ -2842,7 +2843,11 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
         )
     };
     let structure_lines = format!(
-        "Syntax contract (pseudo-EBNF; this is one Plasm grammar, and TSV rows bind the actual catalogue symbols):\n\
+        "Output choice:\n\
+  - Use a single `plasm_expr` for one read, search, relation, method, or action.\n\
+  - Use a multi-line `plasm_program` only to bind intermediates, transform/project/render, or return multiple ordered roots.\n\
+\n\
+Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
   plasm_program ::= plasm_roots | binding+ plasm_roots\n\
   binding       ::= ident \"=\" plasm_node\n\
   plasm_roots   ::= [\"return\"] plasm_return (\",\" plasm_return)*\n\
@@ -2861,15 +2866,19 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
   transform     ::= \".limit(\" int \")\" | \".sort(\" field [\", desc\"] \")\" | \".aggregate(\" agg_spec \")\" | \".group_by(\" field \",\" agg_spec \")\" | \".singleton()\" | \".page_size(\" int \")\"\n\
   fields        ::= {projection}\n\
   plasm_value   ::= literal | node_ref.field | _.field | [v, …]\n\
+  ident/node_ref/field ::= agent-chosen names for bound nodes and fields\n\
+  literal      ::= quoted string | number | bool | null | heredoc\n\
 \n\
-Use a plain `plasm_expr` for one read, search, relation, method, or action. Use a `plasm_program` only when you must bind intermediate results, transform/project/render them, or return multiple ordered roots.\n\
-Only the TSV `plasm_expr` cells teach catalogue-specific expression atoms. `Meaning` is documentation only — never paste `Meaning`. Compose taught `plasm_expr` atoms with bindings and final roots when a program is needed.\n\
-If projection: full `{projection}` once on the **identity** row; **minimal** in practice. Same for all {projection_form} gets and `{entity}` / `[{entity}]` returns.\n\
-You may have leading `{field}` rows when `args:` on a method line is not enough. All semantic symbols you use must be taught in this prompt.\n\n",
+Catalogue rules:\n\
+  - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.\n\
+  - Never paste `Meaning`. Compose taught atoms with bindings/final roots only when a program is needed.\n\
+  - All semantic symbols you use must be taught in this prompt.\n\
+  - Projection uses a minimal non-empty subset from `{projection}`; the identity row teaches the full set once.\n\
+  - Leading `{field}` rows are metadata for slots when `args:` on a method line is not enough.\n\n",
         search_rule = if spec.include_search_line { " | search" } else { "" }
     );
     let field_hint_line = format!(
-        "  - A row whose `plasm_expr` is only `{field}` (when present) is a pre-declared slot; the same `args:` summary may appear in `Meaning` on a method line instead. Those rows are metadata, not executable Plasm.\n"
+        "  - `{field}`-only rows predeclare slots; they are metadata, not expressions to output.\n"
     );
 
     let mut s = String::new();
@@ -2885,11 +2894,11 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
     );
     let _ = writeln!(
         s,
-        "  - Use only expression shapes taught directly by the TSV `plasm_expr` cells, substituting concrete values for placeholders."
+        "  - Use TSV `plasm_expr` shapes exactly, substituting concrete values for placeholders."
     );
     let _ = writeln!(
         s,
-        "  - For compound-key entity forms such as `{get_form}`, you MUST keep the keyed `p#=v` / `name=value` form. Never rewrite a keyed witness as positional arguments."
+        "  - For compound-key forms such as `{get_form}`, keep keyed args (`p#=v` / `name=value`); never rewrite them as positional."
     );
     let _ = writeln!(
         s,
@@ -2898,7 +2907,7 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
     let _ = writeln!(s, "  - {nav_form} — relation. {method_form} — method call.");
     let _ = writeln!(
         s,
-        "  - Query/list goals use brace predicates `{query_form}` from the entity's rows; do not answer a list goal with a dotted `{method_form}` update unless the goal explicitly asks to mutate data."
+        "  - For list/query goals, use brace predicates `{query_form}`. Use dotted `{method_form}` only when the goal asks to mutate or call a method."
     );
     let _ = writeln!(
         s,
@@ -2906,11 +2915,11 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
     );
     let _ = writeln!(
         s,
-        "  - {projection_form} — any non-empty scalar subset. Full `{projection}` once on the **identity** get; same field set for all {projection_form} and for `{entity}` / `[{entity}]` returns. No {nav_form} for scalars; after `{entity}(id)` dot = relations and taught `{method}` only."
+        "  - {projection_form} — non-empty scalar subset. Dot after `{entity}(id)` means relations or taught `{method}`, not scalar fields."
     );
     let _ = writeln!(
         s,
-        "  - To list one entity scoped by another (e.g. list X inside workspace Y): use the `{scoped_form}` form from X's block — never start from `AnchorEntity(id).{field}`."
+        "  - To list X scoped by parent Y, use `{scoped_form}` from X's rows; do not invent `Y(id).{field}`."
     );
     let _ = writeln!(
         s,
@@ -2918,10 +2927,10 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
     );
     let _ = writeln!(
         s,
-        "  - Plain `str` values in predicates and method arguments MUST use `\"…\"` in this prompt. The parser may accept other quoted forms, but you MUST use double quotes here. In quoted strings only `\\\"` and `\\\\` are escapes."
+        "  - Plain `str` values use double quotes. In quoted strings only `\\\"` and `\\\\` are escapes."
     );
     s.push_str(
-        "  - `select` means choose exactly one listed allowed value from the `Meaning` column. `multiselect` means choose zero or more values using `[v, …]`, again from the listed allowed values.\n",
+        "  - `select` chooses one listed allowed value; `multiselect` chooses zero or more as `[v, …]`.\n",
     );
     if spec.include_rich_string_guidance {
         s.push_str(&render_rich_string_guidance_tsv());
@@ -2934,11 +2943,11 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
     }
     s.push_str(&field_hint_line);
     s.push_str(
-        "  - `$` — appears only in prompt examples as a fill-in cue. Substitute a real value in your output (never send the character `$` to the API). The corresponding field definition before first use gives type and description; your value must match that type.\n\
+        "  - `$` is only a fill-in cue. Substitute a real value; never send `$`.\n\
   - `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.\n",
     );
     s.push_str(
-        "  - TSV rows are teaching rows; only the `plasm_expr` column is executable syntax.\n\n",
+        "  - TSV rows are teaching rows. `plasm_expr` teaches syntax; `Meaning` teaches selection and argument semantics.\n\n",
     );
     s
 }
@@ -3476,13 +3485,13 @@ mod tests {
             "full prompt should include the full projection list `{br}` (heading or primary get)"
         );
         assert!(
-            out.contains("You may have leading `p#` rows")
+            out.contains("Leading `p#` rows are metadata for slots")
                 && out.contains("All semantic symbols you use must be taught"),
             "preamble should explain gloss/projection/args teaching (prompt len {})",
             out.len()
         );
         assert!(
-            out.contains("any non-empty scalar subset"),
+            out.contains("non-empty scalar subset"),
             "preamble should teach projection subsets (prompt len {})",
             out.len()
         );
@@ -3911,15 +3920,15 @@ mod tests {
         for needle in [
             DOMAIN_VALID_EXPR_MARKER,
             "Syntax contract (pseudo-EBNF",
-            "this is one Plasm grammar",
+            "TSV rows bind the catalogue-specific `plasm_expr` atoms",
             "plasm_program ::= plasm_roots | binding+ plasm_roots",
             "plasm_expr    ::= entity_expr [projection]",
-            "Use a plain `plasm_expr` for one read, search, relation, method, or action.",
-            "Use a `plasm_program` only when you must bind intermediate results",
+            "Use a single `plasm_expr` for one read, search, relation, method, or action.",
+            "Use a multi-line `plasm_program` only to bind intermediates",
             "All semantic symbols you use must be taught in this prompt.",
             "standalone create/action",
             "full-text search",
-            "choose exactly one",
+            "`select` chooses one listed allowed value",
             "`..` can appear alone when all args are optional",
         ] {
             assert!(
@@ -3946,7 +3955,7 @@ mod tests {
             );
         }
         assert!(
-            tsv.contains("never paste `Meaning`") && tsv.contains("optional params:"),
+            tsv.contains("Never paste `Meaning`") && tsv.contains("optional params:"),
             "TSV contract should forbid pasting Meaning and document params/args"
         );
         assert!(
@@ -3954,14 +3963,12 @@ mod tests {
             "render_prompt_with_config should emit the TSV teaching surface"
         );
         assert!(
-            tsv.contains(
-                "A row whose `plasm_expr` is only `p#` (when present) is a pre-declared slot"
-            ) || tsv.contains("pre-declared slot"),
+            tsv.contains("`p#`-only rows predeclare slots") || tsv.contains("predeclare slots"),
             "TSV frontmatter should explain p# slot-definition rows when present"
         );
         assert!(
-            tsv.contains("only the `plasm_expr` column is executable syntax"),
-            "TSV frontmatter should keep execution rules scoped to the plasm_expr column"
+            tsv.contains("`plasm_expr` teaches syntax; `Meaning` teaches selection"),
+            "TSV frontmatter should distinguish plasm_expr syntax from Meaning semantics"
         );
         assert!(
             !tsv.contains("DOMAIN witness")
@@ -4659,7 +4666,7 @@ mod tests {
         );
         assert!(
             prompt.contains("session-local aliases")
-                && prompt.contains("keyed slots")
+                && prompt.contains("keyed slot")
                 && !prompt
                     .lines()
                     .any(|l| l.contains("Reuse a `p#` only when the taught slot meaning")),
