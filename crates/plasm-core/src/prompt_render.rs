@@ -2859,7 +2859,7 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     let structure_lines = format!(
         "Output choice:\n\
   - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.\n\
-  - Prefer a multi-line `plasm_program` for analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.\n\
+  - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.\n\
 \n\
 Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
   plasm_program ::= plasm_roots | binding+ plasm_roots\n\
@@ -3927,84 +3927,12 @@ mod tests {
         );
     }
 
+    /// Contract text for MCP / TSV frontmatter; update with `INSTA_UPDATE=1 cargo test -p plasm-core plasm_mcp_language_frontmatter_snapshot`.
     #[test]
-    fn tsv_frontmatter_and_markdown_preamble_share_semantics() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let default_prompt = render_prompt_with_config(
-            &cgs,
-            RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
-        );
-        let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        for needle in [
-            DOMAIN_VALID_EXPR_MARKER,
-            "Syntax contract (pseudo-EBNF",
-            "TSV rows bind the catalogue-specific `plasm_expr` atoms",
-            "plasm_program ::= plasm_roots | binding+ plasm_roots",
-            "plasm_expr    ::= entity_expr [projection]",
-            "Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.",
-            "Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals",
-            "Program construction discipline:",
-            "Plan before executing: choose the final answer shape first",
-            "do **not** prefix with `return`",
-            "All semantic symbols you use must be taught in this prompt.",
-            "standalone create/action",
-            "full-text search",
-            "`select` chooses one listed allowed value",
-            "`..` can appear alone when all args are optional",
-        ] {
-            assert!(
-                default_prompt.contains(needle),
-                "default prompt missing `{needle}`"
-            );
-            assert!(
-                tsv.contains(needle),
-                "TSV frontmatter should preserve the same semantics and include `{needle}`"
-            );
-        }
-        assert!(
-            !tsv.contains("[\"return\"]"),
-            "TSV syntax contract must not advertise optional `return` keyword"
-        );
-        if tsv.contains("tagged heredoc only") {
-            assert!(
-                tsv.contains("tagged heredoc only") && tsv.contains("`<<TAG`"),
-                "TSV should require tagged heredocs only"
-            );
-            assert!(
-                tsv.contains("<<TXT") && tsv.contains("TXT` newline `)`"),
-                "TSV rich-string guidance should show the tagged close + next-line `)` exemplar"
-            );
-            assert!(
-                !tsv.contains("Never mix forms:") && !tsv.contains("hard newline"),
-                "TSV heredoc guidance should stay compressed rather than narrating parser behavior"
-            );
-        }
-        assert!(
-            tsv.contains("Never paste `Meaning`") && tsv.contains("optional params:"),
-            "TSV contract should forbid pasting Meaning and document params/args"
-        );
-        assert!(
-            default_prompt.contains("plasm_expr\tMeaning"),
-            "render_prompt_with_config should emit the TSV teaching surface"
-        );
-        assert!(
-            tsv.contains("`p#`-only rows predeclare slots") || tsv.contains("predeclare slots"),
-            "TSV frontmatter should explain p# slot-definition rows when present"
-        );
-        assert!(
-            tsv.contains("`plasm_expr` teaches syntax; `Meaning` teaches selection"),
-            "TSV frontmatter should distinguish plasm_expr syntax from Meaning semantics"
-        );
-        assert!(
-            !tsv.contains("DOMAIN witness")
-                && !tsv.contains("DOMAIN hint tails")
-                && !tsv.contains("`;;`")
-                && !tsv.contains("`=>`"),
-            "TSV frontmatter should stay format-local and avoid DOMAIN/;; language"
+    fn plasm_mcp_language_frontmatter_snapshot() {
+        insta::assert_snapshot!(
+            "plasm_mcp_language_frontmatter",
+            render_plasm_mcp_language_frontmatter()
         );
     }
 
