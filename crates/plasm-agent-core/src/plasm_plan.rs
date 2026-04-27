@@ -2515,10 +2515,7 @@ mod tests {
             "return": { "kind": "node", "node": "commits" }
         });
         let err = validate_plan_value(&v).expect_err("unnormalized wrapper rejected");
-        assert!(
-            err.contains("unnormalized entity_ref wrapper"),
-            "{err}"
-        );
+        assert!(err.contains("unnormalized entity_ref wrapper"), "{err}");
     }
 
     #[test]

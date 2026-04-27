@@ -44,7 +44,7 @@ pub struct PlasmOssHostState {
     /// Swappable catalog snapshot, bootstrap mode, and reload generation — see [`CatalogRuntime`](crate::catalog_runtime::CatalogRuntime).
     pub catalog: CatalogRuntime,
     pub sessions: Arc<ExecuteSessionStore>,
-    /// In-process registry for MCP `plasm_session_init` (idempotent logical session minting).
+    /// In-process registry for MCP `plasm_context` (idempotent logical session minting).
     pub logical_sessions: Arc<LogicalSessionRegistry>,
     /// Latest execute binding per logical session: `logical_session_id` → `(prompt_hash, execute_session_id)`.
     /// Used for MCP `resources/read` on `plasm://session/{uuid}/r/{n}` without relying on transport state.

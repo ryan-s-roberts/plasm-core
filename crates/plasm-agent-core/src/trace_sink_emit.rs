@@ -30,7 +30,7 @@ pub struct PlasmTraceContext {
     pub call_index: Option<i64>,
     /// MCP `MCP-Session-Id` (transport correlation).
     pub mcp_session_id: Option<String>,
-    /// Agent logical session from `plasm_session_init` (canonical prompt/trace scope).
+    /// Agent logical session from `plasm_context` (canonical prompt/trace scope).
     pub logical_session_id: Option<String>,
     /// MCP transport-local slot (`s0`, …) for short `plasm://session/…/r/n` URIs; HTTP execute leaves unset.
     pub logical_session_ref: Option<String>,

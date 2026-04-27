@@ -188,7 +188,7 @@ impl SessionTraceData {
     /// half of [`Self::push_event`]; used by durable trace-head projections.
     pub fn apply_event_counters(&mut self, ev: &TraceEvent) {
         match &ev.segment {
-            TraceSegment::AddCapabilities {
+            TraceSegment::PlasmContext {
                 domain_prompt_chars_added,
                 ..
             }

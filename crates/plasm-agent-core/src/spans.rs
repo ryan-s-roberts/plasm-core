@@ -83,14 +83,9 @@ pub(crate) fn mcp_tool_discover_capabilities() -> Span {
 }
 
 #[inline]
-pub(crate) fn mcp_tool_plasm_session_init() -> Span {
-    tracing::info_span!("plasm_agent.mcp.tool.plasm_session_init")
-}
-
-#[inline]
-pub(crate) fn mcp_tool_add_capabilities(logical_session_ref: &str) -> Span {
+pub(crate) fn mcp_tool_plasm_context(logical_session_ref: &str) -> Span {
     tracing::info_span!(
-        "plasm_agent.mcp.tool.add_capabilities",
+        "plasm_agent.mcp.tool.plasm_context",
         logical_session_ref = %logical_session_ref,
     )
 }

@@ -99,9 +99,10 @@ The flow is:
 ```text
 discover_capabilities("triage GitHub issues and notify Slack")
   -> candidate entities from github, slack, linear, ...
-add_capabilities([{ api: "github", entity: "Issue" },
-                  { api: "github", entity: "PullRequest" },
-                  { api: "slack",  entity: "Message" }])
+plasm_context(client_session_key="triage-window",
+              seeds=[{ api: "github", entity: "Issue" },
+                     { api: "github", entity: "PullRequest" },
+                     { api: "slack",  entity: "Message" }])
   -> one session-local Plasm language
 plasm([...])
   -> expressions over that shared symbol space

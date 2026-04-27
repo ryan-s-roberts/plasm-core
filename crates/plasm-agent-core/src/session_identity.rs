@@ -11,7 +11,7 @@
 //! - **`McpTransportState::logical_by_id`** ([`crate::mcp_server`]) — **per MCP transport**
 //!   (`MCP-Session-Id`) cache for binding + stats + `_meta.plasm` index; **not** the minting authority.
 //!
-//! Used for idempotent `plasm_session_init` and for correlating MCP tools with a single execute
+//! Used for idempotent `plasm_context` and for correlating MCP tools with a single execute
 //! session without relying on MCP transport session ids. Durable cross-replica storage is a future
 //! layer; this module holds the in-process registry.
 

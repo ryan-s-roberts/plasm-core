@@ -3,17 +3,26 @@
 use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::entity_slices_for_render;
 use plasm_core::expr_parser::{parse_with_cgs_layers, ParseError, ParsedExpr};
-use plasm_core::FocusSpec;
-use plasm_core::SymbolMap;
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
 use plasm_core::DomainExposureSession;
+use plasm_core::FocusSpec;
+use plasm_core::SymbolMap;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
+use crate::execute_session::ExecuteSession;
+use crate::expr_display::expr_display_resolved;
+use crate::expr_display::expr_display_resolved_federated;
+use crate::http_execute::{
+    archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
+    trace_record_plasm_line, PublishedResultStep,
+};
+use crate::incoming_auth::TenantPrincipal;
+use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plasm_plan::{
     parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
     ComputeTemplate, EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate,
@@ -22,15 +31,6 @@ use crate::plasm_plan::{
     ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
     PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
-use crate::execute_session::ExecuteSession;
-use crate::expr_display::expr_display_resolved;
-use crate::expr_display::expr_display_resolved_federated;
-use crate::http_execute::{
-    archive_plasm_result_snapshot, execute_plasm_parsed_expr,
-    publish_plasm_result_steps, trace_record_plasm_line, PublishedResultStep,
-};
-use crate::incoming_auth::TenantPrincipal;
-use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::McpPlasmTraceSink;
 use crate::trace_sink_emit::PlasmTraceContext;
@@ -657,9 +657,7 @@ fn render_plan_expr_ir(ir: &crate::plasm_plan::ValidatedPlanExprIr) -> String {
         .unwrap_or_else(|| crate::expr_display::expr_display(&ir.expr))
 }
 
-fn render_plan_expr_template(
-    template: &crate::plasm_plan::ValidatedPlanExprTemplate,
-) -> String {
+fn render_plan_expr_template(template: &crate::plasm_plan::ValidatedPlanExprTemplate) -> String {
     template
         .display_expr
         .clone()
@@ -1484,7 +1482,16 @@ pub(crate) async fn run_plasm_plan(
 ) -> Result<PlasmPlanRunResult, String> {
     let plan_typed = parse_plan_value(plan)?;
     let validated = validate_plan_artifact(&plan_typed)?;
-    run_validated_plasm_plan(es, st, prompt_hash, session_id, &validated, run, mcp_tool_hooks).await
+    run_validated_plasm_plan(
+        es,
+        st,
+        prompt_hash,
+        session_id,
+        &validated,
+        run,
+        mcp_tool_hooks,
+    )
+    .await
 }
 
 /// Plasm program **plan** execution over a proof-bearing validated artifact.
@@ -1617,10 +1624,8 @@ async fn run_validated_plan_phased(
                     }
                 }
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(
-                        sink, idx, expr_label, &parsed, &result, &scoped_es,
-                    )
-                    .await;
+                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
+                        .await;
                 }
                 MaterializedNode {
                     entry_id: surface
@@ -1723,8 +1728,7 @@ async fn run_validated_plan_phased(
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, es)
-                        .await;
+                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, es).await;
                 }
                 MaterializedNode {
                     entry_id: relation.relation.target.entry_id.clone(),
@@ -2975,7 +2979,8 @@ mod tests {
     #[test]
     fn parse_resolves_e1_with_domain_exposure() {
         let s = test_session();
-        let _ = parse_parsed_expr_for_session(&s, "e1").expect("e1 => first taught entity (Product)");
+        let _ =
+            parse_parsed_expr_for_session(&s, "e1").expect("e1 => first taught entity (Product)");
     }
 
     #[test]

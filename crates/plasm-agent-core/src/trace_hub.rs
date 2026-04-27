@@ -443,9 +443,9 @@ async fn trace_ingest_worker(
     }
 }
 
-/// Payload for [`TraceHub::trace_record_add_capabilities`].
+/// Payload for [`TraceHub::trace_record_plasm_context`].
 #[derive(Debug, Clone)]
-pub struct AddCapabilitiesTrace {
+pub struct PlasmContextTrace {
     pub domain_prompt_chars_added: u64,
     pub reused_session: bool,
     pub mode: String,
@@ -702,7 +702,7 @@ impl TraceHub {
 
     /// Ensure an active trace for an MCP **logical session** (agent-scoped), not transport.
     ///
-    /// `logical_session_id` is the canonical UUID string from `plasm_session_init`. `mcp_transport_id`
+    /// `logical_session_id` is the canonical UUID string from `plasm_context`. `mcp_transport_id`
     /// is optional `MCP-Session-Id` for correlation on summaries and audit payloads.
     pub async fn ensure_logical_session(
         &self,
@@ -1074,10 +1074,10 @@ impl TraceHub {
         .await;
     }
 
-    pub async fn trace_record_add_capabilities(&self, mcp_key: &str, trace: AddCapabilitiesTrace) {
+    pub async fn trace_record_plasm_context(&self, mcp_key: &str, trace: PlasmContextTrace) {
         self.bump_and_emit(
             mcp_key,
-            TraceSegment::AddCapabilities {
+            TraceSegment::PlasmContext {
                 domain_prompt_chars_added: trace.domain_prompt_chars_added,
                 reused_session: trace.reused_session,
                 mode: trace.mode,
@@ -1390,8 +1390,8 @@ mod tests {
     }
 
     #[test]
-    fn add_capabilities_record_serializes_metadata() {
-        let r = TraceSegment::AddCapabilities {
+    fn plasm_context_record_serializes_metadata() {
+        let r = TraceSegment::PlasmContext {
             domain_prompt_chars_added: 12,
             reused_session: false,
             mode: "federate".into(),
@@ -1400,7 +1400,7 @@ mod tests {
             seeds: vec!["linear:Issue".into(), "linear:Team".into()],
         };
         let v = serde_json::to_value(&r).expect("json");
-        assert_eq!(v.get("kind"), Some(&serde_json::json!("add_capabilities")));
+        assert_eq!(v.get("kind"), Some(&serde_json::json!("plasm_context")));
         assert_eq!(v.get("mode"), Some(&serde_json::json!("federate")));
         assert_eq!(v.get("entry_id"), Some(&serde_json::json!("linear")));
         assert_eq!(

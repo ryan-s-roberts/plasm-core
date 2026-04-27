@@ -44,7 +44,7 @@ fn is_false(b: &bool) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TraceSegment {
-    AddCapabilities {
+    PlasmContext {
         domain_prompt_chars_added: u64,
         reused_session: bool,
         #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -102,7 +102,7 @@ pub enum TraceSegment {
         line_index: Option<usize>,
         message: String,
     },
-    /// Domain prompt character weight without an `add_capabilities` / `expand_domain` row (rare; durable parity).
+    /// Domain prompt character weight without a `plasm_context` / `expand_domain` row (rare; durable parity).
     DomainPromptCharsDelta { chars_added: u64 },
     /// Response markdown character weight (MCP tool body sizing; pairs with successful `plasm` tool).
     PlasmResponseCharsDelta {

@@ -4,11 +4,11 @@
 //! the executable leaf language; this module only recognizes local labels, a small set of
 //! collection transforms, and final response roots.
 
+use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanNodeKind, PlanValue,
     QualifiedEntityKey, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
-use crate::execute_session::ExecuteSession;
 use crate::plasm_plan_run::parse_parsed_expr_for_session;
 use plasm_core::Expr;
 use serde_json::json;
@@ -1303,8 +1303,8 @@ doc"#;
     #[test]
     fn surface_line_plan_compiles_e1_with_page_size() {
         let session = test_session();
-        let plan =
-            compile_plasm_surface_line_to_plan(&session, "t", "e1.page_size(100)").expect("compile");
+        let plan = compile_plasm_surface_line_to_plan(&session, "t", "e1.page_size(100)")
+            .expect("compile");
         assert_eq!(plan["nodes"].as_array().map(|a| a.len()), Some(1));
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert!(!dry.node_results.is_empty());

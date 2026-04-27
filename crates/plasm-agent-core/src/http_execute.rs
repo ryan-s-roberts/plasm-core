@@ -263,7 +263,7 @@ fn resolve_paging_storage_handle(
             "MCP requires namespaced paging: use `page({r}_pgN)` from the tool result (plain `{s}` is not valid for MCP `plasm`)"
         ))),
         (None, true) => Err(RunLineError::Parse(
-            "namespaced paging handles are only for MCP `plasm` with `plasm_session_init`; use plain `page(pgN)` for HTTP execute"
+            "namespaced paging handles are only for MCP `plasm` with `plasm_context`; use plain `page(pgN)` for HTTP execute"
                 .into(),
         )),
         (None, false) => Ok(handle.clone()),
@@ -377,7 +377,7 @@ pub struct CreateExecuteSessionBody {
     /// When `PLASM_AUTH_RESOLUTION=delegated`, required non-empty string (end-user / tenant id).
     #[serde(default)]
     pub principal: Option<String>,
-    /// MCP logical session from `plasm_session_init` (scopes execute-session reuse + short artifact URIs).
+    /// MCP logical session from `plasm_context` (scopes execute-session reuse + short artifact URIs).
     #[serde(default)]
     pub logical_session_id: Option<Uuid>,
 }
@@ -415,7 +415,7 @@ pub struct CapabilityWaveOutcome {
     pub reused_session: bool,
     pub domain_prompt_chars_added: u64,
     /// Reserved for legacy callers. MCP initialize now carries the shared Plasm syntax guide, so
-    /// `add_capabilities` responses publish catalogue teaching rows rather than grammar frontmatter.
+    /// `plasm_context` responses publish catalogue teaching rows rather than grammar frontmatter.
     pub tsv_static_frontmatter: Option<String>,
 }
 
@@ -428,7 +428,7 @@ pub struct ApplyCapabilitySeedsOutcome {
     pub waves: Vec<CapabilityWaveOutcome>,
     pub binding_updated: bool,
     /// When true, this call opened a **new** execute row (new `(prompt_hash, session)` and symbol space).
-    /// Any cached `e#` / `m#` / `p#` from a prior `add_capabilities` in this **logical** session is void.
+    /// Any cached `e#` / `m#` / `p#` from a prior `plasm_context` in this **logical** session is void.
     pub new_symbol_space: bool,
     /// MCP still had a `(prompt_hash, session)` pair but the execute store dropped it (TTL / idle).
     /// Caller should finalize the in-memory MCP trace and treat the binding as replaced.
@@ -542,7 +542,7 @@ fn group_seed_entities_by_entry(seeds: &[CapabilitySeed]) -> IndexMap<String, Ve
 
 /// Canonical multi-catalog plan: primary catalog (lexicographically first among distinct `entry_id`s)
 /// and a **deterministic** processing order (primary first, then every other catalog in sorted order).
-/// This removes dependence on the order seeds appear in the `add_capabilities` request.
+/// This removes dependence on the order seeds appear in the `plasm_context` request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CapabilityExposurePlan {
     pub primary_entry_id: String,
@@ -603,7 +603,7 @@ fn primary_entry_id_for_grouped(grouped: &IndexMap<String, Vec<String>>) -> Stri
 }
 
 /// One-line summary for LLM-facing session waves (MCP + stored `prompt_text`); not a Plasm expression.
-pub(crate) fn format_add_capabilities_wave_line(entry_id: &str, entities: &[String]) -> String {
+pub(crate) fn format_plasm_context_wave_line(entry_id: &str, entities: &[String]) -> String {
     let mut v: Vec<String> = entities.to_vec();
     v.sort_unstable();
     format!("Added capabilities from {entry_id}: {}", v.join(", "))
@@ -1023,7 +1023,7 @@ pub async fn federate_execute_session(
     names_sorted.sort_unstable();
     let mut wave = String::new();
     wave.push_str("\n\n");
-    wave.push_str(&format_add_capabilities_wave_line(
+    wave.push_str(&format_plasm_context_wave_line(
         new_entry_id.as_str(),
         &names_sorted,
     ));
@@ -1123,7 +1123,7 @@ pub async fn expand_execute_domain_session(
         .iter()
         .map(|eid| {
             let ents = groups.get(eid).expect("eid in order is from groups");
-            format_add_capabilities_wave_line(eid, &normalize_execute_entity_names(ents.clone()))
+            format_plasm_context_wave_line(eid, &normalize_execute_entity_names(ents.clone()))
         })
         .collect();
     for eid in eid_order {
@@ -1276,14 +1276,14 @@ pub async fn apply_capability_seeds(
             let mut open_md = String::new();
             if stale_execute_binding_recovered {
                 open_md.push_str(
-                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or DOMAIN text from earlier `add_capabilities` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
+                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or DOMAIN text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
                 );
             } else if new_symbol_space {
                 open_md.push_str(
                     "_New execute session: use `e#` / `m#` / `p#` from this open only._\n\n",
                 );
             }
-            open_md.push_str(&format_add_capabilities_wave_line(
+            open_md.push_str(&format_plasm_context_wave_line(
                 &created.entry_id,
                 &primary_entities,
             ));
@@ -2392,11 +2392,17 @@ fn parse_plasm_line(
     };
     let mut parsed = expr_parser::parse_with_cgs_layers(&expanded, &layers, sym_map.clone())
         .map_err(|e| {
-        RunLineError::Parse(augment_unknown_entity_parse_error(
-            execute_session_parse_error_message(&e, &expanded, line, sess.cgs.as_ref(), &sym_map),
-            sess,
-        ))
-    })?;
+            RunLineError::Parse(augment_unknown_entity_parse_error(
+                execute_session_parse_error_message(
+                    &e,
+                    &expanded,
+                    line,
+                    sess.cgs.as_ref(),
+                    &sym_map,
+                ),
+                sess,
+            ))
+        })?;
     if let Some(ref fed) = sess.federation_dispatch() {
         normalize_expr_query_capabilities_federated(
             &mut parsed.expr,

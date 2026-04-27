@@ -1570,9 +1570,7 @@ impl<'a> Parser<'a> {
                 return self.parse_page_invocation();
             }
         }
-        let mut entity: Option<String> = self
-            .sym_map
-            .resolve_session_entity_symbol(&raw);
+        let mut entity: Option<String> = self.sym_map.resolve_session_entity_symbol(&raw);
         if entity.is_none() {
             for c in self.layers_slice() {
                 let e = c.canonical_entity_name(&raw).unwrap_or_else(|| raw.clone());
