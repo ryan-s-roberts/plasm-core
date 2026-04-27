@@ -28,7 +28,7 @@
 //!
 //! Plasm language / instructions body (first wave on `add_capabilities` open plus append-only delta waves from
 //! `add_capabilities` `seeds`) is counted in Unicode scalar values per MCP transport session.
-//! Each `plasm` call also accumulates invocation text (`expressions` plus optional `reasoning` and
+//! Each `plasm` call also accumulates invocation text (`expression` plus optional `reasoning` and
 //! optional TSV `tsv_static_frontmatter`) and,
 //! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
@@ -85,6 +85,8 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 #[cfg(feature = "code_mode")]
+use crate::plasm_dag::{compile_plasm_dag_to_plan, is_plasm_dag_candidate, split_bare_plasm_roots};
+#[cfg(feature = "code_mode")]
 use crate::run_artifacts::{
     code_plan_http_path, parse_code_plan_handle, plasm_session_short_plan_uri,
     CodePlanArchiveDocument,
@@ -106,8 +108,9 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 /// Max Unicode scalars allowed for `plasm` `tsv_static_frontmatter` (the Plasm language contract block).
 const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
 
-/// Model-facing `plasm` tool description: run expressions (session setup is in [`MCP_SERVER_INITIALIZE_INSTRUCTIONS`]).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** Plasm lines (`expressions` required; **`logical_session_ref`** from **`plasm_session_init`**). Full setup, paging, and output shape: MCP **`initialize` `instructions`**. \
+/// Model-facing `plasm` tool description: run one Plasm expression/program (session setup is in [`MCP_SERVER_INITIALIZE_INSTRUCTIONS`]).
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** one Plasm expression/program (`expression` required; **`logical_session_ref`** from **`plasm_session_init`**). Full setup, paging, and output shape: MCP **`initialize` `instructions`**. \
+     **Plasm-DAG:** the single expression string may be ordinary Plasm, comma-separated roots (`expr, expr`), or native DAG composition: `name = <Plasm expr>`, transforms like `name.limit(20)` / `name[field,...] <<TAG`, and a final `returnable[, returnable]`. \
      Optional **`tsv_static_frontmatter`**: the `#`-comment Plasm language contract (cache from **`add_capabilities`** `_meta.plasm.tsv_static_frontmatter` on first TSV open); not executed, counts toward session invocation tokens. \
      **Steady state:** same **`logical_session_ref`**, **`plasm` only** for follow-ups -- do **not** re-run **`plasm_session_init`** or **`add_capabilities`** every turn once capabilities are loaded.";
 
@@ -116,8 +119,8 @@ pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_sessi
      **Session reuse is mandatory by default:** after the first successful **`add_capabilities`** or **`add_code_capabilities`** for that ref, keep using the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`**, do not open a fresh logical session, and do not call capabilities again with a smaller seed set to \"re-initialize\", \"reload\", or \"narrow\" the symbol space. Capability loading is **append-only** for a live logical session: call **`add_capabilities`** / **`add_code_capabilities`** again **only** to add missing **new** **`api` / `entity`** seeds to the existing session; otherwise call **`plasm`** or evaluate/execute the existing Code Mode plan. \
      Optional **`discover_capabilities`** with `query` — **one string** (plain-language or keywords) **or** a string array (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
      **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to **append** to the session; this never intentionally narrows or replaces already-loaded symbols. If you need several entities/APIs for one task, send them together in one call when known, or append missing seeds later on the same ref. Responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
-     **`plasm`**: **`logical_session_ref`** + **`expressions`**, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
-    **Code Mode:** prefer **`plasm`** for one simple expression, one-shot reads/writes, simple follow-ups, and schema/field discovery. Use Code Mode only when the user intent is best satisfied by synthesizing a **single complete program** with multiple operations needing coordination, transformation, compute, fan-out/fan-in, or reusable logic; it is **not a query interface** and **not a REPL**. Flow: **`add_code_capabilities`** -> write the whole TypeScript program for the user goal (all reads, metrics, transformations, and writes in one DAG) -> **`evaluate_code_plan(name, code)`** once -> inspect the full dry-run execution plan -> **`execute_code_plan(plan_handle)`** once the complete plan satisfies the user's intent and risk. Do **not** run many small evaluate/execute pairs to probe fields, counts, refs, or write acceptability; use **`discover_capabilities`**, **`plasm`**, the TypeScript declarations, and the dry-run DAG instead. If the dry-run reveals a defect, missing capability, excessive output, or unacceptable risk, revise the **complete** program and re-evaluate; do not execute probe plans. Reuse the **`plan_handle`**; resend TypeScript only when changing the complete program or symbol space. Start uncertain reads inside the complete plan with **`Plan.limit(...)`** before widening. Minimize output: select/project only needed source fields, use **`Plan.project`** / **`.select(...)`**, and make **`Plan.return(...)`** publish only final answer nodes, never intermediates.";
+     **`plasm`**: **`logical_session_ref`** + one **`expression`** string, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. The expression may be ordinary Plasm, comma-separated Plasm roots (`expr, expr`), or Plasm-native DAG composition (`label = <Plasm expr>`, `label.limit(n)`, `label[field,...] <<TAG`, final `label, <Plasm expr>` roots). Response order follows the final root list; execution order is derived from DAG/runtime dependencies. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
+    **Code Mode:** TypeScript Code Mode remains available for compatibility, but new multi-step composition should prefer **`plasm`** Plasm-DAG so executable leaves stay verbatim DOMAIN-taught Plasm expressions.";
 
 fn parse_tool_seeds(
     tool: &str,
@@ -408,17 +411,11 @@ fn mcp_chars_to_token_est(chars: u64) -> u64 {
 
 /// Per `plasm` call: count expression + reasoning + optional TSV static frontmatter for invocation telemetry.
 fn plasm_invocation_char_count(
-    expressions: &[String],
+    expression: &str,
     reasoning: Option<&str>,
     tsv_static_frontmatter: Option<&str>,
 ) -> u64 {
-    let mut n: u64 = 0;
-    for (i, line) in expressions.iter().enumerate() {
-        if i > 0 {
-            n = n.saturating_add(1);
-        }
-        n = n.saturating_add(line.chars().count() as u64);
-    }
+    let mut n = expression.chars().count() as u64;
     if let Some(r) = reasoning {
         n = n.saturating_add(r.chars().count() as u64);
     }
@@ -705,9 +702,9 @@ impl PlasmMcpHandler {
             ),
         );
         run_props.insert(
-            "expressions".into(),
-            json_schema_non_empty_string_array(
-                "Non-empty array of executable lines—one string per line, using shapes from the TSV teaching table in `add_capabilities` (and optional `tsv_static_frontmatter` for the `#` contract, same as `_meta.plasm.tsv_static_frontmatter` on first open).",
+            "expression".into(),
+            json_schema_string_type(
+                "One executable Plasm expression/program string. Use ordinary Plasm, comma-separated roots (`expr, expr`), or Plasm-DAG composition (`name = expr` lines plus final roots) using shapes from the TSV teaching table in `add_capabilities`.",
             ),
         );
         run_props.insert(
@@ -775,7 +772,7 @@ impl PlasmMcpHandler {
                      First distinct **`api`** is the primary open; additional **`api`** values federate into the **same** Plasm language session. \
                      Legacy top-level `{entry_id, entities}` input is invalid; always send one seed object per entity. \
                      Unknown or disallowed catalog ids fail the whole call. \
-                     On a **new** TSV open, the fenced result is the **teaching table only**; the Plasm language **contract** (leading `#` comments) is in **`_meta.plasm.tsv_static_frontmatter`**. **Cache** it and pass with each **`plasm`** as **`tsv_static_frontmatter`**; execute expressions with **`plasm`**. Symbol `eN` exists only up to **N** exposed entities. One execute binding per **logical** session.".into(),
+                     On a **new** TSV open, the fenced result is the **teaching table only**; the Plasm language **contract** (leading `#` comments) is in **`_meta.plasm.tsv_static_frontmatter`**. **Cache** it and pass with each **`plasm`** as **`tsv_static_frontmatter`**; execute one Plasm expression/program with **`plasm`**. Symbol `eN` exists only up to **N** exposed entities. One execute binding per **logical** session.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -827,7 +824,7 @@ impl PlasmMcpHandler {
                 name: "add_code_capabilities".into(),
                 title: None,
                 description: Some(
-                    "Open or append capabilities for Code Mode program authoring. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Reuse the same **`logical_session_ref`**; newly added types extend the current Code Mode surface and previous types remain valid. If the program needs several entities/APIs, include all known required seeds in one call; append newly discovered missing seeds later on the same ref. Prefer **`plasm`** for one simple expression, schema discovery, or one-off reads.".into(),
+                    "Open or append capabilities for Code Mode program authoring. This is additive, not a replacement or narrowing operation. Same seeds as **`add_capabilities`**, plus **`_meta.plasm.facade_delta`** and prompt-facing **typescript** (`.d.ts`-style fragments; prelude on first or new symbol space). Reuse the same **`logical_session_ref`**; newly added types extend the current Code Mode surface and previous types remain valid. If the program needs several entities/APIs, include all known required seeds in one call; append newly discovered missing seeds later on the same ref. Prefer **`plasm`** for Plasm-native expression/program composition, schema discovery, or one-off reads.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -898,7 +895,7 @@ impl PlasmMcpHandler {
             title: None,
             description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
-                vec!["logical_session_ref".into(), "expressions".into()],
+                vec!["logical_session_ref".into(), "expression".into()],
                 Some(run_props),
                 None,
             ),
@@ -921,19 +918,6 @@ impl PlasmMcpHandler {
 fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("string"));
-    m.insert(
-        "description".into(),
-        serde_json::Value::String(description.to_string()),
-    );
-    m
-}
-
-fn json_schema_string_array(description: &str) -> serde_json::Map<String, serde_json::Value> {
-    let mut items = serde_json::Map::new();
-    items.insert("type".into(), serde_json::json!("string"));
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), serde_json::json!("array"));
-    m.insert("items".into(), serde_json::Value::Object(items));
     m.insert(
         "description".into(),
         serde_json::Value::String(description.to_string()),
@@ -964,14 +948,6 @@ fn json_schema_string_or_string_array(
         serde_json::Value::Object(m) => m,
         _ => unreachable!(),
     }
-}
-
-fn json_schema_non_empty_string_array(
-    description: &str,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = json_schema_string_array(description);
-    m.insert("minItems".into(), serde_json::json!(1));
-    m
 }
 
 fn json_schema_non_empty_object_array(
@@ -2786,7 +2762,13 @@ impl ServerHandler for PlasmMcpHandler {
                         g.binding = Some(b);
                     }
                 }
-                let Some(arr) = v.get("expressions").and_then(|x| x.as_array()) else {
+                let Some(expression) = v
+                    .get("expression")
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                else {
                     crate::metrics::record_mcp_tool(
                         "plasm",
                         Some(false),
@@ -2797,46 +2779,15 @@ impl ServerHandler for PlasmMcpHandler {
                     return Ok(CallToolResult::with_error(
                         CallToolError::invalid_arguments(
                             "plasm",
-                            Some(
-                                "missing or invalid `expressions`: non-empty JSON array of strings"
-                                    .into(),
-                            ),
+                            Some("missing or invalid `expression`: non-empty string".into()),
                         ),
                     ));
                 };
-                if arr.is_empty() {
-                    crate::metrics::record_mcp_tool(
-                        "plasm",
-                        Some(false),
-                        "error",
-                        "invalid_arguments",
-                        started.elapsed(),
-                    );
-                    return Ok(CallToolResult::with_error(
-                        CallToolError::invalid_arguments(
-                            "plasm",
-                            Some("`expressions` must be non-empty".into()),
-                        ),
-                    ));
+                let mut expressions = vec![expression.clone()];
+                #[cfg(feature = "code_mode")]
+                if let Some(expanded) = split_bare_plasm_roots(&expression) {
+                    expressions = expanded;
                 }
-                let expressions: Vec<String> = arr
-                    .iter()
-                    .map(|x| {
-                        x.as_str()
-                            .map(str::to_string)
-                            .ok_or_else(|| "expressions[] elements must be strings".to_string())
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|msg| {
-                        crate::metrics::record_mcp_tool(
-                            "plasm",
-                            Some(false),
-                            "error",
-                            "invalid_arguments",
-                            started.elapsed(),
-                        );
-                        CallToolError::invalid_arguments("plasm", Some(msg))
-                    })?;
 
                 let reasoning = v
                     .get("reasoning")
@@ -2870,11 +2821,8 @@ impl ServerHandler for PlasmMcpHandler {
                 let (binding, this_invocation_chars, mut idx, call_count) = {
                     let mut g = state.lock().await;
                     let binding = g.binding.clone();
-                    let this_invocation_chars = plasm_invocation_char_count(
-                        &expressions,
-                        reasoning,
-                        tsv_static_frontmatter,
-                    );
+                    let this_invocation_chars =
+                        plasm_invocation_char_count(&expression, reasoning, tsv_static_frontmatter);
                     g.stats.plasm_invocation_chars = g
                         .stats
                         .plasm_invocation_chars
@@ -2956,6 +2904,101 @@ impl ServerHandler for PlasmMcpHandler {
                     mcp_key: ls_key.clone(),
                     call_index,
                 };
+
+                #[cfg(feature = "code_mode")]
+                if is_plasm_dag_candidate(&expressions) {
+                    let Some(es) = self
+                        .plasm
+                        .sessions
+                        .get_by_strs(&b.prompt_hash, &b.session_id)
+                        .await
+                    else {
+                        return Ok(CallToolResult::with_error(CallToolError::from_message(
+                            "Execute session expired: call `add_capabilities` again with your `seeds` to open a new session.",
+                        )));
+                    };
+                    let plan_name = format!("plasm_dag_call_{call_count}");
+                    let run_result =
+                        match compile_plasm_dag_to_plan(&es, &plan_name, &expressions[0]) {
+                            Ok(plan) => {
+                                run_code_mode_plan(
+                                    &es,
+                                    self.plasm.as_ref(),
+                                    principal_incoming.as_ref(),
+                                    &b.prompt_hash,
+                                    &b.session_id,
+                                    &plan,
+                                    true,
+                                    Some(CodeModePlasmRunHooks {
+                                        meta_index: &mut idx,
+                                        trace: mcp_trace.clone(),
+                                        sink: sink.clone(),
+                                    }),
+                                )
+                                .await
+                            }
+                            Err(e) => Err(e),
+                        };
+                    {
+                        let mut g = state.lock().await;
+                        g.meta_index = idx;
+                    }
+                    match run_result {
+                        Ok(out) => {
+                            let markdown = out.run_markdown.unwrap_or_else(|| {
+                                "# Plasm-DAG dry run\n\nNo execution output.".to_string()
+                            });
+                            let response_chars = markdown.chars().count() as u64;
+                            if response_chars > 0 {
+                                let mut g = state.lock().await;
+                                g.stats.plasm_response_chars =
+                                    g.stats.plasm_response_chars.saturating_add(response_chars);
+                                self.plasm
+                                    .trace_hub
+                                    .trace_note_plasm_response_chars(
+                                        &ls_key,
+                                        response_chars,
+                                        "plasm",
+                                        call_index,
+                                        false,
+                                        1,
+                                    )
+                                    .await;
+                            }
+                            crate::metrics::record_mcp_tool(
+                                "plasm",
+                                Some(false),
+                                "success",
+                                "none",
+                                started.elapsed(),
+                            );
+                            let blocks = vec![ContentBlock::TextContent(TextContent::new(
+                                markdown, None, None,
+                            ))];
+                            let mut res = CallToolResult::from_content(blocks);
+                            if let Some(m) = out.run_plasm_meta {
+                                res = res.with_meta(Some(m));
+                            }
+                            return Ok(res);
+                        }
+                        Err(msg) => {
+                            self.plasm
+                                .trace_hub
+                                .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
+                                .await;
+                            crate::metrics::record_mcp_tool(
+                                "plasm",
+                                Some(false),
+                                "error",
+                                "execute_failed",
+                                started.elapsed(),
+                            );
+                            return Ok(CallToolResult::with_error(CallToolError::from_message(
+                                msg,
+                            )));
+                        }
+                    }
+                }
 
                 let run_result = execute_session_run_markdown(
                     self.plasm.as_ref(),
@@ -3260,10 +3303,9 @@ mod tests {
 
     #[test]
     fn plasm_invocation_char_count_includes_tsv_static_frontmatter() {
-        let e = vec!["a".to_string()];
-        assert_eq!(super::plasm_invocation_char_count(&e, None, None), 1);
+        assert_eq!(super::plasm_invocation_char_count("a", None, None), 1);
         assert_eq!(
-            super::plasm_invocation_char_count(&e, None, Some("#c")),
+            super::plasm_invocation_char_count("a", None, Some("#c")),
             1 + 2
         );
     }
@@ -3381,6 +3423,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn plasm_input_schema_advertises_single_expression_string() {
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let plasm = tools
+            .iter()
+            .find(|t| t.name == "plasm")
+            .expect("plasm tool");
+        let v = serde_json::to_value(&plasm.input_schema).expect("input_schema json");
+        let required = v
+            .get("required")
+            .and_then(|x| x.as_array())
+            .expect("required array");
+        assert!(required.iter().any(|x| x.as_str() == Some("expression")));
+        assert!(!required.iter().any(|x| x.as_str() == Some("expressions")));
+        let props = v
+            .get("properties")
+            .and_then(|x| x.as_object())
+            .expect("properties object");
+        assert_eq!(
+            props
+                .get("expression")
+                .and_then(|x| x.get("type"))
+                .and_then(|x| x.as_str()),
+            Some("string")
+        );
+        assert!(!props.contains_key("expressions"));
+    }
+
     /// Code-mode plan tools document the archive handle flow.
     #[cfg(feature = "code_mode")]
     #[test]
@@ -3441,27 +3511,12 @@ mod tests {
     fn initialize_instructions_document_code_mode_decision_and_flow() {
         let d = super::MCP_SERVER_INITIALIZE_INSTRUCTIONS;
         for expected in [
-            "prefer **`plasm`** for one simple expression",
-            "synthesizing a **single complete program**",
-            "not a query interface",
-            "not a REPL",
-            "multiple operations needing coordination",
-            "transformation",
-            "compute",
-            "fan-out/fan-in",
-            "add_code_capabilities",
-            "evaluate_code_plan(name, code)",
-            "execute_code_plan(plan_handle)",
-            "full dry-run execution plan",
-            "Do **not** run many small evaluate/execute pairs",
-            "probe fields",
-            "once the complete plan satisfies the user's intent",
-            "revise the **complete** program and re-evaluate",
-            "Reuse the **`plan_handle`**",
-            "Plan.project",
-            ".select(...)",
-            "Plan.return(...)",
-            "never intermediates",
+            "new multi-step composition should prefer **`plasm`** Plasm-DAG",
+            "one **`expression`** string",
+            "comma-separated Plasm roots",
+            "Plasm-native DAG composition",
+            "execution order is derived from DAG/runtime dependencies",
+            "TypeScript Code Mode remains available for compatibility",
         ] {
             assert!(
                 d.contains(expected),

@@ -372,7 +372,6 @@ pub type RawPlanArtifact = Plan<RawPlanState>;
 pub enum PlanReturn {
     Node { node: String },
     Parallel { nodes: Vec<String> },
-    Record { fields: BTreeMap<String, String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -877,7 +876,6 @@ fn return_refs(ret: &PlanReturn) -> Vec<&str> {
     match ret {
         PlanReturn::Node { node } => vec![node.as_str()],
         PlanReturn::Parallel { nodes } => nodes.iter().map(String::as_str).collect(),
-        PlanReturn::Record { fields: _ } => Vec::new(),
     }
 }
 
@@ -1903,9 +1901,6 @@ fn validate_return_refs(
         PlanReturn::Parallel { nodes } if nodes.is_empty() => {
             return Err("plan.return.nodes must contain at least one node".to_string());
         }
-        PlanReturn::Record { .. } => {
-            return Err("plan.return object maps are not supported; return a single node or { kind: \"parallel\", nodes: [...] }".to_string());
-        }
         _ => {}
     }
     for id in return_refs(ret) {
@@ -1922,7 +1917,6 @@ fn validate_return_refs(
                 .map(PlanNodeId::new)
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        PlanReturn::Record { .. } => unreachable!("record returns are rejected above"),
     }
 }
 

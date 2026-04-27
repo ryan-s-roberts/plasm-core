@@ -49,6 +49,8 @@ pub mod oauth_provider_pull;
 mod oauth_runtime_source;
 pub mod outbound_secret_provider;
 pub mod output;
+#[cfg(feature = "code_mode")]
+pub mod plasm_dag;
 pub mod plugin_catalog;
 pub mod query_args;
 pub mod run_artifacts;

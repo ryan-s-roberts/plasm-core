@@ -1,14 +1,18 @@
-//! CGS prompt renderer — **DOMAIN** many-shot examples (in symbolic [`PromptRenderMode`]s: `p#` gloss on the line before first use in **compact** markdown DOMAIN).
+//! CGS prompt renderer — TSV **Plasm** many-shot examples (`plasm_expr` + `Meaning`), with `p#`
+//! glosses emitted before first use in symbolic modes.
 //!
 //! This is the prompt string for `plasm-eval` / BAML, REPL startup / `:schema`, HTTP execute session `prompt`, and MCP DOMAIN after `add_capabilities`.
-//! Build via [`render_prompt_with_config`] or [`render_prompt_tsv_with_config`]. [`RenderConfig::for_eval`] defaults to [`PromptRenderMode::Tsv`]
-//! (`e#` / `m#` / `p#`); use [`RenderConfig::with_render_mode`] (CLI `--symbol-tuning compact|tsv`) for **compact** markdown DOMAIN; use [`RenderConfig::for_eval_canonical`] for raw DOMAIN names.
-//! There is **no separate SYNTAX block** — teach only from **DOMAIN** indented lines, using
-//! `e#`/`p#`/`m#` when [`PromptRenderMode::uses_symbols`] is true (**compact** or **tsv**). The prompt opens with a short **Plasm language contract**
-//! preamble (see [`DOMAIN_VALID_EXPR_MARKER`]) defining `{ }`, `.`, `[ ]`, `;;`, etc. The `~` search
-//! form is mentioned in that preamble **only** when at least one entity in the rendered slice has a
-//! Search capability (matching per-entity DOMAIN lines). A mandatory tagged `<<TAG` heredoc bullet appears when the
-//! slice includes any non-`short` [`StringSemantics`](crate::StringSemantics) (see [`DOMAIN_RICH_STRING_GUIDANCE_SENTINEL`]).
+//! Build via [`render_prompt_with_config`] or [`render_prompt_tsv_with_config`]. Both now emit the
+//! TSV teaching surface. [`RenderConfig::for_eval`] defaults to [`PromptRenderMode::Tsv`] (`e#` /
+//! `m#` / `p#`); legacy compact/canonical modes affect symbol naming only, not the output format.
+//! The prompt opens with a compact pseudo-EBNF **Plasm language contract** (see
+//! [`DOMAIN_VALID_EXPR_MARKER`]) defining the stable syntax surface (`{ }`, `.`, `[ ]`, assignments,
+//! final roots, `;;`, etc.). Catalogue-specific DOMAIN rows then act as many-shot semantic
+//! instantiations: they teach which concrete `e#` / `m#` / `p#` symbols, fields, methods, scoped
+//! filters, and relations are valid for this catalogue wave. The `~` search form is mentioned in the
+//! contract **only** when at least one entity in the rendered slice has a Search capability (matching
+//! per-entity DOMAIN rows). A mandatory tagged `<<TAG` heredoc bullet appears when the slice includes
+//! any non-`short` [`StringSemantics`](crate::StringSemantics).
 //!
 //! **DOMAIN** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
 //! Each block starts with `e#  ;;  …` (entity semantic gloss), then **four-space** example lines
@@ -60,11 +64,11 @@ pub enum PromptRenderMode {
 }
 
 impl PromptRenderMode {
-    pub const USER_FACING_VALUES: [&'static str; 2] = ["compact", "tsv"];
+    pub const USER_FACING_VALUES: [&'static str; 1] = ["tsv"];
 
     pub fn parse_user_facing(raw: &str) -> Option<Self> {
         match raw {
-            "verbose" | "compact" => Some(Self::Compact),
+            "verbose" | "compact" => Some(Self::Tsv),
             "tsv" => Some(Self::Tsv),
             _ => None,
         }
@@ -90,28 +94,20 @@ impl PromptRenderMode {
         matches!(self, Self::Tsv)
     }
 
-    pub const fn include_markdown_contract(self) -> bool {
-        matches!(self, Self::Compact | Self::Canonical)
-    }
-
     pub const fn markdown_fence_info_string(self) -> &'static str {
-        if self.is_tsv() {
-            "tsv"
-        } else {
-            "text"
-        }
+        "tsv"
     }
 }
 
-/// TSV DOMAIN: first line of the teaching table (`Expression` and `Meaning` columns) including the
+/// TSV DOMAIN: first line of the teaching table (`plasm_expr` and `Meaning` columns) including the
 /// trailing newline, matching [`render_prompt_tsv_from_bundle`].
-pub const TSV_DOMAIN_TABLE_HEADER: &str = "Expression\tMeaning\n";
+pub const TSV_DOMAIN_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 
 /// Split a TSV DOMAIN string into the optional comment-prefixed Plasm language **contract** block
 /// (InitialTeaching) and the **table body** (from [`TSV_DOMAIN_TABLE_HEADER`] through end).
 ///
 /// Additive TSV (delta waves) has no contract prefix: returns [`None`] and the full input as body.
-/// If the `Expression`/`Meaning` header is missing, returns [`None`] and the full input (pass-through).
+/// If the `plasm_expr`/`Meaning` header is missing, returns [`None`] and the full input (pass-through).
 pub fn split_tsv_domain_contract_and_table(domain_tsv: &str) -> (Option<String>, String) {
     if let Some(idx) = domain_tsv.find(TSV_DOMAIN_TABLE_HEADER) {
         let prefix = domain_tsv[..idx].trim_end();
@@ -134,7 +130,7 @@ pub fn split_tsv_domain_contract_and_table(domain_tsv: &str) -> (Option<String>,
 pub(crate) enum DomainWaveSurface {
     /// First wave or greenfield teaching: emit global contract as leading TSV `#` comments.
     InitialTeaching,
-    /// Subsequent waves: new entity rows only; keep `Expression` / `Meaning` header for a self-describing fragment.
+    /// Subsequent waves: new entity rows only; keep `plasm_expr` / `Meaning` header for a self-describing fragment.
     AdditiveWave,
 }
 
@@ -373,7 +369,7 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
         &mut out,
         &mut entities_buf,
         fill_model,
-        config.render_mode.include_markdown_contract(),
+        false,
         None,
     );
     tracing::debug!(
@@ -467,7 +463,7 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         &mut out,
         &mut entities_buf,
         fill_model,
-        config.render_mode.include_markdown_contract(),
+        false,
         emit_entity_blocks,
     );
     let model = if fill_model {
@@ -531,7 +527,7 @@ pub fn render_domain_prompt_bundle_for_exposure(
         &mut out,
         &mut entities_buf,
         fill_model,
-        config.render_mode.include_markdown_contract(),
+        false,
         emit_entity_blocks,
     );
     let model = if fill_model {
@@ -545,15 +541,18 @@ pub fn render_domain_prompt_bundle_for_exposure(
     DomainPromptBundle { prompt: out, model }
 }
 
-/// Render DOMAIN (many-shot examples) for the given CGS and [`RenderConfig`]; when [`RenderConfig::uses_symbols`] is true, `p#` gloss is emitted inline (compact markdown layout).
+/// Render the Plasm teaching surface for the given CGS and [`RenderConfig`].
+///
+/// The only prompt-facing teaching form is TSV; this wrapper is retained for older callers that
+/// historically asked for the markdown DOMAIN surface.
 pub fn render_prompt_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String {
-    render_domain_prompt_bundle(cgs, config).prompt
+    render_prompt_tsv_with_config(cgs, config)
 }
 
-/// Render the DOMAIN teaching surface as TSV with stable, expression-first rows.
+/// Render the DOMAIN teaching surface as TSV with stable, Plasm-expression-first rows.
 ///
 /// Columns:
-/// `Expression`, `Meaning`
+/// `plasm_expr`, `Meaning`
 pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String {
     // Align with [`render_domain_prompt_bundle`]: symbolic modes render entity blocks in
     // [`DomainExposureSession::entities`] order (sorted for `FocusSpec::All`), while
@@ -601,20 +600,15 @@ pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
 where
     F: FnMut(&str) -> &'b CGS,
 {
-    if render_mode.is_tsv() {
-        let spec =
-            prompt_contract_spec_resolved(resolve, full_entities, render_mode.uses_symbols());
-        render_prompt_tsv_from_bundle(
-            bundle,
-            spec,
-            full_entities,
-            symbol_map,
-            ident_meta,
-            wave_surface,
-        )
-    } else {
-        bundle.prompt.clone()
-    }
+    let spec = prompt_contract_spec_resolved(resolve, full_entities, render_mode.uses_symbols());
+    render_prompt_tsv_from_bundle(
+        bundle,
+        spec,
+        full_entities,
+        symbol_map,
+        ident_meta,
+        wave_surface,
+    )
 }
 
 #[derive(Debug, Default)]
@@ -651,16 +645,12 @@ fn render_prompt_tsv_from_bundle(
     ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
     wave_surface: DomainWaveSurface,
 ) -> String {
-    const TSV_HEADER: &str = "Expression\tMeaning\n";
     let mut out = String::new();
     if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
-        out.push_str(&comment_prefix_block(&render_prompt_contract(
-            spec,
-            PromptContractFormat::TsvComment,
-        )));
+        out.push_str(&comment_prefix_block(&render_prompt_contract(spec)));
         out.push('\n');
     }
-    out.push_str(TSV_HEADER);
+    out.push_str(TSV_DOMAIN_TABLE_HEADER);
     let prompt_lines: Vec<&str> = bundle.prompt.lines().collect();
     let blocks = collect_domain_blocks(&prompt_lines);
     for (idx, (heading, block_lines)) in blocks.into_iter().enumerate() {
@@ -2682,24 +2672,11 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
 /// Marker substring for tests; must appear once at the start of the rendered prompt contract.
 pub const DOMAIN_VALID_EXPR_MARKER: &str = "This defines the valid Plasm expression surface for this prompt; you MUST only reply with valid Plasm expressions:";
 
-/// Stable substring for tests: present when the preamble adds raw-string advice for structured string semantics.
-pub const DOMAIN_RICH_STRING_GUIDANCE_SENTINEL: &str =
-    "For non-`str` string glosses such as `markdown`, `html`, `document`, `json_text`, or `blob`";
-
-/// Stable substring for tests: fenced `text` blocks carry copy-pastable heredoc examples (avoids broken inline-code newlines).
-pub const DOMAIN_RICH_STRING_GUIDANCE_FENCED_SENTINEL: &str = "```text";
-
 #[derive(Clone, Copy, Debug)]
 struct PromptContractSpec {
     symbolic: bool,
     include_search_line: bool,
     include_rich_string_guidance: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum PromptContractFormat {
-    DomainMarkdown,
-    TsvComment,
 }
 
 fn cgs_slice_has_search_capability(cgs: &CGS, full_entities: &[&str]) -> bool {
@@ -2797,15 +2774,10 @@ fn symbolic_field_form(symbolic: bool) -> &'static str {
     }
 }
 
-fn render_prompt_contract(spec: PromptContractSpec, format: PromptContractFormat) -> String {
+fn render_prompt_contract(spec: PromptContractSpec) -> String {
     let entity = symbolic_entity_form(spec.symbolic);
     let method = symbolic_method_form(spec.symbolic);
     let field = symbolic_field_form(spec.symbolic);
-    let entity_label = if spec.symbolic {
-        "`e#` / entity name"
-    } else {
-        "`Entity` / entity name"
-    };
     let projection = if spec.symbolic {
         "[p#,…]"
     } else {
@@ -2860,7 +2832,7 @@ fn render_prompt_contract(spec: PromptContractSpec, format: PromptContractFormat
     let symbol_line = if spec.symbolic {
         Some(
             "  - e#, m#, p# are session-local aliases. Use the aliases **exactly** as shown in expression cells.\n\
-  - Choose by **Meaning** (and row `args: …`), not by symbol number: each row’s description picks the method (m#); `args: p# label type req|opt` maps inputs by wire label and type. Copy the **Expression** pattern and bind with keyed slots: `p12=value` (never positional or renumbered slots).\n\
+  - Choose by **Meaning** (and row `args: …`), not by symbol number: each row’s description picks the method (m#); `args: p# label type req|opt` maps inputs by wire label and type. Copy the **plasm_expr** pattern and bind with keyed slots: `p12=value` (never positional or renumbered slots).\n\
   - When a prior prompt taught different aliases (e.g. `new_symbol_space` / new session or wave), **discard** earlier p#/m# bindings and re-read the current table.\n",
         )
     } else {
@@ -2869,31 +2841,36 @@ fn render_prompt_contract(spec: PromptContractSpec, format: PromptContractFormat
   - A slot name may denote an entity field, a relation, or a capability parameter depending on context.\n",
         )
     };
-    let structure_lines = match format {
-        PromptContractFormat::DomainMarkdown => format!(
-            "DOMAIN: one heading line per block ({entity_label}, optional `;;`, description); expression lines in each block are the only valid Plasm path forms for this schema slice (each must be defined here).\n\
-If projection: full `{projection}` once on the **identity** get (`{projection_form}`; not the heading); use a **minimal** subset. Same field set for all {projection_form} gets and for `{entity}` / `[{entity}]` returns.\n\
-Where needed, compact `args: …` in `;;` on a line can replace extra `{field}` gloss lines when the compact form is enough; you may still get gloss rows for projection, relations, long enums, or lossy `+` types. All path shapes you use are defined in this prompt.\n\n"
-        ),
-        PromptContractFormat::TsvComment => format!(
-            "Only the `Expression` column is executable syntax. `Meaning` is documentation only — never paste `Meaning`. Use it to pick methods/args; output is `Expression` + values only.\n\
+    let structure_lines = format!(
+        "Syntax contract (pseudo-EBNF; this is one Plasm grammar, and TSV rows bind the actual catalogue symbols):\n\
+  plasm_program ::= plasm_roots | binding+ plasm_roots\n\
+  binding       ::= ident \"=\" plasm_node\n\
+  plasm_roots   ::= [\"return\"] plasm_return (\",\" plasm_return)*\n\
+  plasm_return  ::= node_ref | plasm_expr\n\
+  plasm_node    ::= plasm_expr | node_ref dag_suffix | node_ref \"=>\" plasm_value\n\
+  plasm_expr    ::= entity_expr [projection]\n\
+  entity_expr   ::= query_all | get | query | relation | method | create_action{search_rule}\n\
+  query_all     ::= {query_all_form}\n\
+  get           ::= {get_form}\n\
+  query         ::= {query_form}\n\
+  relation      ::= {nav_form}\n\
+  method        ::= {method_form}\n\
+  create_action ::= {create_form}\n\
+  projection    ::= {projection_form} | \"[\" fields \"]\"\n\
+  dag_suffix    ::= transform | \"[\" fields \"]\" | \"[\" fields \"]\" heredoc\n\
+  transform     ::= \".limit(\" int \")\" | \".sort(\" field [\", desc\"] \")\" | \".aggregate(\" agg_spec \")\" | \".group_by(\" field \",\" agg_spec \")\" | \".singleton()\" | \".page_size(\" int \")\"\n\
+  fields        ::= {projection}\n\
+  plasm_value   ::= literal | node_ref.field | _.field | [v, …]\n\
+\n\
+Use a plain `plasm_expr` for one read, search, relation, method, or action. Use a `plasm_program` only when you must bind intermediate results, transform/project/render them, or return multiple ordered roots.\n\
+Only the TSV `plasm_expr` cells teach catalogue-specific expression atoms. `Meaning` is documentation only — never paste `Meaning`. Compose taught `plasm_expr` atoms with bindings and final roots when a program is needed.\n\
 If projection: full `{projection}` once on the **identity** row; **minimal** in practice. Same for all {projection_form} gets and `{entity}` / `[{entity}]` returns.\n\
-You may have leading `{field}` rows when `args:` on a method line is not enough. All path shapes you use are defined in this prompt.\n\n"
-        ),
-    };
-    let hint_line = match format {
-        PromptContractFormat::DomainMarkdown => "  - `;;` — on DOMAIN teaching rows, everything after the first `;;` is a hint only (`Type` / `=> result`, optional-parameter constraints, then the capability description). It is not Plasm syntax and must not appear in your output: emit only the expression characters before `;;` (no `;;`, no `=> …`, no trailing description).\n".to_string(),
-        // Tsv: `structure_lines` already states Meaning is non-executable; omit duplicate bullet.
-        PromptContractFormat::TsvComment => String::new(),
-    };
-    let field_hint_line = match format {
-        PromptContractFormat::DomainMarkdown => format!(
-            "  - A bare `{field}  ;;  …` line (when present) defines a slot before first use; it is a hint line, not an expression to output. Prefer a row that already has `args:` in `;;` when the compact summary covers that slot’s type and label.\n"
-        ),
-        PromptContractFormat::TsvComment => format!(
-            "  - A row whose `Expression` is only `{field}` (when present) is a pre-declared slot; the same `args:` summary may appear in `Meaning` on a method line instead. Those rows are metadata, not executable Plasm.\n"
-        ),
-    };
+You may have leading `{field}` rows when `args:` on a method line is not enough. All semantic symbols you use must be taught in this prompt.\n\n",
+        search_rule = if spec.include_search_line { " | search" } else { "" }
+    );
+    let field_hint_line = format!(
+        "  - A row whose `plasm_expr` is only `{field}` (when present) is a pre-declared slot; the same `args:` summary may appear in `Meaning` on a method line instead. Those rows are metadata, not executable Plasm.\n"
+    );
 
     let mut s = String::new();
     s.push_str(DOMAIN_VALID_EXPR_MARKER);
@@ -2906,20 +2883,10 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
         s,
         "  - {get_form} — get one entity by id or compound key (examples below use `v=$`, not concrete API values)."
     );
-    match format {
-        PromptContractFormat::DomainMarkdown => {
-            let _ = writeln!(
-                s,
-                "  - Each DOMAIN witness line shows a valid expression prefix before `;;`. Use that expression shape exactly and substitute only concrete values for placeholders; omit `;;` and everything after it from your output."
-            );
-        }
-        PromptContractFormat::TsvComment => {
-            let _ = writeln!(
-                s,
-                "  - Use only expression shapes taught directly by the TSV `Expression` cells, substituting concrete values for placeholders."
-            );
-        }
-    }
+    let _ = writeln!(
+        s,
+        "  - Use only expression shapes taught directly by the TSV `plasm_expr` cells, substituting concrete values for placeholders."
+    );
     let _ = writeln!(
         s,
         "  - For compound-key entity forms such as `{get_form}`, you MUST keep the keyed `p#=v` / `name=value` form. Never rewrite a keyed witness as positional arguments."
@@ -2929,12 +2896,10 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
         "  - {query_form} — list query; `{query_all_form}` alone queries all."
     );
     let _ = writeln!(s, "  - {nav_form} — relation. {method_form} — method call.");
-    if matches!(format, PromptContractFormat::TsvComment) {
-        let _ = writeln!(
-            s,
-            "  - Query/list goals use brace predicates `{query_form}` from the entity's rows; do not answer a list goal with a dotted `{method_form}` update unless the goal explicitly asks to mutate data."
-        );
-    }
+    let _ = writeln!(
+        s,
+        "  - Query/list goals use brace predicates `{query_form}` from the entity's rows; do not answer a list goal with a dotted `{method_form}` update unless the goal explicitly asks to mutate data."
+    );
     let _ = writeln!(
         s,
         "  - {create_form} — standalone create/action (no anchor id needed)."
@@ -2955,20 +2920,11 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
         s,
         "  - Plain `str` values in predicates and method arguments MUST use `\"…\"` in this prompt. The parser may accept other quoted forms, but you MUST use double quotes here. In quoted strings only `\\\"` and `\\\\` are escapes."
     );
-    let select_line = match format {
-        PromptContractFormat::DomainMarkdown => {
-            "  - `select` means choose exactly one value from `Allowed Values`. `multiselect` means choose zero or more values using `[v, …]`, again from `Allowed Values`.\n"
-        }
-        PromptContractFormat::TsvComment => {
-            "  - `select` means choose exactly one listed allowed value from the `Meaning` column. `multiselect` means choose zero or more values using `[v, …]`, again from the listed allowed values.\n"
-        }
-    };
-    s.push_str(select_line);
+    s.push_str(
+        "  - `select` means choose exactly one listed allowed value from the `Meaning` column. `multiselect` means choose zero or more values using `[v, …]`, again from the listed allowed values.\n",
+    );
     if spec.include_rich_string_guidance {
-        match format {
-            PromptContractFormat::DomainMarkdown => s.push_str(&render_rich_string_guidance()),
-            PromptContractFormat::TsvComment => s.push_str(&render_rich_string_guidance_tsv()),
-        }
+        s.push_str(&render_rich_string_guidance_tsv());
     }
     if spec.include_search_line {
         let _ = writeln!(
@@ -2976,41 +2932,15 @@ You may have leading `{field}` rows when `args:` on a method line is not enough.
             "  - {search_form} — full-text search on entities whose teaching rows include a `~` example (same entities only)."
         );
     }
-    s.push_str(&hint_line);
     s.push_str(&field_hint_line);
     s.push_str(
         "  - `$` — appears only in prompt examples as a fill-in cue. Substitute a real value in your output (never send the character `$` to the API). The corresponding field definition before first use gives type and description; your value must match that type.\n\
   - `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.\n",
     );
-    match format {
-        PromptContractFormat::DomainMarkdown => {
-            s.push_str("  One Plasm expression per output line, with no `;;` suffix (teaching rows may show `;;` hints; your answers must not).\n\n");
-        }
-        PromptContractFormat::TsvComment => {
-            s.push_str(
-                "  - TSV rows are teaching rows; only the `Expression` column is executable syntax.\n\n",
-            );
-        }
-    }
+    s.push_str(
+        "  - TSV rows are teaching rows; only the `plasm_expr` column is executable syntax.\n\n",
+    );
     s
-}
-
-fn render_rich_string_guidance() -> String {
-    let text = "  - For non-`str` string glosses such as `markdown`, `html`, `document`, `json_text`, or `blob`, you MUST use a **tagged** structured heredoc: `<<TAG` newline, body lines, then a closing line whose trimmed text is `TAG` (same identifier as after `<<`).\n\
-\n\
-```text\n\
-p#=<<TXT\n\
-Line one\n\
-TXT\n\
-```\n\
-\n\
-  - **hard newline** after the closing `TAG` before `)` / `,` / `}` is preferred; the parser also accepts `TAG` immediately followed by optional ASCII space and one of `)` / `,` / `}` on the same line (e.g. `TXT)`).\n\
-\n\
-  - Opener is `<<` + tag + newline (never `<<<`, never `<<` + newline alone). Omitting a valid `TAG` close is a parse error.\n\
-\n\
-  - No escapes are processed inside the heredoc body.\n\
-  - Use normal quoted strings `\"…\"` only for plain short single-line `str` values. In quoted strings `\\n` is two characters, not a newline.\n";
-    text.to_string()
 }
 
 /// Heredoc rules for TSV prompts: same semantics as markdown — one minimal tagged exemplar.
@@ -3149,19 +3079,11 @@ fn render_domain_table_resolved<'b, F>(
     out: &mut String,
     model_out: &mut Vec<EntityDomainPrompt>,
     fill_model: bool,
-    include_contract_preamble: bool,
+    _include_contract_preamble: bool,
     emit_entity_blocks: Option<&[&str]>,
 ) where
     F: FnMut(&str) -> &'b CGS,
 {
-    let contract_spec = prompt_contract_spec_resolved(&mut resolve, full_entities, map.is_some());
-    if emit_entity_blocks.is_none() && include_contract_preamble {
-        out.push_str(&render_prompt_contract(
-            contract_spec,
-            PromptContractFormat::DomainMarkdown,
-        ));
-    }
-
     let ident_meta = match (map, exposure_for_ident) {
         (Some(_), Some(exposure)) => {
             Some(exposure.ident_metadata_for_exposure_entities(full_entities))
@@ -3306,11 +3228,11 @@ fn is_field_gloss_line(trimmed: &str) -> bool {
     rest[len..].trim_start().starts_with(";;")
 }
 
-/// Extract expression strings from the rendered DOMAIN section: **compact** uses 4-space-indented
-/// teaching rows; **tsv** uses the `Expression` column after the `Expression\tMeaning` header.
+/// Extract expression strings from the rendered DOMAIN section: **tsv** uses the `plasm_expr` column
+/// after the `plasm_expr\tMeaning` header.
 #[cfg(test)]
 fn example_expressions_from_prompt(prompt: &str) -> Vec<String> {
-    if prompt.contains("Expression\tMeaning") {
+    if prompt.contains(TSV_DOMAIN_TABLE_HEADER) {
         return example_expressions_from_prompt_tsv(prompt);
     }
     let mut out = Vec::new();
@@ -3365,7 +3287,7 @@ fn example_expressions_from_prompt_tsv(prompt: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_table = false;
     for line in prompt.lines() {
-        if line == "Expression\tMeaning" {
+        if line == TSV_DOMAIN_TABLE_HEADER.trim_end() {
             in_table = true;
             continue;
         }
@@ -3554,9 +3476,8 @@ mod tests {
             "full prompt should include the full projection list `{br}` (heading or primary get)"
         );
         assert!(
-            out.contains("gloss rows for projection, relations, long enums")
-                || (out.contains("gloss")
-                    && (out.contains("identity") || out.contains("primary get"))),
+            out.contains("You may have leading `p#` rows")
+                && out.contains("All semantic symbols you use must be taught"),
             "preamble should explain gloss/projection/args teaching (prompt len {})",
             out.len()
         );
@@ -3641,7 +3562,7 @@ mod tests {
             "Issue projection should include at least one p# symbol"
         );
         for sym in symbols {
-            let def = format!("    {sym}  ;;");
+            let def = format!("{sym}\t");
             let def_idx = lines
                 .iter()
                 .position(|l| l.starts_with(&def))
@@ -3676,7 +3597,7 @@ mod tests {
         );
         assert!(
             table.starts_with(TSV_DOMAIN_TABLE_HEADER),
-            "table body should start with Expression/Meaning"
+            "table body should start with plasm_expr/Meaning"
         );
         let (c2, t2) = split_tsv_domain_contract_and_table(&table);
         assert_eq!(c2, None, "table-only TSV has no contract prefix");
@@ -3688,14 +3609,14 @@ mod tests {
             "additive TSV must not repeat global contract comments"
         );
         assert!(
-            delta.contains("Expression\tMeaning"),
+            delta.contains(TSV_DOMAIN_TABLE_HEADER.trim_end()),
             "additive TSV should keep column header"
         );
     }
 
     #[test]
     fn split_tsv_domain_contract_and_table_table_only() {
-        let t = "Expression\tMeaning\na\tb\n";
+        let t = "plasm_expr\tMeaning\na\tb\n";
         let (c, b) = split_tsv_domain_contract_and_table(t);
         assert_eq!(c, None);
         assert_eq!(b, t);
@@ -3703,10 +3624,10 @@ mod tests {
 
     #[test]
     fn split_tsv_domain_contract_and_table_with_comment_prefix() {
-        let t = "# Plasm contract line\n# second\n\nExpression\tMeaning\na\tb\n";
+        let t = "# Plasm contract line\n# second\n\nplasm_expr\tMeaning\na\tb\n";
         let (c, b) = split_tsv_domain_contract_and_table(t);
         assert_eq!(c.as_deref(), Some("# Plasm contract line\n# second"));
-        assert_eq!(b, "Expression\tMeaning\na\tb\n");
+        assert_eq!(b, "plasm_expr\tMeaning\na\tb\n");
     }
 
     /// Regression: TSV `p#` gloss rows must use [`IdentMetadata`] for the entity owning the DOMAIN
@@ -3728,9 +3649,9 @@ mod tests {
         );
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let after_header = tsv
-            .split("Expression\tMeaning\n")
+            .split(TSV_DOMAIN_TABLE_HEADER)
             .nth(1)
-            .expect("tsv Expression/Meaning table");
+            .expect("tsv plasm_expr/Meaning table");
         let first_block: String = after_header
             .lines()
             .take_while(|l| {
@@ -3811,7 +3732,7 @@ mod tests {
     }
 
     #[test]
-    fn tsv_prompt_uses_expression_and_meaning_columns() {
+    fn tsv_prompt_uses_plasm_expr_and_meaning_columns() {
         let dir = std::path::Path::new("../../apis/github");
         if !dir.exists() {
             return;
@@ -3826,9 +3747,9 @@ mod tests {
         );
         let header = tsv
             .lines()
-            .find(|line| *line == "Expression\tMeaning")
+            .find(|line| *line == TSV_DOMAIN_TABLE_HEADER.trim_end())
             .expect("tsv header");
-        assert_eq!(header, "Expression\tMeaning");
+        assert_eq!(header, TSV_DOMAIN_TABLE_HEADER.trim_end());
         let issue_identity = tsv
             .lines()
             .find(|l| {
@@ -3842,12 +3763,12 @@ mod tests {
         assert!(
             (cols[0].contains('[') && cols[0].contains(']'))
                 || (cols[1].contains("projection [") && cols[1].contains('p')),
-            "identity row should teach full projection on the Expression get line, or in Meaning if the list is not on the expression: row={issue_identity:?}"
+            "identity row should teach full projection on the plasm_expr get line, or in Meaning if the list is not on the expression: row={issue_identity:?}"
         );
         if cols[0].contains('[') {
             assert!(
                 !cols[1].contains("projection ["),
-                "do not repeat full projection in Meaning when Expression already carries the list"
+                "do not repeat full projection in Meaning when plasm_expr already carries the list"
             );
         }
         assert!(
@@ -3868,7 +3789,7 @@ mod tests {
         assert_eq!(select_cols[1], "select · allowed: open, closed");
         let body = tsv
             .lines()
-            .skip_while(|line| *line != "Expression\tMeaning")
+            .skip_while(|line| *line != TSV_DOMAIN_TABLE_HEADER.trim_end())
             .skip(1)
             .collect::<Vec<_>>()
             .join("\n");
@@ -3938,21 +3859,21 @@ mod tests {
             "compact render includes the same DOMAIN contract preamble as eval markdown"
         );
         assert!(
-            prompt.contains("  e5  ;;") && prompt.contains("    e5("),
-            "compact render should still include symbolic heading and expression rows"
+            prompt.contains("plasm_expr\tMeaning") && prompt.contains("e5("),
+            "compact alias should now render the TSV teaching surface with symbolic expression rows"
         );
     }
 
     #[test]
     fn prompt_render_mode_user_surface_helpers_cover_public_modes() {
-        assert_eq!(PromptRenderMode::USER_FACING_VALUES, ["compact", "tsv"]);
+        assert_eq!(PromptRenderMode::USER_FACING_VALUES, ["tsv"]);
         assert_eq!(
             PromptRenderMode::parse_user_facing("verbose"),
-            Some(PromptRenderMode::Compact)
+            Some(PromptRenderMode::Tsv)
         );
         assert_eq!(
             PromptRenderMode::parse_user_facing("compact"),
-            Some(PromptRenderMode::Compact)
+            Some(PromptRenderMode::Tsv)
         );
         assert_eq!(
             PromptRenderMode::parse_user_facing("tsv"),
@@ -3971,7 +3892,7 @@ mod tests {
         assert_eq!(PromptRenderMode::Tsv.markdown_fence_info_string(), "tsv");
         assert_eq!(
             PromptRenderMode::Compact.markdown_fence_info_string(),
-            "text"
+            "tsv"
         );
     }
 
@@ -3982,39 +3903,35 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let markdown = render_prompt_with_config(
+        let default_prompt = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         for needle in [
             DOMAIN_VALID_EXPR_MARKER,
-            "All path shapes you use are defined in this prompt.",
+            "Syntax contract (pseudo-EBNF",
+            "this is one Plasm grammar",
+            "plasm_program ::= plasm_roots | binding+ plasm_roots",
+            "plasm_expr    ::= entity_expr [projection]",
+            "Use a plain `plasm_expr` for one read, search, relation, method, or action.",
+            "Use a `plasm_program` only when you must bind intermediate results",
+            "All semantic symbols you use must be taught in this prompt.",
             "standalone create/action",
             "full-text search",
             "choose exactly one",
             "`..` can appear alone when all args are optional",
         ] {
             assert!(
-                markdown.contains(needle),
-                "markdown prompt missing `{needle}`"
+                default_prompt.contains(needle),
+                "default prompt missing `{needle}`"
             );
             assert!(
                 tsv.contains(needle),
                 "TSV frontmatter should preserve the same semantics and include `{needle}`"
             );
         }
-        if markdown.contains(super::DOMAIN_RICH_STRING_GUIDANCE_SENTINEL) {
-            assert!(
-                markdown.contains(
-                    "For non-`str` string glosses such as `markdown`, `html`, `document`, `json_text`, or `blob`",
-                ),
-                "markdown should document structured string glosses and heredocs"
-            );
-            assert!(
-                markdown.contains("hard newline") && markdown.contains("Omitting a valid"),
-                "markdown should state heredoc close (hard newline preferred) and validity"
-            );
+        if tsv.contains("tagged heredoc only") {
             assert!(
                 tsv.contains("tagged heredoc only") && tsv.contains("`<<TAG`"),
                 "TSV should require tagged heredocs only"
@@ -4029,26 +3946,22 @@ mod tests {
             );
         }
         assert!(
-            markdown.contains("must not appear in your output"),
-            "markdown contract should forbid copying DOMAIN ;; tails into model output"
-        );
-        assert!(
             tsv.contains("never paste `Meaning`") && tsv.contains("optional params:"),
             "TSV contract should forbid pasting Meaning and document params/args"
         );
         assert!(
-            markdown.contains("Where needed, compact `args:") && markdown.contains("gloss rows"),
-            "markdown preamble should describe args hints and p# gloss rows"
+            default_prompt.contains("plasm_expr\tMeaning"),
+            "render_prompt_with_config should emit the TSV teaching surface"
         );
         assert!(
             tsv.contains(
-                "A row whose `Expression` is only `p#` (when present) is a pre-declared slot"
+                "A row whose `plasm_expr` is only `p#` (when present) is a pre-declared slot"
             ) || tsv.contains("pre-declared slot"),
             "TSV frontmatter should explain p# slot-definition rows when present"
         );
         assert!(
-            tsv.contains("only the `Expression` column is executable syntax"),
-            "TSV frontmatter should keep execution rules scoped to the Expression column"
+            tsv.contains("only the `plasm_expr` column is executable syntax"),
+            "TSV frontmatter should keep execution rules scoped to the plasm_expr column"
         );
         assert!(
             !tsv.contains("DOMAIN witness")
@@ -4066,22 +3979,18 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let compact = render_prompt_with_config(
+        let tsv_via_default = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
         assert!(
-            compact.contains(super::DOMAIN_RICH_STRING_GUIDANCE_SENTINEL),
-            "Linear exposes structured string semantics; compact preamble should add raw-string guidance"
+            tsv_via_default.contains("tagged heredoc only"),
+            "Linear exposes structured string semantics; TSV preamble should add heredoc guidance"
         );
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
             tsv.contains("When `Meaning` marks a slot used in an input value as `markdown`, `html`, `document`, `json_text`, or `blob`"),
             "TSV preamble should document structured string heredocs via Meaning-oriented wording"
-        );
-        assert!(
-            compact.contains("hard newline") && compact.contains("Omitting a valid"),
-            "compact preamble should stress heredoc close (hard newline preferred) and that omitting a valid close errors"
         );
         assert!(
             tsv.contains("<<TAG") && tsv.contains("<<TXT"),
@@ -4098,7 +4007,7 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
         assert!(
-            !out.contains(super::DOMAIN_RICH_STRING_GUIDANCE_SENTINEL),
+            !out.contains("tagged heredoc only"),
             "Type-only slice should not add rich-string preamble without structured semantics in CGS"
         );
     }
@@ -4157,12 +4066,12 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let output = render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(None));
         assert!(
-            output.contains("Pet") && output.contains("DOMAIN"),
-            "DOMAIN should list Pet"
+            output.contains("Pet") && output.contains("plasm_expr\tMeaning"),
+            "TSV prompt should list Pet"
         );
         assert!(
             !output.contains("shape:"),
-            "DOMAIN should not prefix every line with shape:"
+            "TSV prompt should not prefix every line with shape:"
         );
         assert!(
             output.contains("Pet{") && output.contains("status"),
@@ -4229,7 +4138,7 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(None));
         assert!(out.len() < 50_000, "bundle should stay bounded");
-        assert!(!out.contains("EXAMPLES:") && out.contains("DOMAIN"));
+        assert!(!out.contains("EXAMPLES:") && out.contains("plasm_expr\tMeaning"));
     }
 
     /// `Team(id).spaces` uses `query_scoped` materialization — it parses as [`Expr::Chain`]; DOMAIN shows
@@ -4286,20 +4195,20 @@ mod tests {
         );
         // `p#` indices depend on sorted entity exposure — pick any gloss token that also appears in `[…,p#]`.
         let (gloss, p_tok, bracket_use) = sym
-            .match_indices("  ;;  ")
-            .find_map(|(i, _)| {
-                let line_start = sym[..i].rfind('\n').map(|x| x + 1).unwrap_or(0);
-                let prefix = sym[line_start..i].trim_start();
-                let rest = prefix.strip_prefix('p')?;
-                let n = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-                if n == 0 {
+            .lines()
+            .find_map(|line| {
+                let (expr, meaning) = line.split_once('\t')?;
+                let rest = expr.strip_prefix('p')?;
+                if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
                     return None;
                 }
-                let tok = &prefix[..1 + n];
-                let gloss_pos = sym.find(&format!("{tok}  ;;  "))?;
+                if !meaning.contains('·') {
+                    return None;
+                }
+                let gloss_pos = sym.find(line)?;
                 sym[gloss_pos..]
-                    .find(&format!("{tok}]"))
-                    .map(|off| (gloss_pos, tok.to_string(), gloss_pos + off))
+                    .find(&format!("{expr}]"))
+                    .map(|off| (gloss_pos, expr.to_string(), gloss_pos + off))
             })
             .expect("p# gloss with matching bracket projection");
         assert!(
@@ -4323,14 +4232,14 @@ mod tests {
         let team_sym = map.entity_sym("Team");
         assert!(
             domain_block.contains(super::DOMAIN_VALID_EXPR_MARKER),
-            "DOMAIN should open with valid-expression rules"
+            "TSV contract should open with valid-expression rules"
         );
         assert!(
             domain_block.lines().any(|line| {
                 line.contains("List all accessible workspaces")
-                    && line.contains(&format!(";;  => [{}]", team_sym))
+                    && line.contains(&format!("[{}]", team_sym))
             }),
-            "DOMAIN team_query should describe list workspaces with ;;  => [{}]",
+            "TSV team_query should describe list workspaces returning [{}]",
             team_sym
         );
         assert!(
@@ -4352,7 +4261,7 @@ mod tests {
         );
         assert!(
             domain_block.contains("List all accessible workspaces"),
-            "DOMAIN ;; should carry capability description without duplicating m#"
+            "TSV Meaning should carry capability description without duplicating m#"
         );
     }
 
@@ -4381,10 +4290,9 @@ mod tests {
                 l.contains("currently authenticated")
                     && l.contains(".m")
                     && l.contains("()")
-                    && l.contains("=>")
                     && !l.contains("(42)")
             }),
-            "User DOMAIN should teach singleton get-me as e#.m#() with => result gloss, not id-based e#(42)"
+            "User TSV should teach singleton get-me as e#.m#(), not id-based e#(42)"
         );
     }
 
@@ -4598,7 +4506,7 @@ mod tests {
             .lines()
             .filter(|l| {
                 let t = l.trim_start();
-                t.starts_with("p") && t.contains(CAP_LEGEND_SEP) && t.contains("P_SLOT_REIDENT_")
+                t.starts_with("p") && t.contains('\t') && t.contains("P_SLOT_REIDENT_")
             })
             .collect();
         assert!(
@@ -4630,9 +4538,7 @@ mod tests {
             .lines()
             .filter(|l| {
                 let t = l.trim_start();
-                t.starts_with("p")
-                    && t.contains(CAP_LEGEND_SEP)
-                    && t.contains("P_SLOT_REIDENT_SAME")
+                t.starts_with("p") && t.contains('\t') && t.contains("P_SLOT_REIDENT_SAME")
             })
             .count();
         assert_eq!(
@@ -4769,7 +4675,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        let body = tsv.split("Expression\tMeaning\n").nth(1).expect("tsv body");
+        let body = tsv.split(TSV_DOMAIN_TABLE_HEADER).nth(1).expect("tsv body");
         assert!(
             body.contains("args:"),
             "TSV `Meaning` should carry the same `args:` fragment as compact DOMAIN"
