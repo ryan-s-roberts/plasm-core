@@ -3363,6 +3363,36 @@ mod tests {
     use crate::FieldType;
     use crate::CGS;
 
+    /// [`Path::new`] relative segments are resolved against the **test process** current
+    /// directory, which is not always `crates/plasm-core` (e.g. it may be a workspace root).
+    /// Build paths from [`CARGO_MANIFEST_DIR`] so `apis/…` and `fixtures/…` resolve correctly in
+    /// `cargo test` and CI the same as local `cd plasm-oss && cargo test`.
+    fn repo_path(components: &[&str]) -> std::path::PathBuf {
+        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for c in components {
+            p.push(c);
+        }
+        p
+    }
+    fn apis_dir(name: &str) -> std::path::PathBuf {
+        repo_path(&["..", "..", "apis", name])
+    }
+    fn fixtures_schemas_dir(name: &str) -> std::path::PathBuf {
+        repo_path(&["..", "..", "fixtures", "schemas", name])
+    }
+
+    /// Insta resolves the default `snapshots/` path from `file!()`. In the parent
+    /// `plasm/` virtual workspace, path remaps can make that resolve under a spurious
+    /// `plasm-oss/plasm-oss/...` tree, so the committed `.snap` is not found. Anchor to
+    /// [`CARGO_MANIFEST_DIR`], which is always the `plasm-core` crate root.
+    fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
+        let mut settings = insta::Settings::clone_current();
+        settings.set_snapshot_path(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"),
+        );
+        settings.bind(f)
+    }
+
     #[test]
     fn redundant_relation_sym_gloss_skipped_for_terminal_chain_line() {
         use crate::symbol_tuning::{IdentMetadata, IdentRole};
@@ -3412,16 +3442,15 @@ mod tests {
 
     #[test]
     fn bundled_github_petstore_clickup_full_entities_emit_domain_lines() {
-        for dir in [
-            "../../apis/github",
-            "../../fixtures/schemas/petstore",
-            "../../apis/clickup",
+        for p in [
+            apis_dir("github"),
+            fixtures_schemas_dir("petstore"),
+            apis_dir("clickup"),
         ] {
-            let p = std::path::Path::new(dir);
             if !p.exists() {
                 continue;
             }
-            let cgs = load_schema_dir(p).unwrap_or_else(|e| panic!("load {}: {e}", p.display()));
+            let cgs = load_schema_dir(&p).unwrap_or_else(|e| panic!("load {}: {e}", p.display()));
             let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
             let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
             for ename in &full {
@@ -3437,11 +3466,11 @@ mod tests {
 
     #[test]
     fn google_sheets_compound_get_entity_ref_key_var_emits_valid_domain_line() {
-        let dir = std::path::Path::new("../../apis/google-sheets");
+        let dir = apis_dir("google-sheets");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let lines = domain_example_lines(&cgs, "ValueRange", None);
         let expected = "ValueRange(spreadsheetId=Spreadsheet($), range=$)";
         assert!(
@@ -3461,11 +3490,11 @@ mod tests {
     /// prefix ladder or a duplicate extra exemplar line.
     #[test]
     fn github_issue_domain_emits_single_full_projection_exemplar() {
-        let dir = std::path::Path::new("../../apis/github");
+        let dir = apis_dir("github");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let Some(ent) = cgs.get_entity("Issue") else {
             panic!("missing Issue entity");
         };
@@ -3517,11 +3546,11 @@ mod tests {
     /// teach scalar fields from `issue_get.provides` (see [`CGS::domain_projection_heading_fields`]).
     #[test]
     fn linear_issue_heading_projection_despite_method_style_get() {
-        let dir = std::path::Path::new("../../apis/linear");
+        let dir = apis_dir("linear");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
         let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
             .expect("Linear Issue should carry a full projection bracket (heading or primary get)");
@@ -3551,11 +3580,11 @@ mod tests {
 
     #[test]
     fn heading_projection_symbols_are_declared_before_heading_use() {
-        let dir = std::path::Path::new("../../apis/github");
+        let dir = apis_dir("github");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
         let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
             .expect("Issue should carry a projection list");
@@ -3596,11 +3625,11 @@ mod tests {
 
     #[test]
     fn tsv_additive_wave_omits_global_contract_but_keeps_column_header() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = fixtures_schemas_dir("petstore");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let pipeline = PromptPipelineConfig::default();
         let mut exp = DomainExposureSession::new(&cgs, "", &["Pet"]);
         let first = pipeline.render_domain_first_wave_for_session(&cgs, &exp, None);
@@ -3656,11 +3685,11 @@ mod tests {
     /// `CaptureItem.id` (integer); mis-alignment produced `str · id` for CaptureItem's block.
     #[test]
     fn tsv_symbolic_blocks_align_ident_gloss_with_exposure_entity_order() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let (names, _) = resolve_prompt_surface_entities(&cgs, FocusSpec::All, true);
         assert_eq!(
             names.first().map(|s| s.as_str()),
@@ -3707,11 +3736,11 @@ mod tests {
     /// must still teach `e7($).p#` chain nav for `query_scoped` many relations.
     #[test]
     fn overshow_tsv_includes_query_scoped_profile_relation_nav() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
             tsv.lines()
@@ -3727,11 +3756,11 @@ mod tests {
     /// Regression: compound-key `CaptureItem` get witness must be taught (covers `capture_item_get`).
     #[test]
     fn overshow_tsv_includes_compound_capture_item_get_witness() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let p_id = map.ident_sym_entity_field("CaptureItem", "id");
@@ -3753,11 +3782,11 @@ mod tests {
 
     #[test]
     fn tsv_prompt_uses_plasm_expr_and_meaning_columns() {
-        let dir = std::path::Path::new("../../apis/github");
+        let dir = apis_dir("github");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let mut lines = tsv.lines();
         let first = lines.next().expect("tsv frontmatter");
@@ -3868,16 +3897,22 @@ mod tests {
     /// `INSTA_UPDATE=1 cargo test -p plasm-core github_api_full_prompt_symbolic_snapshot` and review the diff.
     #[test]
     fn github_api_full_prompt_symbolic_snapshot() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
+        let dir = apis_dir("github");
+        if !dir.is_dir() {
+            eprintln!(
+                "skip: apis/github not at {} (incomplete plasm-oss tree?)",
+                dir.display()
+            );
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
-        insta::assert_snapshot!("github_api_full_prompt_symbolic", prompt);
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!("github_api_full_prompt_symbolic", prompt);
+        });
     }
 
     #[test]
@@ -3915,45 +3950,59 @@ mod tests {
     /// Contract text for MCP / TSV frontmatter; update with `INSTA_UPDATE=1 cargo test -p plasm-core plasm_mcp_language_frontmatter_snapshot`.
     #[test]
     fn plasm_mcp_language_frontmatter_snapshot() {
-        insta::assert_snapshot!(
-            "plasm_mcp_language_frontmatter",
-            render_plasm_mcp_language_frontmatter()
-        );
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!(
+                "plasm_mcp_language_frontmatter",
+                render_plasm_mcp_language_frontmatter()
+            );
+        });
     }
 
     /// Full `apis/linear` prompt. Deterministic for the checked-in catalog; use `INSTA_UPDATE=1`
     /// with `linear_api_full_prompt` when the catalog or renderer changes.
     #[test]
     fn linear_api_full_prompt_includes_rich_string_preamble_snapshot() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
+        let dir = apis_dir("linear");
+        if !dir.is_dir() {
+            eprintln!(
+                "skip: apis/linear not at {} (incomplete plasm-oss tree?)",
+                dir.display()
+            );
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        insta::assert_snapshot!("linear_api_full_prompt", prompt);
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!("linear_api_full_prompt", prompt);
+        });
     }
 
     /// Pokeapi `Type`-only slice. Deterministic for the checked-in `apis/pokeapi` + slice config;
     /// update the snapshot with `INSTA_UPDATE=1` when inputs change.
     #[test]
     fn pokeapi_type_only_slice_prompt_snapshot() {
-        let dir = std::path::Path::new("../../apis/pokeapi");
-        if !dir.exists() {
+        let dir = apis_dir("pokeapi");
+        if !dir.is_dir() {
+            eprintln!(
+                "skip: apis/pokeapi not at {} (incomplete plasm-oss tree?)",
+                dir.display()
+            );
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
-        insta::assert_snapshot!("pokeapi_type_only_slice_prompt", out);
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!("pokeapi_type_only_slice_prompt", out);
+        });
     }
 
     #[test]
     fn domain_prompt_bundle_tags_relation_nav_materialization() {
-        let dir = std::path::Path::new("../../apis/pokeapi");
+        let dir = apis_dir("pokeapi");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let bundle = render_domain_prompt_bundle(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
         let found = bundle
             .model
@@ -3979,11 +4028,11 @@ mod tests {
 
     #[test]
     fn petstore_domain_lists_capabilities() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = fixtures_schemas_dir("petstore");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let output = render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(None));
         assert!(
             output.contains("Pet") && output.contains("plasm_expr\tMeaning"),
@@ -4001,11 +4050,11 @@ mod tests {
 
     #[test]
     fn petstore_domain_line_meta_includes_source_capability() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = fixtures_schemas_dir("petstore");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let bundle = render_domain_prompt_bundle(
             &cgs,
             RenderConfig {
@@ -4038,11 +4087,11 @@ mod tests {
 
     #[test]
     fn focus_subsetting_shows_full_and_dim() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = fixtures_schemas_dir("petstore");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let output =
             render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(Some("Order")));
         assert!(output.contains("Order"));
@@ -4051,11 +4100,11 @@ mod tests {
 
     #[test]
     fn pokeapi_bundle_is_reasonable_size() {
-        let dir = std::path::Path::new("../../apis/pokeapi");
+        let dir = apis_dir("pokeapi");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(None));
         assert!(out.len() < 50_000, "bundle should stay bounded");
         assert!(!out.contains("EXAMPLES:") && out.contains("plasm_expr\tMeaning"));
@@ -4065,11 +4114,11 @@ mod tests {
     /// anchored relation nav plus scoped `Space{…}` under Space.
     #[test]
     fn clickup_domain_includes_materialized_team_spaces_nav() {
-        let dir = std::path::Path::new("../../apis/clickup");
+        let dir = apis_dir("clickup");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let sym = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
@@ -4100,11 +4149,11 @@ mod tests {
     /// `team_query` is query-shaped (`e1` in DOMAIN); description + gloss inline after `;;` (no QUERIES table).
     #[test]
     fn clickup_domain_gloss_and_symbol_map_queries() {
-        let dir = std::path::Path::new("../../apis/clickup");
+        let dir = apis_dir("clickup");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let sym = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
@@ -4188,11 +4237,11 @@ mod tests {
     /// User has only pathless singleton `user_get_me` — DOMAIN must show `e#.m#()` (get-me) and not mislead with `e#(42)`.
     #[test]
     fn clickup_user_singleton_get_me_line_in_domain() {
-        let dir = std::path::Path::new("../../apis/clickup");
+        let dir = apis_dir("clickup");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let sym = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
@@ -4519,17 +4568,17 @@ mod tests {
 
     #[test]
     fn petstore_rendered_examples_parse() {
-        assert_prompt_examples_parse(std::path::Path::new("../../fixtures/schemas/petstore"));
+        assert_prompt_examples_parse(&fixtures_schemas_dir("petstore"));
     }
 
     #[test]
     fn clickup_rendered_examples_parse() {
-        assert_prompt_examples_parse(std::path::Path::new("../../apis/clickup"));
+        assert_prompt_examples_parse(&apis_dir("clickup"));
     }
 
     #[test]
     fn github_rendered_examples_parse() {
-        assert_prompt_examples_parse(std::path::Path::new("../../apis/github"));
+        assert_prompt_examples_parse(&apis_dir("github"));
     }
 
     /// Writes `apis/<name>/eval/prompt_symbol_tuning.txt` for inspection (eval/REPL bundle).
@@ -4538,11 +4587,11 @@ mod tests {
     #[test]
     #[ignore = "manual: dumps prompt bundle to apis/.../eval/prompt_symbol_tuning.txt"]
     fn write_clickup_prompt_fixture() {
-        let dir = std::path::Path::new("../../apis/clickup");
+        let dir = apis_dir("clickup");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let s = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let out = dir.join("eval/prompt_symbol_tuning.txt");
         std::fs::write(&out, &s).unwrap();
@@ -4564,11 +4613,11 @@ mod tests {
 
     #[test]
     fn p_symbol_verbosity_uses_args_summary_and_short_alias_preamble() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_with_config(
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
@@ -4589,11 +4638,11 @@ mod tests {
 
     #[test]
     fn tsv_parity_includes_compact_args_in_meaning_when_in_domain_legend() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
         }
-        let cgs = load_schema_dir(dir).unwrap();
+        let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let body = tsv.split(TSV_DOMAIN_TABLE_HEADER).nth(1).expect("tsv body");
         assert!(
