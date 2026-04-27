@@ -1,4 +1,4 @@
-version: 18
+version: 21
 
 http_backend: https://api.github.com
 
@@ -439,7 +439,7 @@ entities:
     - owner
     - repo
     - sha
-    description: Repo commit (owner, repo, SHA); branch/tags resolve in get.
+    description: A repository commit with message, times, and relations to author and committer users and to changed files.
     fields:
       owner:
         field_type: string
@@ -459,6 +459,111 @@ entities:
         required: false
         path: commit.message
       html_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      url:
+        field_type: string
+        string_semantics: short
+        required: false
+      authored_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: commit.author.date
+      committed_at:
+        field_type: date
+        value_format: rfc3339
+        required: false
+        path: commit.committer.date
+      comment_count:
+        field_type: integer
+        required: false
+        path: commit.comment_count
+      stats_additions:
+        field_type: integer
+        required: false
+        path: stats.additions
+      stats_deletions:
+        field_type: integer
+        required: false
+        path: stats.deletions
+      total_changes:
+        field_type: integer
+        required: false
+        path: stats.total
+    relations:
+      files:
+        target: CommitFile
+        cardinality: many
+        description: Files changed in this commit.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: files
+          - wildcard: true
+      author:
+        target: User
+        cardinality: one
+        description: GitHub user for the commit author, when the API provides one.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: author
+      committer:
+        target: User
+        cardinality: one
+        description: GitHub user for the committer, when the API provides one.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: committer
+  CommitFile:
+    abstract: true
+    id_field: filename
+    description: A file changed in a single repository commit.
+    fields:
+      filename:
+        field_type: string
+        string_semantics: short
+        required: true
+      sha:
+        field_type: string
+        string_semantics: short
+        required: false
+      status:
+        field_type: select
+        allowed_values:
+        - added
+        - removed
+        - modified
+        - renamed
+        - copied
+        - changed
+        - unchanged
+        required: false
+      additions:
+        field_type: integer
+        required: false
+      deletions:
+        field_type: integer
+        required: false
+      changes:
+        field_type: integer
+        required: false
+      patch:
+        field_type: string
+        string_semantics: markdown
+        required: false
+      previous_filename:
+        field_type: string
+        string_semantics: short
+        required: false
+      blob_url:
+        field_type: string
+        string_semantics: short
+        required: false
+      raw_url:
         field_type: string
         string_semantics: short
         required: false
@@ -1934,6 +2039,13 @@ capabilities:
     - sha
     - message
     - html_url
+    - url
+    - authored_at
+    - committed_at
+    - comment_count
+    - stats_additions
+    - stats_deletions
+    - stats_total
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -1949,10 +2061,24 @@ capabilities:
       type: string
       required: false
       string_semantics: short
-    - name: author
+    - name: by_author
       type: string
       required: false
       string_semantics: short
+    - name: by_committer
+      type: string
+      required: false
+      string_semantics: short
+    - name: since
+      type: date
+      value_format: rfc3339
+      required: false
+      role: filter
+    - name: until
+      type: date
+      value_format: rfc3339
+      required: false
+      role: filter
   commit_get:
     kind: get
     entity: Commit
@@ -1963,6 +2089,13 @@ capabilities:
     - sha
     - message
     - html_url
+    - url
+    - authored_at
+    - committed_at
+    - comment_count
+    - stats_additions
+    - stats_deletions
+    - stats_total
   pr_review_query:
     kind: query
     entity: PullRequestReview

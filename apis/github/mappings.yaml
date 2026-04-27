@@ -336,9 +336,18 @@ commit_query:
       - [path, { type: if, condition: { type: exists, var: path },
                  then_expr: { type: var, name: path },
                  else_expr: { type: const, value: null } }]
-      - [author, { type: if, condition: { type: exists, var: author },
-                   then_expr: { type: var, name: author },
+      - [author, { type: if, condition: { type: exists, var: by_author },
+                   then_expr: { type: var, name: by_author },
                    else_expr: { type: const, value: null } }]
+      - [committer, { type: if, condition: { type: exists, var: by_committer },
+                    then_expr: { type: var, name: by_committer },
+                    else_expr: { type: const, value: null } }]
+      - [since, { type: if, condition: { type: exists, var: since },
+                 then_expr: { type: var, name: since },
+                 else_expr: { type: const, value: null } }]
+      - [until, { type: if, condition: { type: exists, var: until },
+                 then_expr: { type: var, name: until },
+                 else_expr: { type: const, value: null } }]
   pagination:
     params:
       page:     {counter: 1}
