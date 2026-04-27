@@ -3508,7 +3508,7 @@ mod tests {
         );
         assert!(
             out.len() > 8_000,
-            "full apis/github DOMAIN+legend should be substantial (got {}); see github_api_full_prompt_symbolic snapshot",
+            "full apis/github DOMAIN+legend should be substantial (got {}); compare `github_api_full_prompt_symbolic` snapshot",
             out.len()
         );
     }
@@ -3863,7 +3863,9 @@ mod tests {
         );
     }
 
-    /// Full `apis/github` TSV teaching prompt (symbolic). Update: `INSTA_UPDATE=1 cargo test -p plasm-core github_api_full_prompt_symbolic_snapshot`.
+    /// Full `apis/github` TSV teaching prompt (symbolic). Output is **deterministic** for the
+    /// tree’s `apis/github` catalog. When the catalog or renderer changes, run
+    /// `INSTA_UPDATE=1 cargo test -p plasm-core github_api_full_prompt_symbolic_snapshot` and review the diff.
     #[test]
     fn github_api_full_prompt_symbolic_snapshot() {
         let dir = std::path::Path::new("../../apis/github");
@@ -3919,7 +3921,8 @@ mod tests {
         );
     }
 
-    /// Linear has structured string params; heredoc bullets appear in the language preamble.
+    /// Full `apis/linear` prompt. Deterministic for the checked-in catalog; use `INSTA_UPDATE=1`
+    /// with `linear_api_full_prompt` when the catalog or renderer changes.
     #[test]
     fn linear_api_full_prompt_includes_rich_string_preamble_snapshot() {
         let dir = std::path::Path::new("../../apis/linear");
@@ -3931,7 +3934,8 @@ mod tests {
         insta::assert_snapshot!("linear_api_full_prompt", prompt);
     }
 
-    /// Pokeapi `Type`-only slice: no rich-string heredoc block, no `~` search in preamble (snapshot documents absence).
+    /// Pokeapi `Type`-only slice. Deterministic for the checked-in `apis/pokeapi` + slice config;
+    /// update the snapshot with `INSTA_UPDATE=1` when inputs change.
     #[test]
     fn pokeapi_type_only_slice_prompt_snapshot() {
         let dir = std::path::Path::new("../../apis/pokeapi");
