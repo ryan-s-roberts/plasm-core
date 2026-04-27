@@ -417,8 +417,8 @@ pub struct CapabilityWaveOutcome {
     pub markdown_delta: String,
     pub reused_session: bool,
     pub domain_prompt_chars_added: u64,
-    /// TSV: comment-prefixed Plasm language contract from the first open, sent in MCP
-    /// `add_capabilities` `_meta` — not part of `markdown_delta`.
+    /// Reserved for legacy callers. MCP initialize now carries the shared Plasm syntax guide, so
+    /// `add_capabilities` responses publish catalogue teaching rows rather than grammar frontmatter.
     pub tsv_static_frontmatter: Option<String>,
 }
 
@@ -1381,7 +1381,7 @@ pub async fn apply_capability_seeds(
             let mut open_md = String::new();
             if stale_execute_binding_recovered {
                 open_md.push_str(
-                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or DOMAIN text from earlier `add_capabilities` output in this chat. Re-read the teaching table and `_meta.plasm` from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
+                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or DOMAIN text from earlier `add_capabilities` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
                 );
             } else if new_symbol_space {
                 open_md.push_str(
@@ -1394,7 +1394,6 @@ pub async fn apply_capability_seeds(
             ));
             open_md.push_str("\n\n");
             open_md.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
-            let mut tsv_meta: Option<String> = None;
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
             } else {
@@ -1404,8 +1403,7 @@ pub async fn apply_capability_seeds(
                         &created.prompt,
                         mode.markdown_fence_info_string(),
                     ) {
-                        let (contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
-                        tsv_meta = contract;
+                        let (_contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
                         let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
                         open_md.push_str("\n\n");
                         open_md.push_str(&wrapped);
@@ -1418,14 +1416,10 @@ pub async fn apply_capability_seeds(
                     open_md.push_str(&created.prompt);
                 }
             }
-            let contract_extra_chars = tsv_meta
-                .as_ref()
-                .map(|c| c.chars().count() as u64)
-                .unwrap_or(0);
             let domain_prompt_chars_added = if created.reused {
                 0u64
             } else {
-                (open_md.chars().count() as u64).saturating_add(contract_extra_chars)
+                open_md.chars().count() as u64
             };
             waves.push(CapabilityWaveOutcome {
                 mode: "open".to_string(),
@@ -1434,7 +1428,7 @@ pub async fn apply_capability_seeds(
                 markdown_delta: open_md.clone(),
                 reused_session: created.reused,
                 domain_prompt_chars_added,
-                tsv_static_frontmatter: tsv_meta,
+                tsv_static_frontmatter: None,
             });
             (created.prompt_hash, created.session, true)
         }

@@ -108,19 +108,28 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 /// Max Unicode scalars allowed for `plasm` `tsv_static_frontmatter` (the Plasm language contract block).
 const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
 
-/// Model-facing `plasm` tool description: run one Plasm expression/program (session setup is in [`MCP_SERVER_INITIALIZE_INSTRUCTIONS`]).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** one Plasm expression/program (`expression` required; **`logical_session_ref`** from **`plasm_session_init`**). Full setup, paging, and output shape: MCP **`initialize` `instructions`**. \
-     **Plasm-DAG:** the single expression string may be ordinary Plasm, comma-separated roots (`expr, expr`), or native DAG composition: `name = <Plasm expr>`, transforms like `name.limit(20)` / `name[field,...] <<TAG`, and a final `returnable[, returnable]`. \
-     Optional **`tsv_static_frontmatter`**: the `#`-comment Plasm language contract (cache from **`add_capabilities`** `_meta.plasm.tsv_static_frontmatter` on first TSV open); not executed, counts toward session invocation tokens. \
-     **Steady state:** same **`logical_session_ref`**, **`plasm` only** for follow-ups -- do **not** re-run **`plasm_session_init`** or **`add_capabilities`** every turn once capabilities are loaded.";
+/// Model-facing `plasm` tool description: run one Plasm expression/program (session setup is in initialize instructions).
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Run** one Plasm expression/program with **`expression`** and the **`logical_session_ref`** from **`plasm_session_init`**. \
+     Use the Plasm syntax guide in initialize instructions and the active TSV rows from **`add_capabilities`**. \
+     Simple goal: send one taught `plasm_expr`. Multi-step goal: send one `plasm_program`. \
+     Reuse the same **`logical_session_ref`** for follow-ups; call **`add_capabilities`** again only to append new **`api`/`entity`** seeds.";
 
-/// MCP `initialize` `instructions` field: tool flow (LLM-facing; transport auth is host-owned).
-pub(crate) const MCP_SERVER_INITIALIZE_INSTRUCTIONS: &str = "**Call `plasm_session_init` first** on each MCP connection (before `discover_capabilities`, `add_capabilities`, or `plasm`): pass **`client_session_key`** -- **the host’s stable agent-context id** (same value for the same window, subagent, or other isolation boundary the host defines); use **one key per context you want to share one Plasm logical session**, not a new random id every message. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). **Idempotent:** same transport + same `client_session_key` + tenant => **reuse** the same logical session and ref. \
-     **Session reuse is mandatory by default:** after the first successful **`add_capabilities`** or **`add_code_capabilities`** for that ref, keep using the **same** **`logical_session_ref`**. **Do not** re-invoke **`plasm_session_init`**, do not open a fresh logical session, and do not call capabilities again with a smaller seed set to \"re-initialize\", \"reload\", or \"narrow\" the symbol space. Capability loading is **append-only** for a live logical session: call **`add_capabilities`** / **`add_code_capabilities`** again **only** to add missing **new** **`api` / `entity`** seeds to the existing session; otherwise call **`plasm`** or evaluate/execute the existing Code Mode plan. \
-     Optional **`discover_capabilities`** with `query` — **one string** (plain-language or keywords) **or** a string array (**search**; **TSV rows** are entities with descriptions). Use columns **`api`** + **`entity`** for each `add_capabilities` seed. \
-     **`add_capabilities`**: **`logical_session_ref`** + **`seeds`**, a JSON array of objects with keys **`api`** (catalog id) and **`entity`** (legacy key **`entry_id`** still accepted per object). Multiple distinct **`api`** values **federate** into **one Plasm language** for that session—`plasm` lines may reference entities from every included catalog. Re-call with more seeds on the **same** **`logical_session_ref`** to **append** to the session; this never intentionally narrows or replaces already-loaded symbols. If you need several entities/APIs for one task, send them together in one call when known, or append missing seeds later on the same ref. Responses may include **`reused: true`** when the server matches a prior open (less prompt churn). On a **new** TSV open, the Plasm language **contract** is in **`_meta.plasm.tsv_static_frontmatter`**; the body is the teaching table only. **Cache** the contract and pass it as **`plasm` `tsv_static_frontmatter`**; do not paste it into the system or user message. \
-     **`plasm`**: **`logical_session_ref`** + one **`expression`** string, optional **`tsv_static_frontmatter`**, optional **`reasoning`**. The expression may be ordinary Plasm, comma-separated Plasm roots (`expr, expr`), or Plasm-native DAG composition (`label = <Plasm expr>`, `label.limit(n)`, `label[field,...] <<TAG`, final `label, <Plasm expr>` roots). Response order follows the final root list; execution order is derived from DAG/runtime dependencies. **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` for more rows in the **same** logical session. \
-    **Code Mode:** TypeScript Code Mode remains available for compatibility, but new multi-step composition should prefer **`plasm`** Plasm-DAG so executable leaves stay verbatim DOMAIN-taught Plasm expressions.";
+/// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
+pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Workflow: **`plasm_session_init` once**, then **`add_capabilities` once per needed seed set**, then mostly **`plasm`**. \
+     **`plasm_session_init`**: pass a stable **`client_session_key`** for this workspace/task. The response gives **`logical_session_ref`** (`s0`, `s1`, ...). Reuse it; do not create a new key every message. \
+     **`discover_capabilities`** is optional search. It accepts one query string or an array of strings and returns TSV entity rows. Use row columns **`api`** + **`entity`** as seeds. Skip it when you already know the seeds. \
+     **`add_capabilities`**: pass **`logical_session_ref`** and non-empty **`seeds`** array of `{ \"api\": catalog_id, \"entity\": entity_name }` objects (`entry_id` is accepted per object as a legacy alias). Loading is **append-only** for a live logical session: call again only for new seeds; do not resend identical seeds every turn, and do not send a smaller set to narrow or reset. Multiple APIs federate into one Plasm language; the primary catalog is the lexicographically first distinct `api`. \
+     On a new TSV open, read the teaching table from **`add_capabilities`**; it binds the syntax guide below to the current catalogue symbols. \
+     **`plasm`**: pass **`logical_session_ref`** and one **`expression`** string. For simple goals, send one taught `plasm_expr`. For multi-step goals, send one `plasm_program`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows.";
+
+fn mcp_server_initialize_instructions() -> String {
+    format!(
+        "{workflow}\n\nPlasm syntax guide:\n\n{frontmatter}",
+        workflow = MCP_SERVER_INITIALIZE_WORKFLOW,
+        frontmatter = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter(),
+    )
+}
 
 fn parse_tool_seeds(
     tool: &str,
@@ -684,7 +693,7 @@ impl PlasmMcpHandler {
         add_props.insert(
             "logical_session_ref".into(),
             json_schema_string_type(
-                "Session slot from `plasm_session_init` (e.g. `s0`). Reuse for every `add_capabilities` / `plasm` in this workspace—do not request a new slot unless you intentionally start a new logical session.",
+                "Session slot from `plasm_session_init` (e.g. `s0`). Reuse it for this workspace/task; do not create a fresh slot to narrow or reset symbols.",
             ),
         );
         add_props.insert(
@@ -698,23 +707,23 @@ impl PlasmMcpHandler {
         run_props.insert(
             "logical_session_ref".into(),
             json_schema_string_type(
-                "Same `logical_session_ref` you already use for this task—call `plasm` repeatedly with it; do not pair every `plasm` with a fresh `add_capabilities` unless appending new seeds.",
+                "Same `logical_session_ref` used for `add_capabilities`. Reuse for follow-up `plasm` calls.",
             ),
         );
         run_props.insert(
             "expression".into(),
             json_schema_string_type(
-                "One executable Plasm expression/program string. Use ordinary Plasm, comma-separated roots (`expr, expr`), or Plasm-DAG composition (`name = expr` lines plus final roots) using shapes from the TSV teaching table in `add_capabilities`.",
+                "One Plasm expression/program string. Use the syntax guide from initialize instructions and the active TSV rows from `add_capabilities`.",
             ),
         );
         run_props.insert(
             "reasoning".into(),
-            json_schema_string_type("Optional note for the caller only; not executed."),
+            json_schema_string_type("Optional short note explaining the intent of this call."),
         );
         run_props.insert(
             "tsv_static_frontmatter".into(),
             json_schema_string_type(
-                "Optional. The `#`-comment Plasm language contract (TSV symbolic mode) — use the value from the first `add_capabilities` result `_meta.plasm.tsv_static_frontmatter`; not executed; not duplicated in the teaching table body. Repeat on `plasm` when the model needs the contract in tool context.",
+                "Optional extra Plasm syntax guide text supplied by the host. Usually omit; initialize instructions already include the guide.",
             ),
         );
 
@@ -766,13 +775,11 @@ impl PlasmMcpHandler {
                 name: "add_capabilities".into(),
                 title: None,
                 description: Some(
-                    "**Append** catalog surface to an **existing** session: reuse **`logical_session_ref`** from **`plasm_session_init`**. This is additive, not a replacement or narrowing operation. Call when you need **new** **`api`/`entity`** pairs; **do not** repeat this with identical seeds before every **`plasm`** call, and **do not** reinitialize or resend a smaller seed set to narrow the symbol space. \
-                     Set `seeds` as JSON objects (`{\"api\":\"...\",\"entity\":\"...\"}`), one object per entity (`entry_id` accepted instead of `api`). \
-                     Example: `[{\"api\":\"pokeapi\",\"entity\":\"Pokemon\"},{\"api\":\"pokeapi\",\"entity\":\"Move\"}]`. If a task needs multiple entities/APIs, include all known required seeds in one call; if you discover another needed entity later, append it on the same **`logical_session_ref`**. \
-                     First distinct **`api`** is the primary open; additional **`api`** values federate into the **same** Plasm language session. \
-                     Legacy top-level `{entry_id, entities}` input is invalid; always send one seed object per entity. \
-                     Unknown or disallowed catalog ids fail the whole call. \
-                     On a **new** TSV open, the fenced result is the **teaching table only**; the Plasm language **contract** (leading `#` comments) is in **`_meta.plasm.tsv_static_frontmatter`**. **Cache** it and pass with each **`plasm`** as **`tsv_static_frontmatter`**; execute one Plasm expression/program with **`plasm`**. Symbol `eN` exists only up to **N** exposed entities. One execute binding per **logical** session.".into(),
+                    "**Append** catalogue teaching to the existing session; reuse the same **`logical_session_ref`** from **`plasm_session_init`**. This is additive, not a replacement or narrowing operation. \
+                     Use one seed object per entity: `{\"api\":\"...\",\"entity\":\"...\"}` (`entry_id` accepted per object as a legacy alias). Legacy top-level `{entry_id, entities}` is invalid. \
+                     Include all known needed seeds together; append later only when new **`api`/`entity`** pairs are needed. Do not repeat identical seeds before every **`plasm`** call. \
+                     Multiple APIs federate into one Plasm language; the primary API is the lexicographically first distinct `api`. Unknown or disallowed APIs fail the whole call. \
+                     On a new TSV open, the result explains which catalogue entries were added and provides the active `plasm_expr` teaching rows for those entries.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into(), "seeds".into()],
@@ -2048,24 +2055,18 @@ impl ServerHandler for PlasmMcpHandler {
                         .ensure_logical_session(&ls_key, Some(&key), trace_meta)
                         .await;
 
-                    let (mut text, tsv_from_waves) = if is_add_code {
+                    let mut text = if is_add_code {
                         #[cfg(feature = "code_mode")]
                         {
-                            (String::new(), None)
+                            String::new()
                         }
                         #[cfg(not(feature = "code_mode"))]
                         {
-                            (String::new(), None)
+                            String::new()
                         }
                     } else {
                         let mut t = String::new();
-                        let mut tsv: Option<String> = None;
                         for wave in &out.waves {
-                            if tsv.is_none() {
-                                if let Some(front) = wave.tsv_static_frontmatter.as_ref() {
-                                    tsv = Some(front.clone());
-                                }
-                            }
                             if !wave.markdown_delta.is_empty() {
                                 t.push_str(&wave.markdown_delta);
                                 if !t.ends_with('\n') {
@@ -2073,7 +2074,7 @@ impl ServerHandler for PlasmMcpHandler {
                                 }
                             }
                         }
-                        (t, tsv)
+                        t
                     };
                     for wave in &out.waves {
                         if wave.domain_prompt_chars_added > 0 {
@@ -2104,9 +2105,6 @@ impl ServerHandler for PlasmMcpHandler {
                             .await;
                     }
                     let mut plasm = serde_json::Map::new();
-                    if let Some(front) = tsv_from_waves {
-                        plasm.insert("tsv_static_frontmatter".to_string(), json!(front));
-                    }
                     let mut continuity = serde_json::Map::new();
                     continuity.insert(
                         "stale_binding_recovered".to_string(),
@@ -3239,7 +3237,7 @@ fn mcp_initialize_result() -> InitializeResult {
             ..Default::default()
         },
         protocol_version: ProtocolVersion::V2025_11_25.into(),
-        instructions: Some(MCP_SERVER_INITIALIZE_INSTRUCTIONS.into()),
+        instructions: Some(mcp_server_initialize_instructions()),
         meta: None,
     }
 }
@@ -3314,28 +3312,58 @@ mod tests {
     fn mcp_plasm_tool_and_initialize_instructions_coherent() {
         assert!(
             super::MCP_PLASM_TOOL_DESCRIPTION.contains("plasm_session_init")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("initialize")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Steady state")
-                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("tsv_static_frontmatter"),
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("initialize instructions")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Simple goal")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("Multi-step goal")
+                && super::MCP_PLASM_TOOL_DESCRIPTION.contains("logical_session_ref"),
             "plasm tool description: {}",
             super::MCP_PLASM_TOOL_DESCRIPTION
         );
         assert!(
-            super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("plasm_session_init")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("logical_session_ref")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("api")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("Plasm language")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("reused")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("_meta.plasm.paging")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("Session reuse")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("append-only")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("smaller seed set")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS.contains("otherwise call")
-                && super::MCP_SERVER_INITIALIZE_INSTRUCTIONS
-                    .contains("_meta.plasm.tsv_static_frontmatter",),
-            "initialize instructions: {}",
-            super::MCP_SERVER_INITIALIZE_INSTRUCTIONS
+            !super::MCP_PLASM_TOOL_DESCRIPTION.contains("label.limit")
+                && !super::MCP_PLASM_TOOL_DESCRIPTION.contains("comma-separated roots")
+                && !super::MCP_PLASM_TOOL_DESCRIPTION.contains("name ="),
+            "plasm tool description should not duplicate Plasm grammar: {}",
+            super::MCP_PLASM_TOOL_DESCRIPTION
         );
+        for forbidden in [
+            "cached contract",
+            "model context",
+            "not executed",
+            "source of truth",
+        ] {
+            assert!(
+                !super::MCP_PLASM_TOOL_DESCRIPTION.contains(forbidden),
+                "plasm tool description should guide model behavior, not implementation details: {}",
+                super::MCP_PLASM_TOOL_DESCRIPTION
+            );
+        }
+        let init = super::mcp_server_initialize_instructions();
+        assert!(
+            init.contains("plasm_session_init")
+                && init.contains("logical_session_ref")
+                && init.contains("api")
+                && init.contains("read the teaching table")
+                && init.contains("_meta.plasm.paging")
+                && init.contains("append-only")
+                && init.contains("smaller set")
+                && init.contains("Plasm syntax guide")
+                && init.contains("plasm_program ::= plasm_roots | binding+ plasm_roots"),
+            "initialize instructions: {}",
+            init
+        );
+        for forbidden in [
+            "cached contract",
+            "model context",
+            "not executed",
+            "source of truth",
+        ] {
+            assert!(
+                !init.contains(forbidden),
+                "initialize instructions should guide model behavior, not implementation details: {}",
+                init
+            );
+        }
     }
 
     #[test]
@@ -3509,14 +3537,14 @@ mod tests {
     #[cfg(feature = "code_mode")]
     #[test]
     fn initialize_instructions_document_code_mode_decision_and_flow() {
-        let d = super::MCP_SERVER_INITIALIZE_INSTRUCTIONS;
+        let d = super::mcp_server_initialize_instructions();
         for expected in [
-            "new multi-step composition should prefer **`plasm`** Plasm-DAG",
-            "one **`expression`** string",
-            "comma-separated Plasm roots",
-            "Plasm-native DAG composition",
-            "execution order is derived from DAG/runtime dependencies",
-            "TypeScript Code Mode remains available for compatibility",
+            "Plasm syntax guide",
+            "plasm_program ::= plasm_roots | binding+ plasm_roots",
+            "Use a single `plasm_expr`",
+            "Use a multi-line `plasm_program`",
+            "Response order follows the final roots",
+            "execution order follows Plasm/runtime dependencies",
         ] {
             assert!(
                 d.contains(expected),
