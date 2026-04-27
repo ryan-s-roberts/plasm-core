@@ -38,7 +38,7 @@ pub struct RunArtifactHandle {
     pub request_fingerprints: Vec<String>,
 }
 
-/// Handle for a stored Code Mode plan (permanent plan archive, not run snapshot GC).
+/// Handle for a stored serialized Plasm program plan (permanent plan archive, not run snapshot GC).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodePlanArchiveHandle {
     pub plan_id: Uuid,
@@ -98,7 +98,7 @@ pub struct RunArtifactDocument {
     pub stats: ExecutionStats,
 }
 
-/// Permanent archived Code Mode plan document.
+/// Permanent archived Plasm program plan document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodePlanArchiveDocument {
     pub kind: String,
@@ -106,7 +106,7 @@ pub struct CodePlanArchiveDocument {
     pub prompt_hash: String,
     pub session_id: String,
     pub entry_id: String,
-    /// Monotonic per `(prompt_hash, session_id)` Code Mode plan index; drives `plasm://.../p/{n}`.
+    /// Monotonic per `(prompt_hash, session_id)` program-plan index; drives `plasm://.../p/{n}`.
     pub plan_index: u64,
     pub plan_handle: String,
     pub name: String,
@@ -1066,17 +1066,17 @@ pub fn parse_code_plan_handle(handle: &str) -> Option<u64> {
     rest.parse().ok()
 }
 
-/// Short LLM-facing Code Mode plan URI; resolve via bound execute session.
+/// Short LLM-facing program-plan URI; resolve via bound execute session.
 pub fn plasm_short_code_plan_uri(plan_index: u64) -> String {
     format!("plasm://p/{plan_index}")
 }
 
-/// Short Code Mode plan URI scoped to an MCP logical session slot or UUID.
+/// Short program-plan URI scoped to an MCP logical session slot or UUID.
 pub fn plasm_session_short_plan_uri(session_segment: &str, plan_index: u64) -> String {
     format!("plasm://session/{session_segment}/p/{plan_index}")
 }
 
-/// Canonical URI for a permanent Code Mode plan archive document.
+/// Canonical URI for a permanent program plan archive document.
 pub fn plasm_code_plan_resource_uri(prompt_hash: &str, session_id: &str, plan_id: &Uuid) -> String {
     format!("plasm://execute/{prompt_hash}/{session_id}/plan/{plan_id}")
 }

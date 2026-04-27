@@ -826,6 +826,12 @@ pub struct SymbolMap {
 }
 
 impl SymbolMap {
+    /// If `token` is a session `e#` symbol (e.g. `e1` from the DOMAIN table), return the canonical entity name.
+    #[inline]
+    pub fn resolve_session_entity_symbol(&self, token: &str) -> Option<String> {
+        self.sym_to_entity.get(token).cloned()
+    }
+
     /// Build maps for all entities in `full_entities` (slice order defines `e1`, `e2`, …).
     ///
     /// This is a thin wrapper around [`DomainExposureSession::new`] + [`DomainExposureSession::to_symbol_map`]:

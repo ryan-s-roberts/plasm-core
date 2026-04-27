@@ -4,12 +4,12 @@
 //! the executable leaf language; this module only recognizes local labels, a small set of
 //! collection transforms, and final response roots.
 
-use crate::code_mode_plan::{
+use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanNodeKind, PlanValue,
     QualifiedEntityKey, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 use crate::execute_session::ExecuteSession;
-use crate::mcp_plasm_code::parse_parsed_expr_for_session;
+use crate::plasm_plan_run::parse_parsed_expr_for_session;
 use plasm_core::Expr;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,13 +24,14 @@ struct DagNode {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum DagNodeSource {
     Surface {
         parsed: plasm_core::expr_parser::ParsedExpr,
         kind: PlanNodeKind,
         qualified_entity: QualifiedEntityKey,
         effect_class: EffectClass,
-        result_shape: crate::code_mode_plan::ResultShape,
+        result_shape: crate::plasm_plan::ResultShape,
         uses_result: Vec<serde_json::Value>,
     },
     Data(PlanValue),
@@ -144,10 +145,44 @@ pub fn compile_plasm_dag_to_plan(
     let nodes = state
         .nodes
         .iter()
-        .map(|node| node_to_json(node))
+        .map(node_to_json)
         .collect::<Result<Vec<_>, _>>()?;
     let return_value = if roots.len() == 1 {
         json!({ "kind": "node", "node": roots[0] })
+    } else {
+        json!({ "kind": "parallel", "nodes": roots })
+    };
+    Ok(json!({
+        "version": 1,
+        "kind": "program",
+        "name": name,
+        "nodes": nodes,
+        "return": return_value,
+        "metadata": { "language": "plasm-dag" }
+    }))
+}
+
+/// One line of surface Plasm (or `a, b` at top level) as a one-`return` program plan — same shape as
+/// [`compile_plasm_dag_to_plan`], so the MCP and HTTP runtimes can always execute through the plan runner.
+pub fn compile_plasm_surface_line_to_plan(
+    session: &ExecuteSession,
+    name: &str,
+    line: &str,
+) -> Result<serde_json::Value, String> {
+    let mut state = CompileState::default();
+    let trimmed = line.trim();
+    let as_return = trimmed.strip_prefix("return ").unwrap_or(trimmed);
+    let roots = split_return_list(as_return, &mut state, session)?;
+    if roots.is_empty() {
+        return Err("expression is empty".to_string());
+    }
+    let nodes = state
+        .nodes
+        .iter()
+        .map(node_to_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    let return_value = if roots.len() == 1 {
+        json!({ "kind": "node", "node": &roots[0] })
     } else {
         json!({ "kind": "parallel", "nodes": roots })
     };
@@ -380,6 +415,20 @@ fn compile_surface_node(
     id: &str,
     expr: &str,
 ) -> Result<DagNode, String> {
+    if let Some(inner) = expr.trim().strip_suffix(".singleton()") {
+        let base = compile_surface_node(session, state, id, inner.trim())?;
+        return Ok(DagNode {
+            singleton: true,
+            ..base
+        });
+    }
+    if let Some((inner, n)) = parse_unary_call(expr, "page_size")? {
+        let base = compile_surface_node(session, state, id, inner.trim())?;
+        return Ok(DagNode {
+            page_size: Some(n),
+            ..base
+        });
+    }
     let (rewritten, uses) = rewrite_template_expr(expr, state, None)?;
     let parsed = parse_parsed_expr_for_session(session, &rewritten)
         .map_err(|e| format!("Plasm-DAG `{id}` expression parse: {e}"))?;
@@ -436,6 +485,9 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
                 obj["ir"] = ir;
             } else {
                 obj["ir_template"] = ir;
+            }
+            if let Some(n) = node.page_size {
+                obj["page_size"] = json!(n);
             }
             Ok(obj)
         }
@@ -597,7 +649,7 @@ fn split_assignment(line: &str) -> Option<(&str, &str)> {
 }
 
 fn split_arrow(line: &str) -> Result<Option<(&str, &str)>, String> {
-    Ok(split_token_top_level(line, "=>")?)
+    split_token_top_level(line, "=>")
 }
 
 fn split_token_top_level<'a>(
@@ -775,7 +827,7 @@ fn parse_field_list(fields: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-fn parse_aggregates(args: &str) -> Result<Vec<crate::code_mode_plan::AggregateSpec>, String> {
+fn parse_aggregates(args: &str) -> Result<Vec<crate::plasm_plan::AggregateSpec>, String> {
     split_top_level(args, ',')?
         .into_iter()
         .map(|raw| {
@@ -785,9 +837,9 @@ fn parse_aggregates(args: &str) -> Result<Vec<crate::code_mode_plan::AggregateSp
             let name = OutputName::new(name.trim().to_string())?;
             let rhs = rhs.trim();
             if rhs == "count" {
-                return Ok(crate::code_mode_plan::AggregateSpec {
+                return Ok(crate::plasm_plan::AggregateSpec {
                     name,
-                    function: crate::code_mode_plan::AggregateFunction::Count,
+                    function: crate::plasm_plan::AggregateFunction::Count,
                     field: None,
                 });
             }
@@ -805,7 +857,7 @@ fn parse_aggregates(args: &str) -> Result<Vec<crate::code_mode_plan::AggregateSp
                 "max" => AggregateFunction::Max,
                 other => return Err(format!("unknown aggregate function `{other}`")),
             };
-            Ok(crate::code_mode_plan::AggregateSpec {
+            Ok(crate::plasm_plan::AggregateSpec {
                 name,
                 function,
                 field: Some(FieldPath::from_dotted(field.trim())?),
@@ -1051,7 +1103,7 @@ fn infer_surface_contract(
         PlanNodeKind,
         QualifiedEntityKey,
         EffectClass,
-        crate::code_mode_plan::ResultShape,
+        crate::plasm_plan::ResultShape,
     ),
     String,
 > {
@@ -1083,7 +1135,7 @@ fn infer_surface_contract_from_expr(
         PlanNodeKind,
         String,
         EffectClass,
-        crate::code_mode_plan::ResultShape,
+        crate::plasm_plan::ResultShape,
     ),
     String,
 > {
@@ -1092,43 +1144,43 @@ fn infer_surface_contract_from_expr(
             PlanNodeKind::Query,
             q.entity.as_str().to_string(),
             EffectClass::Read,
-            crate::code_mode_plan::ResultShape::List,
+            crate::plasm_plan::ResultShape::List,
         ),
         Expr::Get(g) => (
             PlanNodeKind::Get,
             g.reference.entity_type.as_str().to_string(),
             EffectClass::Read,
-            crate::code_mode_plan::ResultShape::Single,
+            crate::plasm_plan::ResultShape::Single,
         ),
         Expr::Create(c) => (
             PlanNodeKind::Create,
             c.entity.as_str().to_string(),
             EffectClass::Write,
-            crate::code_mode_plan::ResultShape::MutationResult,
+            crate::plasm_plan::ResultShape::MutationResult,
         ),
         Expr::Delete(d) => (
             PlanNodeKind::Delete,
             d.target.entity_type.as_str().to_string(),
             EffectClass::Write,
-            crate::code_mode_plan::ResultShape::SideEffectAck,
+            crate::plasm_plan::ResultShape::SideEffectAck,
         ),
         Expr::Invoke(i) => (
             PlanNodeKind::Action,
             i.target.entity_type.as_str().to_string(),
             EffectClass::SideEffect,
-            crate::code_mode_plan::ResultShape::SideEffectAck,
+            crate::plasm_plan::ResultShape::SideEffectAck,
         ),
         Expr::Chain(_) => (
             PlanNodeKind::Query,
             "Chain".to_string(),
             EffectClass::Read,
-            crate::code_mode_plan::ResultShape::List,
+            crate::plasm_plan::ResultShape::List,
         ),
         Expr::Page(_) => (
             PlanNodeKind::Query,
             "__page__".to_string(),
             EffectClass::Read,
-            crate::code_mode_plan::ResultShape::Page,
+            crate::plasm_plan::ResultShape::Page,
         ),
     };
     Ok((kind, entity, effect, shape))
@@ -1153,7 +1205,7 @@ fn schema_from_output_fields<'a>(
 
 fn schema_from_aggregates(
     entity: &str,
-    aggregates: &[crate::code_mode_plan::AggregateSpec],
+    aggregates: &[crate::plasm_plan::AggregateSpec],
 ) -> SyntheticResultSchema {
     SyntheticResultSchema {
         entity: Some(entity.to_string()),
@@ -1194,7 +1246,7 @@ fn looks_like_plasm_effect_template(rhs: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp_plasm_code::evaluate_code_mode_plan_dry;
+    use crate::plasm_plan_run::evaluate_plasm_plan_dry;
     use plasm_core::{load_schema, CgsContext, DomainExposureSession};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1243,8 +1295,18 @@ doc = top[id,name] <<MD
 MD
 doc"#;
         let plan = compile_plasm_dag_to_plan(&session, "native", source).expect("compile");
-        let dry = evaluate_code_mode_plan_dry(&session, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 3);
         assert_eq!(plan["nodes"].as_array().map(Vec::len), Some(3));
+    }
+
+    #[test]
+    fn surface_line_plan_compiles_e1_with_page_size() {
+        let session = test_session();
+        let plan =
+            compile_plasm_surface_line_to_plan(&session, "t", "e1.page_size(100)").expect("compile");
+        assert_eq!(plan["nodes"].as_array().map(|a| a.len()), Some(1));
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert!(!dry.node_results.is_empty());
     }
 }

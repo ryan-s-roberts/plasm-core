@@ -186,7 +186,7 @@ pub async fn serve_http_listener(
         "  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)"
     );
     eprintln!(
-        "  GET  /execute/:prompt_hash/:session/plans/:plan_id — archived Code Mode plan JSON (or /plans/by-index/:n)"
+        "  GET  /execute/:prompt_hash/:session/plans/:plan_id — archived Plasm program plan JSON (or /plans/by-index/:n)"
     );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

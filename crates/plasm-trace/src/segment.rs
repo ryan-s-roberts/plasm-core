@@ -16,7 +16,7 @@ pub struct PlasmLineTraceMeta {
     pub api_entry_id: Option<String>,
 }
 
-/// Structured reference to a run snapshot produced while executing an archived Code Mode plan.
+/// Structured reference to a run snapshot produced while executing an archived Plasm program plan.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CodePlanRunArtifactRef {
     pub run_id: String,

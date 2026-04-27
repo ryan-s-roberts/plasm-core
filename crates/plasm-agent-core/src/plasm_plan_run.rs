@@ -1,7 +1,10 @@
-//! Code Mode MCP helpers: parse Plasm effect plans and optional QuickJS bootstrap string.
+//! Parse, validate, dry-run, and execute Plasm effect [`Plan`](crate::plasm_plan::Plan) programs (HTTP + MCP).
 
 use plasm_core::cgs_federation::FederationDispatch;
-use plasm_core::expr_parser::{parse, parse_with_cgs_layers, ParseError, ParsedExpr};
+use plasm_core::entity_slices_for_render;
+use plasm_core::expr_parser::{parse_with_cgs_layers, ParseError, ParsedExpr};
+use plasm_core::FocusSpec;
+use plasm_core::SymbolMap;
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
@@ -11,7 +14,7 @@ use plasm_core::DomainExposureSession;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
-use crate::code_mode_plan::{
+use crate::plasm_plan::{
     parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
     ComputeTemplate, EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate,
     PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
@@ -23,8 +26,8 @@ use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    archive_code_mode_result_snapshot, execute_code_mode_parsed_expr,
-    publish_code_mode_result_steps, trace_record_code_mode_plasm_line, PublishedResultStep,
+    archive_plasm_result_snapshot, execute_plasm_parsed_expr,
+    publish_plasm_result_steps, trace_record_plasm_line, PublishedResultStep,
 };
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -40,26 +43,30 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 /// Parse a Plasm line to [`ParsedExpr`] (surface IR + optional projection) for the active session.
+///
+/// Uses the session [`plasm_core::DomainExposureSession`] symbol map when present (single- or
+/// multi-catalog) so `e#` / `p#` / `m#` DOMAIN symbols resolve. This must match
+/// [`crate::http_execute::parse_plasm_line`] (including optional pipeline expand) for non-DAG paths.
 pub fn parse_parsed_expr_for_session(
     session: &ExecuteSession,
     line: &str,
 ) -> Result<ParsedExpr, ParseError> {
-    if session.contexts_by_entry.len() <= 1 {
-        return parse(line, session.cgs.as_ref());
-    }
-    let exp = match session.domain_exposure.as_ref() {
-        Some(e) => e,
-        None => {
-            return parse(line, session.cgs.as_ref());
-        }
+    let layers: Vec<&CGS> = if session.contexts_by_entry.is_empty() {
+        vec![session.cgs.as_ref()]
+    } else {
+        session
+            .contexts_by_entry
+            .values()
+            .map(|c| c.cgs.as_ref())
+            .collect()
     };
-    let layers: Vec<&CGS> = session
-        .contexts_by_entry
-        .values()
-        .map(|c| c.cgs.as_ref())
-        .collect();
-    let sym = exp.to_symbol_map();
-    parse_with_cgs_layers(line, &layers, sym)
+    let sym_map = if let Some(exp) = session.domain_exposure.as_ref() {
+        exp.to_symbol_map()
+    } else {
+        let (full, _) = entity_slices_for_render(session.cgs.as_ref(), FocusSpec::All);
+        SymbolMap::build(session.cgs.as_ref(), &full)
+    };
+    parse_with_cgs_layers(line, &layers, sym_map)
 }
 
 /// Type-check a parsed line against the session CGS (federated when multiple catalogs are loaded).
@@ -90,7 +97,7 @@ fn entry_scoped_execute_session(
     }
     let ctx = session.contexts_by_entry.get(&q.entry_id).ok_or_else(|| {
         format!(
-            "Code Mode node targets catalog {:?}, but that catalog is not loaded in this execute session",
+            "Plasm program node targets catalog {:?}, but that catalog is not loaded in this execute session",
             q.entry_id
         )
     })?;
@@ -169,16 +176,16 @@ pub fn parse_plasm_line_for_session(
 
 /// Optional MCP `plasm` run hooks: meta index, distributed trace, hub sink. Pass when
 /// `run: true` and the caller must match the MCP `execute` tool (same as batch `plasm` tracing).
-pub struct CodeModePlasmRunHooks<'a> {
+pub struct PlasmPlanRunHooks<'a> {
     pub meta_index: &'a mut PlasmMetaIndex,
     pub trace: PlasmTraceContext,
     pub sink: McpPlasmTraceSink,
 }
 
-/// Outcome of [`run_code_mode_plan`]: the same `node_results` / optional run payload shape as the MCP
+/// Outcome of [`run_plasm_plan`]: the same `node_results` / optional run payload shape as the MCP
 /// `execute` tool (fenced JSON), without Markdown framing.
 #[derive(Debug)]
-pub struct CodeModePlanRunResult {
+pub struct PlasmPlanRunResult {
     pub version: serde_json::Value,
     /// One entry per `plan.nodes[]` with `ir`, `simulation`, and optional `id`.
     pub node_results: Vec<serde_json::Value>,
@@ -189,9 +196,9 @@ pub struct CodeModePlanRunResult {
     pub run_plasm_meta: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Dry-run a code-mode plan: validate, type-check, and render simulation JSON per node.
+/// Dry-run a program plan: validate, type-check, and render simulation JSON per node.
 #[derive(Debug)]
-pub struct DryCodeModePlanEvaluation {
+pub struct DryPlasmPlanEvaluation {
     pub version: serde_json::Value,
     pub name: Option<String>,
     plan: Plan<ValidatedPlanState>,
@@ -203,14 +210,14 @@ pub struct DryCodeModePlanEvaluation {
     pub graph_summary: serde_json::Value,
 }
 
-impl DryCodeModePlanEvaluation {
+impl DryPlasmPlanEvaluation {
     pub fn validated_plan(&self) -> &Plan<ValidatedPlanState> {
         &self.plan
     }
 }
 
 /// Optional archive/provenance fields shown at the top of compact dry-run text.
-pub struct CodePlanDryRunTextMeta<'a> {
+pub struct PlasmPlanDryRunTextMeta<'a> {
     pub plan_name: Option<&'a str>,
     pub plan_handle: &'a str,
     pub plan_uri: &'a str,
@@ -219,42 +226,42 @@ pub struct CodePlanDryRunTextMeta<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodeModeApprovalDecision {
+enum PlasmPlanApprovalDecision {
     Approved,
 }
 
 #[derive(Debug, Clone)]
-struct CodeModeApprovalReceipt {
-    decision: CodeModeApprovalDecision,
+struct PlasmPlanApprovalReceipt {
+    decision: PlasmPlanApprovalDecision,
     policy: &'static str,
     gate: serde_json::Value,
 }
 
-/// Host-owned approval policy for Code Mode write/side-effect nodes.
+/// Host-owned approval policy for program-plan write/side-effect nodes.
 ///
-/// The current product default is intentionally automatic so Code Mode can execute mutating plans
+/// The current product default is intentionally automatic so mutating plans can run
 /// while the real user/tenant approval surface is built above this boundary.
 #[derive(Debug, Clone)]
-struct CodeModeApprovalPolicy {
-    mode: CodeModeApprovalMode,
+struct PlasmPlanApprovalPolicy {
+    mode: PlasmPlanApprovalMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodeModeApprovalMode {
+enum PlasmPlanApprovalMode {
     AutoApprove,
 }
 
-impl CodeModeApprovalPolicy {
+impl PlasmPlanApprovalPolicy {
     fn automatic() -> Self {
         Self {
-            mode: CodeModeApprovalMode::AutoApprove,
+            mode: PlasmPlanApprovalMode::AutoApprove,
         }
     }
 
-    fn review(&self, gate: serde_json::Value) -> CodeModeApprovalReceipt {
+    fn review(&self, gate: serde_json::Value) -> PlasmPlanApprovalReceipt {
         match self.mode {
-            CodeModeApprovalMode::AutoApprove => CodeModeApprovalReceipt {
-                decision: CodeModeApprovalDecision::Approved,
+            PlasmPlanApprovalMode::AutoApprove => PlasmPlanApprovalReceipt {
+                decision: PlasmPlanApprovalDecision::Approved,
                 policy: "host.auto_approve",
                 gate,
             },
@@ -262,20 +269,21 @@ impl CodeModeApprovalPolicy {
     }
 }
 
-/// Parse, validate, and dry-run a typed code-mode `Plan`.
-pub(crate) fn evaluate_code_mode_plan_dry(
+/// Parse, validate, and dry-run a typed `Plan` (used from unit tests; see `run_plasm_plan` for production).
+#[cfg(test)]
+pub(crate) fn evaluate_plasm_plan_dry(
     es: &ExecuteSession,
     plan: &serde_json::Value,
-) -> Result<DryCodeModePlanEvaluation, String> {
+) -> Result<DryPlasmPlanEvaluation, String> {
     let plan = parse_plan_value(plan)?;
     let validated = validate_plan_artifact(&plan)?;
-    evaluate_validated_code_mode_plan_dry(es, &validated)
+    evaluate_validated_plasm_plan_dry(es, &validated)
 }
 
-pub fn evaluate_validated_code_mode_plan_dry(
+pub fn evaluate_validated_plasm_plan_dry(
     es: &ExecuteSession,
     validated: &ValidatedPlan,
-) -> Result<DryCodeModePlanEvaluation, String> {
+) -> Result<DryPlasmPlanEvaluation, String> {
     let plan = validated.artifact();
     let version = serde_json::json!(plan.version);
     let mut out = Vec::new();
@@ -360,7 +368,7 @@ pub fn evaluate_validated_code_mode_plan_dry(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(i, n));
     }
-    Ok(DryCodeModePlanEvaluation {
+    Ok(DryPlasmPlanEvaluation {
         version,
         name: plan.name.clone(),
         plan: plan.clone(),
@@ -378,9 +386,9 @@ pub fn evaluate_validated_code_mode_plan_dry(
 }
 
 /// Render the canonical human-facing dry-run form: compact topology, roots, approvals, and returns.
-pub fn render_code_mode_plan_dry_text(
-    dry: &DryCodeModePlanEvaluation,
-    archive: Option<CodePlanDryRunTextMeta<'_>>,
+pub fn render_plasm_plan_dry_text(
+    dry: &DryPlasmPlanEvaluation,
+    archive: Option<PlasmPlanDryRunTextMeta<'_>>,
 ) -> String {
     let mut out = String::new();
     let plan = dry.validated_plan();
@@ -401,7 +409,7 @@ pub fn render_code_mode_plan_dry_text(
     let boundedness_facts = json_string_array(summary.get("boundedness_facts"));
     let staged = dry.staged_nodes.len();
 
-    let _ = writeln!(out, "code-plan dry-run");
+    let _ = writeln!(out, "plasm-program dry-run");
     let _ = writeln!(out, "name: {name}");
     if let Some(a) = archive {
         let _ = writeln!(out, "handle: {} ({})", a.plan_handle, a.plan_uri);
@@ -496,7 +504,7 @@ pub fn render_code_mode_plan_dry_text(
 
 /// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
 /// compact dry-run text, so clients do not have to parse Markdown to draw plan topology.
-pub fn code_mode_plan_dag_json(dry: &DryCodeModePlanEvaluation) -> serde_json::Value {
+pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
     let plan = dry.validated_plan();
     let nodes = plan
         .nodes
@@ -643,14 +651,14 @@ fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
     format!("{} {} <= {}", render_kind(node.kind), entity, expr)
 }
 
-fn render_plan_expr_ir(ir: &crate::code_mode_plan::ValidatedPlanExprIr) -> String {
+fn render_plan_expr_ir(ir: &crate::plasm_plan::ValidatedPlanExprIr) -> String {
     ir.display_expr
         .clone()
         .unwrap_or_else(|| crate::expr_display::expr_display(&ir.expr))
 }
 
 fn render_plan_expr_template(
-    template: &crate::code_mode_plan::ValidatedPlanExprTemplate,
+    template: &crate::plasm_plan::ValidatedPlanExprTemplate,
 ) -> String {
     template
         .display_expr
@@ -658,7 +666,7 @@ fn render_plan_expr_template(
         .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
 }
 
-fn render_effect_template_expr(template: &crate::code_mode_plan::EffectTemplate) -> String {
+fn render_effect_template_expr(template: &crate::plasm_plan::EffectTemplate) -> String {
     if !template.expr_template.trim().is_empty() {
         template.expr_template.clone()
     } else {
@@ -699,10 +707,10 @@ fn render_data_inputs(inputs: &[ValidatedPlanDataInput]) -> Vec<String> {
         .collect()
 }
 
-fn render_input_cardinality(proof: crate::code_mode_plan::InputCardinalityProof) -> &'static str {
+fn render_input_cardinality(proof: crate::plasm_plan::InputCardinalityProof) -> &'static str {
     match proof {
-        crate::code_mode_plan::InputCardinalityProof::StaticSingleton => "static-singleton",
-        crate::code_mode_plan::InputCardinalityProof::RuntimeCheckedSingleton => {
+        crate::plasm_plan::InputCardinalityProof::StaticSingleton => "static-singleton",
+        crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {
             "runtime-checked-singleton"
         }
     }
@@ -761,7 +769,7 @@ fn render_compute_template(compute: &ComputeTemplate) -> String {
     }
 }
 
-fn render_aggregates(aggregates: &[crate::code_mode_plan::AggregateSpec]) -> String {
+fn render_aggregates(aggregates: &[crate::plasm_plan::AggregateSpec]) -> String {
     aggregates
         .iter()
         .map(|agg| {
@@ -780,7 +788,7 @@ fn render_aggregates(aggregates: &[crate::code_mode_plan::AggregateSpec]) -> Str
         .join(", ")
 }
 
-fn render_predicate(predicate: &crate::code_mode_plan::PlanPredicate) -> String {
+fn render_predicate(predicate: &crate::plasm_plan::PlanPredicate) -> String {
     format!(
         "{}{}{}",
         predicate.field_path.join("."),
@@ -928,14 +936,14 @@ fn render_effect_class(effect: EffectClass) -> &'static str {
     }
 }
 
-fn render_result_shape(shape: crate::code_mode_plan::ResultShape) -> &'static str {
+fn render_result_shape(shape: crate::plasm_plan::ResultShape) -> &'static str {
     match shape {
-        crate::code_mode_plan::ResultShape::List => "list",
-        crate::code_mode_plan::ResultShape::Single => "single",
-        crate::code_mode_plan::ResultShape::MutationResult => "mutation_result",
-        crate::code_mode_plan::ResultShape::SideEffectAck => "side_effect_ack",
-        crate::code_mode_plan::ResultShape::Page => "page",
-        crate::code_mode_plan::ResultShape::Artifact => "artifact",
+        crate::plasm_plan::ResultShape::List => "list",
+        crate::plasm_plan::ResultShape::Single => "single",
+        crate::plasm_plan::ResultShape::MutationResult => "mutation_result",
+        crate::plasm_plan::ResultShape::SideEffectAck => "side_effect_ack",
+        crate::plasm_plan::ResultShape::Page => "page",
+        crate::plasm_plan::ResultShape::Artifact => "artifact",
     }
 }
 
@@ -949,17 +957,17 @@ fn render_aggregate_function(function: AggregateFunction) -> &'static str {
     }
 }
 
-fn render_predicate_op(op: crate::code_mode_plan::PlanPredicateOp) -> &'static str {
+fn render_predicate_op(op: crate::plasm_plan::PlanPredicateOp) -> &'static str {
     match op {
-        crate::code_mode_plan::PlanPredicateOp::Eq => "=",
-        crate::code_mode_plan::PlanPredicateOp::Ne => "!=",
-        crate::code_mode_plan::PlanPredicateOp::Lt => "<",
-        crate::code_mode_plan::PlanPredicateOp::Lte => "<=",
-        crate::code_mode_plan::PlanPredicateOp::Gt => ">",
-        crate::code_mode_plan::PlanPredicateOp::Gte => ">=",
-        crate::code_mode_plan::PlanPredicateOp::Contains => "~",
-        crate::code_mode_plan::PlanPredicateOp::In => " in ",
-        crate::code_mode_plan::PlanPredicateOp::Exists => " exists ",
+        crate::plasm_plan::PlanPredicateOp::Eq => "=",
+        crate::plasm_plan::PlanPredicateOp::Ne => "!=",
+        crate::plasm_plan::PlanPredicateOp::Lt => "<",
+        crate::plasm_plan::PlanPredicateOp::Lte => "<=",
+        crate::plasm_plan::PlanPredicateOp::Gt => ">",
+        crate::plasm_plan::PlanPredicateOp::Gte => ">=",
+        crate::plasm_plan::PlanPredicateOp::Contains => "~",
+        crate::plasm_plan::PlanPredicateOp::In => " in ",
+        crate::plasm_plan::PlanPredicateOp::Exists => " exists ",
     }
 }
 
@@ -990,7 +998,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
         if let Some(approval) = inferred_node_approval(n) {
             approval_gates.push(approval);
         }
-        if matches!(n.result_shape(), crate::code_mode_plan::ResultShape::List)
+        if matches!(n.result_shape(), crate::plasm_plan::ResultShape::List)
             && n.effect_class() == EffectClass::Read
             && node_dependencies(n).is_empty()
         {
@@ -1059,11 +1067,11 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
 }
 
 fn render_relation_cardinality(
-    cardinality: crate::code_mode_plan::RelationCardinality,
+    cardinality: crate::plasm_plan::RelationCardinality,
 ) -> &'static str {
     match cardinality {
-        crate::code_mode_plan::RelationCardinality::One => "one",
-        crate::code_mode_plan::RelationCardinality::Many => "many",
+        crate::plasm_plan::RelationCardinality::One => "one",
+        crate::plasm_plan::RelationCardinality::Many => "many",
     }
 }
 
@@ -1247,7 +1255,7 @@ fn ensure_surface_expr_matches_plan_kind(
             "plan.nodes[{index}] is kind search but expression resolved capability {name:?} with kind {other:?}"
         )),
         (PlanNodeKind::Query, CapabilityKind::Search) => Err(format!(
-            "plan.nodes[{index}] is kind query but expression resolved search capability {name:?}; use the search facade"
+            "plan.nodes[{index}] is kind query but expression resolved search capability {name:?}; use a `search` plan node (kind `search`) or a non-search query per DOMAIN"
         )),
         _ => Ok(()),
     }
@@ -1255,7 +1263,7 @@ fn ensure_surface_expr_matches_plan_kind(
 
 fn ensure_relation_expr_matches_plan(
     es: &ExecuteSession,
-    relation: &crate::code_mode_plan::ValidatedRelationTraversalNode,
+    relation: &crate::plasm_plan::ValidatedRelationTraversalNode,
     pe: &ParsedExpr,
     index: usize,
 ) -> Result<(), String> {
@@ -1299,8 +1307,8 @@ fn ensure_relation_expr_matches_plan(
         ));
     }
     let expected_cardinality = match schema_relation.cardinality {
-        plasm_core::Cardinality::One => crate::code_mode_plan::RelationCardinality::One,
-        plasm_core::Cardinality::Many => crate::code_mode_plan::RelationCardinality::Many,
+        plasm_core::Cardinality::One => crate::plasm_plan::RelationCardinality::One,
+        plasm_core::Cardinality::Many => crate::plasm_plan::RelationCardinality::Many,
     };
     if relation.relation.cardinality != expected_cardinality {
         return Err(format!(
@@ -1464,7 +1472,7 @@ fn validated_inputs_json(inputs: &[ValidatedPlanDataInput]) -> Vec<serde_json::V
 /// Raw MCP ingress wrapper. Validation happens once, then execution proceeds through the
 /// proof-bearing [`ValidatedPlan`] core.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_code_mode_plan(
+pub(crate) async fn run_plasm_plan(
     es: &ExecuteSession,
     st: &PlasmHostState,
     _principal: Option<&TenantPrincipal>,
@@ -1472,26 +1480,26 @@ pub(crate) async fn run_code_mode_plan(
     session_id: &str,
     plan: &serde_json::Value,
     run: bool,
-    mcp_plasm: Option<CodeModePlasmRunHooks<'_>>,
-) -> Result<CodeModePlanRunResult, String> {
+    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+) -> Result<PlasmPlanRunResult, String> {
     let plan_typed = parse_plan_value(plan)?;
     let validated = validate_plan_artifact(&plan_typed)?;
-    run_validated_code_mode_plan(es, st, prompt_hash, session_id, &validated, run, mcp_plasm).await
+    run_validated_plasm_plan(es, st, prompt_hash, session_id, &validated, run, mcp_tool_hooks).await
 }
 
-/// Code-mode / program-synthesis **plan** execution over a proof-bearing validated artifact.
-pub async fn run_validated_code_mode_plan(
+/// Plasm program **plan** execution over a proof-bearing validated artifact.
+pub async fn run_validated_plasm_plan(
     es: &ExecuteSession,
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
     validated: &ValidatedPlan,
     run: bool,
-    mcp_plasm: Option<CodeModePlasmRunHooks<'_>>,
-) -> Result<CodeModePlanRunResult, String> {
-    let dry = evaluate_validated_code_mode_plan_dry(es, validated)?;
+    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+) -> Result<PlasmPlanRunResult, String> {
+    let dry = evaluate_validated_plasm_plan_dry(es, validated)?;
     if !run {
-        return Ok(CodeModePlanRunResult {
+        return Ok(PlasmPlanRunResult {
             version: dry.version,
             node_results: dry.node_results,
             graph_summary: dry.graph_summary,
@@ -1499,7 +1507,16 @@ pub async fn run_validated_code_mode_plan(
             run_plasm_meta: None,
         });
     }
-    run_validated_plan_phased(es, st, prompt_hash, session_id, validated, dry, mcp_plasm).await
+    run_validated_plan_phased(
+        es,
+        st,
+        prompt_hash,
+        session_id,
+        validated,
+        dry,
+        mcp_tool_hooks,
+    )
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -1517,7 +1534,7 @@ struct MaterializedNode {
 
 struct MaterializedInputRow {
     node: PlanNodeId,
-    proof: crate::code_mode_plan::InputCardinalityProof,
+    proof: crate::plasm_plan::InputCardinalityProof,
     row: serde_json::Value,
 }
 
@@ -1527,17 +1544,17 @@ async fn run_validated_plan_phased(
     prompt_hash: &str,
     session_id: &str,
     validated: &ValidatedPlan,
-    dry: DryCodeModePlanEvaluation,
-    mcp_plasm: Option<CodeModePlasmRunHooks<'_>>,
-) -> Result<CodeModePlanRunResult, String> {
+    dry: DryPlasmPlanEvaluation,
+    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+) -> Result<PlasmPlanRunResult, String> {
     let _ = prompt_hash;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
-    let approval_policy = CodeModeApprovalPolicy::automatic();
-    let mut approval_receipts: Vec<CodeModeApprovalReceipt> = Vec::new();
+    let approval_policy = PlasmPlanApprovalPolicy::automatic();
+    let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
     let mut trace = None;
     let mut sink = None;
     let mut meta_index = None;
-    if let Some(hooks) = mcp_plasm {
+    if let Some(hooks) = mcp_tool_hooks {
         trace = Some(hooks.trace);
         sink = Some(hooks.sink);
         meta_index = Some(hooks.meta_index);
@@ -1550,7 +1567,7 @@ async fn run_validated_plan_phased(
         if let Some(gate) = inferred_node_approval(node) {
             let receipt = approval_policy.review(gate);
             match receipt.decision {
-                CodeModeApprovalDecision::Approved => approval_receipts.push(receipt),
+                PlasmPlanApprovalDecision::Approved => approval_receipts.push(receipt),
             }
         }
         let mat = match node {
@@ -1583,7 +1600,7 @@ async fn run_validated_plan_phased(
                     .unwrap_or("<ir>");
                 let scoped_es =
                     entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
-                let (parsed, result, artifact) = execute_code_mode_parsed_expr(
+                let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
                     st,
                     &scoped_es,
                     session_id,
@@ -1593,8 +1610,14 @@ async fn run_validated_plan_phased(
                     idx as i64,
                 )
                 .await?;
+                if let Some(cap) = surface.page_size {
+                    if result.entities.len() > cap {
+                        result.entities.truncate(cap);
+                        result.count = result.entities.len();
+                    }
+                }
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_code_mode_plasm_line(
+                    trace_record_plasm_line(
                         sink, idx, expr_label, &parsed, &result, &scoped_es,
                     )
                     .await;
@@ -1689,7 +1712,7 @@ async fn run_validated_plan_phased(
                     .display_expr
                     .as_deref()
                     .unwrap_or("<ir>");
-                let (parsed, result, artifact) = execute_code_mode_parsed_expr(
+                let (parsed, result, artifact) = execute_plasm_parsed_expr(
                     st,
                     es,
                     session_id,
@@ -1700,7 +1723,7 @@ async fn run_validated_plan_phased(
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_code_mode_plasm_line(sink, idx, expr_label, &parsed, &result, es)
+                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, es)
                         .await;
                 }
                 MaterializedNode {
@@ -1755,8 +1778,8 @@ async fn run_validated_plan_phased(
             artifact: mat.artifact.clone(),
         });
     }
-    let out = publish_code_mode_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
-    Ok(CodeModePlanRunResult {
+    let out = publish_plasm_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
+    Ok(PlasmPlanRunResult {
         version: dry.version,
         node_results: dry.node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
@@ -1767,7 +1790,7 @@ async fn run_validated_plan_phased(
 
 fn graph_summary_with_approval_receipts(
     mut graph_summary: serde_json::Value,
-    receipts: &[CodeModeApprovalReceipt],
+    receipts: &[PlasmPlanApprovalReceipt],
 ) -> serde_json::Value {
     if receipts.is_empty() {
         return graph_summary;
@@ -1777,7 +1800,7 @@ fn graph_summary_with_approval_receipts(
         .map(|r| {
             serde_json::json!({
                 "decision": match r.decision {
-                    CodeModeApprovalDecision::Approved => "approved",
+                    PlasmPlanApprovalDecision::Approved => "approved",
                 },
                 "policy": r.policy,
                 "gate": r.gate,
@@ -1844,7 +1867,7 @@ async fn materialize_synthetic_node(
         },
         request_fingerprints: request_fingerprints.clone(),
     };
-    let artifact = archive_code_mode_result_snapshot(
+    let artifact = archive_plasm_result_snapshot(
         st,
         es,
         session_id,
@@ -2007,7 +2030,7 @@ fn materialized_result_use_inputs(
             alias,
             MaterializedInputRow {
                 node,
-                proof: crate::code_mode_plan::InputCardinalityProof::RuntimeCheckedSingleton,
+                proof: crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton,
                 row,
             },
         );
@@ -2194,7 +2217,7 @@ async fn materialize_for_each_node(
             .get(row_index)
             .map(String::as_str)
             .unwrap_or("<ir>");
-        let (parsed, result, _artifact) = execute_code_mode_parsed_expr(
+        let (parsed, result, _artifact) = execute_plasm_parsed_expr(
             st,
             &scoped_es,
             session_id,
@@ -2205,7 +2228,7 @@ async fn materialize_for_each_node(
         )
         .await?;
         if let Some(sink) = sink {
-            trace_record_code_mode_plasm_line(
+            trace_record_plasm_line(
                 sink,
                 trace_line_index,
                 expr_label,
@@ -2237,7 +2260,7 @@ async fn materialize_for_each_node(
         stats,
         request_fingerprints,
     };
-    let artifact = archive_code_mode_result_snapshot(
+    let artifact = archive_plasm_result_snapshot(
         st,
         es,
         session_id,
@@ -2420,8 +2443,8 @@ fn eval_plan_value(value: &PlanValue, env: &PlanEvalEnv<'_>) -> Result<serde_jso
                 ));
             }
             match input.proof {
-                crate::code_mode_plan::InputCardinalityProof::StaticSingleton
-                | crate::code_mode_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
+                crate::plasm_plan::InputCardinalityProof::StaticSingleton
+                | crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
             }
             Ok(value_at_segments(&input.row, path)
                 .cloned()
@@ -2543,7 +2566,7 @@ fn value_at_segments<'a>(
     Some(cur)
 }
 
-fn predicate_matches(row: &serde_json::Value, pred: &crate::code_mode_plan::PlanPredicate) -> bool {
+fn predicate_matches(row: &serde_json::Value, pred: &crate::plasm_plan::PlanPredicate) -> bool {
     let Ok(path) = FieldPath::new(pred.field_path.clone()) else {
         return false;
     };
@@ -2557,29 +2580,29 @@ fn predicate_matches(row: &serde_json::Value, pred: &crate::code_mode_plan::Plan
         _ => return false,
     };
     match pred.op {
-        crate::code_mode_plan::PlanPredicateOp::Eq => lhs == rhs,
-        crate::code_mode_plan::PlanPredicateOp::Ne => lhs != rhs,
-        crate::code_mode_plan::PlanPredicateOp::Exists => !lhs.is_null(),
-        crate::code_mode_plan::PlanPredicateOp::Contains => lhs
+        crate::plasm_plan::PlanPredicateOp::Eq => lhs == rhs,
+        crate::plasm_plan::PlanPredicateOp::Ne => lhs != rhs,
+        crate::plasm_plan::PlanPredicateOp::Exists => !lhs.is_null(),
+        crate::plasm_plan::PlanPredicateOp::Contains => lhs
             .as_str()
             .zip(rhs.as_str())
             .map(|(l, r)| l.contains(r))
             .unwrap_or(false),
-        crate::code_mode_plan::PlanPredicateOp::In => rhs
+        crate::plasm_plan::PlanPredicateOp::In => rhs
             .as_array()
             .map(|items| items.iter().any(|item| item == lhs))
             .unwrap_or(false),
-        crate::code_mode_plan::PlanPredicateOp::Lt => json_number(lhs) < json_number(rhs),
-        crate::code_mode_plan::PlanPredicateOp::Lte => json_number(lhs) <= json_number(rhs),
-        crate::code_mode_plan::PlanPredicateOp::Gt => json_number(lhs) > json_number(rhs),
-        crate::code_mode_plan::PlanPredicateOp::Gte => json_number(lhs) >= json_number(rhs),
+        crate::plasm_plan::PlanPredicateOp::Lt => json_number(lhs) < json_number(rhs),
+        crate::plasm_plan::PlanPredicateOp::Lte => json_number(lhs) <= json_number(rhs),
+        crate::plasm_plan::PlanPredicateOp::Gt => json_number(lhs) > json_number(rhs),
+        crate::plasm_plan::PlanPredicateOp::Gte => json_number(lhs) >= json_number(rhs),
     }
 }
 
 fn group_rows(
     rows: &[serde_json::Value],
     key: &FieldPath,
-    aggregates: &[crate::code_mode_plan::AggregateSpec],
+    aggregates: &[crate::plasm_plan::AggregateSpec],
 ) -> Result<Vec<serde_json::Value>, String> {
     let mut groups: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
     for row in rows {
@@ -2600,7 +2623,7 @@ fn group_rows(
 
 fn aggregate_rows(
     rows: &[serde_json::Value],
-    aggregates: &[crate::code_mode_plan::AggregateSpec],
+    aggregates: &[crate::plasm_plan::AggregateSpec],
 ) -> Result<Vec<serde_json::Value>, String> {
     let refs = rows.iter().collect::<Vec<_>>();
     let mut obj = serde_json::Map::new();
@@ -2611,7 +2634,7 @@ fn aggregate_rows(
 fn append_aggregates(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     rows: &[&serde_json::Value],
-    aggregates: &[crate::code_mode_plan::AggregateSpec],
+    aggregates: &[crate::plasm_plan::AggregateSpec],
 ) -> Result<(), String> {
     for agg in aggregates {
         let value = match agg.function {
@@ -2862,8 +2885,8 @@ mod tests {
     fn duplicate_product_create_session() -> ExecuteSession {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = Arc::new(
-            load_schema(&root.join("../plasm-facade-gen/tests/fixtures/tiny"))
-                .expect("load facade tiny"),
+            load_schema(&root.join("tests/fixtures/scoped_create_tiny"))
+                .expect("load scoped_create_tiny"),
         );
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
@@ -2947,6 +2970,14 @@ mod tests {
         assert!(v.get("expr").is_some());
     }
 
+    /// `e#` is session-local (DOMAIN TSV); single-catalog + exposure must not parse `e1` as an entity *name*.
+    /// (`.page_size(n)` is Plasm-DAG surface sugar; the core line parser does not treat it as Plasm path syntax.)
+    #[test]
+    fn parse_resolves_e1_with_domain_exposure() {
+        let s = test_session();
+        let _ = parse_parsed_expr_for_session(&s, "e1").expect("e1 => first taught entity (Product)");
+    }
+
     #[test]
     fn dry_run_typechecks_product_query() {
         let s = test_session();
@@ -2969,7 +3000,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_matches_single_node() {
+    fn evaluate_plasm_plan_dry_matches_single_node() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -2986,13 +3017,13 @@ mod tests {
             }],
             "return": { "kind": "node", "node": "n0" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 1);
         assert!(dry.can_batch_run);
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_accepts_search_node() {
+    fn evaluate_plasm_plan_dry_accepts_search_node() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3009,13 +3040,13 @@ mod tests {
             }],
             "return": { "kind": "node", "node": "search" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert!(dry.can_batch_run);
         assert_eq!(dry.node_results[0]["kind"], "search");
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_typechecks_ir_not_display_text() {
+    fn evaluate_plasm_plan_dry_typechecks_ir_not_display_text() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3032,7 +3063,7 @@ mod tests {
             }],
             "return": { "kind": "node", "node": "n0" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(
             dry.node_results[0]["execution_contract"]["ir"]["entity"],
             "Product"
@@ -3040,7 +3071,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_rejects_relation_target_mismatch() {
+    fn evaluate_plasm_plan_dry_rejects_relation_target_mismatch() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3076,12 +3107,12 @@ mod tests {
             "return": { "kind": "node", "node": "bad_relation" }
         });
         let err =
-            evaluate_code_mode_plan_dry(&s, &plan).expect_err("relation target mismatch rejected");
+            evaluate_plasm_plan_dry(&s, &plan).expect_err("relation target mismatch rejected");
         assert!(err.contains("does not match CGS target"), "{err}");
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_typechecks_relation_node() {
+    fn evaluate_plasm_plan_dry_typechecks_relation_node() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3116,7 +3147,7 @@ mod tests {
             ],
             "return": { "kind": "node", "node": "category" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert!(!dry.can_batch_run);
         assert_eq!(
             dry.node_results[1]["simulation"]["kind"],
@@ -3125,7 +3156,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_accepts_runtime_checked_singleton_relation() {
+    fn evaluate_plasm_plan_dry_accepts_runtime_checked_singleton_relation() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3160,7 +3191,7 @@ mod tests {
             ],
             "return": { "kind": "node", "node": "category" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(
             dry.node_results[1]["simulation"]["kind"],
             "relation_traversal"
@@ -3168,7 +3199,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_accepts_github_relation_limit_aggregate() {
+    fn evaluate_plasm_plan_dry_accepts_github_relation_limit_aggregate() {
         let s = github_repository_commit_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3236,7 +3267,7 @@ mod tests {
             ],
             "return": { "kind": "node", "node": "n_commits" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(
             dry.node_results[1]["simulation"]["kind"],
             "relation_traversal"
@@ -3301,15 +3332,15 @@ mod tests {
             ],
             "return": { "kind": "parallel", "nodes": ["summary", "cards"] }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
-        let dag = code_mode_plan_dag_json(&dry);
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let dag = plasm_plan_dag_json(&dry);
         assert_eq!(dag["nodes"][0]["id"], "products");
         assert_eq!(dag["nodes"][1]["dependencies"][0], "products");
         assert_eq!(dag["edges"][0]["from"], "products");
         assert_eq!(dag["edges"][0]["to"], "summary");
-        let text = render_code_mode_plan_dry_text(
+        let text = render_plasm_plan_dry_text(
             &dry,
-            Some(CodePlanDryRunTextMeta {
+            Some(PlasmPlanDryRunTextMeta {
                 plan_name: None,
                 plan_handle: "p7",
                 plan_uri: "plasm://session/s0/p/7",
@@ -3320,7 +3351,7 @@ mod tests {
         insta::assert_snapshot!(
             text,
             @r###"
-code-plan dry-run
+plasm-program dry-run
 name: product-summary
 handle: p7 (plasm://session/s0/p/7)
 archive: plasm://execute/ph/s/plan/uuid
@@ -3341,8 +3372,8 @@ dag:
     uses: summary as product
 
 returns:
-- cards -> cards
-- summary -> summary
+- parallel[0] -> summary
+- parallel[1] -> cards
 "###
         );
         assert!(!text.contains("node_results"));
@@ -3375,7 +3406,7 @@ returns:
             InputAlias::new("moveFacts".to_string()).expect("alias"),
             MaterializedInputRow {
                 node: PlanNodeId::new("moveFacts".to_string()).expect("node id"),
-                proof: crate::code_mode_plan::InputCardinalityProof::StaticSingleton,
+                proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
                 row: serde_json::json!({ "move": "thunderbolt", "power": 90 }),
             },
         )]);
@@ -3459,7 +3490,7 @@ returns:
             InputAlias::new("doc".to_string()).expect("alias"),
             MaterializedInputRow {
                 node: PlanNodeId::new("doc".to_string()).expect("node id"),
-                proof: crate::code_mode_plan::InputCardinalityProof::StaticSingleton,
+                proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
                 row: input,
             },
         )]);
@@ -3513,12 +3544,12 @@ returns:
             ],
             "return": { "kind": "node", "node": "cards" }
         });
-        let err = crate::code_mode_plan::validate_plan_value(&plan).expect_err("ambiguous input");
+        let err = crate::plasm_plan::validate_plan_value(&plan).expect_err("ambiguous input");
         assert!(err.contains("not statically singleton"), "{err}");
     }
 
     #[test]
-    fn evaluate_code_mode_plan_dry_reports_for_each_stage() {
+    fn evaluate_plasm_plan_dry_reports_for_each_stage() {
         let s = test_session();
         let plan = serde_json::json!({
             "version": 1,
@@ -3564,7 +3595,7 @@ returns:
             ],
             "return": { "kind": "parallel", "nodes": ["find", "label"] }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert!(!dry.can_batch_run);
         assert_eq!(dry.node_results.len(), 2);
         assert_eq!(dry.node_results[1]["simulation"]["kind"], "template_stage");
@@ -3686,10 +3717,10 @@ returns:
             ],
             "return": { "kind": "node", "node": "details" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(dry.staged_nodes, vec!["details (ForEach)"]);
         assert!(dry.execution_unsupported.is_empty());
-        let text = render_code_mode_plan_dry_text(&dry, None);
+        let text = render_plasm_plan_dry_text(&dry, None);
         assert!(
             text.contains("for_each products as product => Product(${product.id})"),
             "{text}"
@@ -3768,8 +3799,8 @@ returns:
             ],
             "return": { "kind": "node", "node": "createIssue" }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
-        let text = render_code_mode_plan_dry_text(&dry, None);
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let text = render_plasm_plan_dry_text(&dry, None);
         assert!(text.contains("approval: linear.Issue.create"), "{text}");
         assert!(!text.contains("approval: linear.Issue.\n"), "{text}");
     }
@@ -3820,7 +3851,7 @@ returns:
             ],
             "return": { "kind": "parallel", "nodes": ["find", "label"] }
         });
-        let dry = evaluate_code_mode_plan_dry(&s, &plan).expect("dry");
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert_eq!(
             dry.graph_summary["approval_gates"][0]["policy_key"],
             "acme.Product.label"
@@ -3859,7 +3890,7 @@ returns:
             "required": true,
             "policy_key": "acme.Product.create"
         });
-        let receipt = CodeModeApprovalPolicy::automatic().review(gate.clone());
+        let receipt = PlasmPlanApprovalPolicy::automatic().review(gate.clone());
         let summary = graph_summary_with_approval_receipts(serde_json::json!({}), &[receipt]);
 
         assert_eq!(summary["approval_receipts"][0]["decision"], "approved");

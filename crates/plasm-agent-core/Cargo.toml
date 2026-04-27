@@ -5,14 +5,11 @@ edition = "2021"
 readme = "README.md"
 
 [features]
-# Code Mode (Oxc + QuickJS) is opt-in for library consumers; OSS `plasm-agent` enables it by default.
 default = []
 # Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
 local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-compile/evm"]
-# Plasm Code Mode: [Oxc](https://oxc.rs/docs/guide/usage/transformer) TS→JS + [QuickJS](https://bellard.org/quickjs/) (`rquickjs`) for synthesized plans and tests (`code_mode` module; `tests/code_mode_kitchen_sink_e2e.rs`).
-code_mode = ["dep:oxc", "dep:rquickjs", "dep:plasm-facade-gen"]
 
 [lib]
 name = "plasm_agent_core"
@@ -20,7 +17,6 @@ path = "src/lib.rs"
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
-plasm-facade-gen = { path = "../plasm-facade-gen", optional = true }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm-trace = { path = "../plasm-trace" }
@@ -62,9 +58,6 @@ subtle = { workspace = true }
 auth-framework = { workspace = true }
 sqlx = { workspace = true, features = ["migrate", "chrono", "uuid"] }
 opentelemetry = { workspace = true }
-# Optional: enabled by `code_mode` (Oxc TS transform + QuickJS embedder).
-oxc = { workspace = true, optional = true }
-rquickjs = { workspace = true, optional = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
 
 [dev-dependencies]
@@ -76,8 +69,3 @@ serde = { workspace = true }
 serde_urlencoded = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 tower = { workspace = true }
-
-[[test]]
-name = "code_mode_kitchen_sink_e2e"
-path = "tests/code_mode_kitchen_sink_e2e.rs"
-required-features = ["code_mode"]

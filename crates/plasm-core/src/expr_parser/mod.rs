@@ -1570,12 +1570,16 @@ impl<'a> Parser<'a> {
                 return self.parse_page_invocation();
             }
         }
-        let mut entity: Option<String> = None;
-        for c in self.layers_slice() {
-            let e = c.canonical_entity_name(&raw).unwrap_or_else(|| raw.clone());
-            if c.get_entity(&e).is_some() {
-                entity = Some(e);
-                break;
+        let mut entity: Option<String> = self
+            .sym_map
+            .resolve_session_entity_symbol(&raw);
+        if entity.is_none() {
+            for c in self.layers_slice() {
+                let e = c.canonical_entity_name(&raw).unwrap_or_else(|| raw.clone());
+                if c.get_entity(&e).is_some() {
+                    entity = Some(e);
+                    break;
+                }
             }
         }
         if entity.is_none() {

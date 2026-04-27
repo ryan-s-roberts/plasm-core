@@ -28,8 +28,6 @@ use plasm_core::{
     symbol_tuning::FocusSpec,
     AuthScheme, CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
-#[cfg(feature = "code_mode")]
-use plasm_facade_gen::TypeScriptCodeArtifacts;
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
     CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, ExecutionSource,
@@ -169,7 +167,6 @@ pub struct ExecuteRunToolOutput {
     pub tool_meta: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-#[cfg(feature = "code_mode")]
 #[derive(Debug, Clone)]
 pub struct PublishedResultStep {
     pub name: Option<String>,
@@ -614,108 +611,6 @@ pub(crate) fn format_add_capabilities_wave_line(entry_id: &str, entities: &[Stri
 
 pub(crate) const ADD_CAPABILITIES_SESSION_REUSE_HINT: &str =
     "_New types added for this logical_session_ref; previously loaded types remain valid._";
-
-pub(crate) const CODE_MODE_PROGRAM_DISCIPLINE_HINT: &str =
-    "_Code Mode discipline: do not use evaluate/execute as a REPL or probe loop. Write one complete TypeScript program for the user goal, include all coordinated reads/computes/writes in that DAG, run evaluate_code_plan once to review the full dry-run, then execute that reviewed handle only when the whole plan is acceptable. Use discover_capabilities or plasm for schema discovery and one-off reads instead of many tiny Code Mode plans._";
-
-/// MCP `add_code_capabilities` text body: wave summaries plus the actual incremental TypeScript
-/// declaration fragments from `plasm_facade_gen::build_code_facade`.
-#[cfg(feature = "code_mode")]
-pub(crate) fn mcp_add_code_capabilities_markdown(
-    out: &ApplyCapabilitySeedsOutcome,
-    ts: &TypeScriptCodeArtifacts,
-) -> String {
-    let mut s = String::new();
-    if out.stale_execute_binding_recovered {
-        s.push_str(
-            "**Prior Code Mode session was missing or expired.** A new `(prompt_hash, session)` was opened; replace cached TypeScript declarations with the fragments below.\n\n",
-        );
-    }
-    for wave in &out.waves {
-        match wave.mode.as_str() {
-            "open" => {
-                if out.new_symbol_space
-                    && !out.stale_execute_binding_recovered
-                    && !wave.reused_session
-                {
-                    s.push_str("_New Code Mode session: load the TypeScript fragments below._\n\n");
-                }
-                s.push_str(&format_add_capabilities_wave_line(
-                    &wave.entry_id,
-                    &wave.entities,
-                ));
-                if wave.reused_session {
-                    s.push_str("\n\n_Session unchanged._\n");
-                }
-            }
-            "federate" => {
-                if wave
-                    .markdown_delta
-                    .contains("No new entities in this federated wave")
-                {
-                    s.push_str(&wave.markdown_delta);
-                    s.push('\n');
-                } else {
-                    s.push_str(&format_add_capabilities_wave_line(
-                        &wave.entry_id,
-                        &wave.entities,
-                    ));
-                }
-            }
-            "expand" => {
-                if wave.markdown_delta.contains("No new entities in this wave") {
-                    s.push_str("_No new entities in this wave (already exposed)._\n");
-                } else {
-                    s.push_str(&format_add_capabilities_wave_line(
-                        &wave.entry_id,
-                        &wave.entities,
-                    ));
-                }
-            }
-            _ => {
-                s.push_str(&format_add_capabilities_wave_line(
-                    &wave.entry_id,
-                    &wave.entities,
-                ));
-            }
-        }
-        if !s.ends_with("\n\n") {
-            s.push_str("\n\n");
-        }
-    }
-    s.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
-    s.push_str("\n\n");
-    append_code_mode_typescript_fragment(&mut s, "Code Mode prelude", &ts.agent_prelude);
-    append_code_mode_typescript_fragment(
-        &mut s,
-        "Code Mode namespace delta",
-        &ts.agent_namespace_body,
-    );
-    append_code_mode_typescript_fragment(
-        &mut s,
-        "Code Mode loaded API delta",
-        &ts.agent_loaded_apis,
-    );
-    if ts.declarations_unchanged {
-        s.push_str("_TypeScript declarations unchanged for this wave._\n");
-    }
-    if let Some(runtime) = ts.runtime_bootstrap_ref.as_deref() {
-        s.push_str(&format!("Runtime bootstrap: `{runtime}`\n"));
-    }
-    s
-}
-
-#[cfg(feature = "code_mode")]
-fn append_code_mode_typescript_fragment(out: &mut String, title: &str, body: &str) {
-    let body = body.trim();
-    if body.is_empty() {
-        return;
-    }
-    out.push_str(title);
-    out.push_str(":\n\n```typescript\n");
-    out.push_str(body);
-    out.push_str("\n```\n\n");
-}
 
 /// Wrap DOMAIN / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
 /// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
@@ -1953,7 +1848,6 @@ pub async fn execute_session_run_markdown(
     }
 }
 
-#[cfg(feature = "code_mode")]
 fn run_line_error_string(e: RunLineError) -> String {
     match e {
         RunLineError::Parse(d) | RunLineError::Normalize(d) | RunLineError::Projection(d) => d,
@@ -1963,8 +1857,7 @@ fn run_line_error_string(e: RunLineError) -> String {
     }
 }
 
-#[cfg(feature = "code_mode")]
-pub async fn execute_code_mode_plasm_line(
+pub async fn execute_plasm_plasm_line(
     st: &PlasmHostState,
     sess: &ExecuteSession,
     session_id: &str,
@@ -1981,8 +1874,7 @@ pub async fn execute_code_mode_plasm_line(
     .map_err(run_line_error_string)
 }
 
-#[cfg(feature = "code_mode")]
-pub async fn execute_code_mode_parsed_expr(
+pub async fn execute_plasm_parsed_expr(
     st: &PlasmHostState,
     sess: &ExecuteSession,
     session_id: &str,
@@ -2006,8 +1898,7 @@ pub async fn execute_code_mode_parsed_expr(
     .map_err(run_line_error_string)
 }
 
-#[cfg(feature = "code_mode")]
-pub async fn trace_record_code_mode_plasm_line(
+pub async fn trace_record_plasm_line(
     sink: &McpPlasmTraceSink,
     line_index: usize,
     line: &str,
@@ -2018,8 +1909,7 @@ pub async fn trace_record_code_mode_plasm_line(
     trace_record_plasm_line_batch(sink, line_index, line, parsed, result, sess).await;
 }
 
-#[cfg(feature = "code_mode")]
-pub async fn archive_code_mode_result_snapshot(
+pub async fn archive_plasm_result_snapshot(
     st: &PlasmHostState,
     sess: &ExecuteSession,
     session_id: &str,
@@ -2098,8 +1988,7 @@ pub async fn archive_code_mode_result_snapshot(
     })
 }
 
-#[cfg(feature = "code_mode")]
-pub fn publish_code_mode_result_steps(
+pub fn publish_plasm_result_steps(
     cgs: Option<&CGS>,
     meta_index: Option<&mut PlasmMetaIndex>,
     steps: &[PublishedResultStep],
@@ -2501,12 +2390,8 @@ fn parse_plasm_line(
         let (full, _) = entity_slices_for_render(sess.cgs.as_ref(), FocusSpec::All);
         SymbolMap::build(sess.cgs.as_ref(), &full)
     };
-    let mut parsed = (if layers.len() == 1 {
-        expr_parser::parse(&expanded, layers[0])
-    } else {
-        expr_parser::parse_with_cgs_layers(&expanded, &layers, sym_map.clone())
-    })
-    .map_err(|e| {
+    let mut parsed = expr_parser::parse_with_cgs_layers(&expanded, &layers, sym_map.clone())
+        .map_err(|e| {
         RunLineError::Parse(augment_unknown_entity_parse_error(
             execute_session_parse_error_message(&e, &expanded, line, sess.cgs.as_ref(), &sym_map),
             sess,
@@ -3431,14 +3316,6 @@ pub fn execute_routes() -> Router {
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
             get(get_execute_run_artifact),
         )
-        .route(
-            "/execute/{prompt_hash}/{session_id}/plans/by-index/{plan_index}",
-            get(get_execute_code_plan_by_index),
-        )
-        .route(
-            "/execute/{prompt_hash}/{session_id}/plans/{plan_id}",
-            get(get_execute_code_plan),
-        )
 }
 
 async fn post_create_execute_session(
@@ -3655,155 +3532,6 @@ async fn get_execute_run_artifact(
         );
     });
 
-    let content_type = payload.metadata.content_type;
-    let header = axum::http::HeaderValue::from_str(content_type.as_str())
-        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
-    crate::metrics::record_execute_artifact_serve("success", "none", started.elapsed());
-    (StatusCode::OK, [(CONTENT_TYPE, header)], payload.bytes).into_response()
-}
-
-async fn get_execute_code_plan(
-    Extension(st): Extension<PlasmHostState>,
-    Path((ph, sid, pid)): Path<(String, String, String)>,
-) -> Response {
-    let started = Instant::now();
-    let prompt_hash = match ph.parse::<PromptHashHex>() {
-        Ok(v) => v,
-        Err(msg) => {
-            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
-            return problem_response_invalid_execute_path(
-                StatusCode::BAD_REQUEST,
-                format!("invalid `prompt_hash` path segment: {msg}"),
-            );
-        }
-    };
-    let session_id = match sid.parse::<ExecuteSessionId>() {
-        Ok(v) => v,
-        Err(msg) => {
-            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
-            return problem_response_invalid_execute_path(
-                StatusCode::BAD_REQUEST,
-                format!("invalid `session_id` path segment: {msg}"),
-            );
-        }
-    };
-    let plan_id = match Uuid::parse_str(pid.trim()) {
-        Ok(u) => u,
-        Err(_) => {
-            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
-            return problem_response_invalid_execute_path(
-                StatusCode::BAD_REQUEST,
-                "invalid `plan_id` path segment: expected UUID",
-            );
-        }
-    };
-
-    serve_execute_code_plan_payload(st, prompt_hash, session_id, plan_id, started).await
-}
-
-async fn get_execute_code_plan_by_index(
-    Extension(st): Extension<PlasmHostState>,
-    Path((ph, sid, raw_idx)): Path<(String, String, String)>,
-) -> Response {
-    let started = Instant::now();
-    let prompt_hash = match ph.parse::<PromptHashHex>() {
-        Ok(v) => v,
-        Err(msg) => {
-            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
-            return problem_response_invalid_execute_path(
-                StatusCode::BAD_REQUEST,
-                format!("invalid `prompt_hash` path segment: {msg}"),
-            );
-        }
-    };
-    let session_id = match sid.parse::<ExecuteSessionId>() {
-        Ok(v) => v,
-        Err(msg) => {
-            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
-            return problem_response_invalid_execute_path(
-                StatusCode::BAD_REQUEST,
-                format!("invalid `session_id` path segment: {msg}"),
-            );
-        }
-    };
-    let plan_index = match raw_idx.trim().parse::<u64>() {
-        Ok(v) => v,
-        Err(_) => {
-            crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
-            return problem_response_invalid_execute_path(
-                StatusCode::BAD_REQUEST,
-                "invalid `plan_index` path segment: expected unsigned integer",
-            );
-        }
-    };
-    let Some(plan_id) = st
-        .run_artifacts
-        .resolve_code_plan_id_for_index(prompt_hash.as_str(), session_id.as_str(), plan_index)
-        .await
-    else {
-        crate::metrics::record_execute_artifact_serve("error", "not_found", started.elapsed());
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::NOT_FOUND,
-                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
-            )
-            .with_title("Not Found")
-            .with_detail("unknown Code Mode plan index for this session"),
-        );
-    };
-    serve_execute_code_plan_payload(st, prompt_hash, session_id, plan_id, started).await
-}
-
-async fn serve_execute_code_plan_payload(
-    st: PlasmHostState,
-    prompt_hash: PromptHashHex,
-    session_id: ExecuteSessionId,
-    plan_id: Uuid,
-    started: Instant,
-) -> Response {
-    let payload = match st
-        .run_artifacts
-        .get_code_plan_payload_result(prompt_hash.as_str(), session_id.as_str(), plan_id)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            crate::metrics::record_execute_artifact_serve(
-                "error",
-                "decode_failed",
-                started.elapsed(),
-            );
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(format!("code plan decode failed: {e}")),
-            );
-        }
-    };
-    let Some(payload) = payload else {
-        crate::metrics::record_execute_artifact_serve("error", "not_found", started.elapsed());
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::NOT_FOUND,
-                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
-            )
-            .with_title("Not Found")
-            .with_detail("unknown Code Mode plan for this session"),
-        );
-    };
-    crate::spans::execute_artifact_serve().in_scope(|| {
-        tracing::info!(
-            target: "plasm_agent::http_execute",
-            prompt_hash = %prompt_hash.as_str(),
-            session_id = %session_id.as_str(),
-            plan_id = %plan_id,
-            bytes = payload.bytes.len(),
-            "GET execute Code Mode plan"
-        );
-    });
     let content_type = payload.metadata.content_type;
     let header = axum::http::HeaderValue::from_str(content_type.as_str())
         .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
@@ -4105,10 +3833,9 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "code_mode")]
     #[test]
-    fn code_mode_publication_renders_named_output_owner() {
-        let out = publish_code_mode_result_steps(
+    fn plasm_plan_publication_renders_named_output_owner() {
+        let out = publish_plasm_result_steps(
             None,
             None,
             &[PublishedResultStep {
@@ -4567,58 +4294,5 @@ mod tests {
             ExecResponseKind::Ndjson
         );
         assert!(negotiate_accept(Some("application/soap+xml")).is_err());
-    }
-}
-
-#[cfg(all(test, feature = "code_mode"))]
-mod mcp_add_code_capabilities_markdown_tests {
-    use super::*;
-
-    #[test]
-    fn ignores_plasm_domain_markdown_delta_for_open_wave() {
-        let out = ApplyCapabilitySeedsOutcome {
-            prompt_hash: "a".repeat(64),
-            session_id: "sess".to_string(),
-            primary_entry_id: "hackernews".to_string(),
-            principal: None,
-            waves: vec![CapabilityWaveOutcome {
-                mode: "open".to_string(),
-                entry_id: "hackernews".to_string(),
-                entities: vec!["Item".to_string()],
-                // Simulates full DOMAIN / TSV that must not appear in add_code_capabilities text.
-                markdown_delta: "Expression\tMeaning\ne1($)[p1]\treturns e1\n".to_string(),
-                reused_session: false,
-                domain_prompt_chars_added: 10_000,
-                tsv_static_frontmatter: Some("# ignored for code-mode MCP text".to_string()),
-            }],
-            binding_updated: true,
-            new_symbol_space: true,
-            stale_execute_binding_recovered: false,
-            stale_binding_previous: None,
-        };
-        let ts = TypeScriptCodeArtifacts {
-            agent_prelude: "declare namespace Plasm { type Node = unknown; }".to_string(),
-            agent_namespace_body:
-                "declare namespace Hackernews { interface ItemRow { id: number; } }".to_string(),
-            agent_loaded_apis: "interface LoadedApis { hackernews: Hackernews.Api; }".to_string(),
-            runtime_bootstrap_ref: Some("code-mode-quickjs-runtime-v1".to_string()),
-            declarations_unchanged: false,
-            added_catalog_aliases: vec!["hackernews".to_string()],
-        };
-        let md = mcp_add_code_capabilities_markdown(&out, &ts);
-        assert!(!md.contains("Expression"), "md:\n{md}");
-        assert!(!md.contains("e1("), "md:\n{md}");
-        assert!(
-            md.contains("hackernews") && md.contains("Item"),
-            "md:\n{md}"
-        );
-        assert!(
-            md.contains("New types added") && md.contains("previously loaded types remain valid"),
-            "md:\n{md}"
-        );
-        assert!(!md.contains("Code Mode discipline"), "md:\n{md}");
-        assert!(!md.contains("REPL or probe loop"), "md:\n{md}");
-        assert!(md.contains("```typescript"), "md:\n{md}");
-        assert!(md.contains("interface ItemRow"), "md:\n{md}");
     }
 }

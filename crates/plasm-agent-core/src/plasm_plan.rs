@@ -1,7 +1,7 @@
-//! Serializable **Code Mode** `Plan` contract.
+//! Serializable effect **`Plan`** contract (JSON DAG).
 //!
-//! Agents author one program-shaped `Plan` in TypeScript; hosts deserialize that JSON into these
-//! Rust types, validate the DAG, then expose only dry-run / execution results to the agent.
+//! Plasm-DAG and other hosts compile to this shape; the runtime validates the DAG, runs dry
+//! reviews, and executes when requested.
 
 use plasm_core::Expr;
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ plan_string_atom! {
 }
 
 plan_string_atom! {
-    /// Declared CGS relation name used by a Code Mode traversal node.
+    /// Declared CGS relation name used by a Plasm program relation-traversal node.
     RelationName
 }
 
@@ -267,7 +267,7 @@ pub enum PlanValue {
     },
 }
 
-/// Executable Plasm IR for a Code Mode node. `display_expr` is inert provenance only.
+/// Executable Plasm IR for a program-plan node. `display_expr` is inert provenance only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanExprIr {
     pub expr: serde_json::Value,
@@ -342,7 +342,7 @@ impl PlanState for ValidatedPlanState {
     type Return = ValidatedPlanReturn;
 }
 
-/// Single code-mode artifact: a program-shaped Plan DAG.
+/// Single serialized program artifact: a program-shaped Plan DAG.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "State::Node: Serialize, State::Return: Serialize",
@@ -425,6 +425,7 @@ pub struct ValidatedSurfaceNode {
     pub(crate) depends_on: Vec<PlanNodeId>,
     pub(crate) uses_result: Vec<PlanResultUse>,
     pub(crate) approval: Option<String>,
+    pub(crate) page_size: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -689,6 +690,9 @@ pub struct PlanNode {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub uses_result: Vec<PlanResultUse>,
+    /// Paging cap for a surface query (Plasm-DAG `e#…page_size(n)` / `.page_size(n)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -896,7 +900,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
     }
     if plan.nodes.is_empty() {
         return Err(
-            "plan.nodes must be non-empty: every Code Mode plan needs at least one DAG root such as plasm.<api>.<Entity>.query() or plasm.<api>.<Entity>.get(...); Plan.return({ x: 1 }) is a literal-only program and cannot execute"
+            "plan.nodes must be non-empty: a Plasm program must include at least one executable DAG node (taught `query` / `get` / search / relation forms per DOMAIN); a literal-only `return` is not executable alone"
                 .to_string(),
         );
     }
@@ -1249,6 +1253,7 @@ fn validated_node_from_raw(
                 depends_on,
                 uses_result,
                 approval: node.approval.clone(),
+                page_size: node.page_size,
             }))
         }
         PlanNodeKind::Data => Ok(ValidatedPlanNode::Data(ValidatedDataNode {
@@ -1963,7 +1968,7 @@ fn validate_predicate(
     }
     if let PlanValue::Helper { name, .. } = &p.value {
         return Err(format!(
-            "plan.nodes[{node_index}].predicates[{pred_index}].value helper {name:?} is not executable in Code Mode predicates; pass a literal/entity_ref_key value or precompute it"
+            "plan.nodes[{node_index}].predicates[{pred_index}].value helper {name:?} is not executable in program-plan predicates; pass a literal/entity_ref_key value or precompute it"
         ));
     }
     validate_plan_value_expr(
@@ -2054,7 +2059,7 @@ fn validate_plan_value_expr(
         PlanValue::Object { fields } => {
             if looks_like_unnormalized_entity_ref_wrapper(fields) {
                 return Err(format!(
-                    "plan.nodes[{node_index}].{path} contains an unnormalized Code Mode entity_ref wrapper; the facade must lower {{api, entity, key}} to its key payload before validation"
+                    "plan.nodes[{node_index}].{path} contains an unnormalized entity_ref wrapper; lower {{api, entity, key}} to its key payload before validation"
                 ));
             }
             for (k, field) in fields {
@@ -2088,7 +2093,7 @@ fn validate_entity_ref_key_value(
             }
             if looks_like_unnormalized_entity_ref_wrapper(fields) {
                 return Err(format!(
-                    "plan.nodes[{node_index}].{path} contains an unnormalized Code Mode entity_ref wrapper; entity_ref_key.key must contain only key fields"
+                    "plan.nodes[{node_index}].{path} contains an unnormalized entity_ref wrapper; entity_ref_key.key must contain only key fields"
                 ));
             }
             for (field, child) in fields {
@@ -2511,7 +2516,7 @@ mod tests {
         });
         let err = validate_plan_value(&v).expect_err("unnormalized wrapper rejected");
         assert!(
-            err.contains("unnormalized Code Mode entity_ref wrapper"),
+            err.contains("unnormalized entity_ref wrapper"),
             "{err}"
         );
     }

@@ -370,8 +370,6 @@ pub struct ExecuteSession {
     pub core: Arc<SessionCore>,
     /// Next `plasm://r/{n}` index for this execute session (1-based after first mint).
     run_resource_next: Arc<AtomicU64>,
-    /// Next `plasm://p/{n}` Code Mode plan index for this execute session (1-based after first mint).
-    code_plan_next: Arc<AtomicU64>,
     /// Opaque `pg#` handles → query or synthetic pagination resume snapshots for [`plasm_core::Expr::Page`].
     paging_resume_by_handle: Arc<StdMutex<HashMap<PagingHandle, PagingResume>>>,
     paging_handle_next: Arc<AtomicU64>,
@@ -415,7 +413,6 @@ impl ExecuteSession {
             graph_cache: core.graph_cache(),
             core,
             run_resource_next: Arc::new(AtomicU64::new(0)),
-            code_plan_next: Arc::new(AtomicU64::new(0)),
             paging_resume_by_handle: Arc::new(StdMutex::new(HashMap::new())),
             paging_handle_next: Arc::new(AtomicU64::new(0)),
             paging_op_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -425,11 +422,6 @@ impl ExecuteSession {
     /// Allocate the next monotonic `resource_index` for this execute session (used for `plasm://r/{n}`).
     pub fn mint_run_resource_index(&self) -> u64 {
         self.run_resource_next.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    /// Allocate the next monotonic Code Mode plan index for this execute session (`p{n}`).
-    pub fn mint_code_plan_index(&self) -> u64 {
-        self.code_plan_next.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Mint a paging handle and store `resume` for subsequent `page(...)` expressions.

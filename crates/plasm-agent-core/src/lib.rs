@@ -8,11 +8,8 @@ mod batch_scheduler;
 pub mod bootstrap_secrets;
 pub mod catalog_runtime;
 pub mod cli_builder;
-/// Plasm **Code Mode**: Oxc TypeScript → JS + QuickJS sandbox (`code_mode` Cargo feature).
-#[cfg(feature = "code_mode")]
-pub mod code_mode;
-#[cfg(feature = "code_mode")]
-pub mod code_mode_plan;
+/// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm-DAG, archived plans).
+pub mod plasm_plan;
 pub mod control_plane_http;
 pub mod dispatch;
 pub mod dotenv_safe;
@@ -32,8 +29,7 @@ pub mod invoke_args;
 pub mod local_trace_archive;
 pub mod mcp_api_key_registry;
 pub mod mcp_config_repository;
-#[cfg(feature = "code_mode")]
-pub mod mcp_plasm_code;
+pub mod plasm_plan_run;
 pub mod mcp_plasm_meta;
 pub mod mcp_policy;
 mod mcp_run_markdown;
@@ -49,7 +45,6 @@ pub mod oauth_provider_pull;
 mod oauth_runtime_source;
 pub mod outbound_secret_provider;
 pub mod output;
-#[cfg(feature = "code_mode")]
 pub mod plasm_dag;
 pub mod plugin_catalog;
 pub mod query_args;
