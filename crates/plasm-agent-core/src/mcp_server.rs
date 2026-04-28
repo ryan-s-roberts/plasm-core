@@ -14,21 +14,21 @@
 //! If the server-side execute session expires while the MCP transport stays open, the next
 //! `plasm_context` opens a **new** `(prompt_hash, session_id)` and refreshes the binding.
 //! For an active binding, `plasm_context` calls are **additive**: call it
-//! with the same `logical_session_ref` to append more `{api, entity}` seeds to the existing symbol
-//! space. Do not reinitialize or open a smaller seed set to "narrow" the session; that creates a new
+//! with the same `logical_session_ref` to append more `{api, entity}` capability picks (JSON field `seeds`) to the existing symbol
+//! space. Do not reinitialize or send a smaller pick list to "narrow" the session; that creates a new
 //! symbol space only when the prior binding is gone or the primary open truly changes.
 //! Tenant MCP policy
 //! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
 //! Tool text includes
 //! the full Plasm instructions body only when the session is newly created server-side (`reused: false`); repeated
-//! opens with the same entry + seeds omit the instruction body to avoid token churn.
+//! opens with the same entry + capability picks omit the instruction body to avoid token churn.
 //! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` are append-only across
-//! incremental `plasm_context` waves; they do not reshuffle. A new primary catalog open or logical session
+//! successive `plasm_context` updates; they do not reshuffle. A new primary catalog open or logical session
 //! starts a new symbol space—always read tokens from the current session `prompt` / Plasm language text.
 //! A soft cap evicts one arbitrary older binding when the map grows past [`MAX_MCP_EXEC_BINDINGS`].
 //!
-//! Plasm language / instructions body (first wave on `plasm_context` open plus append-only delta waves from
-//! `plasm_context` `seeds`) is counted in Unicode scalar values per MCP transport session.
+//! Plasm language / instructions body (first update on `plasm_context` open plus append-only deltas when you add
+//! capability picks via `plasm_context`'s `seeds`) is counted in Unicode scalar values per MCP transport session.
 //! Each `plasm` call also accumulates invocation text (`program` plus optional `reasoning`) and,
 //! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
@@ -99,16 +99,16 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 /// Model-facing `plasm` tool description: plan-first program construction (session setup is in initialize instructions).
 pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan / execute** Plasm with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
      Default: each call returns a **reviewable dry-run program plan** (topology + expected shapes)—**no live API execution** until you set **`execute: true`** after the plan matches your intent. \
-     Use the Plasm syntax guide in initialize instructions and the active TSV rows from **`plasm_context`**. \
+     Use the Plasm syntax guide in initialize instructions and the **syntax table rows** from **`plasm_context`** (each row teaches symbols for one selected API capability). \
      Use a **single** taught `plasm_expr` only for a **one-shot** read/search/get/relation/method whose result is already the final answer. For **compositional** work (reports, multi-step reads, joins, writes, markdown/html payloads), default to one **multi-line `plasm_program`**: bindings + bare final roots—avoid many sequential one-line `plasm` calls. \
      For a **`plasm_program`**, the JSON **`program`** string must contain **real newline characters** (U+000A): **one physical line per** `ident = …` **binding**, then **final bare roots** on their own line(s)—do **not** collapse the whole program into one line. **One line per binding** does **not** mean heredoc bodies are one line: tagged **`<<TAG`** heredocs are one **logical** statement spanning multiple physical lines—newline immediately after `TAG` on the opener line, body lines, then a closing line **`TAG`** (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
-     Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append new **`api`/`entity`** seeds.";
+     Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append **new capability picks** (`api` + `entity` per pick; JSON field **`seeds`**).";
 
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
-pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Workflow: **`plasm_context` once** with **`client_session_key`** and **`seeds`**, then mostly **`plasm`**. \
-     **`discover_capabilities`** is optional search. It accepts one query string or an array of strings and returns TSV entity rows. Use row columns **`api`** + **`entity`** as seeds. Skip it when you already know the seeds. \
-     **`plasm_context`**: pass a stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** array of `{ \"api\": catalog_id, \"entity\": entity_name }` objects (`entry_id` is accepted per object as a legacy alias). The response gives **`logical_session_ref`** (`s0`, `s1`, ...). Loading is **append-only** for a live logical session: call again only for new seeds; do not resend identical seeds every turn, and do not send a smaller set to narrow or reset. Multiple APIs federate into one Plasm language; the primary catalog is the lexicographically first distinct `api`. \
-     On a new TSV open, read the teaching table from **`plasm_context`**; it binds the syntax guide below to the current catalogue symbols. \
+pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** runs programs inside it; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need. \
+     **`discover_capabilities`**: pass **`query`** as one short string (what the user wants) or as several strings. The reply is a small fenced **table**: **`api`** (which integration), **`entity`** (which resource type there), **`description`**. Each row is one **capability pick** — use them to fill **`plasm_context`**’s **`seeds`** array (same columns per object). \
+     **`plasm_context`**: pass a stable **`client_session_key`** and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate the session key per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
+     Whenever **`plasm_context`** returns **new capability rows**, read the teaching table in that reply; it binds the syntax guide below to the symbols for those APIs. \
      **`plasm`**: pass **`logical_session_ref`** and one **`program`** string (JSON allows **multiline** strings with literal newlines). For a **`plasm_program`**, use **one line per binding** and **roots on their own line**—not a single concatenated line; heredocs need a **hard newline right after `<<TAG`** on the opener line, then the body, then the closing **`TAG`** line. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** are bare comma-separated expressions (commas inside heredocs do not split roots). Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
      **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
@@ -129,7 +129,7 @@ fn parse_tool_seeds(
         return Err(CallToolError::invalid_arguments(
             tool,
             Some(
-                "missing seeds: plasm_context requires a `seeds` array of `{api, entity}` objects (legacy `entry_id` key per object still accepted); legacy top-level `{entry_id, entities}` is not supported"
+                "missing capability picks: `plasm_context` requires a non-empty `seeds` array of `{api, entity}` objects (`entry_id` per object still accepted instead of `api`); legacy top-level `{entry_id, entities}` is not supported"
                     .into(),
             ),
         ));
@@ -141,7 +141,7 @@ fn parse_tool_seeds(
                 CallToolError::invalid_arguments(
                     tool,
                     Some(
-                        "missing seeds: expected `seeds` as non-empty array of `{api, entity}` objects (legacy `entry_id` key accepted)".into(),
+                        "missing capability picks: expected non-empty `seeds` array of `{api, entity}` objects (`entry_id` key accepted per object)".into(),
                     ),
                 )
             })?,
@@ -151,7 +151,7 @@ fn parse_tool_seeds(
     if seeds.is_empty() {
         return Err(CallToolError::invalid_arguments(
             tool,
-            Some("`seeds` must be a non-empty array of {api, entity} objects (legacy `entry_id` key accepted)".into()),
+            Some("`seeds` must be a non-empty array of capability picks: `{api, entity}` per object (`entry_id` key accepted per object)".into()),
         ));
     }
     Ok(seeds)
@@ -507,14 +507,14 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "query".into(),
             json_schema_string_or_string_array(
-                "What to find: one string (plain-language or keyword intent) is tokenized; or a non-empty array of strings. Scored against capabilities and entity text; the reply is a TSV of `api` / `entity` / `description` rows.",
+                "One string = what to look for (plain language or keywords), or several strings. Reply: fenced table — **`api`** (integration), **`entity`** (resource type), **`description`**. Each row is one capability pick; use rows to build **`plasm_context`** **`seeds`**.",
             ),
         );
         let mut context_props = init_props;
         context_props.insert(
             "seeds".into(),
             json_schema_non_empty_object_array(
-                "Non-empty JSON array of seed objects: each must include `api` (registry catalog id) and `entity` (CGS entity name). Example: [{\"api\":\"pokeapi\",\"entity\":\"Pokemon\"}]. Legacy per-object key `entry_id` is accepted as an alias for `api`.",
+                "Non-empty **`seeds`** array — each object is **one capability pick**: **`api`** (integration id) and **`entity`** (resource type). Include **every** pick this program needs in this call; different **`api`** values belong in the **same** array. Example: [{\"api\":\"github\",\"entity\":\"Issue\"},{\"api\":\"slack\",\"entity\":\"Channel\"}]. Per object you may use **`entry_id`** instead of **`api`**.",
                 vec!["api", "entity"],
             ),
         );
@@ -528,7 +528,7 @@ impl PlasmMcpHandler {
         run_props.insert(
             "program".into(),
             json_schema_string_type(
-                "One Plasm line, full `plasm_program`, or bare comma-separated final roots. JSON strings may contain literal newline characters (U+000A): for programs with bindings, use one line per `ident = …` and put final bare roots on their own line(s); do not send the whole program as a single long line. Tagged heredocs (`<<TAG` … `TAG`) require a newline immediately after the tag on the opener line, then body lines, then a closing `TAG` line; commas inside the heredoc body are not root separators. Use the syntax guide from initialize instructions and the active TSV rows from `plasm_context`.",
+                "One Plasm line, full `plasm_program`, or bare comma-separated final roots. JSON strings may contain literal newline characters (U+000A): for programs with bindings, use one line per `ident = …` and put final bare roots on their own line(s); do not send the whole program as a single long line. Tagged heredocs (`<<TAG` … `TAG`) require a newline immediately after the tag on the opener line, then body lines, then a closing `TAG` line; commas inside the heredoc body are not root separators. Use the syntax guide from initialize instructions and the **syntax table rows** from `plasm_context` for your selected API capabilities.",
             ),
         );
         run_props.insert(
@@ -547,7 +547,7 @@ impl PlasmMcpHandler {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
                 description: Some(
-                    "**Open or extend** a Plasm logical session by appending seed capabilities. Pass one stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** of `{ \"api\":\"...\", \"entity\":\"...\" }` objects (`entry_id` accepted per object as a legacy alias). Server reuses the logical session for that key + tenant and returns **`logical_session_ref`** (`s0`, …) for **`plasm`**. Loading is additive, not a replacement or narrowing operation; call again only for new **`api`/`entity`** pairs. Multiple APIs federate into one Plasm language; primary API is the lexicographically first distinct `api`.".into(),
+                    "**Open or extend** one logical session. Send a stable **`client_session_key`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick** (integration + resource type). **Put every pick the program will use into `seeds` on the first open**—several different **`api`** values in one array is normal and still **one** session for **`plasm`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Append-only:** call again only with **new** picks; do not resend unchanged **`seeds`** entries each turn or shrink the list.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["client_session_key".into(), "seeds".into()],
@@ -568,10 +568,9 @@ impl PlasmMcpHandler {
             },
             Tool {
                 name: "discover_capabilities".into(),
-                title: None,
+                title: Some("Find entities from intent".into()),
                 description: Some(
-                    "**Search the catalog** with `query` — a **single string** (natural language or keywords) or an **array of strings**; each is tokenized and scored against capabilities and entity domains; **rows are entities**. **Skip** if you already know catalog **`api`** ids and entity names. \
-                     Reply: **TSV in a fenced block** — `api`, `entity`, `description` (entity blurb). Use **`api`** + **`entity`** for each `plasm_context` seed (`entry_id` is accepted as a legacy alias in JSON).".into(),
+                    "When you do not yet know **`api`** and **`entity`** for each capability you need, call with **`query`**: one string (what the user wants) or several strings. You get back a small fenced table: **`api`** (integration), **`entity`** (resource type), **`description`**. Each row is one **capability pick** — copy rows into **`plasm_context`**’s **`seeds`** array (per object you may use **`entry_id`** instead of **`api`**). **Do not call** if you already have every pick you need.".into(),
                 ),
                 input_schema: ToolInputSchema::new(vec![], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
@@ -665,12 +664,14 @@ fn json_schema_non_empty_object_array(
     item_props.insert(
         "api".into(),
         serde_json::Value::Object(json_schema_string_type(
-            "Registry catalog id for one API (discover TSV column `api`; legacy JSON key `entry_id` accepted)",
+            "**`api`**: integration id from the discovery table (or any id you already know). **`entry_id`** is an alternate JSON key for the same value",
         )),
     );
     item_props.insert(
         "entity".into(),
-        serde_json::Value::Object(json_schema_string_type("Entity id/name in that catalog")),
+        serde_json::Value::Object(json_schema_string_type(
+            "**`entity`**: resource type name from the discovery table (or a name you already know)",
+        )),
     );
     let mut item_obj = serde_json::Map::new();
     item_obj.insert("type".into(), serde_json::json!("object"));
@@ -822,16 +823,16 @@ fn format_discovery_markdown(r: &plasm_core::discovery::DiscoveryResult) -> Stri
     }
 
     if !r.ambiguities.is_empty() {
-        s.push_str("**Ambiguities**\n\n");
+        s.push_str("**Same name in more than one `api`**\n\n");
         for Ambiguity {
-            dimension,
+            dimension: _,
             entry_ids,
             capability_name,
             score,
         } in &r.ambiguities
         {
             s.push_str(&format!(
-                "- **{dimension}** `{capability_name}` score={score} entries: {}\n",
+                "- `{capability_name}` (score {score}) — pick one `api`: {}\n",
                 entry_ids.join(", ")
             ));
         }
@@ -1086,7 +1087,7 @@ impl ServerHandler for PlasmMcpHandler {
                 )
                 .await;
                 return Err(RpcError::invalid_params().with_message(
-                    "no execute session for this logical session: call plasm_context with seeds first",
+                    "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
                 ));
             };
             let live_sess = self
@@ -1735,7 +1736,7 @@ impl ServerHandler for PlasmMcpHandler {
                         started.elapsed(),
                     );
                     return Ok(CallToolResult::with_error(CallToolError::from_message(
-                        "No session: call `plasm_context` with `seeds` first.",
+                        "No session: call `plasm_context` with capability picks (`seeds`) first.",
                     )));
                 };
 
@@ -1762,7 +1763,7 @@ impl ServerHandler for PlasmMcpHandler {
                         started.elapsed(),
                     );
                     return Ok(CallToolResult::with_error(CallToolError::from_message(
-                        "Execute session expired: call `plasm_context` again with your `seeds` to open a new session.",
+                        "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
                     )));
                 }
 
@@ -1807,7 +1808,7 @@ impl ServerHandler for PlasmMcpHandler {
                         .await
                     else {
                         return Ok(CallToolResult::with_error(CallToolError::from_message(
-                            "Execute session expired: call `plasm_context` again with your `seeds` to open a new session.",
+                            "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
                         )));
                     };
                     let plan_name = format!("plasm_dag_call_{call_count}");
@@ -2191,7 +2192,7 @@ fn mcp_initialize_result() -> InitializeResult {
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "Stable `client_session_key` for the whole task; `plasm_context` once with seeds, then mostly `plasm` with the same `logical_session_ref`. `plasm_context` only to append new `api`/entity seeds—not every turn."
+                "Stable `client_session_key` for the whole task; `plasm_context` once with capability picks (`seeds`), then mostly `plasm` with the same `logical_session_ref`. Call `plasm_context` again only to append new picks—not every turn."
                     .into(),
             ),
             icons: vec![],
@@ -2401,7 +2402,7 @@ mod tests {
         assert!(q.kinds.is_empty());
     }
 
-    /// Reference output for `discover_capabilities` Markdown (TSV fence only).
+    /// Reference output for `discover_capabilities` Markdown (fenced tabular block; same columns as discovery).
     #[test]
     fn discover_markdown_emits_tsv_snapshot() {
         use plasm_core::discovery::{

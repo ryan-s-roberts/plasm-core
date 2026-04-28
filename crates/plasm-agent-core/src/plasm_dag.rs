@@ -307,136 +307,142 @@ fn compile_node_expr(
         });
     }
     if let Some((source, fields, template)) = parse_render(rhs)? {
-        require_node(state, source)?;
-        let columns = parse_field_list(fields)?
-            .into_iter()
-            .map(OutputName::new)
-            .collect::<Result<Vec<_>, _>>()?;
-        return Ok(DagNode {
-            id: id.to_string(),
-            expr: rhs.to_string(),
-            singleton: true,
-            page_size: None,
-            source: DagNodeSource::Compute {
-                source: source.to_string(),
-                op: ComputeOp::Render { columns, template },
-                schema: SyntheticResultSchema {
-                    entity: Some("PlanRender".to_string()),
-                    fields: vec![SyntheticFieldSchema {
-                        name: OutputName::new("content".to_string())?,
-                        value_kind: SyntheticValueKind::String,
-                        source: None,
-                    }],
+        if state.contains(source) {
+            let columns = parse_field_list(fields)?
+                .into_iter()
+                .map(OutputName::new)
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(DagNode {
+                id: id.to_string(),
+                expr: rhs.to_string(),
+                singleton: true,
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: source.to_string(),
+                    op: ComputeOp::Render { columns, template },
+                    schema: SyntheticResultSchema {
+                        entity: Some("PlanRender".to_string()),
+                        fields: vec![SyntheticFieldSchema {
+                            name: OutputName::new("content".to_string())?,
+                            value_kind: SyntheticValueKind::String,
+                            source: None,
+                        }],
+                    },
                 },
-            },
-        });
+            });
+        }
     }
     if let Some((source, fields)) = parse_projection(rhs)? {
-        require_node(state, source)?;
-        let mut map = BTreeMap::new();
-        for field in parse_field_list(fields)? {
-            map.insert(
-                OutputName::new(field.clone())?,
-                FieldPath::from_dotted(&field)?,
-            );
+        if state.contains(source) {
+            let mut map = BTreeMap::new();
+            for field in parse_field_list(fields)? {
+                map.insert(
+                    OutputName::new(field.clone())?,
+                    FieldPath::from_dotted(&field)?,
+                );
+            }
+            let schema =
+                schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
+            return Ok(DagNode {
+                id: id.to_string(),
+                expr: rhs.to_string(),
+                singleton: false,
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: source.to_string(),
+                    op: ComputeOp::Project { fields: map },
+                    schema,
+                },
+            });
         }
-        let schema =
-            schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
-        return Ok(DagNode {
-            id: id.to_string(),
-            expr: rhs.to_string(),
-            singleton: false,
-            page_size: None,
-            source: DagNodeSource::Compute {
-                source: source.to_string(),
-                op: ComputeOp::Project { fields: map },
-                schema,
-            },
-        });
     }
     if let Some((source, n)) = parse_unary_call(rhs, "limit")? {
-        require_node(state, source)?;
-        return Ok(DagNode {
-            id: id.to_string(),
-            expr: rhs.to_string(),
-            singleton: n <= 1,
-            page_size: None,
-            source: DagNodeSource::Compute {
-                source: source.to_string(),
-                op: ComputeOp::Limit { count: n },
-                schema: single_unknown_schema("PlanLimit"),
-            },
-        });
+        if state.contains(source) {
+            return Ok(DagNode {
+                id: id.to_string(),
+                expr: rhs.to_string(),
+                singleton: n <= 1,
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: source.to_string(),
+                    op: ComputeOp::Limit { count: n },
+                    schema: single_unknown_schema("PlanLimit"),
+                },
+            });
+        }
     }
     if let Some((source, args)) = parse_call(rhs, "sort")? {
-        require_node(state, source)?;
-        let args = split_top_level(args, ',')?;
-        let key = args
-            .first()
-            .ok_or_else(|| "sort(...) requires a field".to_string())?
-            .trim();
-        let descending = args
-            .get(1)
-            .map(|s| s.trim().eq_ignore_ascii_case("desc"))
-            .unwrap_or(false);
-        return Ok(DagNode {
-            id: id.to_string(),
-            expr: rhs.to_string(),
-            singleton: false,
-            page_size: None,
-            source: DagNodeSource::Compute {
-                source: source.to_string(),
-                op: ComputeOp::Sort {
-                    key: FieldPath::from_dotted(key)?,
-                    descending,
+        if state.contains(source) {
+            let args = split_top_level(args, ',')?;
+            let key = args
+                .first()
+                .ok_or_else(|| "sort(...) requires a field".to_string())?
+                .trim();
+            let descending = args
+                .get(1)
+                .map(|s| s.trim().eq_ignore_ascii_case("desc"))
+                .unwrap_or(false);
+            return Ok(DagNode {
+                id: id.to_string(),
+                expr: rhs.to_string(),
+                singleton: false,
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: source.to_string(),
+                    op: ComputeOp::Sort {
+                        key: FieldPath::from_dotted(key)?,
+                        descending,
+                    },
+                    schema: single_unknown_schema("PlanSort"),
                 },
-                schema: single_unknown_schema("PlanSort"),
-            },
-        });
+            });
+        }
     }
     if let Some((source, args)) = parse_call(rhs, "aggregate")? {
-        require_node(state, source)?;
-        let aggregates = parse_aggregates(args)?;
-        let schema = schema_from_aggregates("PlanAggregate", &aggregates);
-        return Ok(DagNode {
-            id: id.to_string(),
-            expr: rhs.to_string(),
-            singleton: true,
-            page_size: None,
-            source: DagNodeSource::Compute {
-                source: source.to_string(),
-                op: ComputeOp::Aggregate { aggregates },
-                schema,
-            },
-        });
+        if state.contains(source) {
+            let aggregates = parse_aggregates(args)?;
+            let schema = schema_from_aggregates("PlanAggregate", &aggregates);
+            return Ok(DagNode {
+                id: id.to_string(),
+                expr: rhs.to_string(),
+                singleton: true,
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: source.to_string(),
+                    op: ComputeOp::Aggregate { aggregates },
+                    schema,
+                },
+            });
+        }
     }
     if let Some((source, args)) = parse_call(rhs, "group_by")? {
-        require_node(state, source)?;
-        let parts = split_top_level(args, ',')?;
-        let key = parts
-            .first()
-            .ok_or_else(|| "group_by(...) requires a key field".to_string())?
-            .trim();
-        let rest = args
-            .split_once(',')
-            .map(|(_, r)| r.trim())
-            .ok_or_else(|| "group_by(...) requires aggregate specs".to_string())?;
-        let aggregates = parse_aggregates(rest)?;
-        let schema = schema_from_aggregates("PlanGroup", &aggregates);
-        return Ok(DagNode {
-            id: id.to_string(),
-            expr: rhs.to_string(),
-            singleton: false,
-            page_size: None,
-            source: DagNodeSource::Compute {
-                source: source.to_string(),
-                op: ComputeOp::GroupBy {
-                    key: FieldPath::from_dotted(key)?,
-                    aggregates,
+        if state.contains(source) {
+            let parts = split_top_level(args, ',')?;
+            let key = parts
+                .first()
+                .ok_or_else(|| "group_by(...) requires a key field".to_string())?
+                .trim();
+            let rest = args
+                .split_once(',')
+                .map(|(_, r)| r.trim())
+                .ok_or_else(|| "group_by(...) requires aggregate specs".to_string())?;
+            let aggregates = parse_aggregates(rest)?;
+            let schema = schema_from_aggregates("PlanGroup", &aggregates);
+            return Ok(DagNode {
+                id: id.to_string(),
+                expr: rhs.to_string(),
+                singleton: false,
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: source.to_string(),
+                    op: ComputeOp::GroupBy {
+                        key: FieldPath::from_dotted(key)?,
+                        aggregates,
+                    },
+                    schema,
                 },
-                schema,
-            },
-        });
+            });
+        }
     }
     if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
         if looks_like_data_literal(rhs) {
@@ -690,9 +696,7 @@ enum HeredocSurfaceStep {
     /// Jump `i` to this index (past full heredoc).
     SkipTo(usize),
     /// Opener `<<TAG` has no newline after tag on this fragment (physical line continues later).
-    OpenerIncomplete {
-        tag: String,
-    },
+    OpenerIncomplete { tag: String },
 }
 
 /// Unified tagged-heredoc recognition for Plasm-DAG surface scans (`split_top_level`, statement line scan).
