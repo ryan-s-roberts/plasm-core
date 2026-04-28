@@ -82,17 +82,16 @@ e5{p39=e17(p304="plasm", p319="plasm"), p42="open"}, e5(p304="plasm", p319="plas
 
 - One **`name = …`** per line. Valid RHS shapes include surface Plasm leaves, **`node.limit(n)`** / **`.sort`**, **`.[field,…]`** projection, **`node[field,…] <<TAG` … `TAG`** render (Jinja-style `{{ … }}` in the heredoc body, as in the `compiles_bound_query_limit_render_dag_to_valid_plan` unit test), **`source => { … }`** derive (plan values, **`_.field`** = current row in a map), and **`source =>` …** for-each side effects when the right-hand side is a Plasm **write** / **action** (line comments: `;;` to end-of-line). **Do not** prefix the final line with `return`—it is a syntax error.
 
-The **compiled plan** chains **query → compute → derive**: each binding becomes a node—**surface Plasm** at the leaves (HTTP/query semantics), **compute** for projections and `limit`, and **`source => …`** for **derive** (object map from each row) or **for-each invokes** when the RHS is a mutation. Two **parallel** final roots return both `summary` (tabular) and `cards` (artifact).
+The graph is: *filtered search* → *narrowed columns* → *per-row object map*; two **parallel** final roots (tabular `summary` and `cards`).
 
 ```mermaid
 flowchart TB
-  search["① surface · query / search"]
-  summary["② compute · project fields"]
-  cards["③ derive · map each row via =&gt; (plan runner invoke)"]
-  search -->|row set| summary
-  summary -->|each row| cards
-  summary -.- r1[parallel root]
-  cards -.- r2[parallel root]
+  search["search = Product~…  (read)"]
+  summary["summary = search id,name  (compute)"]
+  cards["cards = summary =&gt; { … }  (derive)"]
+  search --> summary --> cards
+  summary -.- r1[root]
+  cards -.- r2[root]
   r1 ~~~ r2
 ```
 
@@ -102,8 +101,6 @@ summary = search[id, name]
 cards = summary => { blurb: { id: _.id, name: _.name } }
 summary, cards
 ```
-
-**Rich HTML / previews (Glass, Canvas, Markdown):** Plasm lines can contain **`<<TAG`** heredocs—those begin with **`<`**, which DOM/HTML parsers treat as markup so text after it may **vanish** (you often see a dangling `cards = summary `). **Always show programs as plain text:** `<pre>…</pre>`, `white-space: pre-wrap`, entity-escape `<`, or a code component that does **not** parse inner HTML. Arrows **`=>`** are safe; leading **`<<`** is not unless escaped.
 
 *Larger program (helpdesk-style: **a customer-visible reply** plus a **back-end update**):* read a **Category** and a scoped **Product** list, **minijinja**-render a **public thread message** from the rows (the `brief` node is the **body** of what you would paste into ZenDesk, Intercom, or your own case UI), then **post** that text as a **`product_add_support_reply` action** on a designated “case” product id (`p-helpline-case-1` here—stand-in for the row your CRM uses for the ticket). The render’s `content` field is wired in with `message=brief.content`. Separately, `source => Product(_.id).update(…)` **repoints** each listed row’s `category_id` to the `bucket` you resolved—data-plane fix while the customer sees the reply. For-each vs surface invoke is the same `looks_like_plasm_effect_template` / side-effect path as in [`plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs). The **last line** is **four** **parallel** roots: two digests, the **PATCH** stage, and the **thread comment**.
 

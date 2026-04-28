@@ -4,7 +4,6 @@
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;
 pub mod backend_normalize;
-mod execute_staging;
 pub mod bootstrap_secrets;
 pub mod catalog_runtime;
 pub mod cli_builder;
@@ -14,6 +13,7 @@ pub mod dotenv_safe;
 pub mod error;
 pub mod execute_path_ids;
 pub mod execute_session;
+mod execute_staging;
 pub mod expr_display;
 pub mod http;
 pub mod http_discovery;

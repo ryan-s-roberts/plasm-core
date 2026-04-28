@@ -214,8 +214,9 @@ impl SessionTraceData {
                     .aggregate_plasm_expressions
                     .saturating_add(*expression_count as u64);
                 if *multi_line {
-                    self.aggregate_multi_line_plasm_invocations =
-                        self.aggregate_multi_line_plasm_invocations.saturating_add(1);
+                    self.aggregate_multi_line_plasm_invocations = self
+                        .aggregate_multi_line_plasm_invocations
+                        .saturating_add(1);
                 }
             }
             TraceSegment::DomainPromptCharsDelta { chars_added } => {

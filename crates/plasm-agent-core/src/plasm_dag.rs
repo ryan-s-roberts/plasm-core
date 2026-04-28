@@ -114,10 +114,18 @@ pub fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
 
 pub fn split_bare_plasm_roots(src: &str) -> Option<Vec<String>> {
     let src = src.trim();
-    if src.is_empty() || src.contains('\n') || split_assignment(src).is_some() {
+    if src.is_empty() || src.contains("=>") {
         return None;
     }
-    let parts = split_top_level(src, ',').ok()?;
+    let stmts = parse_statements(src).ok()?;
+    if stmts.len() != 1 {
+        return None;
+    }
+    let sole = stmts[0].trim();
+    if split_assignment(sole).is_some() {
+        return None;
+    }
+    let parts = split_top_level(sole, ',').ok()?;
     if parts.len() <= 1 {
         return None;
     }
@@ -627,36 +635,234 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
     }
 }
 
-fn parse_statements(src: &str) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    let mut lines = src.lines().peekable();
-    while let Some(line) = lines.next() {
-        let stripped = strip_comment(line).trim();
-        if stripped.is_empty() {
-            continue;
+/// How a structured heredoc closing line was recognized (tagged `TAG` line) — mirrors
+/// [`plasm_core::expr_parser::value`] so Plasm-DAG staging matches surface parsing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeredocCloseLineKind {
+    LineOnly,
+    GluedSuffix,
+}
+
+/// Tagged heredoc close: trim matches `TAG` alone, or `TAG` + optional ASCII ws + one of `)` `,` `}`.
+fn tagged_heredoc_close_kind(line_slice: &str, tag: &str) -> Option<(HeredocCloseLineKind, usize)> {
+    let leading_ws = line_slice.len() - line_slice.trim_start().len();
+    let t = line_slice.trim();
+    if t == tag {
+        return Some((HeredocCloseLineKind::LineOnly, leading_ws));
+    }
+    if !t.starts_with(tag) {
+        return None;
+    }
+    let after = &t[tag.len()..];
+    let after = after.trim_start();
+    if after.len() == 1 {
+        let b = after.as_bytes()[0];
+        if matches!(b, b')' | b',' | b'}') {
+            return Some((HeredocCloseLineKind::GluedSuffix, leading_ws));
         }
-        if let Some((prefix, tag)) = stripped.split_once("<<") {
-            let tag = tag.trim();
-            if tag.is_empty() {
-                return Err("heredoc tag must be non-empty".to_string());
-            }
-            let mut stmt = format!("{}<<{}\n", prefix.trim_end(), tag);
-            let mut closed = false;
-            for body in lines.by_ref() {
-                stmt.push_str(body);
-                stmt.push('\n');
-                if body.trim() == tag {
-                    closed = true;
-                    break;
+    }
+    None
+}
+
+enum HeredocOpener {
+    /// Parsed `<<TAG` but the opener line does not yet contain the required newline after `TAG`
+    /// (physical line split — accumulate more lines into the same statement).
+    Incomplete {
+        tag: String,
+    },
+    Complete {
+        tag: String,
+        body_start: usize,
+    },
+}
+
+#[inline]
+fn is_tagged_heredoc_opener_start(bytes: &[u8], i: usize) -> bool {
+    i + 2 <= bytes.len()
+        && &bytes[i..i + 2] == b"<<"
+        && !(i + 3 <= bytes.len() && bytes[i + 2] == b'<')
+}
+
+/// What to do at byte index `i` when the surface scan sees a potential `<<TAG` heredoc.
+enum HeredocSurfaceStep {
+    /// Not `<<` / `<<<` — caller advances one UTF-8 scalar.
+    NotAnOpener,
+    /// Jump `i` to this index (past full heredoc).
+    SkipTo(usize),
+    /// Opener `<<TAG` has no newline after tag on this fragment (physical line continues later).
+    OpenerIncomplete {
+        tag: String,
+    },
+}
+
+/// Unified tagged-heredoc recognition for Plasm-DAG surface scans (`split_top_level`, statement line scan).
+fn heredoc_surface_step_at(s: &str, i: usize) -> Result<HeredocSurfaceStep, String> {
+    let b = s.as_bytes();
+    if !is_tagged_heredoc_opener_start(b, i) {
+        return Ok(HeredocSurfaceStep::NotAnOpener);
+    }
+    match try_parse_tagged_heredoc_opener(s, i)? {
+        HeredocOpener::Incomplete { tag } => Ok(HeredocSurfaceStep::OpenerIncomplete { tag }),
+        HeredocOpener::Complete { tag, body_start } => {
+            let end = skip_tagged_structured_heredoc(s, body_start, &tag)?;
+            Ok(HeredocSurfaceStep::SkipTo(end))
+        }
+    }
+}
+
+/// Parse `<<TAG` on the line containing `open_idx` (byte index of first `<`), requiring a newline
+/// after the tag on the same line with only ASCII whitespace between tag and newline.
+fn try_parse_tagged_heredoc_opener(s: &str, open_idx: usize) -> Result<HeredocOpener, String> {
+    let b = s.as_bytes();
+    debug_assert!(is_tagged_heredoc_opener_start(b, open_idx));
+    let mut p = open_idx + 2;
+    if p >= b.len() {
+        return Err(
+            "tagged heredoc `<<` must be immediately followed by a tag (`TAG` = [A-Za-z_][A-Za-z0-9_]*) and a newline after the tag on the same line".into(),
+        );
+    }
+    if !(b[p].is_ascii_alphabetic() || b[p] == b'_') {
+        return Err(
+            "tagged heredoc `<<` must be immediately followed by a tag (`TAG` = [A-Za-z_][A-Za-z0-9_]*) and a newline after the tag on the same line".into(),
+        );
+    }
+    let tag_start = p;
+    p += 1;
+    while p < b.len() && (b[p].is_ascii_alphanumeric() || b[p] == b'_') {
+        p += 1;
+    }
+    let tag = s[tag_start..p].to_string();
+    let Some(line_end_rel) = s[open_idx..].find('\n') else {
+        return Ok(HeredocOpener::Incomplete { tag });
+    };
+    let line_end = open_idx + line_end_rel;
+    let tail = s[p..line_end].trim();
+    if !tail.is_empty() {
+        return Err(format!(
+            "tagged heredoc `<<{tag}` opener must be only `<<{tag}` then optional ASCII spaces/tabs before the newline; do not put text (or `#` comments) after the tag on the opener line"
+        ));
+    }
+    Ok(HeredocOpener::Complete {
+        tag,
+        body_start: line_end + 1,
+    })
+}
+
+fn skip_tagged_structured_heredoc(s: &str, body_start: usize, tag: &str) -> Result<usize, String> {
+    let mut pos = body_start;
+    while pos <= s.len() {
+        let line_end = s[pos..].find('\n').map(|r| pos + r).unwrap_or(s.len());
+        let line_slice = &s[pos..line_end];
+        if let Some((kind, leading_ws)) = tagged_heredoc_close_kind(line_slice, tag) {
+            return Ok(match kind {
+                HeredocCloseLineKind::LineOnly => {
+                    if line_end < s.len() {
+                        line_end + 1
+                    } else {
+                        s.len()
+                    }
+                }
+                HeredocCloseLineKind::GluedSuffix => pos + leading_ws + tag.len(),
+            });
+        }
+        if line_end >= s.len() {
+            return Err(format!("unterminated tagged heredoc <<{tag}"));
+        }
+        pos = line_end + 1;
+    }
+    Err(format!("unterminated tagged heredoc <<{tag}"))
+}
+
+/// One physical line is a complete Plasm-DAG statement, **unless** it opens a tagged heredoc
+/// whose closing `TAG` line has not yet been seen (then we accumulate further physical lines).
+#[derive(Debug)]
+enum PhysicalLineStmtState {
+    Complete,
+    AwaitingHeredocClose { tag: String },
+}
+
+fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState, String> {
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    while i < line.len() {
+        let c = line[i..]
+            .chars()
+            .next()
+            .ok_or_else(|| "invalid UTF-8 boundary".to_string())?;
+        let cl = c.len_utf8();
+        if quote.is_none() {
+            match heredoc_surface_step_at(line, i)? {
+                HeredocSurfaceStep::NotAnOpener => {}
+                HeredocSurfaceStep::OpenerIncomplete { tag } => {
+                    return Ok(PhysicalLineStmtState::AwaitingHeredocClose { tag });
+                }
+                HeredocSurfaceStep::SkipTo(next) => {
+                    i = next;
+                    continue;
                 }
             }
-            if !closed {
-                return Err(format!("unterminated heredoc <<{tag}"));
-            }
-            out.push(stmt.trim_end().to_string());
-        } else {
-            out.push(stripped.to_string());
         }
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            _ => {}
+        }
+        i += cl;
+    }
+    if depth != 0 {
+        return Err(format!(
+            "unbalanced delimiters in Plasm program line `{line}`"
+        ));
+    }
+    Ok(PhysicalLineStmtState::Complete)
+}
+
+fn parse_statements(src: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut pending_tag: Option<String> = None;
+
+    for raw in src.lines() {
+        let w = strip_comment(raw);
+        if pending_tag.is_some() {
+            if !cur.is_empty() {
+                cur.push('\n');
+            }
+            cur.push_str(w);
+            let last = cur.lines().last().unwrap_or("");
+            if tagged_heredoc_close_kind(last, pending_tag.as_deref().unwrap()).is_some() {
+                out.push(cur.trim_end().to_string());
+                cur.clear();
+                pending_tag = None;
+            }
+        } else {
+            if w.trim().is_empty() {
+                continue;
+            }
+            cur.clear();
+            cur.push_str(w);
+            match scan_physical_line_stmt_state(&cur)? {
+                PhysicalLineStmtState::Complete => {
+                    out.push(cur.trim_end().to_string());
+                    cur.clear();
+                }
+                PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
+                    pending_tag = Some(tag);
+                }
+            }
+        }
+    }
+
+    if pending_tag.is_some() {
+        return Err(
+            "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)".into(),
+        );
+    }
+    if !cur.is_empty() {
+        return Err("unterminated Plasm-DAG statement (unexpected trailing fragment)".into());
     }
     Ok(out)
 }
@@ -744,8 +950,28 @@ fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
     let mut out = Vec::new();
     let mut start = 0usize;
     let mut depth = 0i32;
-    let mut quote = None;
-    for (i, c) in s.char_indices() {
+    let mut quote = None::<char>;
+    let mut i = 0usize;
+    while i < s.len() {
+        let c = s[i..]
+            .chars()
+            .next()
+            .ok_or_else(|| "invalid UTF-8 boundary".to_string())?;
+        let cl = c.len_utf8();
+        if quote.is_none() {
+            match heredoc_surface_step_at(s, i)? {
+                HeredocSurfaceStep::NotAnOpener => {}
+                HeredocSurfaceStep::OpenerIncomplete { .. } => {
+                    return Err(
+                        "tagged heredoc `<<TAG` must have a newline immediately after the tag on the opener line (hard newline; do not squash `<<TAG` with the body on one line)".into(),
+                    );
+                }
+                HeredocSurfaceStep::SkipTo(next) => {
+                    i = next;
+                    continue;
+                }
+            }
+        }
         match c {
             '"' | '\'' if quote == Some(c) => quote = None,
             '"' | '\'' if quote.is_none() => quote = Some(c),
@@ -753,10 +979,11 @@ fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
             ')' | ']' | '}' if quote.is_none() => depth -= 1,
             _ if c == delimiter && quote.is_none() && depth == 0 => {
                 out.push(&s[start..i]);
-                start = i + c.len_utf8();
+                start = i + cl;
             }
             _ => {}
         }
+        i += cl;
     }
     if depth != 0 {
         return Err(format!("unbalanced delimiters in `{s}`"));
@@ -833,7 +1060,12 @@ fn parse_render(rhs: &str) -> Result<Option<(&str, &str, String)>, String> {
     let Some((head, rest)) = rhs.split_once("<<") else {
         return Ok(None);
     };
-    let Some((source, fields)) = parse_projection(head.trim())? else {
+    let head = head.trim();
+    if head.is_empty() {
+        // Heredoc-only / value RHS starts with `<<TAG` — not `source[field] <<TAG` render.
+        return Ok(None);
+    }
+    let Some((source, fields)) = parse_projection(head)? else {
         return Err("render syntax must be source[field,...] <<TAG".to_string());
     };
     let mut lines = rest.lines();
@@ -1273,7 +1505,8 @@ fn single_unknown_schema(entity: &str) -> SyntheticResultSchema {
 }
 
 fn looks_like_data_literal(rhs: &str) -> bool {
-    rhs.starts_with('{') || rhs.starts_with('[') || rhs.starts_with('"')
+    let t = rhs.trim_start();
+    t.starts_with('{') || t.starts_with('[') || t.starts_with('"') || t.starts_with("<<")
 }
 
 fn looks_like_plasm_effect_template(rhs: &str) -> bool {
@@ -1448,7 +1681,10 @@ summary, cards"#;
         .expect("compile");
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 3, "{dry:?}");
-        assert_eq!(plan["return"], json!({ "kind": "parallel", "nodes": ["summary", "cards"] }));
+        assert_eq!(
+            plan["return"],
+            json!({ "kind": "parallel", "nodes": ["summary", "cards"] })
+        );
     }
 
     /// `plasm-oss/README.md` §4 — complex: Jinja public reply + `for_each` **update** + **case comment**
@@ -1549,5 +1785,57 @@ header, brief, synced, posted"#;
         assert_eq!(plan["nodes"].as_array().map(|a| a.len()), Some(1));
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert!(!dry.node_results.is_empty());
+    }
+
+    #[test]
+    fn split_top_level_does_not_split_commas_inside_tagged_heredoc() {
+        let parts = split_top_level("fn(<<T\na,b,c\nT\n), bar", ',').expect("split");
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("a,b,c"), "{:?}", parts[0]);
+        assert_eq!(parts[1].trim(), "bar");
+    }
+
+    #[test]
+    fn parse_statements_errors_on_squashed_heredoc_opener() {
+        let err = parse_statements("body = <<B # junk").expect_err("err");
+        assert!(
+            err.contains("opener") || err.contains("tag") || err.contains("newline"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn parse_statements_glued_heredoc_close() {
+        let stmts = parse_statements("x = <<H\none\nH)").expect("parse");
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].contains("<<H"), "{:?}", stmts[0]);
+    }
+
+    #[test]
+    fn split_bare_plasm_roots_multiline_heredoc_second_root() {
+        let src = "Product, <<TXT\n,\nTXT";
+        let roots = split_bare_plasm_roots(src).expect("roots");
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].trim(), "Product");
+        assert!(
+            roots[1].contains("<<TXT") && roots[1].contains(','),
+            "{:?}",
+            roots[1]
+        );
+    }
+
+    #[test]
+    fn multiline_heredoc_binding_then_parallel_roots_compiles() {
+        let session = test_session();
+        let source = "body = <<T\nhello\nT\nProduct, Category";
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "heredoc-roots",
+            source,
+        )
+        .expect("compile");
+        assert_eq!(plan["return"]["kind"], "parallel");
     }
 }

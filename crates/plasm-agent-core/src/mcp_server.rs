@@ -29,8 +29,7 @@
 //!
 //! Plasm language / instructions body (first wave on `plasm_context` open plus append-only delta waves from
 //! `plasm_context` `seeds`) is counted in Unicode scalar values per MCP transport session.
-//! Each `plasm` call also accumulates invocation text (`program` plus optional `reasoning` and
-//! optional TSV `tsv_static_frontmatter`) and,
+//! Each `plasm` call also accumulates invocation text (`program` plus optional `reasoning`) and,
 //! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
 //! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).
@@ -97,15 +96,12 @@ use uuid::Uuid;
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 const MAX_MCP_EXEC_BINDINGS: usize = 512;
 
-/// Max Unicode scalars allowed for `plasm` `tsv_static_frontmatter` (the Plasm language contract block).
-const MAX_TSV_STATIC_FRONTMATTER_SCALARS: usize = 262_144;
-
 /// Model-facing `plasm` tool description: plan-first program construction (session setup is in initialize instructions).
 pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan / execute** Plasm with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
      Default: each call returns a **reviewable dry-run program plan** (topology + expected shapes)—**no live API execution** until you set **`execute: true`** after the plan matches your intent. \
      Use the Plasm syntax guide in initialize instructions and the active TSV rows from **`plasm_context`**. \
-     Simple goal: one taught `plasm_expr` still compiles as a one-node plan—use when row-level output is already the answer. Multi-step / analytical goal: one **`plasm_program`** that binds, narrows, aggregates, renders, and returns compact final roots—avoid broad probe-and-dump call chains. \
-     For a **`plasm_program`**, the JSON **`program`** string should contain **real newline characters** (U+000A): **one physical line per** `ident = …` **binding**, then **final bare roots** on their own line(s)—do **not** collapse the whole program into one line. Tagged **`<<TAG`** heredocs inside args require a newline after the tag opener, body lines, then a closing line whose trimmed text is **`TAG`**. \
+     Use a **single** taught `plasm_expr` only for a **one-shot** read/search/get/relation/method whose result is already the final answer. For **compositional** work (reports, multi-step reads, joins, writes, markdown/html payloads), default to one **multi-line `plasm_program`**: bindings + bare final roots—avoid many sequential one-line `plasm` calls. \
+     For a **`plasm_program`**, the JSON **`program`** string must contain **real newline characters** (U+000A): **one physical line per** `ident = …` **binding**, then **final bare roots** on their own line(s)—do **not** collapse the whole program into one line. **One line per binding** does **not** mean heredoc bodies are one line: tagged **`<<TAG`** heredocs are one **logical** statement spanning multiple physical lines—newline immediately after `TAG` on the opener line, body lines, then a closing line **`TAG`** (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
      Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append new **`api`/`entity`** seeds.";
 
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
@@ -113,7 +109,7 @@ pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Workflow: **`plasm_cont
      **`discover_capabilities`** is optional search. It accepts one query string or an array of strings and returns TSV entity rows. Use row columns **`api`** + **`entity`** as seeds. Skip it when you already know the seeds. \
      **`plasm_context`**: pass a stable **`client_session_key`** for this workspace/task plus non-empty **`seeds`** array of `{ \"api\": catalog_id, \"entity\": entity_name }` objects (`entry_id` is accepted per object as a legacy alias). The response gives **`logical_session_ref`** (`s0`, `s1`, ...). Loading is **append-only** for a live logical session: call again only for new seeds; do not resend identical seeds every turn, and do not send a smaller set to narrow or reset. Multiple APIs federate into one Plasm language; the primary catalog is the lexicographically first distinct `api`. \
      On a new TSV open, read the teaching table from **`plasm_context`**; it binds the syntax guide below to the current catalogue symbols. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string (JSON allows **multiline** strings with literal newlines). For a **`plasm_program`**, use **one line per binding** and **roots on their own line**—not a single concatenated line; heredocs need hard newlines after **`<<TAG`**. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports or analysis, prefer **one composed `plasm_program`** over many sequential exploratory **`plasm`** calls. For simple goals, send one taught `plasm_expr` (still a one-node plan). For multi-step work, send one `plasm_program` whose **final roots are bare** comma-separated lines (never prefix with `return`). Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string (JSON allows **multiline** strings with literal newlines). For a **`plasm_program`**, use **one line per binding** and **roots on their own line**—not a single concatenated line; heredocs need a **hard newline right after `<<TAG`** on the opener line, then the body, then the closing **`TAG`** line. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** are bare comma-separated expressions (commas inside heredocs do not split roots). Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
      **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
 
@@ -250,18 +246,11 @@ fn mcp_chars_to_token_est(chars: u64) -> u64 {
     chars.saturating_add(3) / 4
 }
 
-/// Per `plasm` call: count program + reasoning + optional TSV static frontmatter for invocation telemetry.
-fn plasm_invocation_char_count(
-    program: &str,
-    reasoning: Option<&str>,
-    tsv_static_frontmatter: Option<&str>,
-) -> u64 {
+/// Per `plasm` call: count program + optional reasoning for invocation telemetry.
+fn plasm_invocation_char_count(program: &str, reasoning: Option<&str>) -> u64 {
     let mut n = program.chars().count() as u64;
     if let Some(r) = reasoning {
         n = n.saturating_add(r.chars().count() as u64);
-    }
-    if let Some(f) = tsv_static_frontmatter {
-        n = n.saturating_add(f.chars().count() as u64);
     }
     n
 }
@@ -539,7 +528,7 @@ impl PlasmMcpHandler {
         run_props.insert(
             "program".into(),
             json_schema_string_type(
-                "One Plasm line, full `plasm_program`, or bare comma-separated final roots. JSON strings may contain literal newline characters (U+000A): for programs with bindings, use one line per `ident = …` and put final bare roots on their own line(s); do not send the whole program as a single long line. Tagged heredocs (`<<TAG` … `TAG`) require newlines after the opener and before the closing tag line. Use the syntax guide from initialize instructions and the active TSV rows from `plasm_context`.",
+                "One Plasm line, full `plasm_program`, or bare comma-separated final roots. JSON strings may contain literal newline characters (U+000A): for programs with bindings, use one line per `ident = …` and put final bare roots on their own line(s); do not send the whole program as a single long line. Tagged heredocs (`<<TAG` … `TAG`) require a newline immediately after the tag on the opener line, then body lines, then a closing `TAG` line; commas inside the heredoc body are not root separators. Use the syntax guide from initialize instructions and the active TSV rows from `plasm_context`.",
             ),
         );
         run_props.insert(
@@ -551,12 +540,6 @@ impl PlasmMcpHandler {
         run_props.insert(
             "reasoning".into(),
             json_schema_string_type("Optional short note explaining the intent of this call."),
-        );
-        run_props.insert(
-            "tsv_static_frontmatter".into(),
-            json_schema_string_type(
-                "Optional extra Plasm syntax guide text supplied by the host. Usually omit; initialize instructions already include the guide.",
-            ),
         );
 
         let mut tools = vec![
@@ -1706,25 +1689,6 @@ impl ServerHandler for PlasmMcpHandler {
                     .get("reasoning")
                     .and_then(|x| x.as_str())
                     .filter(|s| !s.is_empty());
-                let tsv_static_frontmatter = v
-                    .get("tsv_static_frontmatter")
-                    .and_then(|x| x.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
-                if let Some(f) = tsv_static_frontmatter {
-                    let n = f.chars().count();
-                    if n > MAX_TSV_STATIC_FRONTMATTER_SCALARS {
-                        return Ok(CallToolResult::with_error(
-                            CallToolError::invalid_arguments(
-                                "plasm",
-                                Some(format!(
-                                    "`tsv_static_frontmatter` exceeds max length ({} Unicode scalars, max {})",
-                                    n, MAX_TSV_STATIC_FRONTMATTER_SCALARS
-                                )),
-                            ),
-                        ));
-                    }
-                }
                 let line_count = expressions.len();
                 if line_count > 1 && !execute {
                     crate::metrics::record_mcp_tool(
@@ -1752,8 +1716,7 @@ impl ServerHandler for PlasmMcpHandler {
                 let (binding, this_invocation_chars, mut idx, call_count) = {
                     let mut g = state.lock().await;
                     let binding = g.binding.clone();
-                    let this_invocation_chars =
-                        plasm_invocation_char_count(&program, reasoning, tsv_static_frontmatter);
+                    let this_invocation_chars = plasm_invocation_char_count(&program, reasoning);
                     g.stats.plasm_invocation_chars = g
                         .stats
                         .plasm_invocation_chars
@@ -2306,12 +2269,9 @@ mod tests {
     }
 
     #[test]
-    fn plasm_invocation_char_count_includes_tsv_static_frontmatter() {
-        assert_eq!(super::plasm_invocation_char_count("a", None, None), 1);
-        assert_eq!(
-            super::plasm_invocation_char_count("a", None, Some("#c")),
-            1 + 2
-        );
+    fn plasm_invocation_char_count_sums_program_and_reasoning() {
+        assert_eq!(super::plasm_invocation_char_count("a", None), 1);
+        assert_eq!(super::plasm_invocation_char_count("a", Some("#c")), 1 + 2);
     }
 
     /// Model-facing copy; update with `INSTA_UPDATE=1 cargo test -p plasm-agent-core mcp_`.

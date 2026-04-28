@@ -2859,6 +2859,7 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     let structure_lines = format!(
         "Output choice:\n\
   - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.\n\
+  - For **compositional** work (multiple steps, joins, reporting, summarization, writes, or any structured payload like markdown/html), use a **multi-line `plasm_program`** by default—do not chain many one-line `plasm` calls.\n\
   - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.\n\
 \n\
 Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
@@ -2889,7 +2890,8 @@ Program construction discipline:\n\
   - Return at most small final roots unless the user explicitly asks for raw rows.\n\
   - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
   - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
-  - MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—never one concatenated line. Tagged heredocs (`<<TAG` newline body newline `TAG`) require those hard newlines.\n\
+  - MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—never one concatenated line. A **tagged heredoc** is still **one logical statement**: after `<<TAG` you must have a newline immediately after `TAG` on the opener line, then the body lines, then a closing line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}}` on that line). That spans multiple physical lines—**do not** squash `<<TAG` onto the same line as the body.\n\
+  - **Final roots** may be comma-separated on one line **or** split across lines; commas **inside** a heredoc body never separate roots. Example: `e1.m2(p3=<<B\nHello\nB\n), e2` (comma after the heredoc closes on its `B` line, then the next root).\n\
 \n\
 Catalogue rules:\n\
   - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.\n\

@@ -131,9 +131,11 @@ where
     }
 }
 
-use crate::execute_staging::{build_execute_stages, line_may_share_parallel_query_stage, ExecuteStage};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
+use crate::execute_staging::{
+    build_execute_stages, line_may_share_parallel_query_stage, ExecuteStage,
+};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
@@ -411,9 +413,6 @@ pub struct CapabilityWaveOutcome {
     pub markdown_delta: String,
     pub reused_session: bool,
     pub domain_prompt_chars_added: u64,
-    /// Reserved for legacy callers. MCP initialize now carries the shared Plasm syntax guide, so
-    /// `plasm_context` responses publish catalogue teaching rows rather than grammar frontmatter.
-    pub tsv_static_frontmatter: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1002,7 +1001,6 @@ pub async fn federate_execute_session(
                 .to_string(),
             reused_session: true,
             domain_prompt_chars_added: 0,
-            tsv_static_frontmatter: None,
         });
     }
 
@@ -1044,7 +1042,6 @@ pub async fn federate_execute_session(
         markdown_delta: wave.clone(),
         reused_session: false,
         domain_prompt_chars_added: wave.chars().count() as u64,
-        tsv_static_frontmatter: None,
     })
 }
 
@@ -1316,7 +1313,6 @@ pub async fn apply_capability_seeds(
                 markdown_delta: open_md.clone(),
                 reused_session: created.reused,
                 domain_prompt_chars_added,
-                tsv_static_frontmatter: None,
             });
             (created.prompt_hash, created.session, true)
         }
@@ -1370,7 +1366,6 @@ pub async fn apply_capability_seeds(
                 domain_prompt_chars_added: md.chars().count() as u64,
                 markdown_delta: md,
                 reused_session: false,
-                tsv_static_frontmatter: None,
             });
         }
     }
@@ -2099,10 +2094,7 @@ fn split_expression_lines(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_execute_lines_body(
-    content_type: Option<&str>,
-    raw: &[u8],
-) -> Result<Vec<String>, String> {
+fn parse_execute_lines_body(content_type: Option<&str>, raw: &[u8]) -> Result<Vec<String>, String> {
     let mime = content_type
         .unwrap_or("")
         .split(';')
@@ -2126,8 +2118,7 @@ fn parse_execute_lines_body(
         } else if let Some(obj) = v.as_object() {
             let Some(arr) = obj.get("lines").and_then(|x| x.as_array()) else {
                 return Err(
-                    "JSON body must be a JSON array of strings or {\"lines\": [\"...\"]}"
-                        .into(),
+                    "JSON body must be a JSON array of strings or {\"lines\": [\"...\"]}".into(),
                 );
             };
             arr.iter()
@@ -2279,7 +2270,9 @@ fn mcp_staged_execute_error(e: StagedExecuteError) -> String {
                 index + 1
             ),
         },
-        StagedExecuteError::Merge { err } => format!("graph merge after parallel stage failed: {err}"),
+        StagedExecuteError::Merge { err } => {
+            format!("graph merge after parallel stage failed: {err}")
+        }
     }
 }
 
@@ -2987,15 +2980,7 @@ async fn execute_staged_plasm_lines(
                 })?;
                 if let Some(sink) = hub_sink {
                     let (ref parsed, ref result, _) = r;
-                    trace_emit_plasm_line(
-                        sink,
-                        idx,
-                        &expressions[idx],
-                        parsed,
-                        result,
-                        sess,
-                    )
-                    .await;
+                    trace_emit_plasm_line(sink, idx, &expressions[idx], parsed, result, sess).await;
                 }
                 combined[idx] = Some(r);
             }
