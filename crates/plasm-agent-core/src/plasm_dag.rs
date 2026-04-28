@@ -11,16 +11,47 @@ use crate::plasm_plan::{
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 use crate::plasm_plan_run::parse_plasm_surface_line_program;
+use plasm_core::expr_parser::{peel_postfix_suffixes, PlasmPostfixOp};
 use plasm_core::ChainStep;
 use plasm_core::Expr;
 use plasm_core::PlasmInputRef;
 use plasm_core::Predicate;
-use plasm_core::Value;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMapCrossRequestCache;
-use plasm_core::expr_parser::{PlasmPostfixOp, peel_postfix_suffixes};
+use plasm_core::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Deref;
+
+/// Program RHS after session-scoped DOMAIN expansion (`e#` / `p#` / `m#` → wire/catalog text).
+///
+/// Construct only via [`Self::new`] at the [`compile_node_expr`] entry so postfix peel and field
+/// lists never see raw gloss tokens when lowering to [`ComputeOp`](crate::plasm_plan::ComputeOp).
+#[derive(Debug, Clone)]
+pub struct ExpandedProgramSurface(String);
+
+impl ExpandedProgramSurface {
+    pub fn new(session: &ExecuteSession, pipeline: &PromptPipelineConfig, fragment: &str) -> Self {
+        Self(
+            crate::plasm_plan_run::expand_program_surface_for_session_lower(
+                session, pipeline, fragment,
+            ),
+        )
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for ExpandedProgramSurface {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone)]
 struct DagNode {
@@ -173,7 +204,9 @@ fn collect_predicate_for_template_uses(acc: &mut Vec<serde_json::Value>, pred: &
                 collect_predicate_for_template_uses(acc, a);
             }
         }
-        Predicate::Not { predicate } => collect_predicate_for_template_uses(acc, predicate.as_ref()),
+        Predicate::Not { predicate } => {
+            collect_predicate_for_template_uses(acc, predicate.as_ref())
+        }
         Predicate::ExistsRelation { predicate, .. } => {
             if let Some(inner) = predicate {
                 collect_predicate_for_template_uses(acc, inner.as_ref());
@@ -533,6 +566,10 @@ fn compile_node_expr(
     id: &str,
     rhs: &str,
 ) -> Result<Vec<DagNode>, String> {
+    let rhs_display = rhs.trim();
+    let expanded = ExpandedProgramSurface::new(session, state.pipeline, rhs_display);
+    let rhs = expanded.as_str();
+
     if let Some((left, right)) = split_arrow(rhs)? {
         let source = left.trim();
         require_node(state, source)?;
@@ -562,7 +599,7 @@ fn compile_node_expr(
             }
             return Ok(vec![DagNode {
                 id: id.to_string(),
-                expr: rhs.to_string(),
+                expr: rhs_display.to_string(),
                 singleton: false,
                 page_size: None,
                 source: DagNodeSource::ForEach {
@@ -578,7 +615,7 @@ fn compile_node_expr(
         let (value, inputs) = parse_plan_value_expr(right.trim(), state, Some("_"))?;
         return Ok(vec![DagNode {
             id: id.to_string(),
-            expr: rhs.to_string(),
+            expr: rhs_display.to_string(),
             singleton: false,
             page_size: None,
             source: DagNodeSource::Derive {
@@ -596,7 +633,7 @@ fn compile_node_expr(
                 .collect::<Result<Vec<_>, _>>()?;
             return Ok(vec![DagNode {
                 id: id.to_string(),
-                expr: rhs.to_string(),
+                expr: rhs_display.to_string(),
                 singleton: true,
                 page_size: None,
                 source: DagNodeSource::Compute {
@@ -622,7 +659,7 @@ fn compile_node_expr(
             if looks_like_data_literal(rhs) {
                 return Ok(vec![DagNode {
                     id: id.to_string(),
-                    expr: rhs.to_string(),
+                    expr: rhs_display.to_string(),
                     singleton: true,
                     page_size: None,
                     source: DagNodeSource::Data(value.0),
@@ -636,7 +673,7 @@ fn compile_node_expr(
             core.as_str(),
         )?]);
     }
-    compile_postfix_plan(session, state, id, rhs, core.as_str(), ops)
+    compile_postfix_plan(session, state, id, rhs_display, core.as_str(), ops)
 }
 
 /// Longest bound label match so `repos.foo` wins over `repo.foo` when both exist.
@@ -1849,8 +1886,8 @@ fn looks_like_plasm_effect_template(rhs: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plasm_plan_run::evaluate_plasm_plan_dry;
-    use plasm_core::{CGS, CgsContext, DomainExposureSession, PromptPipelineConfig, load_schema};
+    use crate::plasm_plan_run::{evaluate_plasm_plan_dry, symbol_map_for_plasm_surface_parse};
+    use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig, CGS};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -2293,6 +2330,129 @@ projected"#;
         assert_eq!(plan["nodes"].as_array().map(Vec::len), Some(4));
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 4, "{dry:?}");
+    }
+
+    /// DOMAIN `p#` inside postfix projection must lower to wire field names in `Plan` IR (not
+    /// survive as literal `p#` paths that dry-run would project as null).
+    #[test]
+    fn dag_postfix_projection_expands_domain_field_symbols_to_wire_paths() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)\ncommits[{p_sha},{p_msg}]"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-domain-projection",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let last = nodes.last().expect("compute projection node");
+        assert_eq!(last["kind"], "compute");
+        let op = &last["compute"]["op"];
+        assert_eq!(op["kind"], "project");
+        let fields = op["fields"].as_object().expect("project fields");
+        assert!(
+            fields.contains_key("sha") && fields.contains_key("message"),
+            "expected wire keys sha/message, got {fields:?}"
+        );
+        assert!(
+            !fields.contains_key(&p_sha),
+            "DOMAIN symbol {p_sha} must not appear as projection column: {fields:?}"
+        );
+    }
+
+    #[test]
+    fn dag_postfix_sort_expands_domain_field_symbol_in_sort_key() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(3)\nordered = commits.sort({p_msg}, desc)\nordered"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-domain-sort",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let sort_node = nodes
+            .iter()
+            .find(|n| n["id"] == "ordered")
+            .expect("sort node");
+        let op = &sort_node["compute"]["op"];
+        assert_eq!(op["kind"], "sort");
+        assert_eq!(op["key"], json!(["message"]));
+        assert_eq!(op["descending"], true);
+    }
+
+    #[test]
+    fn dag_postfix_aggregate_expands_domain_field_symbol_in_sum() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_add = map.ident_sym_entity_field("Commit", "stats_additions");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(5)\ntot = commits.aggregate(t=sum({p_add}))\ntot"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-domain-aggregate",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let agg = nodes
+            .iter()
+            .find(|n| n["id"] == "tot")
+            .expect("aggregate node");
+        let op = &agg["compute"]["op"];
+        assert_eq!(op["kind"], "aggregate");
+        let aggs = op["aggregates"].as_array().expect("aggregates");
+        assert_eq!(aggs[0]["name"], "t");
+        assert_eq!(aggs[0]["function"], "sum");
+        assert_eq!(aggs[0]["field"], json!(["stats_additions"]));
+    }
+
+    #[test]
+    fn dag_render_field_list_expands_domain_field_symbols() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nout = commits[{p_sha},{p_msg}] <<MD\n{{{{ rows | length }}}}\nMD\nout"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-domain-render",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let render = nodes
+            .iter()
+            .find(|n| n["id"] == "out")
+            .expect("render node");
+        let op = &render["compute"]["op"];
+        assert_eq!(op["kind"], "render");
+        let cols = op["columns"].as_array().expect("columns");
+        let col_names: Vec<_> = cols
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(col_names, vec!["sha", "message"]);
     }
 
     #[test]

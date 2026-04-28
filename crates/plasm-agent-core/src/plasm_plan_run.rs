@@ -1,15 +1,8 @@
 //! Parse, validate, dry-run, and execute Plasm effect [`Plan`](crate::plasm_plan::Plan) programs (HTTP + MCP).
 
-use plasm_core::CGS;
-use plasm_core::DomainExposureSession;
-use plasm_core::FocusSpec;
-use plasm_core::PromptPipelineConfig;
-use plasm_core::SymbolMap;
-use plasm_core::SymbolMapCrossRequestCache;
-use plasm_core::TypeError;
 use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::entity_slices_for_render;
-use plasm_core::expr_parser::{ParseError, ParsedExpr, parse_with_cgs_layers_program};
+use plasm_core::expr_parser::{parse_with_cgs_layers_program, ParseError, ParsedExpr};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
@@ -17,23 +10,30 @@ use plasm_core::symbol_map_cache_key_federated;
 use plasm_core::symbol_map_cache_key_single_catalog;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
+use plasm_core::DomainExposureSession;
+use plasm_core::FocusSpec;
+use plasm_core::PromptPipelineConfig;
+use plasm_core::SymbolMap;
+use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::TypeError;
+use plasm_core::CGS;
 
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    PublishedResultStep, archive_plasm_result_snapshot, execute_plasm_parsed_expr,
-    publish_plasm_result_steps, trace_record_plasm_line,
+    archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
+    trace_record_plasm_line, PublishedResultStep,
 };
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plasm_plan::{
-    AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
-    OutputName, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS, Plan, PlanExprTemplate,
+    parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
+    ComputeTemplate, EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate,
     PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
     ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
     ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
-    parse_plan_value, validate_plan_artifact,
+    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::McpPlasmTraceSink;
@@ -92,14 +92,7 @@ pub fn parse_plasm_surface_line(
     pipeline: &PromptPipelineConfig,
     line: &str,
 ) -> Result<ParsedExpr, ParseError> {
-    parse_plasm_surface_line_program(
-        session,
-        symbol_map_cross_cache,
-        pipeline,
-        line,
-        None,
-        false,
-    )
+    parse_plasm_surface_line_program(session, symbol_map_cross_cache, pipeline, line, None, false)
 }
 
 /// Parse one Plasm surface line with optional **program compile** context (in-scope node ids and
@@ -126,6 +119,25 @@ pub fn parse_plasm_surface_line_program(
         sym_map,
         program_nodes,
         for_each_row_context,
+    )
+}
+
+/// Expand DOMAIN gloss tokens the same way as [`parse_plasm_surface_line_program`], for program
+/// lowering paths that peel postfix or slice field lists before building [`Plan`](crate::plasm_plan::Plan) IR.
+///
+/// Call this **before** any step that turns comma-separated field names into
+/// [`FieldPath`](crate::plasm_plan::FieldPath) literals. The DAG compiler wraps the expanded text
+/// in [`crate::plasm_dag::ExpandedProgramSurface`] at the program-node boundary.
+pub fn expand_program_surface_for_session_lower(
+    session: &ExecuteSession,
+    pipeline: &PromptPipelineConfig,
+    fragment: &str,
+) -> String {
+    pipeline.expand_expr_for_session_with_optional_exposure(
+        fragment,
+        session.cgs.as_ref(),
+        &session.entities,
+        session.domain_exposure.as_ref(),
     )
 }
 
@@ -2785,11 +2797,9 @@ fn append_aggregates(
         let value = match agg.function {
             AggregateFunction::Count => serde_json::json!(rows.len()),
             AggregateFunction::Sum => {
-                serde_json::json!(
-                    aggregate_numbers(rows, agg.field.as_ref())
-                        .iter()
-                        .sum::<f64>()
-                )
+                serde_json::json!(aggregate_numbers(rows, agg.field.as_ref())
+                    .iter()
+                    .sum::<f64>())
             }
             AggregateFunction::Avg => {
                 let nums = aggregate_numbers(rows, agg.field.as_ref());
@@ -2995,9 +3005,9 @@ fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::load_schema;
     use plasm_core::CgsContext;
     use plasm_core::DomainExposureSession;
-    use plasm_core::load_schema;
     use std::path::PathBuf;
     use std::sync::Arc;
 
