@@ -100,22 +100,23 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan Plasm** (dry-run only) with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
      Each call returns a **reviewable dry-run program plan** (topology + expected shapes). **No live API execution** — use **`plasm_run`** with the same arguments after the plan matches your intent. \
      Use the Plasm syntax guide in initialize instructions and the **syntax table rows** from **`plasm_context`** (each row teaches symbols for one capability pick). \
+     **Mandatory for compositional programs:** any `plasm_program` with **more than one physical line of source** (multiple bindings and/or bindings plus final roots) MUST encode **literal U+000A newlines** inside the JSON `program` string—**never** rely on spaces between statements. Models often flatten multi-step programs onto one line; that breaks compilation. Self-check: split `program` on `\n`—you should see **one statement per line** until final comma-separated roots (which stay on their own line). \
      For one direct read/search/get/relation/method/action whose result is already the answer, send one taught `plasm_expr`. For reports, joins, writes, markdown/html payloads, or any multi-step task, send **one multi-line `plasm_program`** in **one** `plasm` call. \
-     **Hard rule:** a multi-line **`program`** string must contain **real newline characters** (U+000A) between statements. Do **not** separate bindings or final roots with spaces. Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. \
-     For a `plasm_program`, use one physical line per `ident = ...` binding, then final bare roots on their own line(s). Tagged `<<TAG` heredocs also require real newlines: opener line, body lines, then closing `TAG` line (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
+     Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. \
+     Tagged `<<TAG` heredocs require real newlines: opener line, body lines, then closing `TAG` line (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
      Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append **new capability picks** (`api` + `entity` per pick; JSON field **`seeds`**).";
 
 /// Model-facing **`plasm_run`** tool description: live execution after plan review.
 pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str = "**Run Plasm** (live execution) with the same **`logical_session_ref`**, **`program`**, and optional **`reasoning`** as **`plasm`**. \
      Call **only after** reviewing the **`plasm`** dry-run plan. This tool performs real HTTP/API work and may return **`resource_link`** / `_meta.plasm` snapshot references. \
-     **Hard rule:** multi-line **`plasm_program`** strings must use **real newline characters** (U+000A) between statements — same shape as **`plasm`**. Bare comma-separated **multi-root** final expressions are supported here (not on **`plasm`**, which is plan-only for a single composed surface).";
+     **Same newline discipline as `plasm`:** compositional programs MUST use literal U+000A between physical lines—never space-separate multiple bindings on one line. Bare comma-separated **multi-root** final expressions are supported here (not on **`plasm`**, which is plan-only for a single composed surface).";
 
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
 pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** returns a **dry-run plan** for programs inside it; **`plasm_run`** performs **live execution** after you review that plan; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need. \
      **`discover_capabilities`**: pass **`query`** as one short string (what the user wants) or as several strings. The reply is a small fenced **table**: **`api`** (which integration), **`entity`** (which resource type there), **`description`**. Each row is one **capability pick** — use them to fill **`plasm_context`**’s **`seeds`** array (same columns per object). \
      **`plasm_context`**: pass a stable **`client_session_key`** and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate the session key per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
      Whenever **`plasm_context`** returns **new syntax table rows**, read that teaching table; it binds the syntax guide below to the symbols for those APIs. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string. JSON and MCP accept multiline strings; the `program` value may contain literal U+000A newline characters. **For every multi-step `plasm_program`, real newlines are required between statements. Never collapse bindings and final roots into one space-separated line.** Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. Heredocs need a real newline right after `<<TAG`, then body lines, then the closing **`TAG`** line. This tool is **plan-only** (dry-run topology + expected shapes); it never performs live API calls. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** in one `plasm` call should be a **single** expression or one multi-line program; bare comma-separated **multi-root** programs belong on **`plasm_run`** after review. Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string. **Before you compose `program`:** if the task needs **more than one physical line** (multiple bindings and/or separate final roots), you MUST insert real newlines (U+000A) in that string—this is the most common agent failure mode. JSON/MCP serialize those as `\\n` on the wire; the server expects actual newline characters after parsing. **Never** emit multiple bindings separated only by spaces on one line. Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. Heredocs need a real newline right after `<<TAG`, then body lines, then the closing **`TAG`** line. This tool is **plan-only** (dry-run topology + expected shapes); it never performs live API calls. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** in one `plasm` call should be a **single** expression or one multi-line program; bare comma-separated **multi-root** programs belong on **`plasm_run`** after review. Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
      **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs). \
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
      **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
@@ -535,7 +536,7 @@ impl PlasmMcpHandler {
         plasm_program_props.insert(
             "program".into(),
             json_schema_string_type(
-                "One Plasm line, full `plasm_program`, or (on **`plasm_run` only`) bare comma-separated final roots. For any program with bindings, the string MUST contain real newline characters (U+000A): one `ident = ...` binding per physical line, then final bare roots on their own line(s). Never send `a = ... b = ... b` as one space-separated line. Good: `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`. Tagged heredocs (`<<TAG` ... `TAG`) also require real newlines: opener line, body lines, closing tag. Use syntax table rows from `plasm_context` for your capability picks.",
+                "JSON string: one Plasm line, a full multi-line `plasm_program`, or (on **`plasm_run` only`) comma-separated final roots. **Compositional programs:** MUST use literal newlines (U+000A) between physical lines—one `ident = ...` binding per line, then roots—never multiple bindings separated only by spaces on one line. Good: `repo = e2(...)\\ncommits = ...\\ncommits`. Bad: `repo = ... commits = ...` on one line. Heredocs span multiple physical lines inside this string. Use syntax rows from `plasm_context`.",
             ),
         );
         plasm_program_props.insert(
@@ -1068,11 +1069,7 @@ impl PlasmMcpHandler {
             ));
         }
         let plasm_tool_span = if dry_run_only {
-            crate::spans::mcp_tool_plasm(
-                line_count > 1,
-                line_count as u64,
-                session_ref.as_str(),
-            )
+            crate::spans::mcp_tool_plasm(line_count > 1, line_count as u64, session_ref.as_str())
         } else {
             crate::spans::mcp_tool_plasm_run(
                 line_count > 1,
@@ -1182,13 +1179,7 @@ impl PlasmMcpHandler {
             let pipeline = self.plasm.engine.prompt_pipeline();
             let cross = self.plasm.sessions.symbol_map_cross_cache();
             let compile = if is_plasm_dag_candidate(&expressions) {
-                compile_plasm_dag_to_plan(
-                    pipeline,
-                    Some(cross),
-                    &es,
-                    &plan_name,
-                    &expressions[0],
-                )
+                compile_plasm_dag_to_plan(pipeline, Some(cross), &es, &plan_name, &expressions[0])
             } else {
                 compile_plasm_surface_line_to_plan(
                     pipeline,
@@ -1236,7 +1227,8 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                                             );
                                             let plan_json = plasm_plan_dag_json(&dry);
                                             let mut plasm_obj = serde_json::Map::new();
-                                            plasm_obj.insert("dry_run".into(), serde_json::json!(true));
+                                            plasm_obj
+                                                .insert("dry_run".into(), serde_json::json!(true));
                                             plasm_obj.insert("plan".into(), plan_json);
                                             plasm_obj.insert(
                                                 "guidance".into(),
@@ -2105,20 +2097,9 @@ impl ServerHandler for PlasmMcpHandler {
             "plasm" | "plasm_run" => {
                 let started = Instant::now();
                 let dry_run_only = matches!(params.name.as_str(), "plasm");
-                let tool_name: &'static str = if dry_run_only {
-                    "plasm"
-                } else {
-                    "plasm_run"
-                };
-                self.handle_plasm_mcp_tool(
-                    &key,
-                    &runtime,
-                    &v,
-                    tool_name,
-                    dry_run_only,
-                    started,
-                )
-                .await
+                let tool_name: &'static str = if dry_run_only { "plasm" } else { "plasm_run" };
+                self.handle_plasm_mcp_tool(&key, &runtime, &v, tool_name, dry_run_only, started)
+                    .await
             }
             _ => {
                 crate::metrics::record_mcp_tool(

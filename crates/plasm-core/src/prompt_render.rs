@@ -2885,12 +2885,13 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   literal      ::= quoted string | number | bool | null | heredoc\n\
 \n\
 Program construction discipline:\n\
+  - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `\n` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)\n\
   - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.\n\
   - Prefer `node[field,…]`, `.limit(n)`, `.sort(...)`, `.aggregate(...)`, `.group_by(...)`, `.singleton()`, `.page_size(n)`, and render heredocs over returning raw broad lists.\n\
   - Return at most small final roots unless the user explicitly asks for raw rows.\n\
   - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
   - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
-  - MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—never one concatenated line. A **tagged heredoc** is still **one logical statement**: after `<<TAG` you must have a newline immediately after `TAG` on the opener line, then the body lines, then a closing line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}}` on that line). That spans multiple physical lines—**do not** squash `<<TAG` onto the same line as the body.\n\
+  - MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—**never** one space-concatenated line for multiple bindings. A **tagged heredoc** is still **one logical statement**: after `<<TAG` you must have a newline immediately after `TAG` on the opener line, then the body lines, then a closing line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}}` on that line). That spans multiple physical lines—**do not** squash `<<TAG` onto the same line as the body.\n\
   - **Final roots** may be comma-separated on one line **or** split across lines; commas **inside** a heredoc body never separate roots. Example: `e1.m2(p3=<<B\nHello\nB\n), e2` (comma after the heredoc closes on its `B` line, then the next root).\n\
 \n\
 Catalogue rules:\n\
