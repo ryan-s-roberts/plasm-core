@@ -1,8 +1,8 @@
-//! Plasm-native DAG composition compiler.
+//! Plasm **program** compiler: multi-line bindings, postfix transforms (`.limit`, `.sort`, …),
+//! and final roots, lowered to the internal plan JSON executed by [`crate::plasm_plan_run`].
 //!
-//! This is deliberately a thin envelope around existing Plasm path expressions. Plain Plasm remains
-//! the executable leaf language; this module only recognizes local labels, a small set of
-//! collection transforms, and final response roots.
+//! Surface path expressions ([`plasm_core::expr_parser`]) remain the leaf language; this module
+//! stitches labels, postfix transforms, and `=>` derives into a single coherent program surface.
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
@@ -14,6 +14,7 @@ use crate::plasm_plan_run::parse_plasm_surface_line;
 use plasm_core::Expr;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::expr_parser::{PlasmPostfixOp, peel_postfix_suffixes};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -92,7 +93,7 @@ impl<'a> CompileState<'a> {
 
     fn insert(&mut self, node: DagNode) -> Result<(), String> {
         if self.labels.contains_key(&node.id) {
-            return Err(format!("duplicate Plasm-DAG node label {:?}", node.id));
+            return Err(format!("duplicate Plasm program node label {:?}", node.id));
         }
         self.labels.insert(node.id.clone(), self.nodes.len());
         self.nodes.push(node);
@@ -117,11 +118,9 @@ pub fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
         let line = strip_comment(line).trim();
         !line.is_empty() && split_assignment(line).is_some()
     }) || src.contains("=>")
-        || src.contains(".limit(")
-        || src.contains(".sort(")
-        || src.contains(".aggregate(")
-        || src.contains(".group_by(")
-        || src.contains(".page_size(")
+        || peel_postfix_suffixes(src)
+            .map(|(_, ops)| !ops.is_empty())
+            .unwrap_or(false)
 }
 
 pub fn split_bare_plasm_roots(src: &str) -> Option<Vec<String>> {
@@ -174,14 +173,15 @@ fn compile_plasm_dag_to_plan_inner(
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     let statements = parse_statements(source)?;
     if statements.is_empty() {
-        return Err("Plasm-DAG program is empty".to_string());
+        return Err("Plasm program is empty".to_string());
     }
     let mut final_roots: Option<Vec<String>> = None;
     for stmt in statements {
         if let Some((id, rhs)) = split_assignment(&stmt) {
             validate_label(id)?;
-            let node = compile_node_expr(session, &state, id, rhs.trim())?;
-            state.insert(node)?;
+            for node in compile_node_expr(session, &state, id, rhs.trim())? {
+                state.insert(node)?;
+            }
         } else {
             let stmt = stmt.trim();
             if stmt.starts_with("return ") {
@@ -194,11 +194,11 @@ fn compile_plasm_dag_to_plan_inner(
         }
     }
     let roots = final_roots.ok_or_else(|| {
-        "Plasm-DAG program needs a final line of bare roots (comma-separated expressions or node labels)"
+        "Plasm program needs a final line of bare roots (comma-separated expressions or node labels)"
             .to_string()
     })?;
     if roots.is_empty() {
-        return Err("Plasm-DAG final roots list is empty".to_string());
+        return Err("Plasm program final roots list is empty".to_string());
     }
     let nodes = state
         .nodes
@@ -261,26 +261,181 @@ pub fn compile_plasm_surface_line_to_plan(
     }))
 }
 
+/// Trailing `.singleton()` / `.page_size(n)` in postfix peel order become flags on the final node.
+fn split_tail_postfix_flags(
+    mut ops: Vec<PlasmPostfixOp>,
+) -> (Vec<PlasmPostfixOp>, bool, Option<usize>) {
+    let mut singleton = false;
+    let mut page_size = None;
+    while let Some(last) = ops.last() {
+        match last {
+            PlasmPostfixOp::Singleton => {
+                singleton = true;
+                ops.pop();
+            }
+            PlasmPostfixOp::PageSize(n) => {
+                page_size = Some(*n);
+                ops.pop();
+            }
+            _ => break,
+        }
+    }
+    (ops, singleton, page_size)
+}
+
+fn postfix_op_to_compute(
+    op: &PlasmPostfixOp,
+    source: &str,
+    id: &str,
+    expr_display: &str,
+) -> Result<DagNode, String> {
+    let mk = |op: ComputeOp, schema: SyntheticResultSchema, singleton: bool| -> DagNode {
+        DagNode {
+            id: id.to_string(),
+            expr: expr_display.to_string(),
+            singleton,
+            page_size: None,
+            source: DagNodeSource::Compute {
+                source: source.to_string(),
+                op,
+                schema,
+            },
+        }
+    };
+    match op {
+        PlasmPostfixOp::Limit(n) => Ok(mk(
+            ComputeOp::Limit { count: *n },
+            single_unknown_schema("PlanLimit"),
+            *n <= 1,
+        )),
+        PlasmPostfixOp::Sort { args } => {
+            let parts = split_top_level(args, ',')?;
+            let key = parts
+                .first()
+                .ok_or_else(|| "sort(...) requires a field".to_string())?
+                .trim();
+            let descending = parts
+                .get(1)
+                .map(|s| s.trim().eq_ignore_ascii_case("desc"))
+                .unwrap_or(false);
+            Ok(mk(
+                ComputeOp::Sort {
+                    key: FieldPath::from_dotted(key)?,
+                    descending,
+                },
+                single_unknown_schema("PlanSort"),
+                false,
+            ))
+        }
+        PlasmPostfixOp::Aggregate { args } => {
+            let aggregates = parse_aggregates(args)?;
+            let schema = schema_from_aggregates("PlanAggregate", &aggregates);
+            Ok(mk(ComputeOp::Aggregate { aggregates }, schema, true))
+        }
+        PlasmPostfixOp::GroupBy { args } => {
+            let parts = split_top_level(args, ',')?;
+            let key = parts
+                .first()
+                .ok_or_else(|| "group_by(...) requires a key field".to_string())?
+                .trim();
+            let rest = if parts.len() <= 1 {
+                return Err("group_by(...) requires aggregate specs".into());
+            } else {
+                parts[1..].join(",")
+            };
+            let aggregates = parse_aggregates(rest.as_str())?;
+            let schema = schema_from_aggregates("PlanGroup", &aggregates);
+            Ok(mk(
+                ComputeOp::GroupBy {
+                    key: FieldPath::from_dotted(key)?,
+                    aggregates,
+                },
+                schema,
+                false,
+            ))
+        }
+        PlasmPostfixOp::Projection { fields } => {
+            let mut map = BTreeMap::new();
+            for field in parse_field_list(fields)? {
+                map.insert(
+                    OutputName::new(field.clone())?,
+                    FieldPath::from_dotted(&field)?,
+                );
+            }
+            let schema =
+                schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
+            Ok(mk(ComputeOp::Project { fields: map }, schema, false))
+        }
+        PlasmPostfixOp::Singleton | PlasmPostfixOp::PageSize(_) => {
+            Err("internal: singleton/page_size must be split as tail flags before lowering".into())
+        }
+    }
+}
+
+/// Lower `core` plus postfix ops to one or more [`DagNode`]s (surface base + optional compute chain).
+fn compile_postfix_plan(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    binding_id: &str,
+    full_rhs: &str,
+    core: &str,
+    ops: Vec<PlasmPostfixOp>,
+) -> Result<Vec<DagNode>, String> {
+    let (compute_ops, tail_singleton, tail_page_size) = split_tail_postfix_flags(ops);
+    let primary = core.trim();
+
+    if compute_ops.is_empty() {
+        if state.contains(primary) && (tail_singleton || tail_page_size.is_some()) {
+            return Err(format!(
+                "Plasm program `{binding_id}`: `.singleton()` / `.page_size(...)` on bare label `{primary}` is not supported; apply transforms to a surface expression or insert an intermediate binding"
+            ));
+        }
+        let mut node = compile_surface_node(session, state, binding_id, primary)?;
+        node.singleton |= tail_singleton;
+        node.page_size = tail_page_size.or(node.page_size);
+        node.expr = full_rhs.to_string();
+        return Ok(vec![node]);
+    }
+
+    let mut out: Vec<DagNode> = Vec::new();
+    let base_source: String = if state.contains(primary) {
+        primary.to_string()
+    } else {
+        let bid = format!("__plasm_{binding_id}_b0");
+        let base = compile_surface_node(session, state, &bid, primary)?;
+        out.push(base);
+        bid
+    };
+
+    let mut cur_source = base_source;
+    for (i, op) in compute_ops.iter().enumerate() {
+        let nid = if i + 1 == compute_ops.len() {
+            binding_id.to_string()
+        } else {
+            format!("__plasm_{binding_id}_s{i}")
+        };
+        let mut node = postfix_op_to_compute(op, &cur_source, &nid, full_rhs)?;
+        if i + 1 < compute_ops.len() {
+            node.expr = format!("{full_rhs}::__step{i}");
+        }
+        cur_source = nid.clone();
+        out.push(node);
+    }
+
+    if let Some(last) = out.last_mut() {
+        last.singleton |= tail_singleton;
+        last.page_size = tail_page_size.or(last.page_size);
+        last.expr = full_rhs.to_string();
+    }
+    Ok(out)
+}
+
 fn compile_node_expr(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     id: &str,
     rhs: &str,
-) -> Result<DagNode, String> {
-    if let Some(inner) = rhs.strip_suffix(".singleton()") {
-        let base = compile_node_expr(session, state, id, inner.trim())?;
-        return Ok(DagNode {
-            singleton: true,
-            ..base
-        });
-    }
-    if let Some((inner, n)) = parse_unary_call(rhs, "page_size")? {
-        let base = compile_node_expr(session, state, id, inner.trim())?;
-        return Ok(DagNode {
-            page_size: Some(n),
-            ..base
-        });
-    }
+) -> Result<Vec<DagNode>, String> {
     if let Some((left, right)) = split_arrow(rhs)? {
         let source = left.trim();
         require_node(state, source)?;
@@ -292,7 +447,7 @@ fn compile_node_expr(
                 state.pipeline,
                 &expr_for_parse,
             )
-            .map_err(|e| format!("Plasm-DAG `{id}` template parse: {e}"))?;
+            .map_err(|e| format!("Plasm program `{id}` template parse: {e}"))?;
             let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
             if !matches!(
                 kind,
@@ -302,10 +457,10 @@ fn compile_node_expr(
                     | PlanNodeKind::Action
             ) {
                 return Err(format!(
-                    "Plasm-DAG `{id}` for_each right side must be a write/side-effect expression"
+                    "Plasm program `{id}` for_each right side must be a write/side-effect expression"
                 ));
             }
-            return Ok(DagNode {
+            return Ok(vec![DagNode {
                 id: id.to_string(),
                 expr: rhs.to_string(),
                 singleton: false,
@@ -318,10 +473,10 @@ fn compile_node_expr(
                     qualified_entity: qualified,
                     uses_result: uses,
                 },
-            });
+            }]);
         }
         let (value, inputs) = parse_plan_value_expr(right.trim(), state, Some("_"))?;
-        return Ok(DagNode {
+        return Ok(vec![DagNode {
             id: id.to_string(),
             expr: rhs.to_string(),
             singleton: false,
@@ -331,7 +486,7 @@ fn compile_node_expr(
                 value,
                 inputs,
             },
-        });
+        }]);
     }
     if let Some((source, fields, template)) = parse_render(rhs)? {
         if state.contains(source) {
@@ -339,7 +494,7 @@ fn compile_node_expr(
                 .into_iter()
                 .map(OutputName::new)
                 .collect::<Result<Vec<_>, _>>()?;
-            return Ok(DagNode {
+            return Ok(vec![DagNode {
                 id: id.to_string(),
                 expr: rhs.to_string(),
                 singleton: true,
@@ -356,133 +511,32 @@ fn compile_node_expr(
                         }],
                     },
                 },
-            });
+            }]);
         }
     }
-    if let Some((source, fields)) = parse_projection(rhs)? {
-        if state.contains(source) {
-            let mut map = BTreeMap::new();
-            for field in parse_field_list(fields)? {
-                map.insert(
-                    OutputName::new(field.clone())?,
-                    FieldPath::from_dotted(&field)?,
-                );
+
+    let (core, ops) =
+        peel_postfix_suffixes(rhs).map_err(|e| format!("Plasm program `{id}`: {e}"))?;
+    if ops.is_empty() {
+        if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
+            if looks_like_data_literal(rhs) {
+                return Ok(vec![DagNode {
+                    id: id.to_string(),
+                    expr: rhs.to_string(),
+                    singleton: true,
+                    page_size: None,
+                    source: DagNodeSource::Data(value.0),
+                }]);
             }
-            let schema =
-                schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
-            return Ok(DagNode {
-                id: id.to_string(),
-                expr: rhs.to_string(),
-                singleton: false,
-                page_size: None,
-                source: DagNodeSource::Compute {
-                    source: source.to_string(),
-                    op: ComputeOp::Project { fields: map },
-                    schema,
-                },
-            });
         }
+        return Ok(vec![compile_surface_node(
+            session,
+            state,
+            id,
+            core.as_str(),
+        )?]);
     }
-    if let Some((source, n)) = parse_unary_call(rhs, "limit")? {
-        if state.contains(source) {
-            return Ok(DagNode {
-                id: id.to_string(),
-                expr: rhs.to_string(),
-                singleton: n <= 1,
-                page_size: None,
-                source: DagNodeSource::Compute {
-                    source: source.to_string(),
-                    op: ComputeOp::Limit { count: n },
-                    schema: single_unknown_schema("PlanLimit"),
-                },
-            });
-        }
-    }
-    if let Some((source, args)) = parse_call(rhs, "sort")? {
-        if state.contains(source) {
-            let args = split_top_level(args, ',')?;
-            let key = args
-                .first()
-                .ok_or_else(|| "sort(...) requires a field".to_string())?
-                .trim();
-            let descending = args
-                .get(1)
-                .map(|s| s.trim().eq_ignore_ascii_case("desc"))
-                .unwrap_or(false);
-            return Ok(DagNode {
-                id: id.to_string(),
-                expr: rhs.to_string(),
-                singleton: false,
-                page_size: None,
-                source: DagNodeSource::Compute {
-                    source: source.to_string(),
-                    op: ComputeOp::Sort {
-                        key: FieldPath::from_dotted(key)?,
-                        descending,
-                    },
-                    schema: single_unknown_schema("PlanSort"),
-                },
-            });
-        }
-    }
-    if let Some((source, args)) = parse_call(rhs, "aggregate")? {
-        if state.contains(source) {
-            let aggregates = parse_aggregates(args)?;
-            let schema = schema_from_aggregates("PlanAggregate", &aggregates);
-            return Ok(DagNode {
-                id: id.to_string(),
-                expr: rhs.to_string(),
-                singleton: true,
-                page_size: None,
-                source: DagNodeSource::Compute {
-                    source: source.to_string(),
-                    op: ComputeOp::Aggregate { aggregates },
-                    schema,
-                },
-            });
-        }
-    }
-    if let Some((source, args)) = parse_call(rhs, "group_by")? {
-        if state.contains(source) {
-            let parts = split_top_level(args, ',')?;
-            let key = parts
-                .first()
-                .ok_or_else(|| "group_by(...) requires a key field".to_string())?
-                .trim();
-            let rest = args
-                .split_once(',')
-                .map(|(_, r)| r.trim())
-                .ok_or_else(|| "group_by(...) requires aggregate specs".to_string())?;
-            let aggregates = parse_aggregates(rest)?;
-            let schema = schema_from_aggregates("PlanGroup", &aggregates);
-            return Ok(DagNode {
-                id: id.to_string(),
-                expr: rhs.to_string(),
-                singleton: false,
-                page_size: None,
-                source: DagNodeSource::Compute {
-                    source: source.to_string(),
-                    op: ComputeOp::GroupBy {
-                        key: FieldPath::from_dotted(key)?,
-                        aggregates,
-                    },
-                    schema,
-                },
-            });
-        }
-    }
-    if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
-        if looks_like_data_literal(rhs) {
-            return Ok(DagNode {
-                id: id.to_string(),
-                expr: rhs.to_string(),
-                singleton: true,
-                page_size: None,
-                source: DagNodeSource::Data(value.0),
-            });
-        }
-    }
-    compile_surface_node(session, state, id, rhs)
+    compile_postfix_plan(session, state, id, rhs, core.as_str(), ops)
 }
 
 /// Longest bound label match so `repos.foo` wins over `repo.foo` when both exist.
@@ -493,10 +547,7 @@ fn longest_matching_bound_prefix(expr: &str, state: &CompileState<'_>) -> Option
         let prefix = format!("{label}.");
         if expr.starts_with(&prefix) {
             let tail = expr[prefix.len()..].to_string();
-            if best
-                .as_ref()
-                .is_none_or(|(len, _, _)| label.len() > *len)
-            {
+            if best.as_ref().is_none_or(|(len, _, _)| label.len() > *len) {
                 best = Some((label.len(), label.clone(), tail));
             }
         }
@@ -548,7 +599,7 @@ fn lookup_relation_chain_meta(
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
     let source_entity = chain.source.primary_entity();
     let ent = session.cgs.get_entity(source_entity).ok_or_else(|| {
-        format!("unknown entity `{source_entity}` (Plasm-DAG relation continuation)")
+        format!("unknown entity `{source_entity}` (Plasm program relation continuation)")
     })?;
     let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
         format!(
@@ -582,33 +633,18 @@ fn compile_surface_node(
     id: &str,
     expr: &str,
 ) -> Result<DagNode, String> {
-    if let Some(inner) = expr.trim().strip_suffix(".singleton()") {
-        let base = compile_surface_node(session, state, id, inner.trim())?;
-        return Ok(DagNode {
-            singleton: true,
-            ..base
-        });
-    }
-    if let Some((inner, n)) = parse_unary_call(expr, "page_size")? {
-        let base = compile_surface_node(session, state, id, inner.trim())?;
-        return Ok(DagNode {
-            page_size: Some(n),
-            ..base
-        });
-    }
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
         if let Some(anchor_plasm) = anchor_expanded_plasm(state, &label) {
             let expanded = format!("{anchor_plasm}.{tail}");
             let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &expanded)
                 .map_err(|e| {
                     format!(
-                        "Plasm-DAG `{id}` expression parse: {e}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)"
+                        "Plasm program `{id}` expression parse: {e}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)"
                     )
                 })?;
             if let Expr::Chain(ref chain) = parsed.expr {
                 let (target_qe, rel_cardinality) = lookup_relation_chain_meta(session, chain)?;
-                let source_card =
-                    relation_source_cardinality_from_bound_node(state, &label);
+                let source_card = relation_source_cardinality_from_bound_node(state, &label);
                 let result_shape = match rel_cardinality {
                     RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
                     RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
@@ -644,16 +680,16 @@ fn compile_surface_node(
                 });
             }
             return Err(format!(
-                "Plasm-DAG `{id}`: `{label}.…` expands to a non-relation Plasm expression; node-ref continuation currently supports CGS relation chains (`label.<relation>`) only"
+                "Plasm program `{id}`: `{label}.…` expands to a non-relation Plasm expression; node-ref continuation currently supports CGS relation chains (`label.<relation>`) only"
             ));
         }
         return Err(format!(
-            "Plasm-DAG `{id}`: `{label}` is not a Plasm expression anchor — compute/derive/data/for_each bindings cannot be extended with `{label}.…`; repeat the full taught `plasm_expr` or bind an intermediate surface node"
+            "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — compute/derive/data/for_each bindings cannot be extended with `{label}.…`; repeat the full taught `plasm_expr` or bind an intermediate surface node"
         ));
     }
     let (rewritten, uses) = rewrite_template_expr(expr, state, None)?;
     let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &rewritten)
-        .map_err(|e| format!("Plasm-DAG `{id}` expression parse: {e}"))?;
+        .map_err(|e| format!("Plasm program `{id}` expression parse: {e}"))?;
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
     Ok(DagNode {
@@ -841,7 +877,7 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
 }
 
 /// How a structured heredoc closing line was recognized (tagged `TAG` line) — mirrors
-/// [`plasm_core::expr_parser::value`] so Plasm-DAG staging matches surface parsing.
+/// [`plasm_core::expr_parser::value`] so program staging matches surface parsing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeredocCloseLineKind {
     LineOnly,
@@ -898,7 +934,7 @@ enum HeredocSurfaceStep {
     OpenerIncomplete { tag: String },
 }
 
-/// Unified tagged-heredoc recognition for Plasm-DAG surface scans (`split_top_level`, statement line scan).
+/// Unified tagged-heredoc recognition for Plasm program surface scans (`split_top_level`, statement line scan).
 fn heredoc_surface_step_at(s: &str, i: usize) -> Result<HeredocSurfaceStep, String> {
     let b = s.as_bytes();
     if !is_tagged_heredoc_opener_start(b, i) {
@@ -976,7 +1012,7 @@ fn skip_tagged_structured_heredoc(s: &str, body_start: usize, tag: &str) -> Resu
     Err(format!("unterminated tagged heredoc <<{tag}"))
 }
 
-/// One physical line is a complete Plasm-DAG statement, **unless** it opens a tagged heredoc
+/// One physical line is a complete Plasm program statement, **unless** it opens a tagged heredoc
 /// whose closing `TAG` line has not yet been seen (then we accumulate further physical lines).
 #[derive(Debug)]
 enum PhysicalLineStmtState {
@@ -1065,7 +1101,7 @@ fn parse_statements(src: &str) -> Result<Vec<String>, String> {
         );
     }
     if !cur.is_empty() {
-        return Err("unterminated Plasm-DAG statement (unexpected trailing fragment)".into());
+        return Err("unterminated Plasm program statement (unexpected trailing fragment)".into());
     }
     Ok(out)
 }
@@ -1082,7 +1118,7 @@ fn flattened_program_newline_diagnostic(src: &str) -> Option<String> {
     let (_id, rhs) = split_assignment(line)?;
     if has_flattened_assignment_boundary(rhs) || has_flattened_final_root_boundary(rhs) {
         Some(
-            "Plasm-DAG statements must be separated by real newline characters (U+000A) in the `program` string. Do not separate bindings or final roots with spaces. Send one physical line per binding, then final roots on their own line, e.g. `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`."
+            "Plasm program statements must be separated by real newline characters (U+000A) in the `program` string. Do not separate bindings or final roots with spaces. Send one physical line per binding, then final roots on their own line, e.g. `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`."
                 .to_string(),
         )
     } else {
@@ -1225,8 +1261,9 @@ fn split_return_list(
             roots.push(part.to_string());
         } else {
             let id = format!("return_{}", roots.len() + 1);
-            let node = compile_surface_node(session, state, &id, part)?;
-            state.insert(node)?;
+            for node in compile_node_expr(session, state, &id, part)? {
+                state.insert(node)?;
+            }
             roots.push(id);
         }
     }
@@ -1281,7 +1318,7 @@ fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
 
 fn validate_label(label: &str) -> Result<(), String> {
     if !is_valid_label(label) || matches!(label, "_" | "$" | "return") {
-        return Err(format!("invalid Plasm-DAG label `{label}`"));
+        return Err(format!("invalid Plasm program label `{label}`"));
     }
     Ok(())
 }
@@ -1304,33 +1341,8 @@ fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
     if state.contains(node) {
         Ok(())
     } else {
-        Err(format!("unknown Plasm-DAG node `{node}`"))
+        Err(format!("unknown Plasm program node `{node}`"))
     }
-}
-
-fn parse_unary_call<'a>(rhs: &'a str, name: &str) -> Result<Option<(&'a str, usize)>, String> {
-    let Some((source, args)) = parse_call(rhs, name)? else {
-        return Ok(None);
-    };
-    let n = args
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| format!("{name}(...) requires a positive integer"))?;
-    if n == 0 {
-        return Err(format!("{name}(...) requires a positive integer"));
-    }
-    Ok(Some((source, n)))
-}
-
-fn parse_call<'a>(rhs: &'a str, name: &str) -> Result<Option<(&'a str, &'a str)>, String> {
-    let suffix = format!(".{name}(");
-    let Some(pos) = rhs.find(&suffix) else {
-        return Ok(None);
-    };
-    if !rhs.ends_with(')') {
-        return Err(format!("{name}(...) call must end with `)`"));
-    }
-    Ok(Some((&rhs[..pos], &rhs[pos + suffix.len()..rhs.len() - 1])))
 }
 
 fn parse_projection(rhs: &str) -> Result<Option<(&str, &str)>, String> {
@@ -1812,7 +1824,7 @@ fn looks_like_plasm_effect_template(rhs: &str) -> bool {
 mod tests {
     use super::*;
     use crate::plasm_plan_run::evaluate_plasm_plan_dry;
-    use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig, CGS};
+    use plasm_core::{CGS, CgsContext, DomainExposureSession, PromptPipelineConfig, load_schema};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -2182,9 +2194,7 @@ header, brief, synced, posted"#;
 
     fn github_repository_commit_session() -> ExecuteSession {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = Arc::new(
-            load_schema(&root.join("../../apis/github")).expect("load github"),
-        );
+        let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
             "github".into(),
@@ -2277,5 +2287,46 @@ bad = trimmed.commits"#;
             err.contains("not a Plasm expression anchor"),
             "unexpected: {err}"
         );
+    }
+
+    /// Direct postfix `.limit` on a surface expression must compile with the same plan shape as
+    /// bind-first `label = expr` then `label.limit(n)` (unified language contract).
+    #[test]
+    fn direct_surface_limit_equivalent_to_bind_first_two_node_plan() {
+        let session = github_repository_commit_session();
+        let bind_first = r#"commits = Repository(owner="ryan-s-roberts", repo="plasm-core").commits
+x = commits.limit(2)
+x"#;
+        let direct = r#"Repository(owner="ryan-s-roberts", repo="plasm-core").commits.limit(2)"#;
+        let p1 = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "bind-first-limit",
+            bind_first,
+        )
+        .expect("bind-first");
+        let p2 = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "direct-limit",
+            direct,
+        )
+        .expect("direct");
+        let n1 = p1["nodes"].as_array().expect("nodes");
+        let n2 = p2["nodes"].as_array().expect("nodes");
+        assert_eq!(n1.len(), 2, "{p1:#}");
+        assert_eq!(n2.len(), 2, "{p2:#}");
+        let last1 = &n1[1];
+        let last2 = &n2[1];
+        assert_eq!(last1["kind"], "compute");
+        assert_eq!(last2["kind"], "compute");
+        let op1 = &last1["compute"]["op"];
+        let op2 = &last2["compute"]["op"];
+        assert_eq!(op1["kind"], "limit", "{op1:#}");
+        assert_eq!(op2["kind"], "limit", "{op2:#}");
+        assert_eq!(op1["count"], 2);
+        assert_eq!(op2["count"], 2);
     }
 }

@@ -252,7 +252,7 @@ The flow is:
 ```text
 discover_capabilities("triage GitHub issues and notify Slack")
   -> candidate entities from github, slack, linear, ...
-plasm_context(client_session_key="triage-window",
+plasm_context(intent="triage-window",
               seeds=[{ api: "github", entity: "Issue" },
                      { api: "github", entity: "PullRequest" },
                      { api: "slack",  entity: "Message" }])

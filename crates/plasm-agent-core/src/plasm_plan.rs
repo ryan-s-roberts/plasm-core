@@ -1,6 +1,6 @@
 //! Serializable effect **`Plan`** contract (JSON DAG).
 //!
-//! Plasm-DAG and other hosts compile to this shape; the runtime validates the DAG, runs dry
+//! Plasm programs and other hosts compile to this shape; the runtime validates the DAG, runs dry
 //! reviews, and executes when requested.
 
 use plasm_core::Expr;
@@ -690,7 +690,7 @@ pub struct PlanNode {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub uses_result: Vec<PlanResultUse>,
-    /// Paging cap for a surface query (Plasm-DAG `e#…page_size(n)` / `.page_size(n)`).
+    /// Paging cap for a surface query (Plasm program `e#…page_size(n)` / `.page_size(n)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<usize>,
 }

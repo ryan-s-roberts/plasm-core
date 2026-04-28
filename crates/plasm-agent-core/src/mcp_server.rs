@@ -44,15 +44,15 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
 use plasm_core::CgsDiscovery;
+use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
-use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -61,14 +61,14 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::McpServer;
+use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::http_execute::{
-    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
-    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
+    execute_session_run_markdown, normalize_capability_seeds,
 };
-use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
@@ -79,12 +79,12 @@ use crate::plasm_dag::{
 };
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
 use crate::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines,
-    render_plasm_plan_dry_text, run_plasm_plan, PlasmPlanRunHooks, PlasmPlanRunResult,
+    PlasmPlanRunHooks, PlasmPlanRunResult, evaluate_validated_plasm_plan_dry, plasm_plan_dag_json,
+    plasm_plan_review_guidance_lines, render_plasm_plan_dry_text, run_plasm_plan,
 };
 use crate::run_artifacts::{
-    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri, ArtifactPayload,
-    LogicalSessionUriSegment,
+    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_run_uri,
+    parse_plasm_session_short_resource_uri,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -103,7 +103,7 @@ pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan Plasm** (dry-run onl
      **Mandatory for compositional programs:** any `plasm_program` with **more than one physical line of source** (multiple bindings and/or bindings plus final roots) MUST encode **literal U+000A newlines** inside the JSON `program` string—**never** rely on spaces between statements. Models often flatten multi-step programs onto one line; that breaks compilation. Self-check: split `program` on `\n`—you should see **one statement per line** until final comma-separated roots (which stay on their own line). \
      For one direct read/search/get/relation/method/action whose result is already the answer, send one taught `plasm_expr`. For reports, joins, writes, markdown/html payloads, or any multi-step task, send **one multi-line `plasm_program`** in **one** `plasm` call. \
      Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. \
-     **Node-ref continuation:** when a binding is a taught surface row, `next = repo.<relation>` continues that row’s Plasm (same as inlining the anchor expression before `.<relation>`); the plan keeps an edge from `repo` to `next`. Do not extend synthetic nodes (`…[fields]`, `.limit`, …) with `ident.<relation>`—write the full expression from DOMAIN. \
+     **Postfix transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]` projection, `.singleton()`, `.page_size`) apply to the **same** surface expression language: e.g. `e1{p4=repo}.limit(20)` is valid on one line without an extra binding. **Node-ref continuation:** when a binding is a taught surface row, `next = repo.<relation>` continues that row’s Plasm (same as inlining the anchor expression before `.<relation>`); the plan keeps an edge from `repo` to `next`. Do not extend **compute-only** nodes (`…[fields]`, `.limit`, …) with `ident.<relation>`—write the full expression from DOMAIN or bind a fresh surface node first. \
      Tagged `<<TAG` heredocs require real newlines: opener line, body lines, then closing `TAG` line (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
      Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append **new capability picks** (`api` + `entity` per pick; JSON field **`seeds`**).";
 
@@ -115,7 +115,7 @@ pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str = "**Run Plasm** (live exe
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
 pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** returns a **dry-run plan** for programs inside it; **`plasm_run`** performs **live execution** after you review that plan; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need. \
      **`discover_capabilities`**: pass **`query`** as one short string (what the user wants) or as several strings. The reply is a small fenced **table**: **`api`** (which integration), **`entity`** (which resource type there), **`description`**. Each row is one **capability pick** — use them to fill **`plasm_context`**’s **`seeds`** array (same columns per object). \
-     **`plasm_context`**: pass a stable **`client_session_key`** and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate the session key per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
+     **`plasm_context`**: pass a stable **`intent`** string and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate **intent** per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
      Whenever **`plasm_context`** returns **new syntax table rows**, read that teaching table; it binds the syntax guide below to the symbols for those APIs. \
      **`plasm`**: pass **`logical_session_ref`** and one **`program`** string. **Before you compose `program`:** if the task needs **more than one physical line** (multiple bindings and/or separate final roots), you MUST insert real newlines (U+000A) in that string—this is the most common agent failure mode. JSON/MCP serialize those as `\\n` on the wire; the server expects actual newline characters after parsing. **Never** emit multiple bindings separated only by spaces on one line. Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. Heredocs need a real newline right after `<<TAG`, then body lines, then the closing **`TAG`** line. This tool is **plan-only** (dry-run topology + expected shapes); it never performs live API calls. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** in one `plasm` call should be a **single** expression or one multi-line program; bare comma-separated **multi-root** programs belong on **`plasm_run`** after review. Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
      **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs). \
@@ -507,9 +507,9 @@ impl PlasmMcpHandler {
     fn plasm_tools() -> Vec<Tool> {
         let mut init_props = BTreeMap::new();
         init_props.insert(
-            "client_session_key".into(),
+            "intent".into(),
             json_schema_string_type(
-                "Stable handle for one ongoing workspace/task (e.g. one id for the whole chat). Same key + tenant reuses the same logical session—do not rotate a new key every user message.",
+                "Stable string for one user goal or agent context (e.g. one id for the whole chat). Same intent + tenant reuses the same logical session—do not rotate a new value every user message.",
             ),
         );
         let mut discover_props = BTreeMap::new();
@@ -550,10 +550,10 @@ impl PlasmMcpHandler {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
                 description: Some(
-                    "**Open or extend** one logical session. Send a stable **`client_session_key`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick** (integration + resource type). **Put every pick the program will use into `seeds` on the first open**—several different **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Append-only:** call again only with **new** picks; do not resend unchanged **`seeds`** entries each turn or shrink the list.".into(),
+                    "**Open or extend** one logical session. Send a stable **`intent`** string and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick** (integration + resource type). **Put every pick the program will use into `seeds` on the first open**—several different **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Append-only:** call again only with **new** picks; do not resend unchanged **`seeds`** entries each turn or shrink the list.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
-                    vec!["client_session_key".into(), "seeds".into()],
+                    vec!["intent".into(), "seeds".into()],
                     Some(context_props),
                     None,
                 ),
@@ -654,13 +654,13 @@ fn json_schema_string_or_string_array(
             {
                 "type": "string",
                 "minLength": 1,
-                "description": "One intent or keyword phrase; tokenized for search."
+                "description": "One user goal phrase or short keywords."
             },
             {
                 "type": "array",
                 "minItems": 1,
                 "items": { "type": "string" },
-                "description": "Multiple search strings (each tokenized; OR-style coverage via shared token set)."
+                "description": "Several phrases; each is searched (combined for coverage)."
             }
         ]
     });
@@ -1832,20 +1832,20 @@ impl ServerHandler for PlasmMcpHandler {
                 let tname = "plasm_context";
                 let res: Result<CallToolResult, CallToolError> = async {
                     let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
-                    let client_session_key = v
-                        .get("client_session_key")
+                    let intent = v
+                        .get("intent")
                         .and_then(|x| x.as_str())
                         .ok_or_else(|| {
                         CallToolError::invalid_arguments(
                             tname,
-                            Some("missing `client_session_key`".into()),
+                            Some("missing `intent`".into()),
                         )
                     })?;
                     let scope = tenant_scope(principal_incoming.as_ref());
                     let rec = self
                         .plasm
                         .logical_sessions
-                        .init_session(&scope, &ClientSessionKey::new(client_session_key))
+                        .init_session(&scope, &ClientSessionKey::new(intent))
                         .await;
                     let logical_session_ref = {
                         let transport = self.session_state(&key).await;
@@ -2015,8 +2015,8 @@ impl ServerHandler for PlasmMcpHandler {
                         json!(logical_session_ref),
                     );
                     plasm.insert(
-                        "client_session_key".to_string(),
-                        json!(rec.client_session_key.as_str()),
+                        "intent".to_string(),
+                        json!(rec.intent.as_str()),
                     );
                     plasm.insert("tenant_scope".to_string(), json!(rec.tenant_scope));
                     if text.is_empty() {
@@ -2229,7 +2229,7 @@ fn mcp_initialize_result() -> InitializeResult {
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "Stable `client_session_key` for the whole task; `plasm_context` once with capability picks (`seeds`), then `plasm` (dry-run plan) and `plasm_run` (execute) with the same `logical_session_ref`. Call `plasm_context` again only to append new picks—not every turn."
+                "Stable `intent` for the whole task; `plasm_context` once with capability picks (`seeds`), then `plasm` (dry-run plan) and `plasm_run` (execute) with the same `logical_session_ref`. Call `plasm_context` again only to append new picks—not every turn."
                     .into(),
             ),
             icons: vec![],
@@ -2369,6 +2369,44 @@ mod tests {
             .expect("plasm_context description")
             .clone();
         insta::assert_snapshot!("plasm_context_tool_description", context);
+    }
+
+    #[test]
+    fn plasm_context_input_schema_requires_intent_and_seeds() {
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let ctx = tools
+            .iter()
+            .find(|t| t.name == "plasm_context")
+            .expect("plasm_context tool");
+        let v = serde_json::to_value(&ctx.input_schema).expect("input_schema json");
+        let required = v
+            .get("required")
+            .and_then(|x| x.as_array())
+            .expect("required array");
+        assert!(required.iter().any(|x| x.as_str() == Some("intent")));
+        assert!(required.iter().any(|x| x.as_str() == Some("seeds")));
+        assert!(
+            !required
+                .iter()
+                .any(|x| x.as_str() == Some("client_session_key"))
+        );
+        let props = v
+            .get("properties")
+            .and_then(|x| x.as_object())
+            .expect("properties object");
+        assert!(
+            props.contains_key("intent"),
+            "expected `intent` property, got keys: {:?}",
+            props.keys().collect::<Vec<_>>()
+        );
+        assert!(!props.contains_key("client_session_key"));
+        assert_eq!(
+            props
+                .get("intent")
+                .and_then(|x| x.get("type"))
+                .and_then(|x| x.as_str()),
+            Some("string")
+        );
     }
 
     /// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema

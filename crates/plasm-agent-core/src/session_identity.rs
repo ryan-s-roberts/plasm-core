@@ -1,9 +1,10 @@
-//! Agent-scoped logical session identity: stable `client_session_key` + server-minted `LogicalSessionId`.
+//! Agent-scoped logical session identity: stable host **`intent`** (MCP `plasm_context` JSON string) +
+//! server-minted `LogicalSessionId`.
 //!
 //! ## Roles vs other MCP session state (in-process)
 //!
 //! - **`LogicalSessionRegistry` (this module)** — sole **mint** for `LogicalSessionId` and
-//!   **idempotent** lookup by `(tenant_scope, client_session_key)`; [`LogicalSessionRegistry::verify_tenant`]
+//!   **idempotent** lookup by `(tenant_scope, intent string)`; [`LogicalSessionRegistry::verify_tenant`]
 //!   gates tool use.
 //! - **`PlasmHostState::logical_execute_bindings`** ([`crate::server_state::PlasmHostState`]) —
 //!   host-wide **latest** `(prompt_hash, execute_session_id)` per logical id for **`resources/read`**
@@ -62,12 +63,13 @@ impl std::fmt::Display for LogicalSessionId {
 #[derive(Clone, Debug)]
 pub struct LogicalSessionRecord {
     pub logical_session_id: LogicalSessionId,
-    pub client_session_key: ClientSessionKey,
+    /// Host-stable string from MCP `plasm_context` **`intent`** (same role as before the wire rename).
+    pub intent: ClientSessionKey,
     pub tenant_scope: String,
 }
 
 struct RegistryInner {
-    /// `(tenant_scope, client_session_key)` → logical id (idempotent init).
+    /// `(tenant_scope, intent)` → logical id (idempotent init).
     client_index: HashMap<(String, String), Uuid>,
     /// All minted sessions (for lookup by id).
     sessions: HashMap<Uuid, LogicalSessionRecord>,
@@ -95,16 +97,13 @@ impl LogicalSessionRegistry {
         }
     }
 
-    /// Idempotent: same `(tenant_scope, client_session_key)` returns the same [`LogicalSessionId`].
+    /// Idempotent: same `(tenant_scope, intent)` returns the same [`LogicalSessionId`].
     pub async fn init_session(
         &self,
         tenant_scope: &str,
-        client_session_key: &ClientSessionKey,
+        intent: &ClientSessionKey,
     ) -> LogicalSessionRecord {
-        let k = (
-            tenant_scope.to_string(),
-            client_session_key.as_str().to_string(),
-        );
+        let k = (tenant_scope.to_string(), intent.as_str().to_string());
         let mut g = self.inner.write().await;
         if let Some(id) = g.client_index.get(&k).copied() {
             return g
@@ -116,7 +115,7 @@ impl LogicalSessionRegistry {
         let logical_session_id = LogicalSessionId::new_v4();
         let rec = LogicalSessionRecord {
             logical_session_id,
-            client_session_key: client_session_key.clone(),
+            intent: intent.clone(),
             tenant_scope: tenant_scope.to_string(),
         };
         g.client_index.insert(k, logical_session_id.0);

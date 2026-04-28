@@ -1,8 +1,15 @@
 //! Parse, validate, dry-run, and execute Plasm effect [`Plan`](crate::plasm_plan::Plan) programs (HTTP + MCP).
 
+use plasm_core::CGS;
+use plasm_core::DomainExposureSession;
+use plasm_core::FocusSpec;
+use plasm_core::PromptPipelineConfig;
+use plasm_core::SymbolMap;
+use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::TypeError;
 use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::entity_slices_for_render;
-use plasm_core::expr_parser::{parse_with_cgs_layers, ParseError, ParsedExpr};
+use plasm_core::expr_parser::{ParseError, ParsedExpr, parse_with_cgs_layers};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
@@ -10,30 +17,23 @@ use plasm_core::symbol_map_cache_key_federated;
 use plasm_core::symbol_map_cache_key_single_catalog;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
-use plasm_core::DomainExposureSession;
-use plasm_core::FocusSpec;
-use plasm_core::PromptPipelineConfig;
-use plasm_core::SymbolMap;
-use plasm_core::SymbolMapCrossRequestCache;
-use plasm_core::TypeError;
-use plasm_core::CGS;
 
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
-    trace_record_plasm_line, PublishedResultStep,
+    PublishedResultStep, archive_plasm_result_snapshot, execute_plasm_parsed_expr,
+    publish_plasm_result_steps, trace_record_plasm_line,
 };
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plasm_plan::{
-    parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
-    ComputeTemplate, EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate,
+    AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
+    OutputName, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS, Plan, PlanExprTemplate,
     PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
     ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
     ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
-    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    parse_plan_value, validate_plan_artifact,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::McpPlasmTraceSink;
@@ -84,7 +84,7 @@ pub fn symbol_map_for_plasm_surface_parse(
 }
 
 /// Parse one Plasm surface line: strip DOMAIN gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
-/// [`parse_with_cgs_layers`]. This is the single path for HTTP execute, Plasm-DAG compile, and MCP `plasm`.
+/// [`parse_with_cgs_layers`]. This is the single path for HTTP execute, Plasm program compile, and MCP `plasm`.
 pub fn parse_plasm_surface_line(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -2758,9 +2758,11 @@ fn append_aggregates(
         let value = match agg.function {
             AggregateFunction::Count => serde_json::json!(rows.len()),
             AggregateFunction::Sum => {
-                serde_json::json!(aggregate_numbers(rows, agg.field.as_ref())
-                    .iter()
-                    .sum::<f64>())
+                serde_json::json!(
+                    aggregate_numbers(rows, agg.field.as_ref())
+                        .iter()
+                        .sum::<f64>()
+                )
             }
             AggregateFunction::Avg => {
                 let nums = aggregate_numbers(rows, agg.field.as_ref());
@@ -2966,9 +2968,9 @@ fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::load_schema;
     use plasm_core::CgsContext;
     use plasm_core::DomainExposureSession;
+    use plasm_core::load_schema;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -3089,7 +3091,7 @@ mod tests {
     }
 
     /// `e#` is session-local (DOMAIN TSV); single-catalog + exposure must not parse `e1` as an entity *name*.
-    /// (`.page_size(n)` is Plasm-DAG surface sugar; the core line parser does not treat it as Plasm path syntax.)
+    /// (`.page_size(n)` is Plasm program postfix sugar; the core line parser does not treat it as Plasm path syntax.)
     #[test]
     fn parse_resolves_e1_with_domain_exposure() {
         let s = test_session();

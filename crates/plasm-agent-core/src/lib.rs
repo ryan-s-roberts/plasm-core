@@ -43,7 +43,7 @@ mod oauth_runtime_source;
 pub mod outbound_secret_provider;
 pub mod output;
 pub mod plasm_dag;
-/// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm-DAG, archived plans).
+/// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;
 pub mod plugin_catalog;

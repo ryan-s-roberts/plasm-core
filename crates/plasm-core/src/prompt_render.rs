@@ -2867,7 +2867,7 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   binding       ::= ident \"=\" plasm_node\n\
   plasm_roots   ::= plasm_return (\",\" plasm_return)*\n\
   plasm_return  ::= node_ref | plasm_expr\n\
-  plasm_node    ::= plasm_expr | node_ref dag_suffix | node_ref \"=>\" plasm_value\n\
+  plasm_node    ::= ( plasm_expr | node_ref ) postfix* | node_ref \"=>\" plasm_value\n\
   plasm_expr    ::= entity_expr [projection]\n\
   entity_expr   ::= query_all | get | query | relation | method | create_action{search_rule}\n\
   query_all     ::= {query_all_form}\n\
@@ -2877,7 +2877,7 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   method        ::= {method_form}\n\
   create_action ::= {create_form}\n\
   projection    ::= {projection_form} | \"[\" fields \"]\"\n\
-  dag_suffix    ::= transform | \"[\" fields \"]\" | \"[\" fields \"]\" heredoc\n\
+  postfix       ::= transform | \"[\" fields \"]\" | \"[\" fields \"]\" heredoc\n\
   transform     ::= \".limit(\" int \")\" | \".sort(\" field [\", desc\"] \")\" | \".aggregate(\" agg_spec \")\" | \".group_by(\" field \",\" agg_spec \")\" | \".singleton()\" | \".page_size(\" int \")\"\n\
   fields        ::= {projection}\n\
   plasm_value   ::= literal | node_ref.field | _.field | [v, …]\n\
@@ -2885,7 +2885,8 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   literal      ::= quoted string | number | bool | null | heredoc\n\
 \n\
 Node-ref continuation:\n\
-  - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. Synthetic steps (`ident[field,…]`, `.limit`, `.aggregate`, `.group_by`, derive/`=>`, etc.) are **not** anchors and cannot be extended with `ident.<relation>`—repeat the full expression from DOMAIN instead.\n\
+  - **Postfix transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, bracket projections, `.singleton()`, `.page_size`, heredoc render tails) are **one language** with `plasm_expr`: you may write `e1{{…}}.limit(20)` on a single line without an intermediate binding when the postfix applies to that surface expression.\n\
+  - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`ident[field,…]`, `.limit`, `.aggregate`, `.group_by`, derive/`=>`, etc.) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.\n\
 \n\
 Program construction discipline:\n\
   - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `\n` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)\n\
