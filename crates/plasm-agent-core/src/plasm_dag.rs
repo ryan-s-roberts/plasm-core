@@ -1,5 +1,5 @@
 //! Plasm **program** compiler: multi-line bindings, postfix transforms (`.limit`, `.sort`, …),
-//! and final roots, lowered to the internal plan JSON executed by [`crate::plasm_plan_run`].
+//! and final roots, lowered to the serialized program [`Plan`](crate::plasm_plan::Plan) IR consumed by [`crate::plasm_plan_run`].
 //!
 //! Surface path expressions ([`plasm_core::expr_parser`]) remain the leaf language; this module
 //! stitches labels, postfix transforms, and `=>` derives into a single coherent program surface.
@@ -10,8 +10,12 @@ use crate::plasm_plan::{
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
-use crate::plasm_plan_run::parse_plasm_surface_line;
+use crate::plasm_plan_run::parse_plasm_surface_line_program;
+use plasm_core::ChainStep;
 use plasm_core::Expr;
+use plasm_core::PlasmInputRef;
+use plasm_core::Predicate;
+use plasm_core::Value;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::expr_parser::{PlasmPostfixOp, peel_postfix_suffixes};
@@ -106,6 +110,99 @@ impl<'a> CompileState<'a> {
 
     fn contains(&self, id: &str) -> bool {
         self.labels.contains_key(id)
+    }
+
+    fn program_node_id_set(&self) -> BTreeSet<String> {
+        self.labels.keys().cloned().collect()
+    }
+}
+
+fn collect_template_uses_from_expr(expr: &Expr) -> Vec<serde_json::Value> {
+    let mut acc = Vec::new();
+    collect_expr_for_template_uses(&mut acc, expr);
+    dedupe_uses(acc)
+}
+
+fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr) {
+    match expr {
+        Expr::Query(q) => {
+            if let Some(pred) = &q.predicate {
+                collect_predicate_for_template_uses(acc, pred);
+            }
+        }
+        Expr::Get(g) => {
+            if let Some(pv) = &g.path_vars {
+                for v in pv.values() {
+                    collect_value_for_template_uses(acc, v);
+                }
+            }
+        }
+        Expr::Create(c) => collect_value_for_template_uses(acc, &c.input),
+        Expr::Delete(d) => {
+            if let Some(pv) = &d.path_vars {
+                for v in pv.values() {
+                    collect_value_for_template_uses(acc, v);
+                }
+            }
+        }
+        Expr::Invoke(i) => {
+            if let Some(input) = &i.input {
+                collect_value_for_template_uses(acc, input);
+            }
+            if let Some(pv) = &i.path_vars {
+                for v in pv.values() {
+                    collect_value_for_template_uses(acc, v);
+                }
+            }
+        }
+        Expr::Chain(ch) => {
+            collect_expr_for_template_uses(acc, &ch.source);
+            if let ChainStep::Explicit { expr } = &ch.step {
+                collect_expr_for_template_uses(acc, expr.as_ref());
+            }
+        }
+        Expr::Page(_) => {}
+    }
+}
+
+fn collect_predicate_for_template_uses(acc: &mut Vec<serde_json::Value>, pred: &Predicate) {
+    match pred {
+        Predicate::Comparison { value, .. } => collect_value_for_template_uses(acc, value),
+        Predicate::And { args } | Predicate::Or { args } => {
+            for a in args {
+                collect_predicate_for_template_uses(acc, a);
+            }
+        }
+        Predicate::Not { predicate } => collect_predicate_for_template_uses(acc, predicate.as_ref()),
+        Predicate::ExistsRelation { predicate, .. } => {
+            if let Some(inner) = predicate {
+                collect_predicate_for_template_uses(acc, inner.as_ref());
+            }
+        }
+        Predicate::True | Predicate::False => {}
+    }
+}
+
+fn collect_value_for_template_uses(acc: &mut Vec<serde_json::Value>, v: &Value) {
+    match v {
+        Value::PlasmInputRef(PlasmInputRef::NodeInput { node, .. }) => {
+            acc.push(json!({
+                "node": node,
+                "as": node,
+            }));
+        }
+        Value::PlasmInputRef(PlasmInputRef::RowBinding { .. }) => {}
+        Value::Object(m) => {
+            for x in m.values() {
+                collect_value_for_template_uses(acc, x);
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                collect_value_for_template_uses(acc, x);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -440,14 +537,17 @@ fn compile_node_expr(
         let source = left.trim();
         require_node(state, source)?;
         if looks_like_plasm_effect_template(right) {
-            let (expr_for_parse, uses) = rewrite_template_expr(right.trim(), state, Some("_"))?;
-            let parsed = parse_plasm_surface_line(
+            let refs = state.program_node_id_set();
+            let parsed = parse_plasm_surface_line_program(
                 session,
                 state.cross_cache,
                 state.pipeline,
-                &expr_for_parse,
+                right.trim(),
+                Some(&refs),
+                true,
             )
             .map_err(|e| format!("Plasm program `{id}` template parse: {e}"))?;
+            let uses = collect_template_uses_from_expr(&parsed.expr);
             let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
             if !matches!(
                 kind,
@@ -636,12 +736,20 @@ fn compile_surface_node(
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
         if let Some(anchor_plasm) = anchor_expanded_plasm(state, &label) {
             let expanded = format!("{anchor_plasm}.{tail}");
-            let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &expanded)
-                .map_err(|e| {
-                    format!(
-                        "Plasm program `{id}` expression parse: {e}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)"
-                    )
-                })?;
+            let refs = state.program_node_id_set();
+            let parsed = parse_plasm_surface_line_program(
+                session,
+                state.cross_cache,
+                state.pipeline,
+                &expanded,
+                Some(&refs),
+                false,
+            )
+            .map_err(|e| {
+                format!(
+                    "Plasm program `{id}` expression parse: {e}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)"
+                )
+            })?;
             if let Expr::Chain(ref chain) = parsed.expr {
                 let (target_qe, rel_cardinality) = lookup_relation_chain_meta(session, chain)?;
                 let source_card = relation_source_cardinality_from_bound_node(state, &label);
@@ -687,9 +795,17 @@ fn compile_surface_node(
             "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — compute/derive/data/for_each bindings cannot be extended with `{label}.…`; repeat the full taught `plasm_expr` or bind an intermediate surface node"
         ));
     }
-    let (rewritten, uses) = rewrite_template_expr(expr, state, None)?;
-    let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &rewritten)
-        .map_err(|e| format!("Plasm program `{id}` expression parse: {e}"))?;
+    let refs = state.program_node_id_set();
+    let parsed = parse_plasm_surface_line_program(
+        session,
+        state.cross_cache,
+        state.pipeline,
+        expr,
+        Some(&refs),
+        false,
+    )
+    .map_err(|e| format!("Plasm program `{id}` expression parse: {e}"))?;
+    let uses = collect_template_uses_from_expr(&parsed.expr);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
     Ok(DagNode {
@@ -1528,69 +1644,11 @@ fn parse_literal(raw: &str) -> Result<serde_json::Value, String> {
     Ok(json!(raw))
 }
 
-fn rewrite_template_expr(
-    expr: &str,
-    state: &CompileState<'_>,
-    row_binding: Option<&str>,
-) -> Result<(String, Vec<serde_json::Value>), String> {
-    let mut rewritten = expr.to_string();
-    let mut uses = Vec::new();
-    for node in &state.nodes {
-        for path in find_node_paths(expr, &node.id) {
-            let sentinel = format!("__plasm_dag_node_{}_{}__", node.id, path.replace('.', "_"));
-            rewritten =
-                rewritten.replace(&format!("{}.{}", node.id, path), &format!("\"{sentinel}\""));
-            uses.push(json!({
-                "node": node.id,
-                "as": node.id,
-            }));
-        }
-        rewritten = replace_bare_node_value(&rewritten, &node.id, node.expr.as_str());
-    }
-    if let Some(_binding) = row_binding {
-        for path in find_node_paths(expr, "_") {
-            let sentinel = format!("__plasm_dag_binding_{}__", path.replace('.', "_"));
-            rewritten = rewritten.replace(&format!("_.{path}"), &format!("\"{sentinel}\""));
-        }
-    }
-    Ok((rewritten, dedupe_uses(uses)))
-}
-
-fn find_node_paths(expr: &str, node: &str) -> Vec<String> {
-    let needle = format!("{node}.");
-    let mut out = Vec::new();
-    let mut rest = expr;
-    while let Some(pos) = rest.find(&needle) {
-        let after = &rest[pos + needle.len()..];
-        let path: String = after
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
-            .collect();
-        if !path.is_empty() {
-            out.push(path.trim_end_matches('.').to_string());
-        }
-        rest = &after[path.len()..];
-    }
-    out
-}
-
-fn replace_bare_node_value(expr: &str, node: &str, replacement: &str) -> String {
-    let mut out = expr.to_string();
-    for prefix in ["=", "(", ","] {
-        out = out.replace(
-            &format!("{prefix}{node}"),
-            &format!("{prefix}{replacement}"),
-        );
-    }
-    out
-}
-
 fn expr_template_json(
     parsed: &plasm_core::expr_parser::ParsedExpr,
     uses: &[serde_json::Value],
 ) -> Result<serde_json::Value, String> {
-    let mut value = serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?;
-    replace_sentinels(&mut value);
+    let value = serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?;
     Ok(json!({
         "expr": value,
         "projection": parsed.projection,
@@ -1602,38 +1660,6 @@ fn expr_template_json(
             })
         }).collect::<Vec<_>>()
     }))
-}
-
-fn replace_sentinels(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(s) if s.starts_with("__plasm_dag_node_") => {
-            let raw = s
-                .trim_start_matches("__plasm_dag_node_")
-                .trim_end_matches("__");
-            let mut parts = raw.split('_');
-            let node = parts.next().unwrap_or_default().to_string();
-            let path = parts.map(str::to_string).collect::<Vec<_>>();
-            *value = json!({ "__plasm_hole": { "kind": "node_input", "node": node, "alias": node, "path": path } });
-        }
-        serde_json::Value::String(s) if s.starts_with("__plasm_dag_binding_") => {
-            let raw = s
-                .trim_start_matches("__plasm_dag_binding_")
-                .trim_end_matches("__");
-            let path = raw.split('_').map(str::to_string).collect::<Vec<_>>();
-            *value = json!({ "__plasm_hole": { "kind": "binding", "binding": "_", "path": path } });
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                replace_sentinels(item);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for item in map.values_mut() {
-                replace_sentinels(item);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn dedupe_uses(uses: Vec<serde_json::Value>) -> Vec<serde_json::Value> {

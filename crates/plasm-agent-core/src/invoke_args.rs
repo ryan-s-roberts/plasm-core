@@ -2,7 +2,7 @@ use clap::ArgMatches;
 use indexmap::IndexMap;
 use plasm_core::{CapabilitySchema, Value};
 
-use crate::input_field_cli::{build_field_args, field_value_for_invoke, FieldArgHelp};
+use crate::input_field_cli::{FieldArgHelp, build_field_args, field_value_for_invoke};
 
 /// Generate typed clap `Arg`s from a capability's InputSchema.
 ///

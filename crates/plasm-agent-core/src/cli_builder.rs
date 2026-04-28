@@ -1,14 +1,14 @@
 use clap::{Arg, Command};
 use plasm_compile::{
+    CapabilityTemplate, CmlRequest, PaginationConfig, PaginationLocation, PaginationParam,
     pagination_config_for_capability, parse_capability_template, path_var_names_from_request,
-    template_var_names, CapabilityTemplate, CmlRequest, PaginationConfig, PaginationLocation,
-    PaginationParam,
+    template_var_names,
 };
 use std::collections::HashSet;
 
 use plasm_core::{
-    capability_method_label_kebab, CapabilityKind, CapabilityParamName, CapabilitySchema,
-    EntityDef, FieldType, PromptRenderMode, RelationMaterialization, CGS,
+    CGS, CapabilityKind, CapabilityParamName, CapabilitySchema, EntityDef, FieldType,
+    PromptRenderMode, RelationMaterialization, capability_method_label_kebab,
 };
 
 use crate::invoke_args::build_invoke_args;

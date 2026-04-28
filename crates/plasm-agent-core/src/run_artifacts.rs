@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use axum::body::Bytes;
 use futures_util::TryStreamExt;
-use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};
+use object_store::{ObjectStore, ObjectStoreExt, path::Path as StorePath};
 use plasm_runtime::{ExecutionResult, ExecutionSource, ExecutionStats};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

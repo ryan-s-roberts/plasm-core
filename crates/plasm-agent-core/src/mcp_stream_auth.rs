@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use http::header::{CONTENT_TYPE, LOCATION};
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rust_mcp_sdk::auth::{AuthInfo, AuthProvider, AuthenticationError, OauthEndpoint};
 use rust_mcp_sdk::mcp_http::{GenericBody, GenericBodyExt, McpAppState};
 use rust_mcp_sdk::mcp_server::error::TransportServerError;
@@ -292,8 +292,7 @@ impl PlasmMcpApiKeyAuthProvider {
         };
         if has_tenants {
             return Err(AuthenticationError::InvalidToken {
-                description:
-                    "MCP Authorization required: send `Authorization: Bearer <api_key>` or OAuth access token",
+                description: "MCP Authorization required: send `Authorization: Bearer <api_key>` or OAuth access token",
             });
         }
         let mut extra = serde_json::Map::new();
@@ -380,8 +379,7 @@ impl PlasmMcpApiKeyAuthProvider {
             })?
         else {
             return Err(AuthenticationError::InvalidToken {
-                description:
-                    "OAuth token subject is not bound to an active personal MCP configuration",
+                description: "OAuth token subject is not bound to an active personal MCP configuration",
             });
         };
 
@@ -742,7 +740,7 @@ impl PlasmMcpApiKeyAuthProvider {
                         "temporarily_unavailable",
                         "incoming auth JWT secret is not configured",
                     ),
-                ))
+                ));
             }
         };
         let iat = now_secs();
@@ -791,8 +789,8 @@ impl PlasmMcpApiKeyAuthProvider {
     }
 
     fn validate_pkce_s256(code_challenge: &str, code_verifier: &str) -> bool {
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let hash = Sha256::digest(code_verifier.as_bytes());
         let encoded = URL_SAFE_NO_PAD.encode(hash);
         encoded == code_challenge
@@ -925,7 +923,7 @@ impl PlasmMcpApiKeyAuthProvider {
                 return Ok(Self::json_response(
                     StatusCode::BAD_REQUEST,
                     Self::oauth_error_json("invalid_request", "invalid registration JSON"),
-                ))
+                ));
             }
         };
 

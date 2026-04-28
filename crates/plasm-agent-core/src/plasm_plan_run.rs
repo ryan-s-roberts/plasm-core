@@ -9,7 +9,7 @@ use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::TypeError;
 use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::entity_slices_for_render;
-use plasm_core::expr_parser::{ParseError, ParsedExpr, parse_with_cgs_layers};
+use plasm_core::expr_parser::{ParseError, ParsedExpr, parse_with_cgs_layers_program};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
@@ -43,7 +43,7 @@ use plasm_core::{CapabilityKind, EntityName, Expr, Ref, Value};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 /// CGS layers for [`parse_with_cgs_layers`] (primary + federated contexts).
@@ -84,12 +84,33 @@ pub fn symbol_map_for_plasm_surface_parse(
 }
 
 /// Parse one Plasm surface line: strip DOMAIN gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
-/// [`parse_with_cgs_layers`]. This is the single path for HTTP execute, Plasm program compile, and MCP `plasm`.
+/// [`plasm_core::expr_parser::parse_with_cgs_layers_program`] (no program-node refs). This is the
+/// single path for HTTP execute and MCP `plasm`.
 pub fn parse_plasm_surface_line(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     pipeline: &PromptPipelineConfig,
     line: &str,
+) -> Result<ParsedExpr, ParseError> {
+    parse_plasm_surface_line_program(
+        session,
+        symbol_map_cross_cache,
+        pipeline,
+        line,
+        None,
+        false,
+    )
+}
+
+/// Parse one Plasm surface line with optional **program compile** context (in-scope node ids and
+/// `for_each` row binding).
+pub fn parse_plasm_surface_line_program(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    pipeline: &PromptPipelineConfig,
+    line: &str,
+    program_nodes: Option<&BTreeSet<String>>,
+    for_each_row_context: bool,
 ) -> Result<ParsedExpr, ParseError> {
     let expanded = pipeline.expand_expr_for_session_with_optional_exposure(
         line,
@@ -99,7 +120,13 @@ pub fn parse_plasm_surface_line(
     );
     let layers = session_cgs_layers(session);
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-    parse_with_cgs_layers(&expanded, &layers, sym_map)
+    parse_with_cgs_layers_program(
+        &expanded,
+        &layers,
+        sym_map,
+        program_nodes,
+        for_each_row_context,
+    )
 }
 
 /// Parse a Plasm line to [`ParsedExpr`] (surface IR + optional projection) for the active session.

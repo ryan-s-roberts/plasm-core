@@ -342,7 +342,7 @@ impl PlanState for ValidatedPlanState {
     type Return = ValidatedPlanReturn;
 }
 
-/// Single serialized program artifact: a program-shaped Plan DAG.
+/// Serialized program plan IR (`Plan`): validated by the runner and persisted for evaluation/trace lineage (not a separate external protocol).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "State::Node: Serialize, State::Return: Serialize",
@@ -883,9 +883,9 @@ fn return_refs(ret: &PlanReturn) -> Vec<&str> {
     }
 }
 
-/// Parse canonical program-DAG Plan JSON.
+/// Deserialize a program-shaped [`Plan`] from a JSON value (same IR shape as evaluation archives).
 pub fn parse_plan_value(plan: &serde_json::Value) -> Result<Plan, String> {
-    serde_json::from_value(plan.clone()).map_err(|e| format!("Plan JSON: {e}"))
+    serde_json::from_value(plan.clone()).map_err(|e| format!("invalid serialized plan: {e}"))
 }
 
 /// Parse and validate one program-shaped Plan.
@@ -2205,7 +2205,7 @@ fn validate_no_js_object_coercion(text: &str, node_index: usize, path: &str) -> 
     Ok(())
 }
 
-/// Parse and validate Plan JSON.
+/// Deserialize and validate a program-shaped plan value (same serialized IR as traces/archives).
 pub fn validate_plan_value(plan: &serde_json::Value) -> Result<(), String> {
     let plan = parse_plan_value(plan)?;
     validate_plan(&plan)

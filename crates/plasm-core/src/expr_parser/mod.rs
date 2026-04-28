@@ -54,6 +54,9 @@
 
 mod value;
 
+pub mod value_expr;
+pub use value_expr::{RenderExpr, ValueExpr};
+
 pub mod postfix;
 pub use postfix::{PlasmPostfixOp, peel_postfix_suffixes};
 
@@ -417,6 +420,20 @@ pub fn parse_with_cgs_layers(
     layers: &[&CGS],
     sym_map: SymbolMap,
 ) -> Result<ParsedExpr, ParseError> {
+    parse_with_cgs_layers_program(input, layers, sym_map, None, false)
+}
+
+/// Like [`parse_with_cgs_layers`], but when compiling a **Plasm program**, supply the set of
+/// in-scope program node ids so `method(p=report)` and `report.field` lower to
+/// [`crate::value::PlasmInputRef`] instead of string literals. `for_each_row_context` enables
+/// `_.field` row holes on the right-hand side of `=>`.
+pub fn parse_with_cgs_layers_program(
+    input: &str,
+    layers: &[&CGS],
+    sym_map: SymbolMap,
+    program_nodes: Option<&BTreeSet<String>>,
+    for_each_row_context: bool,
+) -> Result<ParsedExpr, ParseError> {
     if layers.is_empty() {
         return Err(ParseError {
             kind: ParseErrorKind::Other {
@@ -426,6 +443,8 @@ pub fn parse_with_cgs_layers(
         });
     }
     let mut p = Parser::new_with_sym_map(input, ParserLayers::Many(layers), sym_map);
+    p.program_nodes = program_nodes;
+    p.for_each_row_context = for_each_row_context;
     p.parse_expr()
 }
 
@@ -453,6 +472,11 @@ pub(super) struct Parser<'a> {
     layers: ParserLayers<'a>,
     /// Same `m#` → kebab table as the SYMBOL MAP bundle (forgiving when expansion did not run).
     sym_map: SymbolMap,
+    /// When set, bare `id` / `id.path` in dotted-call args, predicates, and array literals refer
+    /// to program nodes with those ids (typed [`crate::value::PlasmInputRef`]).
+    pub(super) program_nodes: Option<&'a BTreeSet<String>>,
+    /// Enables `_.path` row references (for `source => …` templates).
+    pub(super) for_each_row_context: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -469,6 +493,8 @@ impl<'a> Parser<'a> {
             pos: 0,
             layers,
             sym_map,
+            program_nodes: None,
+            for_each_row_context: false,
         };
         p.skip_ws();
         p
@@ -3563,5 +3589,76 @@ mod tests {
             "msg: {}",
             err.message()
         );
+    }
+
+    #[test]
+    fn program_parse_maps_known_binding_to_plasm_input_ref_in_predicate() {
+        let dir = std::path::Path::new("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = SymbolMap::build(&cgs, &full);
+        let layers = [&cgs];
+        let mut refs = std::collections::BTreeSet::new();
+        refs.insert("report".into());
+        let r = parse_with_cgs_layers_program(
+            "Issue{state=report}",
+            &layers,
+            sym_map,
+            Some(&refs),
+            false,
+        )
+        .expect("parse program predicate");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected query");
+        };
+        let Some(pred) = &q.predicate else {
+            panic!("expected predicate");
+        };
+        let Predicate::Comparison { value, .. } = pred else {
+            panic!("expected comparison");
+        };
+        assert!(
+            matches!(
+                value,
+                Value::PlasmInputRef(crate::PlasmInputRef::NodeInput { node, path })
+                    if node == "report" && path.is_empty()
+            ),
+            "expected PlasmInputRef(report), got {value:?}"
+        );
+    }
+
+    #[test]
+    fn program_parse_unknown_ident_stays_string_in_predicate() {
+        let dir = std::path::Path::new("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = SymbolMap::build(&cgs, &full);
+        let layers = [&cgs];
+        let mut refs = std::collections::BTreeSet::new();
+        refs.insert("not_report".into());
+        let r = parse_with_cgs_layers_program(
+            "Issue{state=report}",
+            &layers,
+            sym_map,
+            Some(&refs),
+            false,
+        )
+        .expect("parse");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected query");
+        };
+        let Some(pred) = &q.predicate else {
+            panic!("expected predicate");
+        };
+        let Predicate::Comparison { value, .. } = pred else {
+            panic!("expected comparison");
+        };
+        assert_eq!(value, &Value::String("report".into()));
     }
 }

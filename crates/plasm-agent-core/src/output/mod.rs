@@ -1,6 +1,6 @@
 use plasm_core::{
-    AgentPresentation, EntityName, FieldType, Value, ValueTableCellBudget, CGS,
-    PLASM_ATTACHMENT_KEY,
+    AgentPresentation, CGS, EntityName, FieldType, PLASM_ATTACHMENT_KEY, Value,
+    ValueTableCellBudget,
 };
 use plasm_runtime::{CachedEntity, ExecutionResult};
 use std::collections::BTreeSet;
@@ -10,7 +10,7 @@ mod presentation_fields;
 mod summary;
 
 pub use in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
-pub(crate) use presentation_fields::{lossy_summary_field_names, LossySummaryFieldNames};
+pub(crate) use presentation_fields::{LossySummaryFieldNames, lossy_summary_field_names};
 pub(crate) use summary::format_result_tsv_with_cgs;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -538,7 +538,7 @@ mod tests {
     use plasm_compile::DecodedRelation;
     use plasm_core::{
         AgentPresentation, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema,
-        FieldType, Ref, ResourceSchema, StringSemantics, PLASM_ATTACHMENT_KEY,
+        FieldType, PLASM_ATTACHMENT_KEY, Ref, ResourceSchema, StringSemantics,
     };
     use plasm_runtime::{ExecutionSource, ExecutionStats};
 

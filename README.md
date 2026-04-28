@@ -78,7 +78,7 @@ e16(p304="acme", p319="purchasing")[p201,p190]
 e5{p39=e17(p304="plasm", p319="plasm"), p42="open"}, e5(p304="plasm", p319="plasm", p297=42)[p350,p237],e5(p304="plasm", p319="plasm", p297=42).m16(p47=123456)
 ```
 
-*Example (**`plasm-dag`** multiline program—the host compiles it with [`compile_plasm_dag_to_plan` in `plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs) into a typed `Plan` JSON artifact with `metadata: { "language": "plasm-dag" }` for the same runner; you author **bindings** and a **last line of bare roots**, not a hand-written plan):*
+*Example (**`plasm-dag`** multiline program—the host compiles it with [`compile_plasm_dag_to_plan` in `plasm_dag.rs`](crates/plasm-agent-core/src/plasm_dag.rs) into the serialized `Plan` IR (runner + evaluation lineage; optional `metadata: { "language": "plasm-dag" }`); you author **bindings** and a **last line of bare roots**, not a hand-written graph):*
 
 - One **`name = …`** per line. Valid RHS shapes include surface Plasm leaves, **`node.limit(n)`** / **`.sort`**, **`.[field,…]`** projection, **`node[field,…] <<TAG` … `TAG`** render (Jinja-style `{{ … }}` in the heredoc body, as in the `compiles_bound_query_limit_render_dag_to_valid_plan` unit test), **`source => { … }`** derive (plan values, **`_.field`** = current row in a map), and **`source =>` …** for-each side effects when the right-hand side is a Plasm **write** / **action** (line comments: `;;` to end-of-line). **Do not** prefix the final line with `return`—it is a syntax error.
 

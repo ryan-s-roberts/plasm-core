@@ -3,7 +3,7 @@
 use crate::output::LossySummaryFieldNames;
 use crate::run_artifacts::RunArtifactHandle;
 use plasm_core::PagingHandle;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 const MIME_JSON: &str = "application/json";

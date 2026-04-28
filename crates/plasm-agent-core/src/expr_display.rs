@@ -1,9 +1,9 @@
 //! Short human-readable [`Expr`] line (REPL `→ …` hint, MCP tool text).
 
+use plasm_core::CGS;
+use plasm_core::Expr;
 use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::resolve_query_capability;
-use plasm_core::Expr;
-use plasm_core::CGS;
 
 /// Compact one-line `il` (no `cap=` for queries that depend on resolution).
 pub fn expr_display(expr: &Expr) -> String {

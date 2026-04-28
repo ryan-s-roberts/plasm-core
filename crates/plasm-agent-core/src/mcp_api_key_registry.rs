@@ -457,9 +457,10 @@ mod tests {
             .expect("label");
         let list = reg.list_api_keys(cid).await.expect("list");
         assert_eq!(list[0].label.as_deref(), Some("Work laptop"));
-        assert!(reg
-            .set_key_label(cid, a.key_id, "".to_string())
-            .await
-            .is_err());
+        assert!(
+            reg.set_key_label(cid, a.key_id, "".to_string())
+                .await
+                .is_err()
+        );
     }
 }

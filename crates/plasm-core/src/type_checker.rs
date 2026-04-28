@@ -756,6 +756,10 @@ fn validate_input_type(
         }
     };
 
+    if matches!(value, Value::PlasmInputRef(_)) {
+        return Ok(());
+    }
+
     match input_type {
         crate::InputType::None => {
             if value.is_domain_example_placeholder() {

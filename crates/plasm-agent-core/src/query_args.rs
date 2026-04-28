@@ -1,7 +1,7 @@
 use clap::ArgMatches;
 use plasm_core::{CapabilitySchema, Predicate};
 
-use crate::input_field_cli::{build_field_args, extend_query_predicates_for_field, FieldArgHelp};
+use crate::input_field_cli::{FieldArgHelp, build_field_args, extend_query_predicates_for_field};
 
 /// Generate typed clap `Arg`s for a query capability's declared `parameters:`.
 ///
@@ -165,9 +165,10 @@ mod tests {
         for arg in build_query_param_args(&cap) {
             cmd = cmd.arg(arg);
         }
-        assert!(cmd
-            .try_get_matches_from(["test", "--status", "BOGUS"])
-            .is_err());
+        assert!(
+            cmd.try_get_matches_from(["test", "--status", "BOGUS"])
+                .is_err()
+        );
     }
 
     #[test]

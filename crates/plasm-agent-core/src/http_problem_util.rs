@@ -1,9 +1,9 @@
 //! Shared RFC 7807 [`Problem`] → Axum [`Response`] mapping for HTTP discovery and execute routes.
 
-use axum::http::header::CONTENT_TYPE;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use axum::Json;
+use axum::http::StatusCode;
+use axum::http::header::CONTENT_TYPE;
+use axum::response::{IntoResponse, Response};
 use http_problem::Problem;
 
 /// Stable `type` URI references for machine clients.

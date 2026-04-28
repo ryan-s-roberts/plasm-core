@@ -8,8 +8,8 @@
 //! path expressions and cannot be executed via the `plasm` tool alone.
 
 use crate::output::{
-    format_result_tsv_with_cgs, format_result_with_cgs, lossy_summary_field_names,
-    InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
+    InBandSummaryReport, LossySummaryFieldNames, OutputFormat, format_result_tsv_with_cgs,
+    format_result_with_cgs, lossy_summary_field_names,
 };
 use crate::run_artifacts::RunArtifactHandle;
 use plasm_core::CGS;

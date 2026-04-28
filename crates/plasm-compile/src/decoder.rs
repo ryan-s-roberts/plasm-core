@@ -527,6 +527,7 @@ pub fn decode_entities(
 
 fn value_to_key_slot(v: &Value) -> Option<String> {
     match v {
+        Value::PlasmInputRef(_) => None,
         Value::String(s) => Some(s.clone()),
         Value::Integer(i) => Some(i.to_string()),
         Value::Float(f) => {

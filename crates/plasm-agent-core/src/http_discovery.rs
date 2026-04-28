@@ -6,8 +6,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use plasm_core::discovery::{
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, DiscoveryError, DiscoveryResult,
 };
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::server_state::PlasmHostState;
-use crate::tool_model::{build_tool_model, ToolModelBuildError, ToolModelQuery};
+use crate::tool_model::{ToolModelBuildError, ToolModelQuery, build_tool_model};
 
 #[derive(Debug, Deserialize)]
 pub struct IncludeCgsQuery {
@@ -136,7 +136,7 @@ async fn get_registry_entry(
     let meta = match reg.lookup_entry_meta(&id) {
         Some(m) => m,
         None => {
-            return problem_response(discovery_problem(DiscoveryError::UnknownEntry(id.clone())))
+            return problem_response(discovery_problem(DiscoveryError::UnknownEntry(id.clone())));
         }
     };
     let cgs = if q.include_cgs {
@@ -167,7 +167,7 @@ async fn get_tool_model(
         None => {
             return problem_response(discovery_problem(DiscoveryError::UnknownEntry(
                 entry_id.clone(),
-            )))
+            )));
         }
     };
     let ctx = match reg.load_context(&entry_id) {

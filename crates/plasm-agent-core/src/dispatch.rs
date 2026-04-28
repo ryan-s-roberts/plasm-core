@@ -1,19 +1,19 @@
 use clap::ArgMatches;
 use indexmap::IndexMap;
 use plasm_compile::{
-    parse_capability_template, path_var_names_from_request, template_pagination,
-    template_var_names, CapabilityTemplate,
+    CapabilityTemplate, parse_capability_template, path_var_names_from_request,
+    template_pagination, template_var_names,
 };
 use plasm_core::{
-    CapabilityKind, ChainExpr, CreateExpr, DeleteExpr, EntityDef, EntityKey, Expr, FieldType,
-    GetExpr, InvokeExpr, QueryExpr, QueryPagination, Ref, Value, CGS,
+    CGS, CapabilityKind, ChainExpr, CreateExpr, DeleteExpr, EntityDef, EntityKey, Expr, FieldType,
+    GetExpr, InvokeExpr, QueryExpr, QueryPagination, Ref, Value,
 };
 use plasm_runtime::{ExecuteOptions, ExecutionMode, ExprExecutor, GraphCache, StreamConsumeOpts};
 use tracing::Instrument;
 
 use crate::error::AgentError;
 use crate::invoke_args::args_to_input;
-use crate::output::{format_result_with_cgs, OutputFormat};
+use crate::output::{OutputFormat, format_result_with_cgs};
 use crate::query_args::args_to_query_predicate;
 use crate::subcommand_util::{
     field_subcommand_kebab, normalize_cli_token, path_param_arg_id, pluralize_entity,

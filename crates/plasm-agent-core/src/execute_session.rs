@@ -2,22 +2,22 @@
 //! Plasm instructions text is built incrementally via [`plasm_core::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`).
 
 use indexmap::IndexMap;
+use plasm_core::CGS;
 use plasm_core::CgsContext;
 use plasm_core::DomainExposureSession;
 use plasm_core::FederationDispatch;
 use plasm_core::PagingHandle;
-use plasm_core::CGS;
 use plasm_plugin_host::LoadedPluginGeneration;
 use plasm_runtime::{CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData};
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::time::{sleep, Duration as TokioDuration};
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::time::{Duration as TokioDuration, sleep};
 
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::run_artifacts::{ArtifactPayload, RunArtifactStore};
@@ -828,8 +828,8 @@ async fn finalize_session_once(
 mod tests {
     use super::*;
     use crate::run_artifacts::{ArtifactPayload, ArtifactPayloadMetadata};
-    use plasm_core::CgsContext;
     use plasm_core::CGS;
+    use plasm_core::CgsContext;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -1036,8 +1036,8 @@ mod tests {
     fn sample_pagination_resume() -> QueryPaginationResumeData {
         use indexmap::indexmap;
         use plasm_compile::{
-            parse_capability_template, CmlEnv, PaginationConfig, PaginationLocation,
-            PaginationParam,
+            CmlEnv, PaginationConfig, PaginationLocation, PaginationParam,
+            parse_capability_template,
         };
         use plasm_runtime::QueryPaginationState;
 

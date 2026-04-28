@@ -190,6 +190,6 @@ pub use type_checker::{
     type_check_query,
 };
 pub use value::{
-    CompOp, FieldType, TemporalWireFormat, Value, ValueTableCellBudget, ValueWireFormat,
-    PLASM_ATTACHMENT_KEY,
+    CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
+    ValueWireFormat, PLASM_ATTACHMENT_KEY,
 };

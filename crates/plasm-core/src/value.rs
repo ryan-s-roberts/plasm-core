@@ -6,6 +6,124 @@ use std::fmt;
 /// Reserved object key for decoded attachment / binary metadata on the wire (see `FieldType::Blob`).
 pub const PLASM_ATTACHMENT_KEY: &str = "__plasm_attachment";
 
+/// Typed reference to another program node's output or to a `for_each` row binding (`_`),
+/// lowered to plan `__plasm_hole` JSON. **Not** used on ordinary HTTP surface lines — only when
+/// the parser is invoked with in-scope program node ids (see [`crate::expr_parser::parse_with_cgs_layers_program`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PlasmInputRef {
+    /// Materialized program node / binding (alias defaults to `node`).
+    NodeInput {
+        node: String,
+        path: Vec<String>,
+    },
+    /// Row cursor in `source => …` templates (`binding` is typically `"_"`).
+    RowBinding {
+        binding: String,
+        path: Vec<String>,
+    },
+}
+
+impl PlasmInputRef {
+    #[must_use]
+    pub fn node_output(node: impl Into<String>, path: Vec<String>) -> Self {
+        Self::NodeInput {
+            node: node.into(),
+            path,
+        }
+    }
+
+    #[must_use]
+    pub fn row_binding(binding: impl Into<String>, path: Vec<String>) -> Self {
+        Self::RowBinding {
+            binding: binding.into(),
+            path,
+        }
+    }
+}
+
+impl Serialize for PlasmInputRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let hole = match self {
+            PlasmInputRef::NodeInput { node, path } => serde_json::json!({
+                "kind": "node_input",
+                "node": node,
+                "alias": node,
+                "path": path,
+            }),
+            PlasmInputRef::RowBinding { binding, path } => serde_json::json!({
+                "kind": "binding",
+                "binding": binding,
+                "path": path,
+            }),
+        };
+        let mut m = serializer.serialize_map(Some(1))?;
+        m.serialize_entry("__plasm_hole", &hole)?;
+        m.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for PlasmInputRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = serde_json::Value::deserialize(deserializer)?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| de::Error::custom("PlasmInputRef expects a JSON object"))?;
+        let inner = obj
+            .get("__plasm_hole")
+            .ok_or_else(|| de::Error::custom("PlasmInputRef expects __plasm_hole key"))?;
+        let kind = inner
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .ok_or_else(|| de::Error::custom("PlasmInputRef hole missing kind"))?;
+        match kind {
+            "node_input" => {
+                let node = inner
+                    .get("node")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| de::Error::custom("node_input hole missing node"))?
+                    .to_string();
+                let path: Vec<String> = inner
+                    .get("path")
+                    .and_then(|p| p.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(PlasmInputRef::NodeInput { node, path })
+            }
+            "binding" => {
+                let binding = inner
+                    .get("binding")
+                    .and_then(|b| b.as_str())
+                    .ok_or_else(|| de::Error::custom("binding hole missing binding"))?
+                    .to_string();
+                let path: Vec<String> = inner
+                    .get("path")
+                    .and_then(|p| p.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(PlasmInputRef::RowBinding { binding, path })
+            }
+            other => Err(de::Error::custom(format!(
+                "unknown PlasmInputRef hole kind `{other}`"
+            ))),
+        }
+    }
+}
+
 /// Plasm's universal value type supporting JSON-like data plus typed extensions.
 ///
 /// `Integer` and `Float` are kept distinct so that integer field values (e.g. from
@@ -14,6 +132,8 @@ pub const PLASM_ATTACHMENT_KEY: &str = "__plasm_attachment";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Value {
+    /// Program / template compile-time reference (see [`PlasmInputRef`]).
+    PlasmInputRef(PlasmInputRef),
     Null,
     Bool(bool),
     /// Whole-number integer (maps to `FieldType::Integer` and JSON integer literals).
@@ -70,15 +190,21 @@ impl Value {
     pub fn contains_domain_placeholder_deep(&self) -> bool {
         match self {
             Value::String(s) if s == "$" => true,
+            Value::String(_) => false,
             Value::Object(m) => m.values().any(Self::contains_domain_placeholder_deep),
             Value::Array(a) => a.iter().any(Self::contains_domain_placeholder_deep),
-            _ => false,
+            Value::PlasmInputRef(_)
+            | Value::Null
+            | Value::Bool(_)
+            | Value::Integer(_)
+            | Value::Float(_) => false,
         }
     }
 
     /// Get the type name of this value as a string.
     pub fn type_name(&self) -> &'static str {
         match self {
+            Value::PlasmInputRef(_) => "plasm_input_ref",
             Value::Null => "null",
             Value::Bool(_) => "boolean",
             Value::Integer(_) => "integer",
@@ -92,6 +218,8 @@ impl Value {
     /// Check if this value is compatible with the given field type.
     pub fn is_compatible_with_field_type(&self, field_type: &FieldType) -> bool {
         match (self, field_type) {
+            // Compile-time holes defer to plan / runtime materialization.
+            (Value::PlasmInputRef(_), _) => true,
             (Value::Null, _) => true,
             (Value::Bool(_), FieldType::Boolean) => true,
             // Integer is compatible with both Integer and Number fields
@@ -216,6 +344,20 @@ impl Value {
 
     fn format_table_cell_inner(v: &Value, budget: &ValueTableCellBudget, depth: u8) -> String {
         match v {
+            Value::PlasmInputRef(r) => match r {
+                PlasmInputRef::NodeInput { node, path } if path.is_empty() => {
+                    format!("@{node}")
+                }
+                PlasmInputRef::NodeInput { node, path } => {
+                    format!("@{node}.{}", path.join("."))
+                }
+                PlasmInputRef::RowBinding { binding, path } if path.is_empty() => {
+                    format!("@{binding}")
+                }
+                PlasmInputRef::RowBinding { binding, path } => {
+                    format!("@{binding}.{}", path.join("."))
+                }
+            },
             Value::Null => "null".to_string(),
             Value::Bool(b) => b.to_string(),
             Value::Integer(i) => i.to_string(),

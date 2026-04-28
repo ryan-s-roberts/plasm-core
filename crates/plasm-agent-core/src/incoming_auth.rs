@@ -1,11 +1,11 @@
 //! Incoming (inbound) authentication for HTTP and MCP: JWT (`Authorization: Bearer`) and
 //! API keys (`X-API-Key`). Outbound CGS/API credentials remain in [`plasm_runtime::auth`].
 
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
-use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
+use axum::http::header::AUTHORIZATION;
 use http_problem::Problem;
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn jwt_round_trip_hs256() {
-        use jsonwebtoken::{encode, EncodingKey, Header};
+        use jsonwebtoken::{EncodingKey, Header, encode};
         use serde_json::json;
 
         let secret = "unit-test-secret";

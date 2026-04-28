@@ -26,6 +26,7 @@
 //! - Corrections: [`crate::error_render`], [`crate::expr_correction`]
 
 use super::{ParseError, ParseErrorKind, Parser, Value};
+use crate::PlasmInputRef;
 
 /// How a structured heredoc closing line was recognized (tagged `TAG` line).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +62,8 @@ fn tagged_heredoc_close_kind(line_slice: &str, tag: &str) -> Option<(HeredocClos
 enum PhraseClose {
     Predicate,
     DottedCallParen,
+    /// Comma-separated values inside `[` … `]` (array literal element).
+    ArrayElement,
 }
 
 impl<'a> Parser<'a> {
@@ -390,14 +393,84 @@ impl<'a> Parser<'a> {
         if self.ident_starts_here() {
             let id_start = self.pos;
             self.consume_raw_ident();
+            let name = self.input[id_start..self.pos].to_string();
             self.skip_ws();
             if self.peek_char() == Some('(') {
                 self.pos = id_start;
                 return self.parse_value();
             }
+            // `for_each` row holes: `_.field` …
+            if name == "_"
+                && self.peek_char() == Some('.')
+                && self.for_each_row_context
+            {
+                self.pos += 1;
+                self.skip_ws();
+                let mut path = Vec::new();
+                while self.ident_starts_here() {
+                    let p0 = self.pos;
+                    self.consume_raw_ident();
+                    path.push(self.input[p0..self.pos].to_string());
+                    self.skip_ws();
+                    if self.peek_char() == Some('.') {
+                        self.pos += 1;
+                        self.skip_ws();
+                    } else {
+                        break;
+                    }
+                }
+                if !path.is_empty() && self.at_rhs_close_delimiter(close) {
+                    return Ok(Value::PlasmInputRef(PlasmInputRef::row_binding("_", path)));
+                }
+            } else if let Some(refs) = self.program_nodes {
+                if refs.contains(name.as_str()) {
+                    if self.peek_char() == Some('.') {
+                        self.pos += 1;
+                        self.skip_ws();
+                        let mut path = Vec::new();
+                        while self.ident_starts_here() {
+                            let p0 = self.pos;
+                            self.consume_raw_ident();
+                            path.push(self.input[p0..self.pos].to_string());
+                            self.skip_ws();
+                            if self.peek_char() == Some('.') {
+                                self.pos += 1;
+                                self.skip_ws();
+                            } else {
+                                break;
+                            }
+                        }
+                        if self.at_rhs_close_delimiter(close) {
+                            return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(name, path)));
+                        }
+                    } else if self.at_rhs_close_delimiter(close) {
+                        return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(
+                            name,
+                            Vec::new(),
+                        )));
+                    }
+                }
+            }
             self.pos = id_start;
         }
         self.parse_phrase_value(close)
+    }
+
+    /// After consuming a program input ref, true if the next non-whitespace char ends this RHS.
+    fn at_rhs_close_delimiter(&self, close: PhraseClose) -> bool {
+        let bytes = self.input.as_bytes();
+        let mut p = self.pos;
+        while p < bytes.len() && bytes[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        match bytes.get(p).copied() {
+            Some(b',') => true,
+            Some(b')') if matches!(close, PhraseClose::DottedCallParen) => true,
+            Some(b'}') if matches!(close, PhraseClose::Predicate) => true,
+            Some(b']') if matches!(close, PhraseClose::ArrayElement) => true,
+            None => true,
+            _ => false,
+        }
     }
 
     /// Array literal for predicate / dotted-call arg RHS: `[v1, v2]` (distinct from trailing `[proj]`).
@@ -435,6 +508,8 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if self.peek_char() == Some('[') {
             self.parse_array_literal()
+        } else if self.program_nodes.is_some() || self.for_each_row_context {
+            self.parse_predicate_or_dotted_call_arg_value(PhraseClose::ArrayElement)
         } else {
             self.parse_value()
         }
@@ -481,6 +556,7 @@ impl<'a> Parser<'a> {
                 match close {
                     PhraseClose::Predicate if b == b'}' => break,
                     PhraseClose::DottedCallParen if b == b')' => break,
+                    PhraseClose::ArrayElement if b == b']' => break,
                     _ => {}
                 }
             }

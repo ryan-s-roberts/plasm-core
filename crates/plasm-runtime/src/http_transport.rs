@@ -352,6 +352,14 @@ fn add_multipart_part(
     }
 
     let text = match &spec.content {
+        Value::PlasmInputRef(_) => {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "multipart part `{}`: compile-time Plasm input refs are not valid HTTP wire values",
+                    spec.name
+                ),
+            });
+        }
         Value::String(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Integer(i) => i.to_string(),
@@ -631,6 +639,7 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
 
 fn plasm_value_to_json(value: &Value) -> serde_json::Value {
     match value {
+        Value::PlasmInputRef(_) => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Integer(i) => serde_json::Value::Number((*i).into()),
