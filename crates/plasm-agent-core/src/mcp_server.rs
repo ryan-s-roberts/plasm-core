@@ -1,14 +1,14 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
-//! Tool results use Markdown [`TextContent`]; `plasm` sets `CallToolResult._meta.plasm` (dry-run
-//! `plan` + `guidance` when `execute` is omitted/false; after `execute: true`, request fingerprints,
-//! artifact URIs, optional `lossy_summary_fields` per truncated step).
+//! Tool results use Markdown [`TextContent`]; **`plasm`** sets `CallToolResult._meta.plasm` for **plan-only**
+//! dry-runs (`plan` + `guidance`); **`plasm_run`** performs live execution and may attach request fingerprints,
+//! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
 //! (`s0`, `s1`, … per MCP transport; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
 //! canonical `plasm://execute/.../run/{uuid}` remains accepted on read.
 //! Tool results may include run snapshot URIs and inline hints when full data requires MCP `resources/read`;
 //! the server repeats that obligation in the reply when it applies.
 //!
-//! Execute bindings (`plasm_context` → `plasm`) are stored **per agent logical session**
+//! Execute bindings (`plasm_context` → `plasm` / `plasm_run`) are stored **per agent logical session**
 //! ([`PlasmExecBinding`]), keyed by canonical logical session UUID from `plasm_context` (client uses per-transport **`logical_session_ref`** slots: `s0`, `s1`, …).
 //! One MCP transport may host **many** logical sessions; `MCP-Session-Id` is transport correlation only.
 //! If the server-side execute session expires while the MCP transport stays open, the next
@@ -29,7 +29,7 @@
 //!
 //! Plasm language / instructions body (first update on `plasm_context` open plus append-only deltas when you add
 //! capability picks via `plasm_context`'s `seeds`) is counted in Unicode scalar values per MCP transport session.
-//! Each `plasm` call also accumulates invocation text (`program` plus optional `reasoning`) and,
+//! Each `plasm` / `plasm_run` call also accumulates invocation text (`program` plus optional `reasoning`) and,
 //! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
 //! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).
@@ -96,20 +96,27 @@ use uuid::Uuid;
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 const MAX_MCP_EXEC_BINDINGS: usize = 512;
 
-/// Model-facing `plasm` tool description: plan-first program construction (session setup is in initialize instructions).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan / execute** Plasm with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
-     Default: each call returns a **reviewable dry-run program plan** (topology + expected shapes)—**no live API execution** until you set **`execute: true`** after the plan matches your intent. \
-     Use the Plasm syntax guide in initialize instructions and the **syntax table rows** from **`plasm_context`** (each row teaches symbols for one selected API capability). \
-     Use a **single** taught `plasm_expr` only for a **one-shot** read/search/get/relation/method whose result is already the final answer. For **compositional** work (reports, multi-step reads, joins, writes, markdown/html payloads), default to one **multi-line `plasm_program`**: bindings + bare final roots—avoid many sequential one-line `plasm` calls. \
-     For a **`plasm_program`**, the JSON **`program`** string must contain **real newline characters** (U+000A): **one physical line per** `ident = …` **binding**, then **final bare roots** on their own line(s)—do **not** collapse the whole program into one line. **One line per binding** does **not** mean heredoc bodies are one line: tagged **`<<TAG`** heredocs are one **logical** statement spanning multiple physical lines—newline immediately after `TAG` on the opener line, body lines, then a closing line **`TAG`** (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
+/// Model-facing **`plasm`** tool description: **plan-only** program construction (session setup is in initialize instructions).
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan Plasm** (dry-run only) with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
+     Each call returns a **reviewable dry-run program plan** (topology + expected shapes). **No live API execution** — use **`plasm_run`** with the same arguments after the plan matches your intent. \
+     Use the Plasm syntax guide in initialize instructions and the **syntax table rows** from **`plasm_context`** (each row teaches symbols for one capability pick). \
+     For one direct read/search/get/relation/method/action whose result is already the answer, send one taught `plasm_expr`. For reports, joins, writes, markdown/html payloads, or any multi-step task, send **one multi-line `plasm_program`** in **one** `plasm` call. \
+     **Hard rule:** a multi-line **`program`** string must contain **real newline characters** (U+000A) between statements. Do **not** separate bindings or final roots with spaces. Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. \
+     For a `plasm_program`, use one physical line per `ident = ...` binding, then final bare roots on their own line(s). Tagged `<<TAG` heredocs also require real newlines: opener line, body lines, then closing `TAG` line (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
      Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append **new capability picks** (`api` + `entity` per pick; JSON field **`seeds`**).";
 
+/// Model-facing **`plasm_run`** tool description: live execution after plan review.
+pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str = "**Run Plasm** (live execution) with the same **`logical_session_ref`**, **`program`**, and optional **`reasoning`** as **`plasm`**. \
+     Call **only after** reviewing the **`plasm`** dry-run plan. This tool performs real HTTP/API work and may return **`resource_link`** / `_meta.plasm` snapshot references. \
+     **Hard rule:** multi-line **`plasm_program`** strings must use **real newline characters** (U+000A) between statements — same shape as **`plasm`**. Bare comma-separated **multi-root** final expressions are supported here (not on **`plasm`**, which is plan-only for a single composed surface).";
+
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
-pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** runs programs inside it; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need. \
+pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** returns a **dry-run plan** for programs inside it; **`plasm_run`** performs **live execution** after you review that plan; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need. \
      **`discover_capabilities`**: pass **`query`** as one short string (what the user wants) or as several strings. The reply is a small fenced **table**: **`api`** (which integration), **`entity`** (which resource type there), **`description`**. Each row is one **capability pick** — use them to fill **`plasm_context`**’s **`seeds`** array (same columns per object). \
-     **`plasm_context`**: pass a stable **`client_session_key`** and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate the session key per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
-     Whenever **`plasm_context`** returns **new capability rows**, read the teaching table in that reply; it binds the syntax guide below to the symbols for those APIs. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string (JSON allows **multiline** strings with literal newlines). For a **`plasm_program`**, use **one line per binding** and **roots on their own line**—not a single concatenated line; heredocs need a **hard newline right after `<<TAG`** on the opener line, then the body, then the closing **`TAG`** line. **`execute`** defaults to **`false`**: you receive a **dry-run program plan** first; set **`execute: true`** only after reviewing that plan. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** are bare comma-separated expressions (commas inside heredocs do not split roots). Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **`plasm_context`**: pass a stable **`client_session_key`** and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate the session key per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
+     Whenever **`plasm_context`** returns **new syntax table rows**, read that teaching table; it binds the syntax guide below to the symbols for those APIs. \
+     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string. JSON and MCP accept multiline strings; the `program` value may contain literal U+000A newline characters. **For every multi-step `plasm_program`, real newlines are required between statements. Never collapse bindings and final roots into one space-separated line.** Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. Heredocs need a real newline right after `<<TAG`, then body lines, then the closing **`TAG`** line. This tool is **plan-only** (dry-run topology + expected shapes); it never performs live API calls. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** in one `plasm` call should be a **single** expression or one multi-line program; bare comma-separated **multi-root** programs belong on **`plasm_run`** after review. Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
+     **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs). \
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
      **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
 
@@ -129,7 +136,7 @@ fn parse_tool_seeds(
         return Err(CallToolError::invalid_arguments(
             tool,
             Some(
-                "missing capability picks: `plasm_context` requires a non-empty `seeds` array of `{api, entity}` objects (`entry_id` per object still accepted instead of `api`); legacy top-level `{entry_id, entities}` is not supported"
+                "missing capability picks: `plasm_context` requires a non-empty `seeds` array of `{api, entity}` objects (`entry_id` per object is accepted instead of `api`); old top-level `{entry_id, entities}` is not supported"
                     .into(),
             ),
         ));
@@ -202,9 +209,9 @@ struct PlasmExecBinding {
 pub(crate) struct McpSessionPlasmStats {
     /// Plasm instructions body from `plasm_context` tool results.
     domain_prompt_chars: u64,
-    /// `plasm` tool payloads: program string plus optional `reasoning`.
+    /// `plasm` / `plasm_run` tool payloads: program string plus optional `reasoning`.
     plasm_invocation_chars: u64,
-    /// Successful `plasm` tool Markdown bodies.
+    /// Successful `plasm` / `plasm_run` tool Markdown bodies.
     plasm_response_chars: u64,
     plasm_call_count: u64,
 }
@@ -246,7 +253,7 @@ fn mcp_chars_to_token_est(chars: u64) -> u64 {
     chars.saturating_add(3) / 4
 }
 
-/// Per `plasm` call: count program + optional reasoning for invocation telemetry.
+/// Per `plasm` / `plasm_run` call: count program + optional reasoning for invocation telemetry.
 fn plasm_invocation_char_count(program: &str, reasoning: Option<&str>) -> u64 {
     let mut n = program.chars().count() as u64;
     if let Some(r) = reasoning {
@@ -518,26 +525,20 @@ impl PlasmMcpHandler {
                 vec!["api", "entity"],
             ),
         );
-        let mut run_props = BTreeMap::new();
-        run_props.insert(
+        let mut plasm_program_props = BTreeMap::new();
+        plasm_program_props.insert(
             "logical_session_ref".into(),
             json_schema_string_type(
-                "Same `logical_session_ref` returned by `plasm_context`. Reuse for follow-up `plasm` calls.",
+                "Same `logical_session_ref` returned by `plasm_context`. Reuse for follow-up `plasm` (plan) and `plasm_run` (execute) calls.",
             ),
         );
-        run_props.insert(
+        plasm_program_props.insert(
             "program".into(),
             json_schema_string_type(
-                "One Plasm line, full `plasm_program`, or bare comma-separated final roots. JSON strings may contain literal newline characters (U+000A): for programs with bindings, use one line per `ident = …` and put final bare roots on their own line(s); do not send the whole program as a single long line. Tagged heredocs (`<<TAG` … `TAG`) require a newline immediately after the tag on the opener line, then body lines, then a closing `TAG` line; commas inside the heredoc body are not root separators. Use the syntax guide from initialize instructions and the **syntax table rows** from `plasm_context` for your selected API capabilities.",
+                "One Plasm line, full `plasm_program`, or (on **`plasm_run` only`) bare comma-separated final roots. For any program with bindings, the string MUST contain real newline characters (U+000A): one `ident = ...` binding per physical line, then final bare roots on their own line(s). Never send `a = ... b = ... b` as one space-separated line. Good: `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`. Tagged heredocs (`<<TAG` ... `TAG`) also require real newlines: opener line, body lines, closing tag. Use syntax table rows from `plasm_context` for your capability picks.",
             ),
         );
-        run_props.insert(
-            "execute".into(),
-            json_schema_boolean_type(
-                "When `false` (default), return a dry-run program plan only (no HTTP/API execution). When `true`, compile and run the program after you have reviewed the prior plan output.",
-            ),
-        );
-        run_props.insert(
+        plasm_program_props.insert(
             "reasoning".into(),
             json_schema_string_type("Optional short note explaining the intent of this call."),
         );
@@ -547,7 +548,7 @@ impl PlasmMcpHandler {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
                 description: Some(
-                    "**Open or extend** one logical session. Send a stable **`client_session_key`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick** (integration + resource type). **Put every pick the program will use into `seeds` on the first open**—several different **`api`** values in one array is normal and still **one** session for **`plasm`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Append-only:** call again only with **new** picks; do not resend unchanged **`seeds`** entries each turn or shrink the list.".into(),
+                    "**Open or extend** one logical session. Send a stable **`client_session_key`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick** (integration + resource type). **Put every pick the program will use into `seeds` on the first open**—several different **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Append-only:** call again only with **new** picks; do not resend unchanged **`seeds`** entries each turn or shrink the list.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["client_session_key".into(), "seeds".into()],
@@ -588,11 +589,32 @@ impl PlasmMcpHandler {
         ];
         tools.push(Tool {
             name: "plasm".into(),
-            title: None,
+            title: Some("Plan Plasm (dry-run)".into()),
             description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
                 vec!["logical_session_ref".into(), "program".into()],
-                Some(run_props),
+                Some(plasm_program_props.clone()),
+                None,
+            ),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                open_world_hint: Some(true),
+                ..Default::default()
+            }),
+            execution: Some(ToolExecution {
+                task_support: Some(ToolExecutionTaskSupport::Forbidden),
+            }),
+            icons: vec![],
+            meta: None,
+            output_schema: None,
+        });
+        tools.push(Tool {
+            name: "plasm_run".into(),
+            title: Some("Run Plasm (execute)".into()),
+            description: Some(MCP_PLASM_RUN_TOOL_DESCRIPTION.into()),
+            input_schema: ToolInputSchema::new(
+                vec!["logical_session_ref".into(), "program".into()],
+                Some(plasm_program_props),
                 None,
             ),
             annotations: Some(ToolAnnotations {
@@ -614,16 +636,6 @@ impl PlasmMcpHandler {
 fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("string"));
-    m.insert(
-        "description".into(),
-        serde_json::Value::String(description.to_string()),
-    );
-    m
-}
-
-fn json_schema_boolean_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), serde_json::json!("boolean"));
     m.insert(
         "description".into(),
         serde_json::Value::String(description.to_string()),
@@ -951,6 +963,467 @@ impl PlasmMcpHandler {
             )
             .await;
     }
+
+    /// Shared MCP implementation for [`Self::handle_call_tool_request`] (`plasm` = plan-only, `plasm_run` = execute).
+    #[allow(clippy::too_many_lines)]
+    async fn handle_plasm_mcp_tool(
+        &self,
+        key: &str,
+        runtime: &Arc<dyn McpServer>,
+        v: &serde_json::Value,
+        tool_name: &'static str,
+        dry_run_only: bool,
+        started: Instant,
+    ) -> Result<CallToolResult, CallToolError> {
+        let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
+        let session_ref = parse_logical_session_ref_arg(tool_name, v)?;
+        let logical_uuid = self
+            .resolve_logical_session_ref_to_uuid(tool_name, key, &session_ref)
+            .await?;
+        let scope = tenant_scope(principal_incoming.as_ref());
+        if !self
+            .plasm
+            .logical_sessions
+            .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+            .await
+        {
+            return Ok(CallToolResult::with_error(CallToolError::from_message(
+                "logical_session_ref is unknown or does not belong to this tenant scope",
+            )));
+        }
+        let ls_key = logical_uuid.to_string();
+        let state = self.logical_mutex(key, &ls_key).await;
+        let needs_binding_hydrate = {
+            let g = state.lock().await;
+            g.binding.is_none()
+        };
+        if needs_binding_hydrate {
+            if let Some(b) = self.resolve_binding_for_logical(key, logical_uuid).await {
+                let mut g = state.lock().await;
+                g.binding = Some(b);
+            }
+        }
+        if dry_run_only && v.get("execute").is_some() {
+            crate::metrics::record_mcp_tool(
+                tool_name,
+                Some(false),
+                "error",
+                "invalid_arguments",
+                started.elapsed(),
+            );
+            return Ok(CallToolResult::with_error(CallToolError::invalid_arguments(
+                tool_name,
+                Some(
+                    "remove `execute`: `plasm` is plan-only. Call `plasm_run` with the same `logical_session_ref` and `program` for live execution after reviewing the dry-run plan."
+                        .into(),
+                ),
+            )));
+        }
+        let Some(program) = v
+            .get("program")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+        else {
+            crate::metrics::record_mcp_tool(
+                tool_name,
+                Some(false),
+                "error",
+                "invalid_arguments",
+                started.elapsed(),
+            );
+            return Ok(CallToolResult::with_error(
+                CallToolError::invalid_arguments(
+                    tool_name,
+                    Some("missing or invalid `program`: non-empty string".into()),
+                ),
+            ));
+        };
+        let mut expressions = vec![program.clone()];
+        if let Some(expanded) = split_bare_plasm_roots(&program) {
+            expressions = expanded;
+        }
+        let reasoning = v
+            .get("reasoning")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty());
+        let line_count = expressions.len();
+        if line_count > 1 && dry_run_only {
+            crate::metrics::record_mcp_tool(
+                tool_name,
+                Some(true),
+                "error",
+                "invalid_arguments",
+                started.elapsed(),
+            );
+            return Ok(CallToolResult::with_error(
+                CallToolError::invalid_arguments(
+                    tool_name,
+                    Some(
+                        "comma-separated multi-root expressions are not supported on plan-only `plasm`: compose one multi-line `plasm_program`, or call `plasm_run` with the same `logical_session_ref` and `program` after reviewing a dry-run plan."
+                            .into(),
+                    ),
+                ),
+            ));
+        }
+        let plasm_tool_span = if dry_run_only {
+            crate::spans::mcp_tool_plasm(
+                line_count > 1,
+                line_count as u64,
+                session_ref.as_str(),
+            )
+        } else {
+            crate::spans::mcp_tool_plasm_run(
+                line_count > 1,
+                line_count as u64,
+                session_ref.as_str(),
+            )
+        };
+        let run_live = !dry_run_only;
+        let (binding, this_invocation_chars, mut idx, call_count) = {
+            let mut g = state.lock().await;
+            let binding = g.binding.clone();
+            let this_invocation_chars = plasm_invocation_char_count(&program, reasoning);
+            g.stats.plasm_invocation_chars = g
+                .stats
+                .plasm_invocation_chars
+                .saturating_add(this_invocation_chars);
+            g.stats.plasm_call_count = g.stats.plasm_call_count.saturating_add(1);
+            let call_count = g.stats.plasm_call_count;
+            let idx = std::mem::take(&mut g.meta_index);
+            (binding, this_invocation_chars, idx, call_count)
+        };
+        let Some(b) = binding else {
+            crate::metrics::record_mcp_tool(
+                tool_name,
+                Some(line_count > 1),
+                "error",
+                "no_session",
+                started.elapsed(),
+            );
+            return Ok(CallToolResult::with_error(CallToolError::from_message(
+                "No session: call `plasm_context` with capability picks (`seeds`) first.",
+            )));
+        };
+
+        if self
+            .plasm
+            .sessions
+            .get_by_strs(&b.prompt_hash, &b.session_id)
+            .await
+            .is_none()
+        {
+            {
+                let mut g = state.lock().await;
+                g.binding = None;
+            }
+            {
+                let mut map = self.plasm.logical_execute_bindings.write().await;
+                map.remove(&logical_uuid);
+            }
+            crate::metrics::record_mcp_tool(
+                tool_name,
+                Some(line_count > 1),
+                "error",
+                "session_expired",
+                started.elapsed(),
+            );
+            return Ok(CallToolResult::with_error(CallToolError::from_message(
+                "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
+            )));
+        }
+
+        let trace_meta = self.trace_session_meta(key, runtime).await;
+        let trace_id = self
+            .plasm
+            .trace_hub
+            .ensure_logical_session(&ls_key, Some(key), trace_meta)
+            .await;
+        let mcp_trace = PlasmTraceContext {
+            trace_id,
+            call_index: Some(call_count as i64),
+            mcp_session_id: Some(key.to_string()),
+            logical_session_id: Some(ls_key.clone()),
+            logical_session_ref: Some(session_ref.clone()),
+        };
+        let reasoning_chars = reasoning.map(|r| r.chars().count() as u64);
+        let call_index = self
+            .plasm
+            .trace_hub
+            .trace_record_plasm_invocation(
+                &ls_key,
+                line_count > 1,
+                line_count,
+                reasoning_chars,
+                this_invocation_chars,
+                reasoning.map(str::to_string),
+            )
+            .await;
+
+        let sink = McpPlasmTraceSink {
+            hub: Arc::clone(&self.plasm.trace_hub),
+            mcp_key: ls_key.clone(),
+            call_index,
+        };
+
+        if expressions.len() == 1 {
+            let Some(es) = self
+                .plasm
+                .sessions
+                .get_by_strs(&b.prompt_hash, &b.session_id)
+                .await
+            else {
+                return Ok(CallToolResult::with_error(CallToolError::from_message(
+                    "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
+                )));
+            };
+            let plan_name = format!("plasm_dag_call_{call_count}");
+            let pipeline = self.plasm.engine.prompt_pipeline();
+            let cross = self.plasm.sessions.symbol_map_cross_cache();
+            let compile = if is_plasm_dag_candidate(&expressions) {
+                compile_plasm_dag_to_plan(
+                    pipeline,
+                    Some(cross),
+                    &es,
+                    &plan_name,
+                    &expressions[0],
+                )
+            } else {
+                compile_plasm_surface_line_to_plan(
+                    pipeline,
+                    Some(cross),
+                    &es,
+                    &plan_name,
+                    &expressions[0],
+                )
+            };
+            let run_result = match compile {
+                Ok(plan) => {
+                    if run_live {
+                        run_plasm_plan(
+                            &es,
+                            self.plasm.as_ref(),
+                            principal_incoming.as_ref(),
+                            &b.prompt_hash,
+                            &b.session_id,
+                            &plan,
+                            true,
+                            Some(PlasmPlanRunHooks {
+                                meta_index: &mut idx,
+                                trace: mcp_trace.clone(),
+                                sink: sink.clone(),
+                            }),
+                        )
+                        .await
+                    } else {
+                        match parse_plan_value(&plan) {
+                            Err(e) => Err(e),
+                            Ok(plan_typed) => match validate_plan_artifact(&plan_typed) {
+                                Err(e) => Err(e),
+                                Ok(validated) => {
+                                    match evaluate_validated_plasm_plan_dry(&es, &validated) {
+                                        Err(e) => Err(e),
+                                        Ok(dry) => {
+                                            let dry_text = render_plasm_plan_dry_text(&dry, None);
+                                            let guidance = plasm_plan_review_guidance_lines(&dry);
+                                            let markdown = format!(
+                                                "# Plasm program plan (dry-run)\n\n\
+Each **`plasm`** call is **plan-only** (no live API execution). \
+Call **`plasm_run`** with the same **`logical_session_ref`** and **`program`** after this topology and result shapes match your intent. \
+After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply.\n\n\
+```text\n{dry_text}\n```"
+                                            );
+                                            let plan_json = plasm_plan_dag_json(&dry);
+                                            let mut plasm_obj = serde_json::Map::new();
+                                            plasm_obj.insert("dry_run".into(), serde_json::json!(true));
+                                            plasm_obj.insert("plan".into(), plan_json);
+                                            plasm_obj.insert(
+                                                "guidance".into(),
+                                                serde_json::Value::Array(
+                                                    guidance
+                                                        .into_iter()
+                                                        .map(serde_json::Value::String)
+                                                        .collect(),
+                                                ),
+                                            );
+                                            let mut meta = serde_json::Map::new();
+                                            meta.insert(
+                                                "plasm".into(),
+                                                serde_json::Value::Object(plasm_obj),
+                                            );
+                                            Ok(PlasmPlanRunResult {
+                                                version: dry.version,
+                                                node_results: dry.node_results,
+                                                graph_summary: dry.graph_summary,
+                                                run_markdown: Some(markdown),
+                                                run_plasm_meta: Some(meta),
+                                            })
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    }
+                }
+                Err(e) => Err(e),
+            };
+            {
+                let mut g = state.lock().await;
+                g.meta_index = idx;
+            }
+            match run_result {
+                Ok(out) => {
+                    let markdown = out.run_markdown.unwrap_or_else(|| {
+                        "# Plasm program plan\n\nNo execution output.".to_string()
+                    });
+                    let response_chars = markdown.chars().count() as u64;
+                    if response_chars > 0 {
+                        let mut g = state.lock().await;
+                        g.stats.plasm_response_chars =
+                            g.stats.plasm_response_chars.saturating_add(response_chars);
+                        self.plasm
+                            .trace_hub
+                            .trace_note_plasm_response_chars(
+                                &ls_key,
+                                response_chars,
+                                tool_name,
+                                call_index,
+                                false,
+                                1,
+                            )
+                            .await;
+                    }
+                    crate::metrics::record_mcp_tool(
+                        tool_name,
+                        Some(false),
+                        "success",
+                        "none",
+                        started.elapsed(),
+                    );
+                    let blocks = vec![ContentBlock::TextContent(TextContent::new(
+                        markdown, None, None,
+                    ))];
+                    let mut res = CallToolResult::from_content(blocks);
+                    if let Some(m) = out.run_plasm_meta {
+                        res = res.with_meta(Some(m));
+                    }
+                    return Ok(res);
+                }
+                Err(msg) => {
+                    self.plasm
+                        .trace_hub
+                        .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
+                        .await;
+                    crate::metrics::record_mcp_tool(
+                        tool_name,
+                        Some(false),
+                        "error",
+                        "execute_failed",
+                        started.elapsed(),
+                    );
+                    return Ok(CallToolResult::with_error(CallToolError::from_message(msg)));
+                }
+            }
+        }
+
+        let run_result = execute_session_run_markdown(
+            self.plasm.as_ref(),
+            principal_incoming.as_ref(),
+            &b.prompt_hash,
+            &b.session_id,
+            expressions,
+            Some(&mut idx),
+            Some(mcp_trace),
+            Some(sink),
+        )
+        .instrument(plasm_tool_span)
+        .await;
+        {
+            let mut g = state.lock().await;
+            g.meta_index = idx;
+        }
+        match run_result {
+            Ok(out) => {
+                let response_chars = out.markdown.chars().count() as u64;
+                if response_chars > 0 {
+                    let mut g = state.lock().await;
+                    g.stats.plasm_response_chars =
+                        g.stats.plasm_response_chars.saturating_add(response_chars);
+                    self.plasm
+                        .trace_hub
+                        .trace_note_plasm_response_chars(
+                            &ls_key,
+                            response_chars,
+                            tool_name,
+                            call_index,
+                            line_count > 1,
+                            line_count,
+                        )
+                        .await;
+                }
+                let (tok_prompt, tok_inv, tok_resp, tok_total) =
+                    self.mcp_plasm_token_snapshot_logical(key, &ls_key).await;
+                tracing::info!(
+                    target: "plasm_agent::mcp",
+                    tool = tool_name,
+                    line_count,
+                    multi_line = line_count > 1,
+                    ok = true,
+                    tokens_est_prompt = tok_prompt,
+                    tokens_est_invocation = tok_inv,
+                    tokens_est_tool_response = tok_resp,
+                    tokens_est_session_total = tok_total,
+                    "MCP tool: plasm / plasm_run (expression detail: plasm_agent::http_execute)"
+                );
+                crate::metrics::record_mcp_tool(
+                    tool_name,
+                    Some(line_count > 1),
+                    "success",
+                    "none",
+                    started.elapsed(),
+                );
+                let blocks = vec![ContentBlock::TextContent(TextContent::new(
+                    out.markdown,
+                    None,
+                    None,
+                ))];
+                let mut res = CallToolResult::from_content(blocks);
+                if let Some(m) = out.tool_meta {
+                    res = res.with_meta(Some(m));
+                }
+                Ok(res)
+            }
+            Err(msg) => {
+                self.plasm
+                    .trace_hub
+                    .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
+                    .await;
+                let (tok_prompt, tok_inv, tok_resp, tok_total) =
+                    self.mcp_plasm_token_snapshot_logical(key, &ls_key).await;
+                tracing::error!(
+                    target: "plasm_agent::mcp",
+                    tool = tool_name,
+                    line_count,
+                    multi_line = line_count > 1,
+                    tokens_est_prompt = tok_prompt,
+                    tokens_est_invocation = tok_inv,
+                    tokens_est_tool_response = tok_resp,
+                    tokens_est_session_total = tok_total,
+                    message = %msg,
+                    "MCP tool: plasm / plasm_run failed"
+                );
+                crate::metrics::record_mcp_tool(
+                    tool_name,
+                    Some(line_count > 1),
+                    "error",
+                    "execute_failed",
+                    started.elapsed(),
+                );
+                Ok(CallToolResult::with_error(CallToolError::from_message(msg)))
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -989,7 +1462,7 @@ impl ServerHandler for PlasmMcpHandler {
                 ResourceTemplate {
                     annotations: None,
                     description: Some(
-                        "Typed bytes for one execute run artifact. `prompt_hash` and `session_id` match `plasm_context`; `run_id` is in `plasm` result metadata."
+                        "Typed bytes for one execute run artifact. `prompt_hash` and `session_id` match `plasm_context`; `run_id` is in `plasm_run` (or prior live) result metadata."
                             .into(),
                     ),
                     icons: vec![],
@@ -1629,441 +2102,23 @@ impl ServerHandler for PlasmMcpHandler {
                 }
                 res
             }
-            "plasm" => {
+            "plasm" | "plasm_run" => {
                 let started = Instant::now();
-                let principal_incoming = self.ensure_mcp_principal(&key, &runtime).await?;
-                let session_ref = parse_logical_session_ref_arg("plasm", &v)?;
-                let logical_uuid = self
-                    .resolve_logical_session_ref_to_uuid("plasm", &key, &session_ref)
-                    .await?;
-                let scope = tenant_scope(principal_incoming.as_ref());
-                if !self
-                    .plasm
-                    .logical_sessions
-                    .verify_tenant(LogicalSessionId(logical_uuid), &scope)
-                    .await
-                {
-                    return Ok(CallToolResult::with_error(CallToolError::from_message(
-                        "logical_session_ref is unknown or does not belong to this tenant scope",
-                    )));
-                }
-                let ls_key = logical_uuid.to_string();
-                let state = self.logical_mutex(&key, &ls_key).await;
-                let needs_binding_hydrate = {
-                    let g = state.lock().await;
-                    g.binding.is_none()
+                let dry_run_only = matches!(params.name.as_str(), "plasm");
+                let tool_name: &'static str = if dry_run_only {
+                    "plasm"
+                } else {
+                    "plasm_run"
                 };
-                if needs_binding_hydrate {
-                    if let Some(b) = self.resolve_binding_for_logical(&key, logical_uuid).await {
-                        let mut g = state.lock().await;
-                        g.binding = Some(b);
-                    }
-                }
-                let Some(program) = v
-                    .get("program")
-                    .and_then(|x| x.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                else {
-                    crate::metrics::record_mcp_tool(
-                        "plasm",
-                        Some(false),
-                        "error",
-                        "invalid_arguments",
-                        started.elapsed(),
-                    );
-                    return Ok(CallToolResult::with_error(
-                        CallToolError::invalid_arguments(
-                            "plasm",
-                            Some("missing or invalid `program`: non-empty string".into()),
-                        ),
-                    ));
-                };
-                let mut expressions = vec![program.clone()];
-                if let Some(expanded) = split_bare_plasm_roots(&program) {
-                    expressions = expanded;
-                }
-                let execute = v.get("execute").and_then(|x| x.as_bool()).unwrap_or(false);
-
-                let reasoning = v
-                    .get("reasoning")
-                    .and_then(|x| x.as_str())
-                    .filter(|s| !s.is_empty());
-                let line_count = expressions.len();
-                if line_count > 1 && !execute {
-                    crate::metrics::record_mcp_tool(
-                        "plasm",
-                        Some(true),
-                        "error",
-                        "invalid_arguments",
-                        started.elapsed(),
-                    );
-                    return Ok(CallToolResult::with_error(
-                        CallToolError::invalid_arguments(
-                            "plasm",
-                            Some(
-                                "comma-separated multi-root expressions require `execute: true` after review; default is plan-only. Prefer one composed `plasm_program` with bindings and a single root block, then call with `execute: true`."
-                                    .into(),
-                            ),
-                        ),
-                    ));
-                }
-                let plasm_tool_span = crate::spans::mcp_tool_plasm(
-                    line_count > 1,
-                    line_count as u64,
-                    session_ref.as_str(),
-                );
-                let (binding, this_invocation_chars, mut idx, call_count) = {
-                    let mut g = state.lock().await;
-                    let binding = g.binding.clone();
-                    let this_invocation_chars = plasm_invocation_char_count(&program, reasoning);
-                    g.stats.plasm_invocation_chars = g
-                        .stats
-                        .plasm_invocation_chars
-                        .saturating_add(this_invocation_chars);
-                    g.stats.plasm_call_count = g.stats.plasm_call_count.saturating_add(1);
-                    let call_count = g.stats.plasm_call_count;
-                    let idx = std::mem::take(&mut g.meta_index);
-                    (binding, this_invocation_chars, idx, call_count)
-                };
-                let Some(b) = binding else {
-                    crate::metrics::record_mcp_tool(
-                        "plasm",
-                        Some(line_count > 1),
-                        "error",
-                        "no_session",
-                        started.elapsed(),
-                    );
-                    return Ok(CallToolResult::with_error(CallToolError::from_message(
-                        "No session: call `plasm_context` with capability picks (`seeds`) first.",
-                    )));
-                };
-
-                if self
-                    .plasm
-                    .sessions
-                    .get_by_strs(&b.prompt_hash, &b.session_id)
-                    .await
-                    .is_none()
-                {
-                    {
-                        let mut g = state.lock().await;
-                        g.binding = None;
-                    }
-                    {
-                        let mut map = self.plasm.logical_execute_bindings.write().await;
-                        map.remove(&logical_uuid);
-                    }
-                    crate::metrics::record_mcp_tool(
-                        "plasm",
-                        Some(line_count > 1),
-                        "error",
-                        "session_expired",
-                        started.elapsed(),
-                    );
-                    return Ok(CallToolResult::with_error(CallToolError::from_message(
-                        "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
-                    )));
-                }
-
-                let trace_meta = self.trace_session_meta(&key, &runtime).await;
-                let trace_id = self
-                    .plasm
-                    .trace_hub
-                    .ensure_logical_session(&ls_key, Some(&key), trace_meta)
-                    .await;
-                let mcp_trace = PlasmTraceContext {
-                    trace_id,
-                    call_index: Some(call_count as i64),
-                    mcp_session_id: Some(key.clone()),
-                    logical_session_id: Some(ls_key.clone()),
-                    logical_session_ref: Some(session_ref.clone()),
-                };
-                let reasoning_chars = reasoning.map(|r| r.chars().count() as u64);
-                let call_index = self
-                    .plasm
-                    .trace_hub
-                    .trace_record_plasm_invocation(
-                        &ls_key,
-                        line_count > 1,
-                        line_count,
-                        reasoning_chars,
-                        this_invocation_chars,
-                        reasoning.map(str::to_string),
-                    )
-                    .await;
-
-                let sink = McpPlasmTraceSink {
-                    hub: Arc::clone(&self.plasm.trace_hub),
-                    mcp_key: ls_key.clone(),
-                    call_index,
-                };
-
-                if expressions.len() == 1 {
-                    let Some(es) = self
-                        .plasm
-                        .sessions
-                        .get_by_strs(&b.prompt_hash, &b.session_id)
-                        .await
-                    else {
-                        return Ok(CallToolResult::with_error(CallToolError::from_message(
-                            "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
-                        )));
-                    };
-                    let plan_name = format!("plasm_dag_call_{call_count}");
-                    let pipeline = self.plasm.engine.prompt_pipeline();
-                    let cross = self.plasm.sessions.symbol_map_cross_cache();
-                    let compile = if is_plasm_dag_candidate(&expressions) {
-                        compile_plasm_dag_to_plan(
-                            pipeline,
-                            Some(cross),
-                            &es,
-                            &plan_name,
-                            &expressions[0],
-                        )
-                    } else {
-                        compile_plasm_surface_line_to_plan(
-                            pipeline,
-                            Some(cross),
-                            &es,
-                            &plan_name,
-                            &expressions[0],
-                        )
-                    };
-                    let run_result = match compile {
-                        Ok(plan) => {
-                            if execute {
-                                run_plasm_plan(
-                                    &es,
-                                    self.plasm.as_ref(),
-                                    principal_incoming.as_ref(),
-                                    &b.prompt_hash,
-                                    &b.session_id,
-                                    &plan,
-                                    true,
-                                    Some(PlasmPlanRunHooks {
-                                        meta_index: &mut idx,
-                                        trace: mcp_trace.clone(),
-                                        sink: sink.clone(),
-                                    }),
-                                )
-                                .await
-                            } else {
-                                match parse_plan_value(&plan) {
-                                    Err(e) => Err(e),
-                                    Ok(plan_typed) => match validate_plan_artifact(&plan_typed) {
-                                        Err(e) => Err(e),
-                                        Ok(validated) => {
-                                            match evaluate_validated_plasm_plan_dry(&es, &validated)
-                                            {
-                                                Err(e) => Err(e),
-                                                Ok(dry) => {
-                                                    let dry_text =
-                                                        render_plasm_plan_dry_text(&dry, None);
-                                                    let guidance =
-                                                        plasm_plan_review_guidance_lines(&dry);
-                                                    let markdown = format!(
-                                                        "# Plasm program plan (dry-run)\n\n\
-Each default **`plasm`** call is **plan-only** (no live API execution). \
-Call again with **`execute: true`** after this topology and result shapes match your intent. \
-After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply.\n\n\
-```text\n{dry_text}\n```"
-                                                    );
-                                                    let plan_json = plasm_plan_dag_json(&dry);
-                                                    let mut plasm_obj = serde_json::Map::new();
-                                                    plasm_obj.insert(
-                                                        "dry_run".into(),
-                                                        serde_json::json!(true),
-                                                    );
-                                                    plasm_obj.insert("plan".into(), plan_json);
-                                                    plasm_obj.insert(
-                                                        "guidance".into(),
-                                                        serde_json::Value::Array(
-                                                            guidance
-                                                                .into_iter()
-                                                                .map(serde_json::Value::String)
-                                                                .collect(),
-                                                        ),
-                                                    );
-                                                    let mut meta = serde_json::Map::new();
-                                                    meta.insert(
-                                                        "plasm".into(),
-                                                        serde_json::Value::Object(plasm_obj),
-                                                    );
-                                                    Ok(PlasmPlanRunResult {
-                                                        version: dry.version,
-                                                        node_results: dry.node_results,
-                                                        graph_summary: dry.graph_summary,
-                                                        run_markdown: Some(markdown),
-                                                        run_plasm_meta: Some(meta),
-                                                    })
-                                                }
-                                            }
-                                        }
-                                    },
-                                }
-                            }
-                        }
-                        Err(e) => Err(e),
-                    };
-                    {
-                        let mut g = state.lock().await;
-                        g.meta_index = idx;
-                    }
-                    match run_result {
-                        Ok(out) => {
-                            let markdown = out.run_markdown.unwrap_or_else(|| {
-                                "# Plasm program plan\n\nNo execution output.".to_string()
-                            });
-                            let response_chars = markdown.chars().count() as u64;
-                            if response_chars > 0 {
-                                let mut g = state.lock().await;
-                                g.stats.plasm_response_chars =
-                                    g.stats.plasm_response_chars.saturating_add(response_chars);
-                                self.plasm
-                                    .trace_hub
-                                    .trace_note_plasm_response_chars(
-                                        &ls_key,
-                                        response_chars,
-                                        "plasm",
-                                        call_index,
-                                        false,
-                                        1,
-                                    )
-                                    .await;
-                            }
-                            crate::metrics::record_mcp_tool(
-                                "plasm",
-                                Some(false),
-                                "success",
-                                "none",
-                                started.elapsed(),
-                            );
-                            let blocks = vec![ContentBlock::TextContent(TextContent::new(
-                                markdown, None, None,
-                            ))];
-                            let mut res = CallToolResult::from_content(blocks);
-                            if let Some(m) = out.run_plasm_meta {
-                                res = res.with_meta(Some(m));
-                            }
-                            return Ok(res);
-                        }
-                        Err(msg) => {
-                            self.plasm
-                                .trace_hub
-                                .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
-                                .await;
-                            crate::metrics::record_mcp_tool(
-                                "plasm",
-                                Some(false),
-                                "error",
-                                "execute_failed",
-                                started.elapsed(),
-                            );
-                            return Ok(CallToolResult::with_error(CallToolError::from_message(
-                                msg,
-                            )));
-                        }
-                    }
-                }
-
-                let run_result = execute_session_run_markdown(
-                    self.plasm.as_ref(),
-                    principal_incoming.as_ref(),
-                    &b.prompt_hash,
-                    &b.session_id,
-                    expressions,
-                    Some(&mut idx),
-                    Some(mcp_trace),
-                    Some(sink),
+                self.handle_plasm_mcp_tool(
+                    &key,
+                    &runtime,
+                    &v,
+                    tool_name,
+                    dry_run_only,
+                    started,
                 )
-                .instrument(plasm_tool_span)
-                .await;
-                {
-                    let mut g = state.lock().await;
-                    g.meta_index = idx;
-                }
-                match run_result {
-                    Ok(out) => {
-                        let response_chars = out.markdown.chars().count() as u64;
-                        if response_chars > 0 {
-                            let mut g = state.lock().await;
-                            g.stats.plasm_response_chars =
-                                g.stats.plasm_response_chars.saturating_add(response_chars);
-                            self.plasm
-                                .trace_hub
-                                .trace_note_plasm_response_chars(
-                                    &ls_key,
-                                    response_chars,
-                                    "plasm",
-                                    call_index,
-                                    line_count > 1,
-                                    line_count,
-                                )
-                                .await;
-                        }
-                        let (tok_prompt, tok_inv, tok_resp, tok_total) =
-                            self.mcp_plasm_token_snapshot_logical(&key, &ls_key).await;
-                        tracing::info!(
-                            target: "plasm_agent::mcp",
-                            tool = "plasm",
-                            line_count,
-                            multi_line = line_count > 1,
-                            ok = true,
-                            tokens_est_prompt = tok_prompt,
-                            tokens_est_invocation = tok_inv,
-                            tokens_est_tool_response = tok_resp,
-                            tokens_est_session_total = tok_total,
-                            "MCP tool: plasm (expression detail: plasm_agent::http_execute)"
-                        );
-                        crate::metrics::record_mcp_tool(
-                            "plasm",
-                            Some(line_count > 1),
-                            "success",
-                            "none",
-                            started.elapsed(),
-                        );
-                        let blocks = vec![ContentBlock::TextContent(TextContent::new(
-                            out.markdown,
-                            None,
-                            None,
-                        ))];
-                        let mut res = CallToolResult::from_content(blocks);
-                        if let Some(m) = out.tool_meta {
-                            res = res.with_meta(Some(m));
-                        }
-                        Ok(res)
-                    }
-                    Err(msg) => {
-                        self.plasm
-                            .trace_hub
-                            .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
-                            .await;
-                        let (tok_prompt, tok_inv, tok_resp, tok_total) =
-                            self.mcp_plasm_token_snapshot_logical(&key, &ls_key).await;
-                        tracing::error!(
-                            target: "plasm_agent::mcp",
-                            tool = "plasm",
-                            line_count,
-                            multi_line = line_count > 1,
-                            tokens_est_prompt = tok_prompt,
-                            tokens_est_invocation = tok_inv,
-                            tokens_est_tool_response = tok_resp,
-                            tokens_est_session_total = tok_total,
-                            message = %msg,
-                            "MCP tool: plasm failed"
-                        );
-                        crate::metrics::record_mcp_tool(
-                            "plasm",
-                            Some(line_count > 1),
-                            "error",
-                            "execute_failed",
-                            started.elapsed(),
-                        );
-                        Ok(CallToolResult::with_error(CallToolError::from_message(msg)))
-                    }
-                }
+                .await
             }
             _ => {
                 crate::metrics::record_mcp_tool(
@@ -2192,7 +2247,7 @@ fn mcp_initialize_result() -> InitializeResult {
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "Stable `client_session_key` for the whole task; `plasm_context` once with capability picks (`seeds`), then mostly `plasm` with the same `logical_session_ref`. Call `plasm_context` again only to append new picks—not every turn."
+                "Stable `client_session_key` for the whole task; `plasm_context` once with capability picks (`seeds`), then `plasm` (dry-run plan) and `plasm_run` (execute) with the same `logical_session_ref`. Call `plasm_context` again only to append new picks—not every turn."
                     .into(),
             ),
             icons: vec![],
@@ -2285,6 +2340,14 @@ mod tests {
     }
 
     #[test]
+    fn mcp_plasm_run_tool_description_snapshot() {
+        insta::assert_snapshot!(
+            "mcp_plasm_run_tool_description",
+            super::MCP_PLASM_RUN_TOOL_DESCRIPTION
+        );
+    }
+
+    #[test]
     fn mcp_server_initialize_instructions_snapshot() {
         insta::assert_snapshot!(
             "mcp_server_initialize_instructions",
@@ -2311,6 +2374,7 @@ mod tests {
         assert!(!names.iter().any(|n| n == "execute_code_plan"));
         assert!(!names.iter().any(|n| n == "execute"));
         assert!(names.iter().any(|n| n == "plasm"));
+        assert!(names.iter().any(|n| n == "plasm_run"));
     }
 
     #[test]
@@ -2378,17 +2442,37 @@ mod tests {
             Some("string")
         );
         assert!(!props.contains_key("expressions"));
-        let execute = props
-            .get("execute")
-            .expect("execute property in input_schema");
-        assert_eq!(
-            execute.get("type").and_then(|x| x.as_str()),
-            Some("boolean")
-        );
         assert!(
-            !required.iter().any(|x| x.as_str() == Some("execute")),
-            "`execute` must be optional"
+            !props.contains_key("execute"),
+            "`plasm` input_schema must not advertise `execute` (use `plasm_run` for live execution)"
         );
+    }
+
+    #[test]
+    fn plasm_run_input_schema_matches_plasm_program_shape() {
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let plasm_run = tools
+            .iter()
+            .find(|t| t.name == "plasm_run")
+            .expect("plasm_run tool");
+        let v = serde_json::to_value(&plasm_run.input_schema).expect("input_schema json");
+        let required = v
+            .get("required")
+            .and_then(|x| x.as_array())
+            .expect("required array");
+        assert!(required.iter().any(|x| x.as_str() == Some("program")));
+        let props = v
+            .get("properties")
+            .and_then(|x| x.as_object())
+            .expect("properties object");
+        assert_eq!(
+            props
+                .get("program")
+                .and_then(|x| x.get("type"))
+                .and_then(|x| x.as_str()),
+            Some("string")
+        );
+        assert!(!props.contains_key("execute"));
     }
 
     #[test]
@@ -2458,7 +2542,7 @@ demo\tWidget\tA contrived widget line
         .expect_err("expected invalid legacy shape");
         assert!(
             err.to_string()
-                .contains("legacy top-level `{entry_id, entities}`"),
+                .contains("old top-level `{entry_id, entities}`"),
             "unexpected error: {err}"
         );
     }

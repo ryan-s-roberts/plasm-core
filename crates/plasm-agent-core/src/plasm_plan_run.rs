@@ -219,16 +219,16 @@ pub fn parse_plasm_line_for_session(
     parse_parsed_expr_for_session(session, line).map(|_| ())
 }
 
-/// Optional MCP `plasm` run hooks: meta index, distributed trace, hub sink. Pass when
-/// `run: true` and the caller must match the MCP `execute` tool (same as batch `plasm` tracing).
+/// Optional MCP live-run hooks: meta index, distributed trace, hub sink. Pass when
+/// `run: true` (e.g. `plasm_run` or multi-line batch execute; same tracing as `execute_session_run_markdown`).
 pub struct PlasmPlanRunHooks<'a> {
     pub meta_index: &'a mut PlasmMetaIndex,
     pub trace: PlasmTraceContext,
     pub sink: McpPlasmTraceSink,
 }
 
-/// Outcome of [`run_plasm_plan`]: the same `node_results` / optional run payload shape as the MCP
-/// `execute` tool (fenced JSON), without Markdown framing.
+/// Outcome of [`run_plasm_plan`]: the same `node_results` / optional run payload shape as an MCP
+/// live `plasm_run` response (fenced JSON), without Markdown framing.
 #[derive(Debug)]
 pub struct PlasmPlanRunResult {
     pub version: serde_json::Value,

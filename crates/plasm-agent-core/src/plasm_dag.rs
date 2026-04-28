@@ -144,6 +144,21 @@ pub fn compile_plasm_dag_to_plan(
     name: &str,
     source: &str,
 ) -> Result<serde_json::Value, String> {
+    compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)
+        .map_err(|err| {
+            flattened_program_newline_diagnostic(source)
+                .map(|hint| format!("{hint}\n\nOriginal parse error: {err}"))
+                .unwrap_or(err)
+        })
+}
+
+fn compile_plasm_dag_to_plan_inner(
+    pipeline: &PromptPipelineConfig,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    session: &ExecuteSession,
+    name: &str,
+    source: &str,
+) -> Result<serde_json::Value, String> {
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     let statements = parse_statements(source)?;
     if statements.is_empty() {
@@ -873,6 +888,90 @@ fn parse_statements(src: &str) -> Result<Vec<String>, String> {
 
 fn strip_comment(line: &str) -> &str {
     line.split_once(";;").map_or(line, |(left, _)| left)
+}
+
+fn flattened_program_newline_diagnostic(src: &str) -> Option<String> {
+    let line = src.trim();
+    if line.is_empty() || line.contains('\n') || line.contains("<<") {
+        return None;
+    }
+    let (_id, rhs) = split_assignment(line)?;
+    if has_flattened_assignment_boundary(rhs) || has_flattened_final_root_boundary(rhs) {
+        Some(
+            "Plasm-DAG statements must be separated by real newline characters (U+000A) in the `program` string. Do not separate bindings or final roots with spaces. Send one physical line per binding, then final roots on their own line, e.g. `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
+fn has_flattened_assignment_boundary(s: &str) -> bool {
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            '=' if quote.is_none() && depth == 0 => {
+                let before_eq = &s[..i];
+                let before_trimmed = before_eq.trim_end();
+                let token_start = before_trimmed
+                    .char_indices()
+                    .rev()
+                    .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx + ch.len_utf8()))
+                    .unwrap_or(0);
+                let label = &before_trimmed[token_start..];
+                if token_start > 0 && is_valid_label(label) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn has_flattened_final_root_boundary(s: &str) -> bool {
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            c if quote.is_none() && depth == 0 && c.is_whitespace() => {
+                let left = s[..i].trim();
+                let right = s[i..].trim();
+                if !left.is_empty() && starts_like_statement_or_root(right) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn starts_like_statement_or_root(s: &str) -> bool {
+    let Some(first) = s.chars().next() else {
+        return false;
+    };
+    if matches!(first, 'e' | 'p' | 'm') {
+        let mut chars = s.chars();
+        chars.next();
+        if matches!(chars.next(), Some(c) if c.is_ascii_digit()) {
+            return true;
+        }
+    }
+    let token = s
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | '(' | '[' | '{' | '.' | '='))
+        .next()
+        .unwrap_or_default();
+    is_valid_label(token)
 }
 
 fn split_assignment(line: &str) -> Option<(&str, &str)> {
@@ -1789,6 +1888,60 @@ header, brief, synced, posted"#;
         assert_eq!(plan["nodes"].as_array().map(|a| a.len()), Some(1));
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert!(!dry.node_results.is_empty());
+    }
+
+    #[test]
+    fn flattened_dag_bindings_get_newline_diagnostic() {
+        let session = test_session();
+        let source = r#"repo = e2("c1") commits = e1{p3=repo}.limit(20) commits"#;
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flattened",
+            source,
+        )
+        .expect_err("flattened input should fail with diagnostic");
+        assert!(
+            err.contains("real newline characters") && err.contains("Original parse error"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn flattened_dag_assignment_then_root_gets_newline_diagnostic() {
+        let session = test_session();
+        let source = r#"repo = e2("c1") e1{p3=repo}.sort(p2, desc).page_size(20)"#;
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flattened-root",
+            source,
+        )
+        .expect_err("flattened input should fail with diagnostic");
+        assert!(
+            err.contains("Do not separate bindings or final roots with spaces"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn flattened_dag_diagnostic_does_not_mask_heredoc_newline_errors() {
+        let session = test_session();
+        let source = "body = <<B hello B";
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "heredoc-flat",
+            source,
+        )
+        .expect_err("bad heredoc should fail");
+        assert!(
+            !err.contains("Do not separate bindings or final roots with spaces"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]

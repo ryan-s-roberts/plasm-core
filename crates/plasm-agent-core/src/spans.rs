@@ -101,6 +101,20 @@ pub(crate) fn mcp_tool_plasm(multi_line: bool, line_count: u64, logical_session_
 }
 
 #[inline]
+pub(crate) fn mcp_tool_plasm_run(
+    multi_line: bool,
+    line_count: u64,
+    logical_session_ref: &str,
+) -> Span {
+    tracing::info_span!(
+        "plasm_agent.mcp.tool.plasm_run",
+        multi_line = multi_line,
+        line_count = line_count,
+        logical_session_ref = %logical_session_ref,
+    )
+}
+
+#[inline]
 pub(crate) fn mcp_resource_read() -> Span {
     tracing::info_span!("plasm_agent.mcp.resource.read")
 }

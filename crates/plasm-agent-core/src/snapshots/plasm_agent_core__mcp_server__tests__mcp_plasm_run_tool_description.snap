@@ -1,0 +1,5 @@
+---
+source: crates/plasm-agent-core/src/mcp_server.rs
+expression: "super::MCP_PLASM_RUN_TOOL_DESCRIPTION"
+---
+**Run Plasm** (live execution) with the same **`logical_session_ref`**, **`program`**, and optional **`reasoning`** as **`plasm`**. Call **only after** reviewing the **`plasm`** dry-run plan. This tool performs real HTTP/API work and may return **`resource_link`** / `_meta.plasm` snapshot references. **Hard rule:** multi-line **`plasm_program`** strings must use **real newline characters** (U+000A) between statements — same shape as **`plasm`**. Bare comma-separated **multi-root** final expressions are supported here (not on **`plasm`**, which is plan-only for a single composed surface).
