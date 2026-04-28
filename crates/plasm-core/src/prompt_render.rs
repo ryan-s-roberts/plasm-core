@@ -2884,6 +2884,9 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   ident/node_ref/field ::= agent-chosen names for bound nodes and fields\n\
   literal      ::= quoted string | number | bool | null | heredoc\n\
 \n\
+Node-ref continuation:\n\
+  - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. Synthetic steps (`ident[field,…]`, `.limit`, `.aggregate`, `.group_by`, derive/`=>`, etc.) are **not** anchors and cannot be extended with `ident.<relation>`—repeat the full expression from DOMAIN instead.\n\
+\n\
 Program construction discipline:\n\
   - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `\n` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)\n\
   - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.\n\

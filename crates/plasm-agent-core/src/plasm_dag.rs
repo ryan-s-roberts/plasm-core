@@ -6,8 +6,9 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
-    AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanNodeKind, PlanValue,
-    QualifiedEntityKey, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+    AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,
+    PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
+    RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 use crate::plasm_plan_run::parse_plasm_surface_line;
 use plasm_core::Expr;
@@ -35,6 +36,17 @@ enum DagNodeSource {
         effect_class: EffectClass,
         result_shape: crate::plasm_plan::ResultShape,
         uses_result: Vec<serde_json::Value>,
+    },
+    /// CGS relation traversal compiled from `bound_label.relation…` (substitutes bound anchor Plasm).
+    RelationTraversal {
+        source_label: String,
+        /// Expanded Plasm used as the continuation anchor for nested `label.…` bindings.
+        expanded_plasm: String,
+        parsed: plasm_core::expr_parser::ParsedExpr,
+        plan_relation: PlanRelationTraversal,
+        qualified_entity: QualifiedEntityKey,
+        effect_class: EffectClass,
+        result_shape: crate::plasm_plan::ResultShape,
     },
     Data(PlanValue),
     Compute {
@@ -473,6 +485,97 @@ fn compile_node_expr(
     compile_surface_node(session, state, id, rhs)
 }
 
+/// Longest bound label match so `repos.foo` wins over `repo.foo` when both exist.
+fn longest_matching_bound_prefix(expr: &str, state: &CompileState<'_>) -> Option<(String, String)> {
+    let expr = expr.trim();
+    let mut best: Option<(usize, String, String)> = None;
+    for label in state.labels.keys() {
+        let prefix = format!("{label}.");
+        if expr.starts_with(&prefix) {
+            let tail = expr[prefix.len()..].to_string();
+            if best
+                .as_ref()
+                .is_none_or(|(len, _, _)| label.len() > *len)
+            {
+                best = Some((label.len(), label.clone(), tail));
+            }
+        }
+    }
+    best.map(|(_, l, t)| (l, t))
+}
+
+fn anchor_expanded_plasm(state: &CompileState<'_>, label: &str) -> Option<String> {
+    let node = state.get(label)?;
+    match &node.source {
+        DagNodeSource::Surface { .. } => Some(node.expr.clone()),
+        DagNodeSource::RelationTraversal { expanded_plasm, .. } => Some(expanded_plasm.clone()),
+        DagNodeSource::Data(_)
+        | DagNodeSource::Compute { .. }
+        | DagNodeSource::Derive { .. }
+        | DagNodeSource::ForEach { .. } => None,
+    }
+}
+
+fn relation_source_cardinality_from_bound_node(
+    state: &CompileState<'_>,
+    source_label: &str,
+) -> RelationSourceCardinality {
+    let Some(node) = state.get(source_label) else {
+        return RelationSourceCardinality::RuntimeCheckedSingleton;
+    };
+    match &node.source {
+        DagNodeSource::Surface { parsed, kind, .. } => {
+            if matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_)) {
+                RelationSourceCardinality::Single
+            } else if matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search) {
+                RelationSourceCardinality::Many
+            } else {
+                RelationSourceCardinality::RuntimeCheckedSingleton
+            }
+        }
+        DagNodeSource::RelationTraversal { .. } => RelationSourceCardinality::Many,
+        DagNodeSource::Data(_)
+        | DagNodeSource::Compute { .. }
+        | DagNodeSource::Derive { .. }
+        | DagNodeSource::ForEach { .. } => RelationSourceCardinality::RuntimeCheckedSingleton,
+    }
+}
+
+/// Resolve relation metadata for a parsed [`Expr::Chain`] (declared CGS relation on the source entity).
+fn lookup_relation_chain_meta(
+    session: &ExecuteSession,
+    chain: &plasm_core::ChainExpr,
+) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
+    let source_entity = chain.source.primary_entity();
+    let ent = session.cgs.get_entity(source_entity).ok_or_else(|| {
+        format!("unknown entity `{source_entity}` (Plasm-DAG relation continuation)")
+    })?;
+    let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
+        format!(
+            "entity `{source_entity}` has no relation `{}` — use a declared relation name from DOMAIN",
+            chain.selector
+        )
+    })?;
+    let target_ent = rel.target_resource.as_str();
+    let entry_id: String = session
+        .domain_exposure
+        .as_ref()
+        .and_then(|e| e.catalog_entry_id_for_entity(target_ent))
+        .map(str::to_string)
+        .unwrap_or_else(|| session.entry_id.clone());
+    let cardinality = match rel.cardinality {
+        plasm_core::Cardinality::One => RelationCardinality::One,
+        plasm_core::Cardinality::Many => RelationCardinality::Many,
+    };
+    Ok((
+        QualifiedEntityKey {
+            entry_id,
+            entity: target_ent.to_string(),
+        },
+        cardinality,
+    ))
+}
+
 fn compile_surface_node(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -492,6 +595,61 @@ fn compile_surface_node(
             page_size: Some(n),
             ..base
         });
+    }
+    if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
+        if let Some(anchor_plasm) = anchor_expanded_plasm(state, &label) {
+            let expanded = format!("{anchor_plasm}.{tail}");
+            let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &expanded)
+                .map_err(|e| {
+                    format!(
+                        "Plasm-DAG `{id}` expression parse: {e}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)"
+                    )
+                })?;
+            if let Expr::Chain(ref chain) = parsed.expr {
+                let (target_qe, rel_cardinality) = lookup_relation_chain_meta(session, chain)?;
+                let source_card =
+                    relation_source_cardinality_from_bound_node(state, &label);
+                let result_shape = match rel_cardinality {
+                    RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
+                    RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
+                };
+                let ir = PlanExprIr {
+                    expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
+                    projection: parsed.projection.clone(),
+                    display_expr: Some(expr.to_string()),
+                };
+                let plan_relation = PlanRelationTraversal {
+                    source: label.clone(),
+                    relation: chain.selector.clone(),
+                    target: target_qe.clone(),
+                    cardinality: rel_cardinality,
+                    source_cardinality: source_card,
+                    expr: expanded.clone(),
+                    ir: ir.clone(),
+                };
+                return Ok(DagNode {
+                    id: id.to_string(),
+                    expr: expr.to_string(),
+                    singleton: false,
+                    page_size: None,
+                    source: DagNodeSource::RelationTraversal {
+                        source_label: label,
+                        expanded_plasm: expanded,
+                        parsed,
+                        plan_relation,
+                        qualified_entity: target_qe,
+                        effect_class: EffectClass::Read,
+                        result_shape,
+                    },
+                });
+            }
+            return Err(format!(
+                "Plasm-DAG `{id}`: `{label}.…` expands to a non-relation Plasm expression; node-ref continuation currently supports CGS relation chains (`label.<relation>`) only"
+            ));
+        }
+        return Err(format!(
+            "Plasm-DAG `{id}`: `{label}` is not a Plasm expression anchor — compute/derive/data/for_each bindings cannot be extended with `{label}.…`; repeat the full taught `plasm_expr` or bind an intermediate surface node"
+        ));
     }
     let (rewritten, uses) = rewrite_template_expr(expr, state, None)?;
     let parsed = parse_plasm_surface_line(session, state.cross_cache, state.pipeline, &rewritten)
@@ -554,6 +712,32 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
             } else {
                 obj["ir_template"] = ir;
             }
+            if let Some(n) = node.page_size {
+                obj["page_size"] = json!(n);
+            }
+            Ok(obj)
+        }
+        DagNodeSource::RelationTraversal {
+            source_label,
+            parsed,
+            plan_relation,
+            qualified_entity,
+            effect_class,
+            result_shape,
+            ..
+        } => {
+            let mut obj = json!({
+                "id": node.id,
+                "kind": PlanNodeKind::Relation,
+                "qualified_entity": qualified_entity,
+                "effect_class": effect_class,
+                "result_shape": result_shape,
+                "projection": parsed.projection.clone().unwrap_or_default(),
+                "predicates": [],
+                "relation": plan_relation,
+                "depends_on": [source_label],
+                "uses_result": [{ "node": source_label, "as": "source" }],
+            });
             if let Some(n) = node.page_size {
                 obj["page_size"] = json!(n);
             }
@@ -1994,5 +2178,104 @@ header, brief, synced, posted"#;
         )
         .expect("compile");
         assert_eq!(plan["return"]["kind"], "parallel");
+    }
+
+    fn github_repository_commit_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("../../apis/github")).expect("load github"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Repository".into(), "Commit".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+        )
+    }
+
+    /// `repo.<relation>` continues the bound repository Plasm and compiles to a `kind: relation` plan node.
+    #[test]
+    fn compiles_bound_node_ref_relation_chain_dag_to_valid_plan() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits
+commits"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-node-ref-rel",
+            source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        assert_eq!(nodes.len(), 2, "{plan:#}");
+        let rel = &nodes[1];
+        assert_eq!(rel["kind"], "relation");
+        assert_eq!(rel["relation"]["source"], "repo");
+        assert_eq!(rel["relation"]["relation"], "commits");
+        assert_eq!(rel["relation"]["target"]["entity"], "Commit");
+        assert_eq!(rel["uses_result"][0]["node"], "repo");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(
+            dry.node_results[1]["simulation"]["kind"],
+            "relation_traversal"
+        );
+    }
+
+    #[test]
+    fn compiles_node_ref_relation_limit_and_project() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits
+limited = commits.limit(20)
+projected = limited[sha,message]
+projected"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-chain-limit-project",
+            source,
+        )
+        .expect("compile");
+        assert_eq!(plan["nodes"].as_array().map(Vec::len), Some(4));
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(dry.node_results.len(), 4, "{dry:?}");
+    }
+
+    #[test]
+    fn rejects_continuation_from_compute_projection_anchor() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+trimmed = repo[id]
+bad = trimmed.commits"#;
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "non-anchor",
+            source,
+        )
+        .expect_err("compute projection is not a Plasm anchor");
+        assert!(
+            err.contains("not a Plasm expression anchor"),
+            "unexpected: {err}"
+        );
     }
 }
