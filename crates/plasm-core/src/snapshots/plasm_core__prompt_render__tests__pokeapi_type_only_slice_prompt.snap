@@ -14,7 +14,7 @@ expression: out
 # binding       ::= ident "=" plasm_node
 # plasm_roots   ::= plasm_return ("," plasm_return)*
 # plasm_return  ::= node_ref | plasm_expr
-# plasm_node    ::= ( plasm_expr | node_ref ) postfix* | node_ref "=>" plasm_value | node_ref "=>" effect_expr
+# plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref "=>" plasm_value | node_ref "=>" effect_expr
 # plasm_expr    ::= entity_expr [projection]
 # entity_expr   ::= query_all | get | query | relation | method | create_action
 # query_all     ::= e#
@@ -24,7 +24,8 @@ expression: out
 # method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
 # create_action ::= e#.m#(args)
 # projection    ::= e#(id)[p#,…] | "[" fields "]"
-# postfix       ::= transform | "[" fields "]" | "[" fields "]" heredoc
+# postfix       ::= transform | "[" fields "]"
+# bracket_render_tail ::= ( "[" fields "]" )? "<<TAG" heredoc_body "TAG"
 # positive_int  ::= non-zero decimal integer literal
 # agg_func      ::= "sum" | "avg" | "min" | "max"
 # agg_spec      ::= ident "=" ( "count" | agg_func "(" field ")" )
@@ -43,7 +44,7 @@ expression: out
 # Node-ref continuation:
 # - **`postfix`** (see `postfix` and `transform` above) applies to the same surface expression as `plasm_expr`; you may chain suffixes on one line without an intermediate binding when they attach to that expression (e.g. `e1{…}.limit(20)`).
 # - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`projection`, `transform`, derive `=>`, …) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.
-# - **`[fields] <<TAG … TAG`** is postfix like `.limit`: suffix it after the expression whose projected **`rows`** you want to render (Minijinja); see **Bracket render / synthesis** below.
+# - **`[fields] <<TAG … TAG`** or **`<<TAG … TAG`** after a bound row-producing node (`binding <<TAG`) are postfix like `.limit`: they suffix the expression whose **`rows`** you want to render (Minijinja); explicit `[fields]` selects columns—otherwise columns are inferred from the bound node’s narrowed row shape after transforms; see **Bracket render / synthesis** below.
 #
 # Program construction discipline:
 # - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `
@@ -79,7 +80,7 @@ expression: out
 #   - For list/query goals, use brace predicates `e#{p#=v, …}`. Use dotted `e#(id).m#() or e#(id).m#(p#=v,..)` only when the goal asks to mutate or call a method.
 #   - e#.m#(args) — standalone create/action (no anchor id needed).
 #   - e#(id)[p#,…] — non-empty scalar subset. Dot after `e#(id)` means relations or taught `m#`, not scalar fields.
-#   - **Bracket render / synthesis** (`label[p#,…] <<TAG … TAG` after projection): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. The rendered **`content`** may be **any** textual format (plain text, markdown, HTML fragments, structured snippets, JSON **text**, logs—not markdown-specific); guard accidental Jinja tokens with `{% raw %}…{% endraw %}`. Output is one synthetic row shaped like `{"content": "…"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.
+#   - **Bracket render / synthesis** (`label[p#,…] <<TAG … TAG`, or `binding <<TAG … TAG` after narrowing **`binding`** with projection/transforms): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. The rendered **`content`** may be **any** textual format (plain text, markdown, HTML fragments, structured snippets, JSON **text**, logs—not markdown-specific); guard accidental Jinja tokens with `{% raw %}…{% endraw %}`. Output is one synthetic row shaped like `{"content": "…"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.
 #   - To list X scoped by parent Y, use `X{p#=AnchorEntity(id)}` from X's rows; do not invent `Y(id).p#`.
 #   - `[v, …]` — array value inside method args, e.g. `p#=[e#($)]`.
 #   - Plain `str` values use double quotes. In quoted strings only `\"` and `\\` are escapes.

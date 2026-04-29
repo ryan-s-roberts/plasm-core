@@ -60,7 +60,7 @@ pub use value_expr::{RenderExpr, ValueExpr};
 pub mod postfix;
 pub use postfix::{
     normalize_nested_projection_field, peel_postfix_suffixes, try_parse_bracket_render,
-    BracketRender, PlasmPostfixOp,
+    try_parse_render_tail, BracketRender, PlasmPostfixOp, RenderTailParse,
 };
 
 use crate::schema::{

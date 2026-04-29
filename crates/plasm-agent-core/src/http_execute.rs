@@ -1045,13 +1045,27 @@ pub async fn federate_execute_session(
     })
 }
 
-/// Markdown reminder so MCP clients see current `e#` bounds after each append wave (including no-op expands).
-fn expand_session_symbol_reminder(n: usize) -> String {
+/// Markdown reminder after an expand wave.
+///
+/// - **Delta wave** (`noop_expand == false`): new DOMAIN rows are in **this** message—point the model at them.
+/// - **No-op expand** (`noop_expand == true`): we intentionally **do not** replay the full DOMAIN to save
+///   tokens; remind the model that symbols still apply and steady state is `plasm` with `logical_session_ref`.
+fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
+    if noop_expand {
+        if n == 0 {
+            return "_No exposed entities in this session yet._\n".to_string();
+        }
+        return format!(
+            "_Symbols `e1`…`e{n}` are unchanged. Full DOMAIN / TSV teaching text is **not** repeated in this response (token-saving). Keep using your **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; rely on DOMAIN from the prior `plasm_context` open or append wave in chat history._\n",
+            n = n
+        );
+    }
     if n == 0 {
-        "_Follow the DOMAIN table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n".to_string()
+        "_Follow the DOMAIN table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n"
+            .to_string()
     } else {
         format!(
-            "_Symbols `e1`…`e{n}` are append-only for this logical session. Use them only with the DOMAIN table in **this** response; if it is absent, call `plasm_context` again with the same seeds._\n",
+            "_Symbols `e1`…`e{n}` are append-only for this logical session. Use them with the new DOMAIN rows in **this** response._\n",
             n = n
         )
     }
@@ -1139,28 +1153,13 @@ pub async fn expand_execute_domain_session(
     let n_total = exp.entities.len();
 
     if added.is_empty() {
-        let prompt_snapshot = sess.prompt_text.clone();
         sess.entities = exp.entities.clone();
         sess.domain_exposure = Some(exp);
         st.sessions
             .replace_session(&prompt_hash_p, &session_id_p, sess)
             .await;
         let mut out = String::from("_No new entities in this wave (already exposed)._\n\n");
-        out.push_str(&expand_session_symbol_reminder(n_total));
-        let mode = st.engine.prompt_pipeline().render_mode;
-        if mode.is_tsv() {
-            if let Some(inner) =
-                markdown_domain_fence_body(&prompt_snapshot, mode.markdown_fence_info_string())
-            {
-                let (_contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
-                let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
-                out.push_str("\n\n");
-                out.push_str(&wrapped);
-            }
-        } else {
-            out.push_str("\n\n");
-            out.push_str(&prompt_snapshot);
-        }
+        out.push_str(&expand_session_symbol_reminder(n_total, true));
         return Ok(out);
     }
 
@@ -1189,7 +1188,7 @@ pub async fn expand_execute_domain_session(
         wave.push_str(&add_lines.join("\n"));
         wave.push_str("\n\n");
     }
-    wave.push_str(&expand_session_symbol_reminder(n_total));
+    wave.push_str(&expand_session_symbol_reminder(n_total, false));
     wave.push_str("\n\n");
     wave.push_str(&wrap_domain_markdown_literal_block(
         &delta,
@@ -1296,8 +1295,9 @@ pub async fn apply_capability_seeds(
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
             }
-            // Reused or fresh: always restate the current DOMAIN symbol table from the execute session
-            // prompt so MCP clients need not rely on earlier chat turns for `e#` / `m#` / `p#`.
+            // First attach after binding resolution (`binding == None`): restate the current DOMAIN symbol table
+            // from the execute session prompt so the client receives authoritative `e#` / `m#` / `p#` for this open.
+            // (Later expand waves with no new entities omit full DOMAIN replay—see `expand_execute_domain_session`.)
             let mode = st.engine.prompt_pipeline().render_mode;
             if mode.is_tsv() {
                 if let Some(inner) =
@@ -4202,8 +4202,12 @@ mod tests {
         .expect("expand duplicate");
         assert!(dup.contains("already exposed"));
         assert!(
-            dup.contains("`e1`…`e2`"),
-            "expected symbol reminder on no-op expand: {dup}"
+            !dup.contains("```tsv"),
+            "no-op expand must not replay full DOMAIN fence: {dup}"
+        );
+        assert!(
+            dup.contains("**not** repeated") || dup.contains("token-saving"),
+            "expected no-op token-saving hint: {dup}"
         );
         let sess2 = st
             .sessions

@@ -11,7 +11,9 @@ use crate::plasm_plan::{
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 use crate::plasm_plan_run::parse_plasm_surface_line_program;
-use plasm_core::expr_parser::{peel_postfix_suffixes, try_parse_bracket_render, PlasmPostfixOp};
+use plasm_core::expr_parser::{
+    peel_postfix_suffixes, try_parse_render_tail, PlasmPostfixOp, RenderTailParse,
+};
 use plasm_core::schema::EntityDef;
 use plasm_core::ChainStep;
 use plasm_core::Expr;
@@ -445,6 +447,93 @@ fn logical_row_field_paths_for_entity(ent: &EntityDef) -> BTreeSet<Vec<String>> 
     set
 }
 
+fn infer_entity_row_columns(
+    session: &ExecuteSession,
+    qe: &QualifiedEntityKey,
+) -> Result<Vec<OutputName>, String> {
+    let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
+        format!(
+            "catalog `{}` is not loaded for entity `{}`",
+            qe.entry_id, qe.entity
+        )
+    })?;
+    let ent = cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
+        format!(
+            "unknown entity `{}` in catalog `{}`",
+            qe.entity, qe.entry_id
+        )
+    })?;
+    let paths = logical_row_field_paths_for_entity(ent);
+    paths
+        .into_iter()
+        .map(|segs| OutputName::new(segs.join(".")))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+fn lookup_dag_node<'a>(
+    state: &'a CompileState<'_>,
+    staged: &'a [DagNode],
+    id: &str,
+) -> Option<&'a DagNode> {
+    state.get(id).or_else(|| staged.iter().find(|n| n.id == id))
+}
+
+fn infer_render_columns_for_node(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    node: &DagNode,
+) -> Result<Vec<OutputName>, String> {
+    match &node.source {
+        DagNodeSource::Compute {
+            op,
+            schema,
+            source: parent_id,
+            ..
+        } => match op {
+            ComputeOp::Project { fields } => Ok(fields.keys().cloned().collect()),
+            ComputeOp::Aggregate { .. } => Ok(schema
+                .fields
+                .iter()
+                .map(|f| f.name.clone())
+                .collect()),
+            ComputeOp::GroupBy { key, aggregates } => {
+                let mut cols = vec![OutputName::new(key.dotted()).map_err(|e| e.to_string())?];
+                cols.extend(aggregates.iter().map(|a| a.name.clone()));
+                Ok(cols)
+            }
+            ComputeOp::Sort { .. } | ComputeOp::Limit { .. } => {
+                let parent = lookup_dag_node(state, staged, parent_id.as_str()).ok_or_else(|| {
+                    format!("bracket-render column inference: missing upstream node `{parent_id}`")
+                })?;
+                infer_render_columns_for_node(session, state, staged, parent)
+            }
+            ComputeOp::Render { .. } => Err(
+                "cannot infer columns from a bracket-render output; bind a row-producing node or use explicit `[field,...] <<TAG`".into(),
+            ),
+            ComputeOp::Filter { .. } => Err(
+                "filtered compute rows cannot be used for inferred bracket-render columns".into(),
+            ),
+        },
+        DagNodeSource::Surface {
+            qualified_entity, ..
+        }
+        | DagNodeSource::RelationTraversal {
+            qualified_entity, ..
+        } => infer_entity_row_columns(session, qualified_entity),
+        DagNodeSource::Data(_) => Err(
+            "data literals cannot be bracket-render sources; use explicit `[field,...] <<TAG` or bind a query".into(),
+        ),
+        DagNodeSource::Derive { .. } => {
+            Err("derive bindings cannot be bracket-render sources".into())
+        }
+        DagNodeSource::ForEach { .. } => {
+            Err("for_each bindings cannot be bracket-render sources".into())
+        }
+    }
+}
+
 fn validate_compute_paths_for_entity(
     session: &ExecuteSession,
     qe: &QualifiedEntityKey,
@@ -692,6 +781,124 @@ fn compile_postfix_plan(
     Ok(out)
 }
 
+fn plan_render_content_schema() -> Result<SyntheticResultSchema, String> {
+    Ok(SyntheticResultSchema {
+        entity: Some("PlanRender".to_string()),
+        fields: vec![SyntheticFieldSchema {
+            name: OutputName::new("content".to_string()).map_err(|e| e.to_string())?,
+            value_kind: SyntheticValueKind::String,
+            source: None,
+        }],
+    })
+}
+
+fn compile_render_from_tail(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    rhs_display: &str,
+    tail: RenderTailParse,
+) -> Result<Vec<DagNode>, String> {
+    match tail {
+        RenderTailParse::Explicit {
+            source,
+            fields,
+            template,
+        } => {
+            let columns = parse_field_list(fields.trim())?
+                .into_iter()
+                .map(OutputName::new)
+                .collect::<Result<Vec<_>, _>>()?;
+            compile_render_chain(
+                session,
+                state,
+                id,
+                rhs_display,
+                source.trim(),
+                Some(columns),
+                template,
+            )
+        }
+        RenderTailParse::Inferred { head, template } => {
+            compile_render_chain(session, state, id, rhs_display, head.trim(), None, template)
+        }
+    }
+}
+
+fn compile_render_chain(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    rhs_display: &str,
+    head: &str,
+    explicit_columns: Option<Vec<OutputName>>,
+    template: String,
+) -> Result<Vec<DagNode>, String> {
+    let (core, ops) =
+        peel_postfix_suffixes(head).map_err(|e| format!("Plasm program `{id}`: {e}"))?;
+    let (compute_ops, tail_singleton, tail_page_size) = split_tail_postfix_flags(ops);
+
+    if compute_ops.is_empty()
+        && state.contains(core.trim())
+        && (tail_singleton || tail_page_size.is_some())
+    {
+        return Err(format!(
+            "Plasm program `{id}`: `.singleton()` / `.page_size(...)` on bare label `{}` is not supported before bracket render; apply transforms to a surface expression first",
+            core.trim()
+        ));
+    }
+
+    let mut prefix: Vec<DagNode> = Vec::new();
+    let chain_tail_id: String = if compute_ops.is_empty() && state.contains(core.trim()) {
+        core.trim().to_string()
+    } else {
+        let tmp = format!("__plasm_render_src_{id}");
+        prefix = compile_postfix_plan(session, state, &tmp, head, core.trim(), compute_ops)
+            .map_err(|e| format!("Plasm program `{id}`: {e}"))?;
+        prefix
+            .last()
+            .map(|n| n.id.clone())
+            .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
+    };
+
+    let columns: Vec<OutputName> = if let Some(cols) = explicit_columns {
+        cols
+    } else {
+        let tail_node =
+            lookup_dag_node(state, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
+                format!(
+                    "Plasm program `{id}`: bracket-render inference failed for `{chain_tail_id}`"
+                )
+            })?;
+        infer_render_columns_for_node(session, state, &prefix, tail_node).map_err(|e| {
+            format!("Plasm program `{id}`: cannot infer bracket-render columns: {e}")
+        })?
+    };
+
+    if columns.is_empty() {
+        return Err(format!(
+            "Plasm program `{id}`: bracket-render requires at least one column; use `[field,...] <<TAG` after narrowing"
+        ));
+    }
+
+    let mut render_node = DagNode {
+        id: id.to_string(),
+        expr: rhs_display.to_string(),
+        singleton: true,
+        page_size: tail_page_size,
+        source: DagNodeSource::Compute {
+            source: chain_tail_id,
+            op: ComputeOp::Render { columns, template },
+            schema: plan_render_content_schema()?,
+        },
+    };
+    render_node.singleton |= tail_singleton;
+
+    let mut out = prefix;
+    out.push(render_node);
+    Ok(out)
+}
+
 fn compile_node_expr(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -757,34 +964,8 @@ fn compile_node_expr(
             },
         }]);
     }
-    if let Some(br) = try_parse_bracket_render(rhs)? {
-        if state.contains(br.source.as_str()) {
-            let columns = parse_field_list(br.fields.as_str())?
-                .into_iter()
-                .map(OutputName::new)
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(vec![DagNode {
-                id: id.to_string(),
-                expr: rhs_display.to_string(),
-                singleton: true,
-                page_size: None,
-                source: DagNodeSource::Compute {
-                    source: br.source,
-                    op: ComputeOp::Render {
-                        columns,
-                        template: br.template,
-                    },
-                    schema: SyntheticResultSchema {
-                        entity: Some("PlanRender".to_string()),
-                        fields: vec![SyntheticFieldSchema {
-                            name: OutputName::new("content".to_string())?,
-                            value_kind: SyntheticValueKind::String,
-                            source: None,
-                        }],
-                    },
-                },
-            }]);
-        }
+    if let Some(tail) = try_parse_render_tail(rhs)? {
+        return compile_render_from_tail(session, state, id, rhs_display, tail);
     }
 
     let (core, ops) =
@@ -2625,6 +2806,129 @@ projected"#;
             .map(|v| v.as_str().unwrap_or_default())
             .collect();
         assert_eq!(col_names, vec!["sha", "message"]);
+    }
+
+    #[test]
+    fn dag_render_infers_columns_from_projected_binding() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)[{p_sha},{p_msg}]\nreport = commits <<MD\n{{{{ rows | length }}}}\nMD\nreport"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-inferred-render-projection",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let render = nodes
+            .iter()
+            .find(|n| n["id"] == "report")
+            .expect("render node");
+        let op = &render["compute"]["op"];
+        assert_eq!(op["kind"], "render");
+        let cols = op["columns"].as_array().expect("columns");
+        let mut col_names: Vec<_> = cols
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect();
+        col_names.sort();
+        assert_eq!(col_names, vec!["message", "sha"]);
+    }
+
+    #[test]
+    fn dag_render_infers_entity_row_columns_after_limit_only() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits.limit(20)
+report = commits <<MD
+{{ rows | length }}
+MD
+report"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-inferred-render-limit",
+            source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let render = nodes
+            .iter()
+            .find(|n| n["id"] == "report")
+            .expect("render node");
+        let op = &render["compute"]["op"];
+        assert_eq!(op["kind"], "render");
+        let cols = op["columns"].as_array().expect("columns");
+        assert!(
+            cols.len() >= 2,
+            "expected entity-backed columns (got {cols:?})"
+        );
+        let names: Vec<_> = cols.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"sha"), "{names:?}");
+        assert!(names.contains(&"message"), "{names:?}");
+    }
+
+    #[test]
+    fn dag_render_node_ref_postfix_explicit_columns_before_heredoc() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits\nreport = commits.limit(20)[{p_sha},{p_msg}] <<MD\nx\nMD\nreport"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-render-chain-binding",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let render = nodes
+            .iter()
+            .find(|n| n["id"] == "report")
+            .expect("render node");
+        let op = &render["compute"]["op"];
+        assert_eq!(op["kind"], "render");
+        let cols = op["columns"].as_array().expect("columns");
+        let col_names: Vec<_> = cols
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(col_names, vec!["sha", "message"]);
+    }
+
+    #[test]
+    fn dag_render_rejects_inference_from_prior_render_output() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nfirst = commits[{p_sha},{p_msg}] <<MD\n{{{{ r.sha }}}}\nMD\nbad = first <<MD\ny\nMD\nbad"
+        );
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-render-on-render",
+            &source,
+        )
+        .expect_err("render from render");
+        assert!(
+            err.contains("cannot infer bracket-render columns")
+                || err.contains("bracket-render output"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]

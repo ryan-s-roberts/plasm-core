@@ -113,11 +113,23 @@ fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> 
     })
 }
 
-/// If `rhs` is `source[field,...] <<TAG` … `TAG` at **delimiter depth 0** (so `<<` inside `method(…)`
-/// is not treated as render), return the parts. Otherwise `Ok(None)`.
+/// Parsed `<<TAG … TAG` render tail after peeling postfix from the expression head.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderTailParse {
+    /// `source[field,...] <<TAG … TAG` — explicit render columns (same as legacy bracket-render).
+    Explicit {
+        source: String,
+        fields: String,
+        template: String,
+    },
+    /// `head <<TAG … TAG` where `head` has no trailing `[fields]` before `<<` — columns inferred at compile time.
+    Inferred { head: String, template: String },
+}
+
+/// Split a program RHS into optional render tail parts at delimiter depth 0.
 ///
-/// Chooses the **rightmost** `<<` at depth 0 that yields a valid projection head and closed template.
-pub fn try_parse_bracket_render(rhs: &str) -> Result<Option<BracketRender>, String> {
+/// Chooses the **rightmost** `<<` at depth 0 whose heredoc closes cleanly.
+pub fn try_parse_render_tail(rhs: &str) -> Result<Option<RenderTailParse>, String> {
     let mut positions: Vec<usize> = rhs.match_indices("<<").map(|(i, _)| i).collect();
     if positions.is_empty() {
         return Ok(None);
@@ -129,18 +141,50 @@ pub fn try_parse_bracket_render(rhs: &str) -> Result<Option<BracketRender>, Stri
             continue;
         }
         let head = rhs[..j].trim_end();
-        let Some((source, fields)) = parse_projection_head(head) else {
+        let rest = &rhs[j + 2..];
+
+        if let Some((source, fields)) = parse_projection_head(head) {
+            let template = parse_render_template_after_tag_opener(rest)?;
+            return Ok(Some(RenderTailParse::Explicit {
+                source: source.to_string(),
+                fields: fields.to_string(),
+                template,
+            }));
+        }
+
+        let Ok(template) = parse_render_template_after_tag_opener(rest) else {
             continue;
         };
-        let rest = &rhs[j + 2..];
-        let template = parse_render_template_after_tag_opener(rest)?;
-        return Ok(Some(BracketRender {
-            source: source.to_string(),
-            fields: fields.to_string(),
+        // `<<TAG` at the start of the RHS is a tagged **value** heredoc (`body = <<TAG`), not a
+        // bracket-render tail (`binding <<TAG`). Require a non-empty expression head before `<<`.
+        if head.trim().is_empty() {
+            continue;
+        }
+        return Ok(Some(RenderTailParse::Inferred {
+            head: head.to_string(),
             template,
         }));
     }
     Ok(None)
+}
+
+/// If `rhs` is `source[field,...] <<TAG` … `TAG` at **delimiter depth 0** (so `<<` inside `method(…)`
+/// is not treated as render), return the parts. Otherwise `Ok(None)`.
+///
+/// Chooses the **rightmost** `<<` at depth 0 that yields a valid projection head and closed template.
+pub fn try_parse_bracket_render(rhs: &str) -> Result<Option<BracketRender>, String> {
+    Ok(match try_parse_render_tail(rhs)? {
+        Some(RenderTailParse::Explicit {
+            source,
+            fields,
+            template,
+        }) => Some(BracketRender {
+            source,
+            fields,
+            template,
+        }),
+        Some(RenderTailParse::Inferred { .. }) | None => None,
+    })
 }
 
 /// Peel trailing postfix operators from `rhs`, returning `(primary, ops)`.
@@ -405,5 +449,40 @@ mod tests {
             normalize_nested_projection_field("p91[p68]").unwrap(),
             "p91.p68"
         );
+    }
+
+    #[test]
+    fn render_tail_inferred_binding_without_projection_bracket() {
+        let r = try_parse_render_tail(
+            "commits <<PLASM_RPT\n{% for r in rows %}{{ r.sha }}{% endfor %}\nPLASM_RPT",
+        )
+        .unwrap()
+        .expect("render tail");
+        match r {
+            RenderTailParse::Inferred { head, template } => {
+                assert_eq!(head, "commits");
+                assert!(template.contains("for r in rows"));
+            }
+            RenderTailParse::Explicit { .. } => panic!("expected inferred"),
+        }
+    }
+
+    #[test]
+    fn render_tail_explicit_after_postfix_chain_before_heredoc() {
+        let r = try_parse_render_tail("commits.limit(20)[sha,message] <<MD\none\nMD")
+            .unwrap()
+            .expect("render tail");
+        match r {
+            RenderTailParse::Explicit {
+                source,
+                fields,
+                template,
+            } => {
+                assert_eq!(source, "commits.limit(20)");
+                assert_eq!(fields, "sha,message");
+                assert_eq!(template, "one");
+            }
+            RenderTailParse::Inferred { .. } => panic!("expected explicit"),
+        }
     }
 }
