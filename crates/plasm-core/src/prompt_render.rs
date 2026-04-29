@@ -2983,6 +2983,9 @@ Catalogue rules:\n\
         s,
         "  - {projection_form} — non-empty scalar subset. Dot after `{entity}(id)` means relations or taught `{method}`, not scalar fields."
     );
+    s.push_str(
+        "  - **Bracket render** (`label[p#,…] <<TAG … TAG` after projection): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. Output is one synthetic row shaped like `{\"content\": \"…\"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.\n",
+    );
     let _ = writeln!(
         s,
         "  - To list X scoped by parent Y, use `{scoped_form}` from X's rows; do not invent `Y(id).{field}`."

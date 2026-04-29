@@ -1929,9 +1929,14 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             field_type,
         } => {
             let fd = ident_label_for_feedback(field, &style);
-            let correction = format!(
+            let mut correction = format!(
                 "Change the value for `{fd}` to match `{field_type}` (you used something like {value_type}).\n\nFor example: a quoted string for text, or a number for numeric fields."
             );
+            if value_type == "object" && matches!(field_type.as_str(), "String" | "Blob") {
+                correction.push_str(
+                    "\n\nIf you passed a **program binding** from **bracket render** (`label[p#,…] <<TAG … TAG`), that node materializes as a row object with a **`content`** field. Use **`binding.content`** for plain string / body parameters—not the bare binding name.",
+                );
+            }
             StepError::type_correction(correction, error)
         }
         TypeError::DomainPlaceholderLiteral {
@@ -2264,6 +2269,22 @@ mod tests {
         assert!(
             se.correction.contains("Workspace to filter"),
             "correction={}",
+            se.correction
+        );
+    }
+
+    #[test]
+    fn type_error_incompatible_value_object_for_string_hints_bracket_render_content() {
+        let cgs = crate::CGS::new();
+        let err = crate::TypeError::IncompatibleValue {
+            field: "plainBody".into(),
+            value_type: "object".into(),
+            field_type: "String".into(),
+        };
+        let se = render_type_error(&err, &cgs);
+        assert!(
+            se.correction.contains("bracket render") && se.correction.contains(".content"),
+            "expected Plan.render / .content hint, correction={}",
             se.correction
         );
     }
