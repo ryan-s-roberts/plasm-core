@@ -77,6 +77,7 @@ expression: prompt
 #   - For list/query goals, use brace predicates `e#{p#=v, …}`. Use dotted `e#(id).m#() or e#(id).m#(p#=v,..)` only when the goal asks to mutate or call a method.
 #   - e#.m#(args) — standalone create/action (no anchor id needed).
 #   - e#(id)[p#,…] — non-empty scalar subset. Dot after `e#(id)` means relations or taught `m#`, not scalar fields.
+#   - **Bracket render** (`label[p#,…] <<TAG … TAG` after projection): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. Output is one synthetic row shaped like `{"content": "…"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.
 #   - To list X scoped by parent Y, use `X{p#=AnchorEntity(id)}` from X's rows; do not invent `Y(id).p#`.
 #   - `[v, …]` — array value inside method args, e.g. `p#=[e#($)]`.
 #   - Plain `str` values use double quotes. In quoted strings only `\"` and `\\` are escapes.
