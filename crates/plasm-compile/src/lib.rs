@@ -92,7 +92,7 @@ mod tests {
             "repository".to_string(),
             Value::String(repository.to_string()),
         );
-        apply_entity_ref_scope_splat(&mut env, &cgs, cap);
+        apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect("scope splat");
         let template = parse_capability_template(&cap.mapping.template)
             .unwrap_or_else(|e| panic!("parse {capability}: {e}"));
         let CompiledOperation::Http(req) = compile_operation(&template, &env)
@@ -133,9 +133,11 @@ mod tests {
         let cap = cgs.get_capability("commit_query").expect("commit_query");
         let mut env = CmlEnv::new();
         env.insert("repository".to_string(), Value::String("plasm-core".into()));
-        apply_entity_ref_scope_splat(&mut env, &cgs, cap);
-        let template = parse_capability_template(&cap.mapping.template).expect("parse template");
-        let err = compile_operation(&template, &env).expect_err("missing owner/repo rejected");
-        assert!(err.to_string().contains("owner"), "{err}");
+        let splat_err = apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect_err("splat");
+        assert!(
+            splat_err.to_string().contains("cannot normalize")
+                || splat_err.to_string().contains("key_vars"),
+            "{splat_err}"
+        );
     }
 }

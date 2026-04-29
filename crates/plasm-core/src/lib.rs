@@ -137,7 +137,8 @@ pub use domain_term::{
     ParameterSlot, Symbol,
 };
 pub use entity_ref_value::{
-    try_narrow_entity_row_to_entity_ref_value, EntityRefAtom, EntityRefPayload, EntityRefValueError,
+    normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
+    EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
 };
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{

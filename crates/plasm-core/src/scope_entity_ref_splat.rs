@@ -3,7 +3,9 @@
 //!
 //! Existing predicate / path keys win over splatted keys (**explicit wins**).
 
-use crate::entity_ref_value::EntityRefPayload;
+use crate::entity_ref_value::{
+    normalize_entity_ref_value_for_target, EntityRefPayload, ScopeEntityRefNormalizeError,
+};
 use crate::identity::EntityFieldName;
 use crate::schema::{CapabilitySchema, InputType, ParameterRole, ScopeAggregateKeyPolicy};
 use crate::value::Value;
@@ -16,10 +18,10 @@ pub fn apply_entity_ref_scope_splat(
     env: &mut IndexMap<String, Value>,
     cgs: &CGS,
     cap: &CapabilitySchema,
-) {
+) -> Result<(), ScopeEntityRefNormalizeError> {
     let Some(InputType::Object { fields, .. }) = cap.input_schema.as_ref().map(|s| &s.input_type)
     else {
-        return;
+        return Ok(());
     };
 
     for param in fields {
@@ -41,13 +43,30 @@ pub fn apply_entity_ref_scope_splat(
             continue;
         };
 
-        splat_aggregate_into_env(env, &ent.key_vars, &aggregate_val);
+        let normalized = normalize_entity_ref_value_for_target(&aggregate_val, ent).ok_or_else(|| {
+            ScopeEntityRefNormalizeError {
+                param_name: aggregate_name.to_string(),
+                target_entity: target.to_string(),
+                message: "cannot normalize entity_ref scope value to target key_vars — supply compound keys, identifiable row fields, full_name owner/repo, or owner/repo string".into(),
+            }
+        })?;
+        set_scope_aggregate_value(env, aggregate_name, normalized.clone());
+
+        splat_aggregate_into_env(env, &ent.key_vars, &normalized);
 
         if cap.scope_aggregate_key_policy == ScopeAggregateKeyPolicy::OmitWhenRedundant
             && splat_redundant(ent.key_vars.as_slice(), env)
         {
             remove_scope_aggregate(env, aggregate_name);
         }
+    }
+    Ok(())
+}
+
+fn set_scope_aggregate_value(env: &mut IndexMap<String, Value>, name: &str, v: Value) {
+    env.insert(name.to_string(), v.clone());
+    if let Some(Value::Object(m)) = env.get_mut("input") {
+        m.insert(name.to_string(), v);
     }
 }
 
@@ -265,7 +284,7 @@ mod tests {
             ),
         );
 
-        apply_entity_ref_scope_splat(&mut env, &cgs, &cap);
+        apply_entity_ref_scope_splat(&mut env, &cgs, &cap).expect("splat");
         assert_eq!(env.get("owner"), Some(&Value::String("octo".into())));
         assert_eq!(env.get("name"), Some(&Value::String("Hello-World".into())));
         assert!(!env.contains_key("repository"));
@@ -310,10 +329,57 @@ mod tests {
             ),
         );
 
-        apply_entity_ref_scope_splat(&mut env, &cgs, &cap);
+        apply_entity_ref_scope_splat(&mut env, &cgs, &cap).expect("splat");
         assert_eq!(env.get("owner"), Some(&Value::String("pred".into())));
         assert_eq!(env.get("name"), Some(&Value::String("Hello-World".into())));
         assert!(env.contains_key("repository"));
+    }
+
+    #[test]
+    fn splat_full_name_object_normalizes_before_splat() {
+        let mut cgs = CGS::new();
+        cgs.add_resource(ResourceSchema {
+            name: "Repository".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![
+                string_field("id"),
+                string_field("owner"),
+                string_field("repo"),
+                string_field("full_name"),
+            ],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec!["owner".into(), "repo".into()],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+        })
+        .unwrap();
+
+        let cap = repo_scope_cap(ScopeAggregateKeyPolicy::OmitWhenRedundant);
+        let mut env = IndexMap::new();
+        env.insert(
+            "repository".into(),
+            Value::Object(
+                vec![(
+                    "full_name".into(),
+                    Value::String("ryan-s-roberts/plasm-core".into()),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        apply_entity_ref_scope_splat(&mut env, &cgs, &cap).expect("splat");
+        assert_eq!(
+            env.get("owner"),
+            Some(&Value::String("ryan-s-roberts".into()))
+        );
+        assert_eq!(env.get("repo"), Some(&Value::String("plasm-core".into())));
+        assert!(!env.contains_key("repository"));
     }
 
     #[test]
@@ -346,7 +412,7 @@ mod tests {
             "repository".into(),
             Value::String("octocat/Hello-World".into()),
         );
-        apply_entity_ref_scope_splat(&mut env, &cgs, &cap);
+        apply_entity_ref_scope_splat(&mut env, &cgs, &cap).expect("splat");
         assert_eq!(env.get("owner"), Some(&Value::String("octocat".into())));
         assert_eq!(env.get("name"), Some(&Value::String("Hello-World".into())));
         assert!(

@@ -875,7 +875,11 @@ impl ExecutionEngine {
         if let Some(pred) = &query.predicate {
             extract_predicate_vars(pred, &mut env);
         }
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability);
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
         if let Some(proj) = &query.projection {
             env.insert(
                 "projection".to_string(),
@@ -1886,7 +1890,11 @@ impl ExecutionEngine {
                 env.insert(k.clone(), v.clone());
             }
         }
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability);
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
 
@@ -2065,7 +2073,11 @@ impl ExecutionEngine {
                 }
             }
         }
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability);
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
 
         self.apply_invoke_preflight(capability, cgs, cache, invoke, mode, &mut env)
             .await?;

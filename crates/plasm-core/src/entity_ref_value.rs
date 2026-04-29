@@ -7,6 +7,7 @@
 use crate::value::Value;
 use crate::EntityDef;
 use indexmap::IndexMap;
+use std::fmt;
 use thiserror::Error;
 
 /// Scalar accepted inside a compound `entity_ref` map (and as a unary ref value).
@@ -126,6 +127,152 @@ pub fn try_narrow_entity_row_to_entity_ref_value(
     scalar_atom(v)
 }
 
+fn scalar_leaf_for_entity_ref(v: &Value) -> Option<Value> {
+    match v {
+        Value::String(_) | Value::Integer(_) | Value::Float(_) | Value::Bool(_) => Some(v.clone()),
+        _ => None,
+    }
+}
+
+/// Split `owner/repo` or `org/name` style phrases on the first `/`.
+fn split_two_part_slash(s: &str) -> Option<(String, String)> {
+    let idx = s.find('/')?;
+    let left = s[..idx].trim();
+    let right = s[idx + 1..].trim();
+    if left.is_empty() || right.is_empty() {
+        return None;
+    }
+    Some((left.to_string(), right.to_string()))
+}
+
+/// Normalize a value intended for [`FieldType::EntityRef`] toward the **canonical key shape**
+/// for `target` (per [`EntityDef::key_vars`] / [`EntityDef::id_field`]).
+///
+/// - [`Value::PlasmInputRef`] / [`Value::Null`] pass through (compile-time holes / optional).
+/// - Row-shaped objects first use [`try_narrow_entity_row_to_entity_ref_value`].
+/// - Compound-key targets may derive missing parts from a string `full_name` field (`owner/repo`)
+///   when `key_vars` has exactly two entries (common REST catalog pattern).
+/// - Two-part string values split on `/` when `key_vars` has two entries.
+///
+/// Returns [`None`] when the value cannot be completed for this target (partial maps, wrong keys).
+#[must_use]
+pub fn normalize_entity_ref_value_for_target(value: &Value, target: &EntityDef) -> Option<Value> {
+    if matches!(value, Value::PlasmInputRef(_) | Value::Null) {
+        return Some(value.clone());
+    }
+    // Top-level booleans are never wire identities for `entity_ref` (unlike numeric/string ids).
+    if matches!(value, Value::Bool(_)) {
+        return None;
+    }
+
+    if let Some(narrowed) = try_narrow_entity_row_to_entity_ref_value(value, target) {
+        return Some(narrowed);
+    }
+
+    match value {
+        Value::Object(map) => {
+            if target.key_vars.len() >= 2 {
+                let mut all_present = true;
+                let mut out = IndexMap::new();
+                for k in &target.key_vars {
+                    let Some(v) = map.get(k.as_str()).and_then(scalar_leaf_for_entity_ref) else {
+                        all_present = false;
+                        break;
+                    };
+                    out.insert(k.to_string(), v);
+                }
+                if all_present {
+                    return Some(Value::Object(out));
+                }
+                if target.key_vars.len() == 2 {
+                    if let Some(Value::String(fn_s)) = map.get("full_name") {
+                        if let Some((a, b)) = split_two_part_slash(fn_s) {
+                            let k0 = target.key_vars[0].as_str();
+                            let k1 = target.key_vars[1].as_str();
+                            let mut out = IndexMap::new();
+                            out.insert(k0.to_string(), Value::String(a));
+                            out.insert(k1.to_string(), Value::String(b));
+                            return Some(Value::Object(out));
+                        }
+                    }
+                }
+                return None;
+            }
+            if target.key_vars.len() == 1 {
+                let k = target.key_vars[0].as_str();
+                if let Some(v) = map.get(k).and_then(scalar_leaf_for_entity_ref) {
+                    let mut out = IndexMap::new();
+                    out.insert(k.to_string(), v);
+                    return Some(Value::Object(out));
+                }
+                return None;
+            }
+            // key_vars empty: primary id only
+            let id = target.id_field.as_str();
+            if let Some(v) = map.get(id).and_then(scalar_leaf_for_entity_ref) {
+                let mut out = IndexMap::new();
+                out.insert(id.to_string(), v);
+                return Some(Value::Object(out));
+            }
+            None
+        }
+        Value::String(s) => {
+            if target.key_vars.len() == 2 {
+                let (a, b) = split_two_part_slash(s)?;
+                let mut out = IndexMap::new();
+                out.insert(target.key_vars[0].to_string(), Value::String(a));
+                out.insert(target.key_vars[1].to_string(), Value::String(b));
+                return Some(Value::Object(out));
+            }
+            if target.key_vars.len() == 1 {
+                let mut out = IndexMap::new();
+                out.insert(target.key_vars[0].to_string(), Value::String(s.clone()));
+                return Some(Value::Object(out));
+            }
+            if target.key_vars.is_empty() {
+                let mut out = IndexMap::new();
+                out.insert(target.id_field.to_string(), Value::String(s.clone()));
+                return Some(Value::Object(out));
+            }
+            None
+        }
+        Value::Integer(_) | Value::Float(_) => {
+            if target.key_vars.len() == 1 {
+                let mut out = IndexMap::new();
+                out.insert(target.key_vars[0].to_string(), value.clone());
+                return Some(Value::Object(out));
+            }
+            if target.key_vars.is_empty() {
+                let mut out = IndexMap::new();
+                out.insert(target.id_field.to_string(), value.clone());
+                return Some(Value::Object(out));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Error returned when a scope aggregate `entity_ref` cannot be normalized for splat / HTTP compile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeEntityRefNormalizeError {
+    pub param_name: String,
+    pub target_entity: String,
+    pub message: String,
+}
+
+impl fmt::Display for ScopeEntityRefNormalizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "entity_ref scope `{}` for target `{}`: {}",
+            self.param_name, self.target_entity, self.message
+        )
+    }
+}
+
+impl std::error::Error for ScopeEntityRefNormalizeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +379,70 @@ mod tests {
             EntityRefPayload::try_from_value(&Value::Object(IndexMap::new())),
             Err(EntityRefValueError::EmptyCompound)
         ));
+    }
+
+    #[test]
+    fn normalize_splits_full_name_when_keys_missing() {
+        let target = EntityDef {
+            name: "Repository".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![
+                EntityFieldName::from("owner"),
+                EntityFieldName::from("repo"),
+            ],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        };
+        let row = Value::Object(
+            vec![(
+                "full_name".into(),
+                Value::String("ryan-s-roberts/plasm-core".into()),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let n = normalize_entity_ref_value_for_target(&row, &target).expect("normalized");
+        let obj = n.as_object().expect("object");
+        assert_eq!(
+            obj.get("owner"),
+            Some(&Value::String("ryan-s-roberts".into()))
+        );
+        assert_eq!(obj.get("repo"), Some(&Value::String("plasm-core".into())));
+    }
+
+    #[test]
+    fn normalize_rejects_partial_compound_without_full_name() {
+        let target = EntityDef {
+            name: "Repository".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![
+                EntityFieldName::from("owner"),
+                EntityFieldName::from("repo"),
+            ],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        };
+        let partial = Value::Object(
+            vec![("repo".into(), Value::String("plasm-core".into()))]
+                .into_iter()
+                .collect(),
+        );
+        assert!(normalize_entity_ref_value_for_target(&partial, &target).is_none());
     }
 }

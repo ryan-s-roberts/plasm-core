@@ -1,5 +1,5 @@
 use crate::cgs_federation::FederationDispatch;
-use crate::entity_ref_value::try_narrow_entity_row_to_entity_ref_value;
+use crate::entity_ref_value::normalize_entity_ref_value_for_target;
 use crate::{
     ArrayItemsSchema, CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr,
     EntityDef, EntityKey, Expr, FieldType, GetExpr, InputFieldSchema, InvokeExpr, PageExpr,
@@ -35,26 +35,23 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
     }
 }
 
-/// Like [`Value::is_compatible_with_field_type`], plus entity-row narrowing for [`FieldType::EntityRef`]
-/// when the CGS declares scalar identity fields on the target entity (see
-/// [`crate::entity_ref_value::try_narrow_entity_row_to_entity_ref_value`]).
+/// Like [`Value::is_compatible_with_field_type`], plus target-aware normalization for
+/// [`FieldType::EntityRef`] (row narrowing, `full_name` split, compound-key completeness).
 fn value_fits_field_type_entity_ref_aware(
     value: &Value,
     field_type: &FieldType,
     cgs: &CGS,
 ) -> bool {
-    if value.is_compatible_with_field_type(field_type) {
-        return true;
-    }
     let FieldType::EntityRef { target } = field_type else {
-        return false;
+        return value.is_compatible_with_field_type(field_type);
     };
     let Some(ent) = cgs.get_entity(target) else {
         return false;
     };
-    try_narrow_entity_row_to_entity_ref_value(value, ent)
-        .map(|v| v.is_compatible_with_field_type(field_type))
-        .unwrap_or(false)
+    match value {
+        Value::PlasmInputRef(_) | Value::Null => true,
+        _ => normalize_entity_ref_value_for_target(value, ent).is_some(),
+    }
 }
 
 fn entity_ref_predicate_hint(target_name: &str, cgs: &CGS) -> String {
@@ -108,11 +105,12 @@ fn validate_array_item_value(
     value: &Value,
     spec: &ArrayItemsSchema,
     path: &str,
+    cgs: &CGS,
 ) -> Result<(), TypeError> {
     if value.is_domain_example_placeholder() {
         return Ok(());
     }
-    if !value.is_compatible_with_field_type(&spec.field_type) {
+    if !value_fits_field_type_entity_ref_aware(value, &spec.field_type, cgs) {
         return Err(TypeError::IncompatibleValue {
             field: path.to_string(),
             value_type: value.type_name().to_string(),
@@ -137,6 +135,7 @@ fn validate_typed_array_value(
     value: &Value,
     spec: &ArrayItemsSchema,
     path: &str,
+    cgs: &CGS,
 ) -> Result<(), TypeError> {
     let Some(arr) = value.as_array() else {
         return Err(TypeError::IncompatibleValue {
@@ -146,7 +145,7 @@ fn validate_typed_array_value(
         });
     };
     for (i, el) in arr.iter().enumerate() {
-        validate_array_item_value(el, spec, &format!("{path}[{i}]"))?;
+        validate_array_item_value(el, spec, &format!("{path}[{i}]"), cgs)?;
     }
     Ok(())
 }
@@ -467,7 +466,7 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
             })?;
 
     if let Some(input_schema) = &capability.input_schema {
-        validate_capability_input(&create.input.to_value(), input_schema)?;
+        validate_capability_input(&create.input.to_value(), input_schema, cgs)?;
     }
 
     Ok(())
@@ -506,7 +505,7 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
     // Validate input against capability input schema if present
     if let Some(input_schema) = &capability.input_schema {
         if let Some(input) = &invoke.input {
-            validate_capability_input(&input.to_value(), input_schema)?;
+            validate_capability_input(&input.to_value(), input_schema, cgs)?;
         } else if !matches!(input_schema.input_type, crate::InputType::None) {
             // Object bodies with only optional fields may be omitted (empty object implied).
             match &input_schema.input_type {
@@ -670,7 +669,7 @@ fn type_check_comparison(
         }
         if matches!(param.field_type, FieldType::Array) {
             if let Some(spec) = param.array_items.as_ref() {
-                validate_typed_array_value(&value, spec, field_name)?;
+                validate_typed_array_value(&value, spec, field_name, cgs)?;
             }
         }
         if matches!(param.field_type, FieldType::MultiSelect) {
@@ -716,7 +715,7 @@ fn type_check_comparison(
                     field_type: "array (missing items schema)".to_string(),
                 });
             };
-            return validate_typed_array_value(&value, spec, field_name);
+            return validate_typed_array_value(&value, spec, field_name, cgs);
         }
         if matches!(field.field_type, FieldType::MultiSelect) {
             let allowed = field.allowed_values.as_deref().unwrap_or(&[]);
@@ -802,8 +801,9 @@ fn type_check_relation(
 fn validate_capability_input(
     input: &Value,
     input_schema: &crate::InputSchema,
+    cgs: &CGS,
 ) -> Result<(), TypeError> {
-    validate_input_type(input, &input_schema.input_type, "")?;
+    validate_input_type(input, &input_schema.input_type, "", cgs)?;
     validate_input_constraints(input, &input_schema.validation)?;
     Ok(())
 }
@@ -813,6 +813,7 @@ fn validate_input_type(
     value: &Value,
     input_type: &crate::InputType,
     path: &str,
+    cgs: &CGS,
 ) -> Result<(), TypeError> {
     let path_label = || {
         if path.is_empty() {
@@ -856,11 +857,17 @@ fn validate_input_type(
                     None,
                 ));
             }
-            if !value.is_compatible_with_field_type(field_type) {
-                return Err(TypeError::IncompatibleValue {
-                    field: path.to_string(),
-                    value_type: value.type_name().to_string(),
-                    field_type: format!("{:?}", field_type),
+            if !value_fits_field_type_entity_ref_aware(value, field_type, cgs) {
+                let lbl = path_label();
+                return Err(match field_type {
+                    FieldType::EntityRef { target } => {
+                        entity_ref_incompatible_value(lbl.as_str(), target.as_str(), value, cgs)
+                    }
+                    _ => TypeError::IncompatibleValue {
+                        field: path.to_string(),
+                        value_type: value.type_name().to_string(),
+                        field_type: format!("{:?}", field_type),
+                    },
                 });
             }
 
@@ -915,7 +922,12 @@ fn validate_input_type(
                                             field_type: "array (missing items schema)".to_string(),
                                         });
                                     };
-                                    validate_typed_array_value(field_value, spec, &field_path)?;
+                                    validate_typed_array_value(
+                                        field_value,
+                                        spec,
+                                        &field_path,
+                                        cgs,
+                                    )?;
                                 }
                                 FieldType::MultiSelect => {
                                     let allowed =
@@ -923,13 +935,28 @@ fn validate_input_type(
                                     validate_multiselect_value(field_value, allowed, &field_path)?;
                                 }
                                 _ => {
-                                    if !field_value
-                                        .is_compatible_with_field_type(&field_schema.field_type)
-                                    {
-                                        return Err(TypeError::IncompatibleValue {
-                                            field: field_path.clone(),
-                                            value_type: field_value.type_name().to_string(),
-                                            field_type: format!("{:?}", field_schema.field_type),
+                                    if !value_fits_field_type_entity_ref_aware(
+                                        field_value,
+                                        &field_schema.field_type,
+                                        cgs,
+                                    ) {
+                                        return Err(match &field_schema.field_type {
+                                            FieldType::EntityRef { target } => {
+                                                entity_ref_incompatible_value(
+                                                    &field_path,
+                                                    target.as_str(),
+                                                    field_value,
+                                                    cgs,
+                                                )
+                                            }
+                                            _ => TypeError::IncompatibleValue {
+                                                field: field_path.clone(),
+                                                value_type: field_value.type_name().to_string(),
+                                                field_type: format!(
+                                                    "{:?}",
+                                                    field_schema.field_type
+                                                ),
+                                            },
                                         });
                                     }
 
@@ -1025,7 +1052,7 @@ fn validate_input_type(
             // Validate each element
             for (i, element) in array.iter().enumerate() {
                 let element_path = format!("{}[{}]", path, i);
-                validate_input_type(element, element_type, &element_path)?;
+                validate_input_type(element, element_type, &element_path, cgs)?;
             }
         }
 
@@ -1042,7 +1069,7 @@ fn validate_input_type(
             }
             // Input must match at least one variant
             for variant in variants {
-                if validate_input_type(value, variant, path).is_ok() {
+                if validate_input_type(value, variant, path, cgs).is_ok() {
                     return Ok(()); // Found compatible variant
                 }
             }
