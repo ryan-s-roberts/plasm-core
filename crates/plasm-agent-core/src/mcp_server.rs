@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::trace_hub::{McpPlasmTraceSink, PlasmContextTrace};
+use crate::trace_hub::{CodePlanTrace, McpPlasmTraceSink, PlasmContextTrace};
 use std::time::Duration;
 use tracing::Instrument;
 
@@ -83,9 +83,13 @@ use crate::plasm_plan_run::{
     render_plasm_plan_dry_text, run_plasm_plan, PlasmPlanRunHooks, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
-    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri, ArtifactPayload,
-    LogicalSessionUriSegment,
+    code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
+    parse_plasm_session_short_resource_uri, plasm_code_plan_resource_uri, plasm_session_short_plan_uri,
+    ArtifactPayload, CodePlanArchiveDocument, LogicalSessionUriSegment,
 };
+use crate::execute_session::ExecuteSession;
+use chrono::Utc;
+use sha2::{Digest, Sha256};
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
@@ -197,6 +201,191 @@ fn parse_logical_session_ref_arg(
             ),
         ))
     }
+}
+
+fn plan_content_sha256_hex(plan: &serde_json::Value) -> String {
+    let bytes = serde_json::to_vec(plan).unwrap_or_default();
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
+
+fn plan_display_name_from_dag(plan_dag: &serde_json::Value) -> String {
+    plan_dag
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "unnamed plan".to_string())
+}
+
+fn plan_node_count_from_dag(plan_dag: &serde_json::Value) -> usize {
+    plan_dag
+        .get("nodes")
+        .and_then(|n| n.as_array())
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+async fn trace_archive_and_emit_code_plan_evaluate(
+    hub: &crate::trace_hub::TraceHub,
+    store: &crate::run_artifacts::RunArtifactStore,
+    mcp_key: &str,
+    es: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    session_ref: &str,
+    plan: &serde_json::Value,
+    program: &str,
+    plan_dag: serde_json::Value,
+    plan_call_index: u64,
+) {
+    let plan_hash_str = plan_content_sha256_hex(plan);
+    let plan_id = Uuid::new_v4();
+    let plan_index = plan_call_index;
+    let handle_str = code_plan_handle(plan_index);
+    let doc = CodePlanArchiveDocument {
+        kind: "code_plan".into(),
+        plan_id: plan_id.to_string(),
+        prompt_hash: prompt_hash.to_string(),
+        session_id: session_id.to_string(),
+        entry_id: es.entry_id.clone(),
+        plan_index,
+        plan_handle: handle_str.clone(),
+        name: plan_display_name_from_dag(&plan_dag),
+        code: program.to_string(),
+        plan_hash: plan_hash_str.clone(),
+        plan: plan.clone(),
+        catalog_cgs_hash: es.catalog_cgs_hash.clone(),
+        domain_revision: es.domain_revision,
+        entities: es.entities.clone(),
+        principal: es.principal.clone(),
+        created_at: Utc::now().to_rfc3339(),
+    };
+    let (plan_uri, canonical_plan_uri, plan_http_path) = match store
+        .insert_code_plan(prompt_hash, session_id, plan_id, plan_index, &doc)
+        .await
+    {
+        Ok(h) => (h.plasm_uri, h.canonical_plasm_uri, h.http_path),
+        Err(e) => {
+            tracing::warn!(
+                target: "plasm_agent::mcp",
+                error = %e,
+                "failed to archive Plasm program plan for trace (non-fatal)"
+            );
+            (
+                plasm_session_short_plan_uri(session_ref, plan_index),
+                plasm_code_plan_resource_uri(prompt_hash, session_id, &plan_id),
+                code_plan_http_path(prompt_hash, session_id, &plan_id),
+            )
+        }
+    };
+    let node_count = plan_node_count_from_dag(&plan_dag);
+    let code_chars = program.chars().count() as u64;
+    hub.trace_record_code_plan_evaluate(
+        mcp_key,
+        CodePlanTrace {
+            plan_handle: handle_str,
+            plan_id: plan_id.to_string(),
+            plan_name: plan_display_name_from_dag(&plan_dag),
+            plan_hash: plan_hash_str,
+            plan_uri,
+            canonical_plan_uri,
+            plan_http_path,
+            prompt_hash: prompt_hash.to_string(),
+            session_id: session_id.to_string(),
+            node_count,
+            code_chars,
+            dag: plan_dag,
+            plasm_call_index: None,
+            run_ids: Vec::new(),
+            run_artifacts: Vec::new(),
+        },
+    )
+    .await;
+}
+
+async fn trace_archive_and_emit_code_plan_execute(
+    hub: &crate::trace_hub::TraceHub,
+    store: &crate::run_artifacts::RunArtifactStore,
+    mcp_key: &str,
+    es: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    session_ref: &str,
+    plan: &serde_json::Value,
+    program: &str,
+    plan_dag: serde_json::Value,
+    plan_call_index: u64,
+    out: &PlasmPlanRunResult,
+) {
+    let plan_hash_str = plan_content_sha256_hex(plan);
+    let plan_id = Uuid::new_v4();
+    let plan_index = plan_call_index;
+    let handle_str = code_plan_handle(plan_index);
+    let doc = CodePlanArchiveDocument {
+        kind: "code_plan".into(),
+        plan_id: plan_id.to_string(),
+        prompt_hash: prompt_hash.to_string(),
+        session_id: session_id.to_string(),
+        entry_id: es.entry_id.clone(),
+        plan_index,
+        plan_handle: handle_str.clone(),
+        name: plan_display_name_from_dag(&plan_dag),
+        code: program.to_string(),
+        plan_hash: plan_hash_str.clone(),
+        plan: plan.clone(),
+        catalog_cgs_hash: es.catalog_cgs_hash.clone(),
+        domain_revision: es.domain_revision,
+        entities: es.entities.clone(),
+        principal: es.principal.clone(),
+        created_at: Utc::now().to_rfc3339(),
+    };
+    let (plan_uri, canonical_plan_uri, plan_http_path) = match store
+        .insert_code_plan(prompt_hash, session_id, plan_id, plan_index, &doc)
+        .await
+    {
+        Ok(h) => (h.plasm_uri, h.canonical_plasm_uri, h.http_path),
+        Err(e) => {
+            tracing::warn!(
+                target: "plasm_agent::mcp",
+                error = %e,
+                "failed to archive Plasm program plan for trace (non-fatal)"
+            );
+            (
+                plasm_session_short_plan_uri(session_ref, plan_index),
+                plasm_code_plan_resource_uri(prompt_hash, session_id, &plan_id),
+                code_plan_http_path(prompt_hash, session_id, &plan_id),
+            )
+        }
+    };
+    let node_count = plan_node_count_from_dag(&plan_dag);
+    let code_chars = program.chars().count() as u64;
+    let run_ids: Vec<String> = out
+        .code_plan_run_artifacts
+        .iter()
+        .map(|a| a.run_id.clone())
+        .collect();
+    hub.trace_record_code_plan_execute(
+        mcp_key,
+        CodePlanTrace {
+            plan_handle: handle_str,
+            plan_id: plan_id.to_string(),
+            plan_name: plan_display_name_from_dag(&plan_dag),
+            plan_hash: plan_hash_str,
+            plan_uri,
+            canonical_plan_uri,
+            plan_http_path,
+            prompt_hash: prompt_hash.to_string(),
+            session_id: session_id.to_string(),
+            node_count,
+            code_chars,
+            dag: plan_dag,
+            plasm_call_index: Some(plan_call_index),
+            run_ids,
+            run_artifacts: out.code_plan_run_artifacts.clone(),
+        },
+    )
+    .await;
 }
 
 /// Per MCP transport session: Plasm execute `prompt_hash` + `session` ids (same as HTTP paths).
@@ -1193,7 +1382,7 @@ impl PlasmMcpHandler {
             let run_result = match compile {
                 Ok(plan) => {
                     if run_live {
-                        run_plasm_plan(
+                        match run_plasm_plan(
                             &es,
                             self.plasm.as_ref(),
                             principal_incoming.as_ref(),
@@ -1208,6 +1397,27 @@ impl PlasmMcpHandler {
                             }),
                         )
                         .await
+                        {
+                            Ok(out) => {
+                                trace_archive_and_emit_code_plan_execute(
+                                    &self.plasm.trace_hub,
+                                    &self.plasm.run_artifacts,
+                                    &ls_key,
+                                    &es,
+                                    b.prompt_hash.as_str(),
+                                    b.session_id.as_str(),
+                                    session_ref.as_str(),
+                                    &plan,
+                                    &program,
+                                    out.plan_dag.clone(),
+                                    call_count,
+                                    &out,
+                                )
+                                .await;
+                                Ok(out)
+                            }
+                            Err(e) => Err(e),
+                        }
                     } else {
                         match parse_plan_value(&plan) {
                             Err(e) => Err(e),
@@ -1227,10 +1437,24 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
 ```text\n{dry_text}\n```"
                                             );
                                             let plan_json = plasm_plan_dag_json(&dry);
+                                            trace_archive_and_emit_code_plan_evaluate(
+                                                &self.plasm.trace_hub,
+                                                &self.plasm.run_artifacts,
+                                                &ls_key,
+                                                &es,
+                                                b.prompt_hash.as_str(),
+                                                b.session_id.as_str(),
+                                                session_ref.as_str(),
+                                                &plan,
+                                                &program,
+                                                plan_json.clone(),
+                                                call_count,
+                                            )
+                                            .await;
                                             let mut plasm_obj = serde_json::Map::new();
                                             plasm_obj
                                                 .insert("dry_run".into(), serde_json::json!(true));
-                                            plasm_obj.insert("plan".into(), plan_json);
+                                            plasm_obj.insert("plan".into(), plan_json.clone());
                                             plasm_obj.insert(
                                                 "guidance".into(),
                                                 serde_json::Value::Array(
@@ -1249,6 +1473,8 @@ After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply
                                                 version: dry.version,
                                                 node_results: dry.node_results,
                                                 graph_summary: dry.graph_summary,
+                                                plan_dag: plan_json,
+                                                code_plan_run_artifacts: Vec::new(),
                                                 run_markdown: Some(markdown),
                                                 run_plasm_meta: Some(meta),
                                             })

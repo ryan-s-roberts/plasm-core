@@ -36,7 +36,7 @@ use crate::plasm_plan::{
     PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
-use crate::trace_hub::McpPlasmTraceSink;
+use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{CapabilityKind, EntityName, Expr, Ref, TypedFieldValue, Value};
@@ -274,6 +274,10 @@ pub struct PlasmPlanRunResult {
     /// One entry per `plan.nodes[]` with `ir`, `simulation`, and optional `id`.
     pub node_results: Vec<serde_json::Value>,
     pub graph_summary: serde_json::Value,
+    /// Canonical DAG JSON for trace/UI (`nodes`, `edges`, `returns`, …).
+    pub plan_dag: serde_json::Value,
+    /// Run snapshots keyed to plan nodes (live execution only).
+    pub code_plan_run_artifacts: Vec<CodePlanRunArtifactRef>,
     /// Set when `run` is `true` and the engine returns Markdown (HTTP-backed run path).
     pub run_markdown: Option<String>,
     /// Optional `CallToolResult` `_meta` map (typically includes `plasm` steps when run snapshots exist).
@@ -1659,10 +1663,13 @@ pub async fn run_validated_plasm_plan(
 ) -> Result<PlasmPlanRunResult, String> {
     let dry = evaluate_validated_plasm_plan_dry(es, validated)?;
     if !run {
+        let plan_dag = plasm_plan_dag_json(&dry);
         return Ok(PlasmPlanRunResult {
             version: dry.version,
             node_results: dry.node_results,
             graph_summary: dry.graph_summary,
+            plan_dag,
+            code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
         });
@@ -1936,10 +1943,29 @@ async fn run_validated_plan_phased(
         });
     }
     let out = publish_plasm_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
+    let plan_dag = plasm_plan_dag_json(&dry);
+    let mut code_plan_run_artifacts = Vec::new();
+    for (i, step) in steps.iter().enumerate() {
+        let Some(h) = step.artifact.as_ref() else {
+            continue;
+        };
+        code_plan_run_artifacts.push(CodePlanRunArtifactRef {
+            run_id: h.run_id.to_string(),
+            artifact_uri: Some(h.plasm_uri.clone()),
+            canonical_artifact_uri: Some(h.canonical_plasm_uri.clone()),
+            artifact_path: Some(h.http_path.clone()),
+            run_step: Some(i),
+            node_id: step.node_id.clone(),
+            display: Some(step.display.clone()),
+            request_fingerprints: h.request_fingerprints.clone(),
+        });
+    }
     Ok(PlasmPlanRunResult {
         version: dry.version,
         node_results: dry.node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
+        plan_dag,
+        code_plan_run_artifacts,
         run_markdown: Some(out.markdown),
         run_plasm_meta: out.tool_meta,
     })
