@@ -4,8 +4,8 @@
 //! for values that are *intended* as `FieldType::EntityRef` payloads after parse/coercion — see
 //! [`EntityRefPayload::try_from_value`] and [`EntityRefPayload::to_value`].
 
-use crate::EntityDef;
 use crate::value::Value;
+use crate::EntityDef;
 use indexmap::IndexMap;
 use thiserror::Error;
 

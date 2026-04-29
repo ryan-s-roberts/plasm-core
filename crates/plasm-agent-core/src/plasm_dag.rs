@@ -451,10 +451,10 @@ fn postfix_op_to_compute(
                 .first()
                 .ok_or_else(|| "sort(...) requires a field".to_string())?
                 .trim();
-            let descending = parts
-                .get(1)
-                .map(|s| s.trim().eq_ignore_ascii_case("desc"))
-                .unwrap_or(false);
+            if key.is_empty() {
+                return Err("sort(...) requires a non-empty field".into());
+            }
+            let descending = parse_sort_direction(&parts)?;
             Ok(mk(
                 ComputeOp::Sort {
                     key: FieldPath::from_dotted(key)?,
@@ -1520,43 +1520,115 @@ fn parse_field_list(fields: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Parses one comma-separated aggregate specification after `.aggregate(...)` / `group_by` tail.
+///
+/// Canonical form: `output=count` or `output=sum(field)` (also `avg`/`min`/`max`).
+///
+/// **Shadow (repair-only, not taught):** bare `count` and `aggregate(count)` canonicalize to
+/// `count=count` with synthetic output name `count`.
+fn parse_one_aggregate_spec(raw: &str) -> Result<crate::plasm_plan::AggregateSpec, String> {
+    let raw = raw.trim();
+    if let Some((name, rhs)) = raw.split_once('=') {
+        let name = OutputName::new(name.trim().to_string())?;
+        let rhs = rhs.trim();
+        if rhs == "count" {
+            return Ok(crate::plasm_plan::AggregateSpec {
+                name,
+                function: crate::plasm_plan::AggregateFunction::Count,
+                field: None,
+            });
+        }
+        let open = rhs.find('(').ok_or_else(|| {
+            format!(
+                "right-hand side `{rhs}` in `{raw}` must be `count` or `func(field)` (e.g. `sum(amount)`)"
+            )
+        })?;
+        let func = &rhs[..open];
+        let field = rhs[open + 1..]
+            .strip_suffix(')')
+            .ok_or_else(|| format!("aggregate call `{rhs}` must end with `)`"))?;
+        let function = match func {
+            "sum" => AggregateFunction::Sum,
+            "avg" => AggregateFunction::Avg,
+            "min" => AggregateFunction::Min,
+            "max" => AggregateFunction::Max,
+            other => return Err(format!("unknown aggregate function `{other}`")),
+        };
+        return Ok(crate::plasm_plan::AggregateSpec {
+            name,
+            function,
+            field: Some(FieldPath::from_dotted(field.trim())?),
+        });
+    }
+
+    // Shadow count-only forms → canonical `count=count`.
+    if raw.eq_ignore_ascii_case("count") {
+        return Ok(crate::plasm_plan::AggregateSpec {
+            name: OutputName::new("count".to_string())?,
+            function: crate::plasm_plan::AggregateFunction::Count,
+            field: None,
+        });
+    }
+    if let Some(inner) = raw
+        .strip_prefix("aggregate(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let inner = inner.trim();
+        if inner.eq_ignore_ascii_case("count") {
+            return Ok(crate::plasm_plan::AggregateSpec {
+                name: OutputName::new("count".to_string())?,
+                function: crate::plasm_plan::AggregateFunction::Count,
+                field: None,
+            });
+        }
+        if inner.contains('(') {
+            return Err(format!(
+                "aggregate spec `{raw}` must name the output explicitly; use e.g. `total={inner}` (not `{raw}` without `output=`)"
+            ));
+        }
+    }
+
+    if raw.contains('(') {
+        return Err(format!(
+            "aggregate spec `{raw}` must use an explicit output name, e.g. `total=sum(amount)` or `n=count`"
+        ));
+    }
+
+    Err(format!(
+        "aggregate spec `{raw}` must be `output=count` or `output=sum(field)`…; bare `count` and `aggregate(count)` are accepted as shorthand for `count=count`"
+    ))
+}
+
 fn parse_aggregates(args: &str) -> Result<Vec<crate::plasm_plan::AggregateSpec>, String> {
     split_top_level(args, ',')?
         .into_iter()
-        .map(|raw| {
-            let (name, rhs) = raw
-                .split_once('=')
-                .ok_or_else(|| format!("aggregate spec `{raw}` must be name=function(field)"))?;
-            let name = OutputName::new(name.trim().to_string())?;
-            let rhs = rhs.trim();
-            if rhs == "count" {
-                return Ok(crate::plasm_plan::AggregateSpec {
-                    name,
-                    function: crate::plasm_plan::AggregateFunction::Count,
-                    field: None,
-                });
-            }
-            let open = rhs
-                .find('(')
-                .ok_or_else(|| format!("aggregate function `{rhs}` must call a field"))?;
-            let func = &rhs[..open];
-            let field = rhs[open + 1..]
-                .strip_suffix(')')
-                .ok_or_else(|| format!("aggregate function `{rhs}` must end with `)`"))?;
-            let function = match func {
-                "sum" => AggregateFunction::Sum,
-                "avg" => AggregateFunction::Avg,
-                "min" => AggregateFunction::Min,
-                "max" => AggregateFunction::Max,
-                other => return Err(format!("unknown aggregate function `{other}`")),
-            };
-            Ok(crate::plasm_plan::AggregateSpec {
-                name,
-                function,
-                field: Some(FieldPath::from_dotted(field.trim())?),
-            })
-        })
+        .map(parse_one_aggregate_spec)
         .collect()
+}
+
+fn parse_sort_direction(parts: &[&str]) -> Result<bool, String> {
+    match parts.len() {
+        0 => Err("sort(...) requires a field".to_string()),
+        1 => Ok(false),
+        2 => {
+            let d = parts[1].trim();
+            if d.is_empty() {
+                return Err(
+                    "sort(...) direction must not be empty when a comma is present".to_string(),
+                );
+            }
+            match d.to_ascii_lowercase().as_str() {
+                "desc" | "descending" => Ok(true),
+                "asc" | "ascending" => Ok(false),
+                other => Err(format!(
+                    "sort(...) unknown direction `{other}`; use `desc` / `descending` for descending, omit the direction or use `asc` / `ascending` for ascending"
+                )),
+            }
+        }
+        _ => {
+            Err("sort(...) expects at most `.sort(field)` or `.sort(field, direction)`".to_string())
+        }
+    }
 }
 
 fn parse_plan_value_expr(
@@ -2484,5 +2556,120 @@ x"#;
         assert_eq!(op2["kind"], "limit", "{op2:#}");
         assert_eq!(op1["count"], 2);
         assert_eq!(op2["count"], 2);
+    }
+
+    #[test]
+    fn parse_aggregates_canonical_n_count() {
+        let specs = super::parse_aggregates("n=count").expect("canonical count");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name.as_str(), "n");
+        assert_eq!(
+            specs[0].function,
+            crate::plasm_plan::AggregateFunction::Count
+        );
+        assert!(specs[0].field.is_none());
+    }
+
+    #[test]
+    fn parse_aggregates_shadow_bare_count() {
+        let specs = super::parse_aggregates("count").expect("shadow bare count");
+        assert_eq!(specs[0].name.as_str(), "count");
+        assert_eq!(
+            specs[0].function,
+            crate::plasm_plan::AggregateFunction::Count
+        );
+    }
+
+    #[test]
+    fn parse_aggregates_shadow_aggregate_count() {
+        let specs = super::parse_aggregates("aggregate(count)").expect("shadow aggregate(count)");
+        assert_eq!(specs[0].name.as_str(), "count");
+    }
+
+    #[test]
+    fn parse_aggregates_rejects_aggregate_sum_without_alias() {
+        let err = super::parse_aggregates("aggregate(sum(amount))").unwrap_err();
+        assert!(
+            err.contains("total=sum(amount)") || err.contains("explicit"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn group_by_postfix_accepts_canonical_key_and_aggs() {
+        let node = super::postfix_op_to_compute(
+            &plasm_core::expr_parser::PlasmPostfixOp::GroupBy {
+                args: "author, n=count".into(),
+            },
+            "src",
+            "id",
+            "expr",
+        )
+        .expect("group_by");
+        match node.source {
+            super::DagNodeSource::Compute {
+                op:
+                    crate::plasm_plan::ComputeOp::GroupBy {
+                        ref key,
+                        ref aggregates,
+                    },
+                ..
+            } => {
+                assert_eq!(key.dotted(), "author");
+                assert_eq!(aggregates.len(), 1);
+                assert_eq!(aggregates[0].name.as_str(), "n");
+            }
+            _ => panic!("expected group_by compute"),
+        }
+    }
+
+    #[test]
+    fn sort_unknown_direction_errors() {
+        let err = super::postfix_op_to_compute(
+            &plasm_core::expr_parser::PlasmPostfixOp::Sort {
+                args: "created_at, newest".into(),
+            },
+            "src",
+            "id",
+            "expr",
+        )
+        .unwrap_err();
+        assert!(err.contains("newest"), "{err}");
+    }
+
+    #[test]
+    fn sort_accepts_direction_aliases() {
+        let asc = super::postfix_op_to_compute(
+            &plasm_core::expr_parser::PlasmPostfixOp::Sort {
+                args: "x, ascending".into(),
+            },
+            "src",
+            "id",
+            "expr",
+        )
+        .expect("asc");
+        match asc.source {
+            super::DagNodeSource::Compute {
+                op: crate::plasm_plan::ComputeOp::Sort { descending, .. },
+                ..
+            } => assert!(!descending),
+            _ => panic!("expected compute sort"),
+        }
+        let desc = super::postfix_op_to_compute(
+            &plasm_core::expr_parser::PlasmPostfixOp::Sort {
+                args: "x, descending".into(),
+            },
+            "src",
+            "id",
+            "expr",
+        )
+        .expect("desc");
+        match desc.source {
+            super::DagNodeSource::Compute {
+                op: crate::plasm_plan::ComputeOp::Sort { descending, .. },
+                ..
+            } => assert!(descending),
+            _ => panic!("expected compute sort"),
+        }
     }
 }

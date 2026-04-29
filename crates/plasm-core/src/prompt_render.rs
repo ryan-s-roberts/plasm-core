@@ -2860,14 +2860,14 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
         "Output choice:\n\
   - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.\n\
   - For **compositional** work (multiple steps, joins, reporting, summarization, writes, or any structured payload like markdown/html), use a **multi-line `plasm_program`** by default—do not chain many one-line `plasm` calls.\n\
-  - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, project only needed fields, limit/page intentionally, aggregate/group/sort, then return a small synthesized result.\n\
+  - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, narrow with `projection` and `postfix` (including `transform` and bracket/heredoc tails), then return a small synthesized result.\n\
 \n\
 Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
   plasm_program ::= plasm_roots | binding+ plasm_roots\n\
   binding       ::= ident \"=\" plasm_node\n\
   plasm_roots   ::= plasm_return (\",\" plasm_return)*\n\
   plasm_return  ::= node_ref | plasm_expr\n\
-  plasm_node    ::= ( plasm_expr | node_ref ) postfix* | node_ref \"=>\" plasm_value\n\
+  plasm_node    ::= ( plasm_expr | node_ref ) postfix* | node_ref \"=>\" plasm_value | node_ref \"=>\" effect_expr\n\
   plasm_expr    ::= entity_expr [projection]\n\
   entity_expr   ::= query_all | get | query | relation | method | create_action{search_rule}\n\
   query_all     ::= {query_all_form}\n\
@@ -2878,20 +2878,29 @@ Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` 
   create_action ::= {create_form}\n\
   projection    ::= {projection_form} | \"[\" fields \"]\"\n\
   postfix       ::= transform | \"[\" fields \"]\" | \"[\" fields \"]\" heredoc\n\
-  transform     ::= \".limit(\" int \")\" | \".sort(\" field [\", desc\"] \")\" | \".aggregate(\" agg_spec \")\" | \".group_by(\" field \",\" agg_spec \")\" | \".singleton()\" | \".page_size(\" int \")\"\n\
+  positive_int  ::= non-zero decimal integer literal\n\
+  agg_func      ::= \"sum\" | \"avg\" | \"min\" | \"max\"\n\
+  agg_spec      ::= ident \"=\" ( \"count\" | agg_func \"(\" field \")\" )\n\
+  agg_specs     ::= agg_spec (\",\" agg_spec)*\n\
+  sort_dir      ::= omitted | \"desc\" | \"asc\" | \"ascending\" | \"descending\"\n\
+  transform     ::= \".limit(\" positive_int \")\" | \".sort(\" field [\",\" sort_dir] \")\" | \".aggregate(\" agg_specs \")\" | \".group_by(\" field \",\" agg_specs \")\" | \".singleton()\" | \".page_size(\" positive_int \")\"\n\
   fields        ::= {projection}\n\
-  plasm_value   ::= literal | node_ref.field | _.field | [v, …]\n\
+  plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]\n\
+  effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)\n\
   ident/node_ref/field ::= agent-chosen names for bound nodes and fields\n\
   literal      ::= quoted string | number | bool | null | heredoc\n\
 \n\
+Examples (illustrations only; `agg_spec` / `agg_specs` / `transform` above are authoritative):\n\
+  - `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.\n\
+\n\
 Node-ref continuation:\n\
-  - **Postfix transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, bracket projections, `.singleton()`, `.page_size`, heredoc render tails) are **one language** with `plasm_expr`: you may write `e1{{…}}.limit(20)` on a single line without an intermediate binding when the postfix applies to that surface expression.\n\
-  - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`ident[field,…]`, `.limit`, `.aggregate`, `.group_by`, derive/`=>`, etc.) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.\n\
+  - **`postfix`** (see `postfix` and `transform` above) applies to the same surface expression as `plasm_expr`; you may chain suffixes on one line without an intermediate binding when they attach to that expression (e.g. `e1{{…}}.limit(20)`).\n\
+  - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`projection`, `transform`, derive `=>`, …) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.\n\
 \n\
 Program construction discipline:\n\
   - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `\n` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)\n\
   - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.\n\
-  - Prefer `node[field,…]`, `.limit(n)`, `.sort(...)`, `.aggregate(...)`, `.group_by(...)`, `.singleton()`, `.page_size(n)`, and render heredocs over returning raw broad lists.\n\
+  - Prefer narrowing with `projection` and `postfix` (including `transform`) and heredoc render tails over returning raw broad lists.\n\
   - Return at most small final roots unless the user explicitly asks for raw rows.\n\
   - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
   - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
