@@ -1,6 +1,6 @@
 use crate::error::CmlError;
 use indexmap::IndexMap;
-use plasm_core::Value;
+use plasm_core::{TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
 
 /// CML Expression - the typed mapping language
@@ -11,9 +11,9 @@ pub enum CmlExpr {
     #[serde(rename = "var")]
     Var { name: String },
 
-    /// Constant value
+    /// Constant value (algebraic [`TypedFieldValue`] — serializes like [`Value`] JSON).
     #[serde(rename = "const")]
-    Const { value: Value },
+    Const { value: TypedFieldValue },
 
     /// Object construction
     #[serde(rename = "object")]
@@ -500,7 +500,7 @@ impl CmlExpr {
     }
 
     /// Create a constant
-    pub fn const_(value: impl Into<Value>) -> Self {
+    pub fn const_(value: impl Into<TypedFieldValue>) -> Self {
         CmlExpr::Const {
             value: value.into(),
         }
@@ -627,7 +627,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
             .cloned()
             .ok_or_else(|| CmlError::VariableNotFound { name: name.clone() }),
 
-        CmlExpr::Const { value } => Ok(value.clone()),
+        CmlExpr::Const { value } => Ok(value.to_value()),
 
         CmlExpr::Object { fields } => {
             let mut obj = IndexMap::new();

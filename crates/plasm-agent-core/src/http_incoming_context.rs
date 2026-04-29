@@ -1,13 +1,13 @@
 //! Shell context for UIs: principal + tenant-scoped workspace/project list (authoritative for Phoenix).
 
-use axum::Json;
 use axum::extract::Extension;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
 use crate::incoming_auth::{
-    IncomingAuthFailure, IncomingAuthMethod, IncomingAuthMode, IncomingPrincipal, TenantPrincipal,
-    incoming_auth_problem,
+    incoming_auth_problem, IncomingAuthFailure, IncomingAuthMethod, IncomingAuthMode,
+    IncomingPrincipal, TenantPrincipal,
 };
 use crate::server_state::PlasmHostState;
 use crate::tenant_binding::{OrgWorkspaceRow, TenantBindingRow};

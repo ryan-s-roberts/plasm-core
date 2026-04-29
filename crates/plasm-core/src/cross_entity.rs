@@ -1,3 +1,4 @@
+use crate::typed_literal::TypedComparisonValue;
 use crate::{CapabilityKind, CompOp, EntityDef, FieldType, Predicate, Value, CGS};
 
 /// Result of analysing a dot-path predicate like `pet.status = available`.
@@ -80,7 +81,7 @@ fn resolve_cross_entity_field(
     prefix: &str,
     suffix: &str,
     op: CompOp,
-    value: &Value,
+    value: &TypedComparisonValue,
     source_entity: &EntityDef,
     cgs: &CGS,
 ) -> Option<CrossEntityPredicate> {
@@ -173,7 +174,7 @@ pub fn strip_cross_entity_comparisons(
                     prefix,
                     suffix,
                     CompOp::Eq,
-                    &Value::Null,
+                    &TypedComparisonValue::from(Value::Null),
                     source_entity,
                     cgs,
                 )

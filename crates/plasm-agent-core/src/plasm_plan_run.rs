@@ -39,7 +39,7 @@ use crate::server_state::PlasmHostState;
 use crate::trace_hub::McpPlasmTraceSink;
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
-use plasm_core::{CapabilityKind, EntityName, Expr, Ref, Value};
+use plasm_core::{CapabilityKind, EntityName, Expr, Ref, TypedFieldValue, Value};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
@@ -2927,11 +2927,14 @@ fn json_rows_to_entities(entity: &str, rows: &[serde_json::Value]) -> Vec<Cached
             match row {
                 serde_json::Value::Object(obj) => {
                     for (k, v) in obj {
-                        fields.insert(k.clone(), json_to_plasm_value(v));
+                        fields.insert(k.clone(), TypedFieldValue::from(json_to_plasm_value(v)));
                     }
                 }
                 other => {
-                    fields.insert("value".to_string(), json_to_plasm_value(other));
+                    fields.insert(
+                        "value".to_string(),
+                        TypedFieldValue::from(json_to_plasm_value(other)),
+                    );
                 }
             }
             CachedEntity {

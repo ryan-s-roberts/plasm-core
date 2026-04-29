@@ -8,9 +8,9 @@
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
 //! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON (`lines` array, or top-level array of line strings); `Accept`: json | ndjson | table | toon (**default** when omitted: **toon**, entity rows only; no duration/cache metadata)
 
-use axum::Router;
 use axum::extract::Extension;
 use axum::routing::get;
+use axum::Router;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 use std::sync::Arc;
@@ -22,8 +22,8 @@ use crate::http_discovery::{discovery_routes_protected, get_auth_status, health_
 use crate::http_execute::execute_routes;
 use crate::http_incoming_context::incoming_context_routes;
 use crate::http_traces::trace_routes;
-use crate::incoming_auth::IncomingAuthVerifier;
 use crate::incoming_auth::incoming_auth_http_middleware;
+use crate::incoming_auth::IncomingAuthVerifier;
 use crate::local_trace_archive::LocalTraceArchive;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState, PlasmOssHostState};

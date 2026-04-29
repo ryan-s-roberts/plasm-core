@@ -12,10 +12,7 @@ use indexmap::IndexMap;
 pub enum ValueExpr {
     Literal(Value),
     Binding(String),
-    Field {
-        base: String,
-        path: Vec<String>,
-    },
+    Field { base: String, path: Vec<String> },
     Array(Vec<ValueExpr>),
     Object(IndexMap<String, ValueExpr>),
 }

@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use http::header::{CONTENT_TYPE, LOCATION};
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use rust_mcp_sdk::auth::{AuthInfo, AuthProvider, AuthenticationError, OauthEndpoint};
 use rust_mcp_sdk::mcp_http::{GenericBody, GenericBodyExt, McpAppState};
 use rust_mcp_sdk::mcp_server::error::TransportServerError;
@@ -379,7 +379,8 @@ impl PlasmMcpApiKeyAuthProvider {
             })?
         else {
             return Err(AuthenticationError::InvalidToken {
-                description: "OAuth token subject is not bound to an active personal MCP configuration",
+                description:
+                    "OAuth token subject is not bound to an active personal MCP configuration",
             });
         };
 
@@ -789,8 +790,8 @@ impl PlasmMcpApiKeyAuthProvider {
     }
 
     fn validate_pkce_s256(code_challenge: &str, code_verifier: &str) -> bool {
-        use base64::Engine as _;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine as _;
         let hash = Sha256::digest(code_verifier.as_bytes());
         let encoded = URL_SAFE_NO_PAD.encode(hash);
         encoded == code_challenge

@@ -168,7 +168,10 @@ fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr)
                 }
             }
         }
-        Expr::Create(c) => collect_value_for_template_uses(acc, &c.input),
+        Expr::Create(c) => {
+            let v = c.input.to_value();
+            collect_value_for_template_uses(acc, &v);
+        }
         Expr::Delete(d) => {
             if let Some(pv) = &d.path_vars {
                 for v in pv.values() {
@@ -178,7 +181,8 @@ fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr)
         }
         Expr::Invoke(i) => {
             if let Some(input) = &i.input {
-                collect_value_for_template_uses(acc, input);
+                let v = input.to_value();
+                collect_value_for_template_uses(acc, &v);
             }
             if let Some(pv) = &i.path_vars {
                 for v in pv.values() {
@@ -198,7 +202,10 @@ fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr)
 
 fn collect_predicate_for_template_uses(acc: &mut Vec<serde_json::Value>, pred: &Predicate) {
     match pred {
-        Predicate::Comparison { value, .. } => collect_value_for_template_uses(acc, value),
+        Predicate::Comparison { value, .. } => {
+            let v = value.to_value();
+            collect_value_for_template_uses(acc, &v);
+        }
         Predicate::And { args } | Predicate::Or { args } => {
             for a in args {
                 collect_predicate_for_template_uses(acc, a);

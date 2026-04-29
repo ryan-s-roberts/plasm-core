@@ -1,6 +1,7 @@
 use crate::identity::{CapabilityName, EntityId, EntityName};
 use crate::paging_handle::PagingHandle;
-use crate::{Predicate, Value};
+use crate::typed_invoke::InvokeInputPayload;
+use crate::{Predicate, Value, CGS};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -9,6 +10,9 @@ use std::collections::BTreeMap;
 pub const PAGE_EXPR_PRIMARY_ENTITY: &str = "__page__";
 
 /// Top-level expression types in the Plasm IR.
+///
+/// Serde uses `tag = "op"`; typed payloads (`Predicate` RHS, invoke/create inputs) serialize through
+/// their [`Value`] projection so snapshots stay wire-compatible when the typed IR evolves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op")]
 pub enum Expr {
@@ -102,7 +106,7 @@ pub struct GetExpr {
 pub struct CreateExpr {
     pub capability: CapabilityName,
     pub entity: EntityName,
-    pub input: Value,
+    pub input: InvokeInputPayload,
 }
 
 /// Delete expression: remove a resource by ID.
@@ -120,7 +124,7 @@ pub struct InvokeExpr {
     pub capability: CapabilityName,
     pub target: Ref,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub input: Option<Value>,
+    pub input: Option<InvokeInputPayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
 }
@@ -275,12 +279,12 @@ impl CreateExpr {
     pub fn new(
         capability: impl Into<CapabilityName>,
         entity: impl Into<EntityName>,
-        input: Value,
+        input: impl Into<InvokeInputPayload>,
     ) -> Self {
         Self {
             capability: capability.into(),
             entity: entity.into(),
-            input,
+            input: input.into(),
         }
     }
 }
@@ -319,7 +323,7 @@ impl InvokeExpr {
         Self {
             capability: capability.into(),
             target: Ref::new(entity_type, id),
-            input,
+            input: input.map(InvokeInputPayload::from),
             path_vars: None,
         }
     }
@@ -333,7 +337,7 @@ impl InvokeExpr {
         Self {
             capability: capability.into(),
             target,
-            input,
+            input: input.map(InvokeInputPayload::from),
             path_vars: None,
         }
     }
@@ -446,6 +450,38 @@ impl Expr {
             Expr::Invoke(i) => i.target.entity_type.as_str(),
             Expr::Chain(c) => c.source.primary_entity(),
             Expr::Page(_) => PAGE_EXPR_PRIMARY_ENTITY,
+        }
+    }
+}
+
+/// Replace raw invoke/create payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
+pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
+    match expr {
+        Expr::Query(_) | Expr::Get(_) | Expr::Delete(_) | Expr::Page(_) => {}
+        Expr::Create(create) => {
+            if let Some(cap) = cgs.get_capability(&create.capability) {
+                if let Some(schema) = &cap.input_schema {
+                    let lifted =
+                        InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type);
+                    create.input = lifted;
+                }
+            }
+        }
+        Expr::Invoke(invoke) => {
+            if let Some(cap) = cgs.get_capability(&invoke.capability) {
+                if let Some(schema) = &cap.input_schema {
+                    if let Some(inp) = &invoke.input {
+                        let lifted = InvokeInputPayload::lift(&inp.to_value(), &schema.input_type);
+                        invoke.input = Some(lifted);
+                    }
+                }
+            }
+        }
+        Expr::Chain(chain) => {
+            lift_invoke_payloads_in_expr(chain.source.as_mut(), cgs);
+            if let ChainStep::Explicit { expr: inner } = &mut chain.step {
+                lift_invoke_payloads_in_expr(inner.as_mut(), cgs);
+            }
         }
     }
 }

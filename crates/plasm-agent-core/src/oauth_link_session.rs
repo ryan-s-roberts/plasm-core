@@ -14,8 +14,8 @@
 //! token exchange still uses the same verifier via [`OauthLinkSession::exchange_and_store`].
 
 use plasm_runtime::{
-    ApplyTokenError, OutboundOAuthKvV1, TokenEndpointResponseSummary,
-    build_oauth_token_http_client, post_oauth_token_form_json,
+    build_oauth_token_http_client, post_oauth_token_form_json, ApplyTokenError, OutboundOAuthKvV1,
+    TokenEndpointResponseSummary,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

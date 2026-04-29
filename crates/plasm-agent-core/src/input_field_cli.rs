@@ -1,6 +1,6 @@
 //! Shared clap construction and ArgMatches extraction for `InputType::Object` capability params.
 
-use clap::{Arg, ArgAction, ArgMatches, builder::PossibleValuesParser};
+use clap::{builder::PossibleValuesParser, Arg, ArgAction, ArgMatches};
 use plasm_core::{CapabilitySchema, CompOp, FieldType, InputFieldSchema, Predicate, Value};
 
 use crate::subcommand_util::leak;

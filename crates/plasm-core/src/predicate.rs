@@ -1,3 +1,4 @@
+use crate::typed_literal::TypedComparisonValue;
 use crate::{CompOp, Value};
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +19,7 @@ pub enum Predicate {
     Comparison {
         field: String,
         op: CompOp,
-        value: Value,
+        value: TypedComparisonValue,
     },
 
     /// Logical AND
@@ -47,7 +48,11 @@ pub enum Predicate {
 
 impl Predicate {
     /// Create a field comparison predicate.
-    pub fn comparison(field: impl Into<String>, op: CompOp, value: impl Into<Value>) -> Self {
+    pub fn comparison(
+        field: impl Into<String>,
+        op: CompOp,
+        value: impl Into<TypedComparisonValue>,
+    ) -> Self {
         Predicate::Comparison {
             field: field.into(),
             op,
@@ -56,48 +61,52 @@ impl Predicate {
     }
 
     /// Create an equality comparison.
-    pub fn eq(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn eq(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Eq, value)
     }
 
     /// Create a not-equal comparison.
-    pub fn neq(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn neq(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Neq, value)
     }
 
     /// Create a greater-than comparison.
-    pub fn gt(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn gt(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Gt, value)
     }
 
     /// Create a less-than comparison.
-    pub fn lt(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn lt(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Lt, value)
     }
 
     /// Create a greater-than-or-equal comparison.
-    pub fn gte(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn gte(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Gte, value)
     }
 
     /// Create a less-than-or-equal comparison.
-    pub fn lte(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn lte(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Lte, value)
     }
 
     /// Create an 'in' comparison (value in array).
-    pub fn in_(field: impl Into<String>, values: impl Into<Value>) -> Self {
+    pub fn in_(field: impl Into<String>, values: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::In, values)
     }
 
     /// Create a 'contains' comparison (array/string contains value).
-    pub fn contains(field: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn contains(field: impl Into<String>, value: impl Into<TypedComparisonValue>) -> Self {
         Self::comparison(field, CompOp::Contains, value)
     }
 
     /// Create an 'exists' check (field is not null).
     pub fn exists(field: impl Into<String>) -> Self {
-        Self::comparison(field, CompOp::Exists, Value::Null)
+        Self::comparison(
+            field,
+            CompOp::Exists,
+            TypedComparisonValue::from(Value::Null),
+        )
     }
 
     /// Create a logical AND of predicates.

@@ -110,6 +110,9 @@ pub mod symbol_tuning;
 pub mod temporal;
 pub mod tests;
 pub mod type_checker;
+pub mod typed_invoke;
+pub mod typed_literal;
+pub mod typed_row;
 pub mod value;
 
 mod o200k_token_count;
@@ -136,8 +139,8 @@ pub use domain_term::{
 pub use entity_ref_value::{EntityRefAtom, EntityRefPayload, EntityRefValueError};
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{
-    ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr, GetExpr, InvokeExpr, PageExpr,
-    QueryExpr, QueryPagination, Ref, PAGE_EXPR_PRIMARY_ENTITY,
+    lift_invoke_payloads_in_expr, ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr,
+    GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, PAGE_EXPR_PRIMARY_ENTITY,
 };
 pub use identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityId, EntityName, PathMethodSegment,
@@ -189,6 +192,9 @@ pub use type_checker::{
     type_check_expr_federated, type_check_get, type_check_invoke, type_check_predicate,
     type_check_query,
 };
+pub use typed_invoke::{InvokeInputPayload, TypedInvokeInput};
+pub use typed_literal::{TypedComparisonValue, TypedLiteral, TypedLiteralError};
+pub use typed_row::TypedFieldValue;
 pub use value::{
     CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
     ValueWireFormat, PLASM_ATTACHMENT_KEY,

@@ -3,8 +3,8 @@
 //! `join_all` + ordered `merge_from_graph`). Everything else runs sequentially so
 //! in-request cache dependencies remain observable.
 
-use plasm_core::Expr;
 use plasm_core::expr_parser::ParsedExpr;
+use plasm_core::Expr;
 
 /// A line may share a parallel query stage iff it is a root `Query` and does not request
 /// post-hoc projection enrichment (`ParsedExpr.projection`), which consults the session graph.

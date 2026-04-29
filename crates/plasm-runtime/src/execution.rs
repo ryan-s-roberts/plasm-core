@@ -18,9 +18,9 @@ use plasm_core::{
     },
     resolve_query_capability as resolve_query_capability_core, type_check_expr,
     type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityFieldName,
-    EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, Predicate,
-    PromptPipelineConfig, QueryExpr, QueryPagination, Ref, RelationMaterialization, RelationSchema,
-    TypeError, Value, CGS,
+    EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload,
+    Predicate, PromptPipelineConfig, QueryExpr, QueryPagination, Ref, RelationMaterialization,
+    RelationSchema, TypeError, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -66,7 +66,7 @@ fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeErr
             }
         }
         Expr::Create(c) => {
-            if c.input.contains_domain_placeholder_deep() {
+            if c.input.to_value().contains_domain_placeholder_deep() {
                 return Err(err());
             }
         }
@@ -87,7 +87,7 @@ fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeErr
                 return Err(err());
             }
             if let Some(inp) = &i.input {
-                if inp.contains_domain_placeholder_deep() {
+                if inp.to_value().contains_domain_placeholder_deep() {
                     return Err(err());
                 }
             }
@@ -1857,12 +1857,18 @@ impl ExecutionEngine {
 
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
+        let payload = if let Some(schema) = &capability.input_schema {
+            InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type)
+        } else {
+            create.input.clone()
+        };
+
         let input = match capability.input_schema.as_ref() {
             Some(schema) => plasm_core::normalize_structured_string_inputs(
-                create.input.clone(),
+                payload.to_value(),
                 &schema.input_type,
             ),
-            None => create.input.clone(),
+            None => payload.to_value(),
         };
 
         let mut env = CmlEnv::new();
@@ -2024,13 +2030,22 @@ impl ExecutionEngine {
 
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
-        let input_for_env = match (&invoke.input, capability.input_schema.as_ref()) {
-            (Some(input), Some(schema)) => Some(plasm_core::normalize_structured_string_inputs(
-                input.clone(),
-                &schema.input_type,
-            )),
-            (Some(input), None) => Some(input.clone()),
-            (None, _) => None,
+        let input_for_env = match &invoke.input {
+            None => None,
+            Some(input) => {
+                let payload = if let Some(schema) = &capability.input_schema {
+                    InvokeInputPayload::lift(&input.to_value(), &schema.input_type)
+                } else {
+                    input.clone()
+                };
+                Some(match capability.input_schema.as_ref() {
+                    Some(schema) => plasm_core::normalize_structured_string_inputs(
+                        payload.to_value(),
+                        &schema.input_type,
+                    ),
+                    None => payload.to_value(),
+                })
+            }
         };
 
         let mut env = CmlEnv::new();
@@ -2457,8 +2472,8 @@ impl ExecutionEngine {
                     .map(|def| def.id_field.as_str().to_string())
                     .unwrap_or_default();
                 let id = entity
-                    .fields
-                    .get(id_field.as_str())
+                    .get_field(id_field.as_str())
+                    .map(|tf| tf.to_value())
                     .and_then(|v| match v {
                         Value::String(s) => Some(s.clone()),
                         Value::Integer(n) => Some(n.to_string()),
@@ -2883,7 +2898,7 @@ impl ExecutionEngine {
                         let is_missing = entity
                             .fields
                             .get(field)
-                            .map(|v| matches!(v, Value::Null))
+                            .map(|v| v.is_null())
                             .unwrap_or(true);
 
                         if is_missing {
@@ -3690,46 +3705,48 @@ fn client_side_predicate_matches(entity: &CachedEntity, predicate: &plasm_core::
         plasm_core::Predicate::True => true,
         plasm_core::Predicate::False => false,
         plasm_core::Predicate::Comparison { field, op, value } => {
-            let Some(actual) = entity.fields.get(field) else {
+            let rhs = value.to_value();
+            let Some(actual_tf) = entity.get_field(field) else {
                 // Field genuinely absent from this entity instance — does not match.
                 // Non-entity-field predicates (scope, filter params) should have been
                 // stripped by `entity_field_predicate` before reaching here.
-                return *op == CompOp::Exists && matches!(value, Value::Null);
+                return *op == CompOp::Exists && matches!(rhs, Value::Null);
             };
+            let actual = actual_tf.to_value();
             match op {
-                CompOp::Eq => actual == value,
-                CompOp::Neq => actual != value,
+                CompOp::Eq => actual == rhs,
+                CompOp::Neq => actual != rhs,
                 CompOp::Gt => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), value.as_number()) {
+                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
                         a > b
                     } else {
                         false
                     }
                 }
                 CompOp::Lt => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), value.as_number()) {
+                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
                         a < b
                     } else {
                         false
                     }
                 }
                 CompOp::Gte => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), value.as_number()) {
+                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
                         a >= b
                     } else {
                         false
                     }
                 }
                 CompOp::Lte => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), value.as_number()) {
+                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
                         a <= b
                     } else {
                         false
                     }
                 }
-                CompOp::Contains => actual.contains(value),
-                CompOp::In => match value {
-                    Value::Array(arr) => arr.contains(actual),
+                CompOp::Contains => actual.contains(&rhs),
+                CompOp::In => match &rhs {
+                    Value::Array(arr) => arr.contains(&actual),
                     _ => false,
                 },
                 CompOp::Exists => !matches!(actual, Value::Null),
@@ -3826,10 +3843,11 @@ fn capability_param_names(capability: &plasm_core::CapabilitySchema) -> HashSet<
 
 /// Extract an EntityRef field value as a string ID from a cached entity.
 fn extract_ref_id(entity: &CachedEntity, selector: &str) -> Option<String> {
-    match entity.fields.get(selector) {
-        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-        Some(Value::Integer(i)) => Some(i.to_string()),
-        Some(Value::Float(f)) => Some(f.to_string()),
+    let v = entity.get_field(selector).map(|tf| tf.to_value())?;
+    match v {
+        Value::String(s) if !s.is_empty() => Some(s),
+        Value::Integer(i) => Some(i.to_string()),
+        Value::Float(f) => Some(f.to_string()),
         _ => None,
     }
 }
@@ -3841,9 +3859,9 @@ fn chain_binding_value(
     parent_field: &EntityFieldName,
 ) -> String {
     let pf = parent_field.as_str();
-    if let Some(v) = entity.fields.get(pf) {
-        return match v {
-            Value::String(s) if !s.is_empty() => s.clone(),
+    if let Some(v) = entity.get_field(pf) {
+        return match v.to_value() {
+            Value::String(s) if !s.is_empty() => s,
             Value::Integer(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
             Value::Bool(b) => b.to_string(),
@@ -4255,9 +4273,10 @@ fn collect_predicate_vars(
 ) {
     match predicate {
         plasm_core::Predicate::Comparison { field, op, value } => {
+            let rhs = value.to_value();
             match op {
                 // In/Contains: accumulate into an array for the field
-                plasm_core::CompOp::In | plasm_core::CompOp::Contains => match value {
+                plasm_core::CompOp::In | plasm_core::CompOp::Contains => match &rhs {
                     Value::Array(arr) => {
                         acc.entry(field.clone())
                             .or_default()
@@ -4270,7 +4289,7 @@ fn collect_predicate_vars(
                 // All other ops: single scalar value — last one wins per field
                 _ => {
                     acc.entry(field.clone()).or_default().clear();
-                    acc.entry(field.clone()).or_default().push(value.clone());
+                    acc.entry(field.clone()).or_default().push(rhs);
                 }
             }
         }

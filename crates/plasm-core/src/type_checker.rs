@@ -413,7 +413,7 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
             })?;
 
     if let Some(input_schema) = &capability.input_schema {
-        validate_capability_input(&create.input, input_schema)?;
+        validate_capability_input(&create.input.to_value(), input_schema)?;
     }
 
     Ok(())
@@ -452,7 +452,7 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
     // Validate input against capability input schema if present
     if let Some(input_schema) = &capability.input_schema {
         if let Some(input) = &invoke.input {
-            validate_capability_input(input, input_schema)?;
+            validate_capability_input(&input.to_value(), input_schema)?;
         } else if !matches!(input_schema.input_type, crate::InputType::None) {
             // Object bodies with only optional fields may be omitted (empty object implied).
             match &input_schema.input_type {
@@ -564,13 +564,14 @@ pub fn type_check_predicate(
 fn type_check_comparison(
     field_name: &str,
     op: CompOp,
-    value: &Value,
+    value: &crate::TypedComparisonValue,
     entity: &EntityDef,
     cap_params: &[InputFieldSchema],
 ) -> Result<(), TypeError> {
+    let value = value.to_value();
     // DOMAIN teaching form: `p#=` with no RHS parses as null — skip strict checks so
     // brace-query witness lines need not repeat concrete literals.
-    if matches!(value, Value::Null) {
+    if matches!(&value, Value::Null) {
         return Ok(());
     }
 
@@ -614,12 +615,12 @@ fn type_check_comparison(
         }
         if matches!(param.field_type, FieldType::Array) {
             if let Some(spec) = param.array_items.as_ref() {
-                validate_typed_array_value(value, spec, field_name)?;
+                validate_typed_array_value(&value, spec, field_name)?;
             }
         }
         if matches!(param.field_type, FieldType::MultiSelect) {
             if let Some(av) = param.allowed_values.as_deref() {
-                validate_multiselect_value(value, av, field_name)?;
+                validate_multiselect_value(&value, av, field_name)?;
             }
         }
         if !value.is_compatible_with_field_type(&param.field_type) {
@@ -655,11 +656,11 @@ fn type_check_comparison(
                     field_type: "array (missing items schema)".to_string(),
                 });
             };
-            return validate_typed_array_value(value, spec, field_name);
+            return validate_typed_array_value(&value, spec, field_name);
         }
         if matches!(field.field_type, FieldType::MultiSelect) {
             let allowed = field.allowed_values.as_deref().unwrap_or(&[]);
-            return validate_multiselect_value(value, allowed, field_name);
+            return validate_multiselect_value(&value, allowed, field_name);
         }
 
         if !value.is_compatible_with_field_type(&field.field_type) {

@@ -15,8 +15,8 @@
 use arc_swap::ArcSwap;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// How the catalog was bootstrapped — drives whether control-plane hot reload is allowed.
 #[derive(Clone, Debug)]

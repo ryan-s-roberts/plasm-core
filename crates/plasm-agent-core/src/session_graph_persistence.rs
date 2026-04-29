@@ -5,7 +5,7 @@
 //! - Object-store backed when `PLASM_GRAPH_CACHE_URL` is set (`object_store::parse_url_opts`).
 
 use object_store::WriteMultipart;
-use object_store::{ObjectStore, ObjectStoreExt, path::Path as StorePath};
+use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};
 use plasm_runtime::GraphCache;
 use serde::Serialize;
 use std::sync::Arc;

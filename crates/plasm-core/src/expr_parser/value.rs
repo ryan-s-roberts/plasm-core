@@ -400,10 +400,7 @@ impl<'a> Parser<'a> {
                 return self.parse_value();
             }
             // `for_each` row holes: `_.field` …
-            if name == "_"
-                && self.peek_char() == Some('.')
-                && self.for_each_row_context
-            {
+            if name == "_" && self.peek_char() == Some('.') && self.for_each_row_context {
                 self.pos += 1;
                 self.skip_ws();
                 let mut path = Vec::new();
@@ -441,7 +438,9 @@ impl<'a> Parser<'a> {
                             }
                         }
                         if self.at_rhs_close_delimiter(close) {
-                            return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(name, path)));
+                            return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(
+                                name, path,
+                            )));
                         }
                     } else if self.at_rhs_close_delimiter(close) {
                         return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(

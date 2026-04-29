@@ -578,4 +578,79 @@ mod tests {
             RequestFingerprint::from_operation(&op_b)
         );
     }
+
+    /// Typed IR stores predicate RHS as [`TypedComparisonValue`] but replay hashing uses normalized JSON bytes from [`Value`].
+    #[test]
+    fn typed_comparison_wire_preserves_http_fingerprint() {
+        use plasm_core::typed_literal::TypedComparisonValue;
+
+        let raw = Value::Integer(42);
+        let roundtrip = TypedComparisonValue::from_value(raw.clone()).to_value();
+
+        let mk = |body: Option<Value>| {
+            CompiledOperation::Http(CompiledRequest {
+                method: HttpMethod::Post,
+                path: "/api".into(),
+                query: None,
+                body,
+                body_format: HttpBodyFormat::Json,
+                multipart: None,
+                headers: None,
+            })
+        };
+
+        assert_eq!(
+            RequestFingerprint::from_operation(&mk(Some(raw))),
+            RequestFingerprint::from_operation(&mk(Some(roundtrip)))
+        );
+    }
+
+    /// [`InvokeInputPayload::lift`] then [`InvokeInputPayload::to_value`] must match raw wire JSON for fingerprint stability.
+    #[test]
+    fn invoke_input_payload_lift_preserves_http_fingerprint() {
+        use plasm_core::schema::{InputFieldSchema, InputType};
+        use plasm_core::typed_invoke::InvokeInputPayload;
+        use plasm_core::FieldType;
+
+        let input_type = InputType::Object {
+            fields: vec![InputFieldSchema {
+                name: "title".into(),
+                field_type: FieldType::String,
+                value_format: None,
+                required: true,
+                allowed_values: None,
+                array_items: None,
+                string_semantics: None,
+                description: None,
+                default: None,
+                role: None,
+            }],
+            additional_fields: false,
+        };
+
+        let body = Value::Object({
+            let mut m = IndexMap::new();
+            m.insert("title".into(), Value::String("hello".into()));
+            m
+        });
+
+        let lifted = InvokeInputPayload::lift(&body, &input_type);
+
+        let mk = |body: Option<Value>| {
+            CompiledOperation::Http(CompiledRequest {
+                method: HttpMethod::Post,
+                path: "/typed-ir".into(),
+                query: None,
+                body,
+                body_format: HttpBodyFormat::Json,
+                multipart: None,
+                headers: None,
+            })
+        };
+
+        assert_eq!(
+            RequestFingerprint::from_operation(&mk(Some(body.clone()))),
+            RequestFingerprint::from_operation(&mk(Some(lifted.to_value())))
+        );
+    }
 }

@@ -1,14 +1,14 @@
 use clap::{Arg, Command};
 use plasm_compile::{
-    CapabilityTemplate, CmlRequest, PaginationConfig, PaginationLocation, PaginationParam,
     pagination_config_for_capability, parse_capability_template, path_var_names_from_request,
-    template_var_names,
+    template_var_names, CapabilityTemplate, CmlRequest, PaginationConfig, PaginationLocation,
+    PaginationParam,
 };
 use std::collections::HashSet;
 
 use plasm_core::{
-    CGS, CapabilityKind, CapabilityParamName, CapabilitySchema, EntityDef, FieldType,
-    PromptRenderMode, RelationMaterialization, capability_method_label_kebab,
+    capability_method_label_kebab, CapabilityKind, CapabilityParamName, CapabilitySchema,
+    EntityDef, FieldType, PromptRenderMode, RelationMaterialization, CGS,
 };
 
 use crate::invoke_args::build_invoke_args;
@@ -980,7 +980,7 @@ mod tests {
         let pred = crate::query_args::args_to_query_predicate(sub_matches, query_cap).unwrap();
         if let Predicate::Comparison { field, value, .. } = &pred {
             assert_eq!(field, "region");
-            assert_eq!(value, &plasm_core::Value::String("EMEA".into()));
+            assert_eq!(value.to_value(), plasm_core::Value::String("EMEA".into()));
         } else {
             panic!("expected single Comparison, got {:?}", pred);
         }

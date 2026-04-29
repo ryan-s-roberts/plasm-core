@@ -58,17 +58,17 @@ pub mod value_expr;
 pub use value_expr::{RenderExpr, ValueExpr};
 
 pub mod postfix;
-pub use postfix::{PlasmPostfixOp, peel_postfix_suffixes};
+pub use postfix::{peel_postfix_suffixes, PlasmPostfixOp};
 
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,
     path_var_names_from_mapping_json, template_invoke_requires_explicit_anchor_id,
 };
-use crate::symbol_tuning::{FocusSpec, SymbolMap, entity_slices_for_render};
+use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
 use crate::{
-    ArrayItemsSchema, CGS, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
+    ArrayItemsSchema, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
     EntityKey, Expr, FieldType, GetExpr, InputType, InvokeExpr, PageExpr, ParameterRole, Predicate,
-    QueryExpr, Ref, Value, ValueWireFormat,
+    QueryExpr, Ref, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -2059,10 +2059,10 @@ fn extract_primary_id(expr: &Expr) -> Option<String> {
 mod tests {
     use super::*;
     use crate::schema::capability_method_label_kebab;
-    use crate::symbol_tuning::{FocusSpec, SymbolMap, entity_slices_for_render};
+    use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
     use crate::{
-        CGS, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality, EntityKey,
-        FieldSchema, FieldType, RelationSchema, ResourceSchema, loader::load_schema_dir,
+        loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
+        EntityKey, FieldSchema, FieldType, RelationSchema, ResourceSchema, CGS,
     };
 
     fn petstore_cgs() -> CGS {
@@ -2206,7 +2206,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("available\n".into()));
+        assert_eq!(value.to_value(), Value::String("available\n".into()));
     }
 
     #[test]
@@ -2225,7 +2225,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("a\"b\n".into()));
+        assert_eq!(value.to_value(), Value::String("a\"b\n".into()));
     }
 
     #[test]
@@ -2244,7 +2244,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("a, b, c\n".into()));
+        assert_eq!(value.to_value(), Value::String("a, b, c\n".into()));
     }
 
     #[test]
@@ -2263,7 +2263,10 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String(">>>\nstill inside\n".into()));
+        assert_eq!(
+            value.to_value(),
+            Value::String(">>>\nstill inside\n".into())
+        );
     }
 
     #[test]
@@ -2310,7 +2313,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("x\n".into()));
+        assert_eq!(value.to_value(), Value::String("x\n".into()));
     }
 
     #[test]
@@ -2348,7 +2351,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("hi\n".into()));
+        assert_eq!(value.to_value(), Value::String("hi\n".into()));
     }
 
     #[test]
@@ -2388,7 +2391,7 @@ mod tests {
         };
         assert_eq!(field, "status");
         assert_eq!(*op, CompOp::Eq);
-        assert_eq!(value, &Value::Null);
+        assert_eq!(value.to_value(), Value::Null);
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
@@ -2411,8 +2414,8 @@ mod tests {
         assert_eq!(field, "tags");
         assert_eq!(*op, CompOp::Eq);
         assert_eq!(
-            value,
-            &Value::Array(vec![
+            value.to_value(),
+            Value::Array(vec![
                 Value::String("puppy".into()),
                 Value::String("friendly".into()),
             ])
@@ -2437,7 +2440,10 @@ mod tests {
             panic!("expected comparison");
         };
         assert_eq!(field, "tags");
-        assert_eq!(value, &Value::Array(vec![Value::String("puppy".into())]));
+        assert_eq!(
+            value.to_value(),
+            Value::Array(vec![Value::String("puppy".into())])
+        );
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
@@ -2459,7 +2465,7 @@ mod tests {
         };
         assert_eq!(field, "status");
         assert_eq!(*op, CompOp::Eq);
-        assert_eq!(value, &Value::String("available".to_string()));
+        assert_eq!(value.to_value(), Value::String("available".to_string()));
     }
 
     #[test]
@@ -2709,7 +2715,8 @@ mod tests {
         let r = parse("Team(42).team-create-goal(name=\"example\",..)", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         if let Expr::Create(c) = &r.expr {
-            let obj = c.input.as_object().expect("object input");
+            let wire = c.input.to_value();
+            let obj = wire.as_object().expect("object input");
             assert!(obj.contains_key("name"));
             assert!(!obj.contains_key("due_date"));
         }
@@ -2858,7 +2865,10 @@ mod tests {
             panic!("expected comparison");
         };
         assert_eq!(field, "id");
-        assert_eq!(value, &Value::String("123456789012345678".to_string()));
+        assert_eq!(
+            value.to_value(),
+            Value::String("123456789012345678".to_string())
+        );
     }
 
     #[test]
@@ -2879,7 +2889,7 @@ mod tests {
             panic!("expected comparison");
         };
         assert!(
-            matches!(value, Value::Integer(_)),
+            matches!(value.to_value(), Value::Integer(_)),
             "due_date=now should coerce to unix_ms integer, got {value:?}"
         );
     }
@@ -2913,7 +2923,7 @@ mod tests {
             panic!("expected due_date comparison, got {pred:?}");
         };
         assert!(
-            matches!(value, Value::Integer(_)),
+            matches!(value.to_value(), Value::Integer(_)),
             "due_date=next-week should coerce via temporal pre-normalisation, got {value:?}"
         );
     }
@@ -2936,7 +2946,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String(u.to_string()));
+        assert_eq!(value.to_value(), Value::String(u.to_string()));
     }
 
     #[test]
@@ -2955,7 +2965,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("acme(test)".to_string()));
+        assert_eq!(value.to_value(), Value::String("acme(test)".to_string()));
     }
 
     /// Unquoted multi-word string in `{{…}}` predicate (lenient RHS).
@@ -3192,7 +3202,8 @@ mod tests {
             panic!("expected comparison");
         };
         assert_eq!(field, "library");
-        let Value::Object(m) = value else {
+        let wire = value.to_value();
+        let Value::Object(m) = wire else {
             panic!("expected normalized object, got {value:?}");
         };
         assert_eq!(m.get("region"), Some(&Value::String("us-west".into())));
@@ -3226,7 +3237,8 @@ mod tests {
             panic!("expected comparison");
         };
         assert_eq!(field, "repository");
-        let Value::Object(m) = value else {
+        let wire = value.to_value();
+        let Value::Object(m) = wire else {
             panic!("expected normalized object, got {value:?}");
         };
         assert_eq!(m.get("owner"), Some(&Value::String("octocat".into())));
@@ -3279,7 +3291,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected simple comparison, got {pred:?}");
         };
-        assert_eq!(value, &Value::String("$".into()));
+        assert_eq!(value.to_value(), Value::String("$".into()));
     }
 
     fn compound_get_fixture_cgs() -> CGS {
@@ -3622,7 +3634,7 @@ mod tests {
         };
         assert!(
             matches!(
-                value,
+                value.to_value(),
                 Value::PlasmInputRef(crate::PlasmInputRef::NodeInput { node, path })
                     if node == "report" && path.is_empty()
             ),
@@ -3659,6 +3671,6 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value, &Value::String("report".into()));
+        assert_eq!(value.to_value(), Value::String("report".into()));
     }
 }

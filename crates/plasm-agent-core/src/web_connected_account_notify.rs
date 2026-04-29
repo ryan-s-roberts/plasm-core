@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use plasm_runtime::{RuntimeError, runtime_error_is_oauth_invalid_grant};
+use plasm_runtime::{runtime_error_is_oauth_invalid_grant, RuntimeError};
 
 use crate::control_plane_http::{
-    X_PLASM_CONTROL_PLANE_SECRET, control_plane_secret_from_env_strict,
+    control_plane_secret_from_env_strict, X_PLASM_CONTROL_PLANE_SECRET,
 };
 
 #[derive(Clone)]

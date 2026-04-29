@@ -68,22 +68,38 @@ pub struct McpConfigUpsertJson {
 impl McpConfigUpsertJson {
     pub fn workspace_slug_resolved(&self) -> &str {
         let t = self.workspace_slug.trim();
-        if t.is_empty() { "default" } else { t }
+        if t.is_empty() {
+            "default"
+        } else {
+            t
+        }
     }
 
     pub fn project_slug_resolved(&self) -> &str {
         let t = self.project_slug.trim();
-        if t.is_empty() { "default" } else { t }
+        if t.is_empty() {
+            "default"
+        } else {
+            t
+        }
     }
 
     pub fn name_resolved(&self) -> &str {
         let t = self.name.trim();
-        if t.is_empty() { "MCP config" } else { t }
+        if t.is_empty() {
+            "MCP config"
+        } else {
+            t
+        }
     }
 
     pub fn status_normalized(&self) -> &str {
         let t = self.status.trim();
-        if t.is_empty() { "active" } else { t }
+        if t.is_empty() {
+            "active"
+        } else {
+            t
+        }
     }
 
     pub fn auth_optional_ids_clean(&self) -> Vec<String> {

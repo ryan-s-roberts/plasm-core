@@ -137,7 +137,7 @@ fn expr_contains_domain_placeholder(expr: &Expr) -> bool {
                     .as_ref()
                     .is_some_and(|m| m.values().any(Value::contains_domain_placeholder_deep))
         }
-        Expr::Create(c) => c.input.contains_domain_placeholder_deep(),
+        Expr::Create(c) => c.input.to_value().contains_domain_placeholder_deep(),
         Expr::Delete(d) => {
             ref_contains_domain_placeholder(&d.target)
                 || d.path_vars
@@ -148,7 +148,7 @@ fn expr_contains_domain_placeholder(expr: &Expr) -> bool {
             ref_contains_domain_placeholder(&i.target)
                 || i.input
                     .as_ref()
-                    .is_some_and(Value::contains_domain_placeholder_deep)
+                    .is_some_and(|inp| inp.to_value().contains_domain_placeholder_deep())
                 || i.path_vars
                     .as_ref()
                     .is_some_and(|m| m.values().any(Value::contains_domain_placeholder_deep))
@@ -171,7 +171,7 @@ fn ref_contains_domain_placeholder(reference: &Ref) -> bool {
 fn predicate_contains_domain_placeholder(predicate: &Predicate) -> bool {
     match predicate {
         Predicate::True | Predicate::False => false,
-        Predicate::Comparison { value, .. } => value.contains_domain_placeholder_deep(),
+        Predicate::Comparison { value, .. } => value.to_value().contains_domain_placeholder_deep(),
         Predicate::And { args } | Predicate::Or { args } => {
             args.iter().any(predicate_contains_domain_placeholder)
         }

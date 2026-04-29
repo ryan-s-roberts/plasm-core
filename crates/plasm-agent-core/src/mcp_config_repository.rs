@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use thiserror::Error;

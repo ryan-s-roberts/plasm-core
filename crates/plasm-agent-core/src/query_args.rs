@@ -1,7 +1,7 @@
 use clap::ArgMatches;
 use plasm_core::{CapabilitySchema, Predicate};
 
-use crate::input_field_cli::{FieldArgHelp, build_field_args, extend_query_predicates_for_field};
+use crate::input_field_cli::{build_field_args, extend_query_predicates_for_field, FieldArgHelp};
 
 /// Generate typed clap `Arg`s for a query capability's declared `parameters:`.
 ///
@@ -141,7 +141,7 @@ mod tests {
         if let Predicate::Comparison { field, op, value } = pred {
             assert_eq!(field, "status");
             assert_eq!(op, CompOp::Eq);
-            assert_eq!(value, Value::String("available".into()));
+            assert_eq!(value.to_value(), Value::String("available".into()));
         } else {
             panic!("expected Comparison");
         }
@@ -165,10 +165,9 @@ mod tests {
         for arg in build_query_param_args(&cap) {
             cmd = cmd.arg(arg);
         }
-        assert!(
-            cmd.try_get_matches_from(["test", "--status", "BOGUS"])
-                .is_err()
-        );
+        assert!(cmd
+            .try_get_matches_from(["test", "--status", "BOGUS"])
+            .is_err());
     }
 
     #[test]
@@ -262,7 +261,7 @@ mod tests {
         if let Predicate::Comparison { field, op, value } = &pred {
             assert_eq!(field, "region");
             assert_eq!(*op, CompOp::Eq);
-            assert_eq!(*value, Value::String("EMEA".into()));
+            assert_eq!(value.to_value(), Value::String("EMEA".into()));
         } else {
             panic!("expected Comparison, got {:?}", pred);
         }
@@ -287,7 +286,7 @@ mod tests {
         if let Predicate::Comparison { field, op, value } = &pred {
             assert_eq!(field, "revenue");
             assert_eq!(*op, CompOp::Eq);
-            assert_eq!(*value, Value::Float(1000.0));
+            assert_eq!(value.to_value(), Value::Float(1000.0));
         } else {
             panic!("expected Comparison, got {:?}", pred);
         }

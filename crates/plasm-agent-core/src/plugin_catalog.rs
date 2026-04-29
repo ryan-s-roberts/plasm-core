@@ -1,11 +1,11 @@
 //! Build an [`plasm_core::discovery::InMemoryCgsRegistry`] from self-describing `cdylib` plugins (ABI v4).
 
-use plasm_core::CgsCatalog;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::schema::CGS;
+use plasm_core::CgsCatalog;
 use plasm_plugin_host::load_catalog_metadata;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub fn validate_registry_templates(reg: &InMemoryCgsRegistry) -> Result<(), String> {

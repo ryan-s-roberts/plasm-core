@@ -487,7 +487,9 @@ fn predicate_mentions_source_placeholder(pred: &Option<Predicate>) -> bool {
 
 fn predicate_contains_source_placeholder(p: &Predicate) -> bool {
     match p {
-        Predicate::Comparison { value, .. } => value == &Value::String("__source_id__".into()),
+        Predicate::Comparison { value, .. } => {
+            value.to_value() == Value::String("__source_id__".into())
+        }
         Predicate::And { args } | Predicate::Or { args } => {
             args.iter().any(predicate_contains_source_placeholder)
         }

@@ -11,7 +11,7 @@ use tokio::time::sleep;
 
 use crate::oauth_link_catalog::OauthLinkCatalog;
 use crate::oauth_runtime_source::{
-    OauthRuntimeFetchError, PostgresOauthRuntimeProviderSource, apply_runtime_source_to_catalog,
+    apply_runtime_source_to_catalog, OauthRuntimeFetchError, PostgresOauthRuntimeProviderSource,
 };
 
 /// Database URL for reading `public.oauth_provider_apps`. Falls back so local dev matches Phoenix.

@@ -476,7 +476,7 @@ fn walk_pred(p: &Predicate, fields: &mut HashSet<String>, values: &mut HashSet<S
         Predicate::True | Predicate::False => {}
         Predicate::Comparison { field, value, .. } => {
             fields.insert(field.clone());
-            match value {
+            match value.to_value() {
                 plasm_core::Value::String(s) => {
                     values.insert(s.clone());
                 }

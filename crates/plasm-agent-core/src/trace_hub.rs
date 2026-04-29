@@ -36,22 +36,22 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use plasm_runtime::ExecutionResult;
 use plasm_runtime::http_trace::HttpTraceEntry;
+use plasm_runtime::ExecutionResult;
 #[cfg(test)]
 use plasm_runtime::{ExecutionSource, ExecutionStats};
 pub use plasm_trace::{
-    CodePlanRunArtifactRef, PlasmLineTraceMeta, RunArtifactArchiveRef, SessionTraceData,
-    TraceEvent, TraceSegment, TraceTotals, totals_from_session_data,
+    totals_from_session_data, CodePlanRunArtifactRef, PlasmLineTraceMeta, RunArtifactArchiveRef,
+    SessionTraceData, TraceEvent, TraceSegment, TraceTotals,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::trace_sink_emit::{McpTraceAuditFields, TraceIngestClient};

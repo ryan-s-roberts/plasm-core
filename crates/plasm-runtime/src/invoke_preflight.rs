@@ -5,14 +5,14 @@
 
 use indexmap::IndexMap;
 use plasm_compile::CmlEnv;
-use plasm_core::Value;
+use plasm_core::TypedFieldValue;
 
 pub(crate) fn merge_preflight_fields_into_env(
     env: &mut CmlEnv,
     prefix: &str,
-    fields: &IndexMap<String, Value>,
+    fields: &IndexMap<String, TypedFieldValue>,
 ) {
     for (k, v) in fields {
-        env.insert(format!("{prefix}_{k}"), v.clone());
+        env.insert(format!("{prefix}_{k}"), v.to_value());
     }
 }

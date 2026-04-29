@@ -44,15 +44,15 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::CgsDiscovery;
 use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
-use rust_mcp_sdk::McpServer;
+use plasm_core::CgsDiscovery;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
+use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -61,14 +61,14 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolInputSchema,
 };
-use rust_mcp_sdk::schema::{ToolExecution, ToolExecutionTaskSupport, schema_utils::CallToolError};
+use rust_mcp_sdk::McpServer;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::http_execute::{
-    ApplyCapabilitySeedsOutcome, CapabilitySeed, apply_capability_seeds,
-    execute_session_run_markdown, normalize_capability_seeds,
+    apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed,
 };
-use crate::incoming_auth::{IncomingAuthMethod, IncomingAuthMode, TenantPrincipal, tenant_scope};
+use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
@@ -79,12 +79,12 @@ use crate::plasm_dag::{
 };
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
 use crate::plasm_plan_run::{
-    PlasmPlanRunHooks, PlasmPlanRunResult, evaluate_validated_plasm_plan_dry, plasm_plan_dag_json,
-    plasm_plan_review_guidance_lines, render_plasm_plan_dry_text, run_plasm_plan,
+    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines,
+    render_plasm_plan_dry_text, run_plasm_plan, PlasmPlanRunHooks, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
-    ArtifactPayload, LogicalSessionUriSegment, parse_plasm_execute_run_uri,
-    parse_plasm_session_short_resource_uri,
+    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri, ArtifactPayload,
+    LogicalSessionUriSegment,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -2385,11 +2385,9 @@ mod tests {
             .expect("required array");
         assert!(required.iter().any(|x| x.as_str() == Some("intent")));
         assert!(required.iter().any(|x| x.as_str() == Some("seeds")));
-        assert!(
-            !required
-                .iter()
-                .any(|x| x.as_str() == Some("client_session_key"))
-        );
+        assert!(!required
+            .iter()
+            .any(|x| x.as_str() == Some("client_session_key")));
         let props = v
             .get("properties")
             .and_then(|x| x.as_object())

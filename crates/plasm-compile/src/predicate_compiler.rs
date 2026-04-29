@@ -84,14 +84,15 @@ fn compile_predicate_internal(
 fn compile_comparison(
     field: &str,
     op: plasm_core::CompOp,
-    value: &plasm_core::Value,
+    value: &plasm_core::TypedComparisonValue,
     entity: &EntityDef,
     cap_params: &[InputFieldSchema],
 ) -> Result<BackendFilter, CompileError> {
+    let wire = value.to_value();
     // Entity field: compile to a BackendFilter field comparison.
     if entity.fields.contains_key(field) {
         let backend_op = BackendOp::from(op);
-        return Ok(BackendFilter::field(field, backend_op, value.clone()));
+        return Ok(BackendFilter::field(field, backend_op, wire));
     }
 
     // Capability parameter: NOT compiled to BackendFilter.

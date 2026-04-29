@@ -338,7 +338,12 @@ fn format_predicate_short(p: &Predicate) -> String {
         Predicate::True => "true".to_string(),
         Predicate::False => "false".to_string(),
         Predicate::Comparison { field, op, value } => {
-            format!("{} {} {}", field, comp_op_str(*op), value_short(value))
+            format!(
+                "{} {} {}",
+                field,
+                comp_op_str(*op),
+                value_short(&value.to_value())
+            )
         }
         Predicate::And { args } => args
             .iter()

@@ -12,15 +12,9 @@ pub const PLASM_ATTACHMENT_KEY: &str = "__plasm_attachment";
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PlasmInputRef {
     /// Materialized program node / binding (alias defaults to `node`).
-    NodeInput {
-        node: String,
-        path: Vec<String>,
-    },
+    NodeInput { node: String, path: Vec<String> },
     /// Row cursor in `source => …` templates (`binding` is typically `"_"`).
-    RowBinding {
-        binding: String,
-        path: Vec<String>,
-    },
+    RowBinding { binding: String, path: Vec<String> },
 }
 
 impl PlasmInputRef {

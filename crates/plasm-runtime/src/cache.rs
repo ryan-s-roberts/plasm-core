@@ -41,7 +41,7 @@
 use crate::RuntimeError;
 use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
-use plasm_core::{EntityName, Ref, Value};
+use plasm_core::{EntityName, Ref, TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -60,7 +60,7 @@ pub enum EntityCompleteness {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CachedEntity {
     pub reference: Ref,
-    pub fields: IndexMap<String, Value>,
+    pub fields: IndexMap<String, TypedFieldValue>,
     /// Only relations that were **specified** on the wire (see [`DecodedRelation::Specified`]); omitted edges have no key here.
     pub relations: IndexMap<String, Vec<Ref>>,
     /// Timestamp when this entity was last updated
@@ -126,6 +126,10 @@ impl CachedEntity {
                 DecodedRelation::Specified(refs) => Some((k, refs)),
             })
             .collect();
+        let fields: IndexMap<String, TypedFieldValue> = fields
+            .into_iter()
+            .map(|(k, v)| (k, TypedFieldValue::from(v)))
+            .collect();
         Self {
             reference,
             fields,
@@ -137,7 +141,7 @@ impl CachedEntity {
     }
 
     /// Get a field value
-    pub fn get_field(&self, field: &str) -> Option<&Value> {
+    pub fn get_field(&self, field: &str) -> Option<&TypedFieldValue> {
         self.fields.get(field)
     }
 
@@ -148,7 +152,7 @@ impl CachedEntity {
 
     /// Update a field
     pub fn update_field(&mut self, field: String, value: Value, timestamp: u64) {
-        self.fields.insert(field, value);
+        self.fields.insert(field, TypedFieldValue::from(value));
         self.last_updated = timestamp;
         self.version += 1;
     }
@@ -239,7 +243,7 @@ impl CachedEntity {
         if both_complete {
             // Additive merge: update with non-null fields from `other`, keep everything else.
             for (field, value) in &other.fields {
-                if matches!(value, plasm_core::Value::Null) {
+                if value.is_null() {
                     continue; // skip absent/null — don't overwrite existing value
                 }
                 if self.fields.get(field) != Some(value) {
@@ -530,7 +534,7 @@ pub struct CacheStats {
 mod tests {
     use super::*;
     use plasm_compile::DecodedRelation;
-    use plasm_core::Value;
+    use plasm_core::{TypedFieldValue, Value};
 
     fn create_test_entity(id: &str, entity_type: &str) -> CachedEntity {
         let reference = Ref::new(entity_type, id);
@@ -559,8 +563,8 @@ mod tests {
         let retrieved = cache.get(&reference).unwrap();
         assert_eq!(retrieved.reference, reference);
         assert_eq!(
-            retrieved.get_field("name"),
-            Some(&Value::String("Entity test-1".to_string()))
+            retrieved.get_field("name").map(TypedFieldValue::to_value),
+            Some(Value::String("Entity test-1".to_string()))
         );
     }
 
@@ -586,8 +590,8 @@ mod tests {
 
         let retrieved = cache.get(&reference).unwrap();
         assert_eq!(
-            retrieved.get_field("name"),
-            Some(&Value::String("Updated Entity".to_string()))
+            retrieved.get_field("name").map(TypedFieldValue::to_value),
+            Some(Value::String("Updated Entity".to_string()))
         );
     }
 
@@ -652,15 +656,17 @@ mod tests {
         entity2.last_updated = 2;
         entity2.fields.insert(
             "new_field".to_string(),
-            Value::String("new_value".to_string()),
+            TypedFieldValue::from(Value::String("new_value".to_string())),
         );
 
         let changed = entity1.merge(&entity2).unwrap();
         assert!(changed);
         assert_eq!(entity1.last_updated, 2);
         assert_eq!(
-            entity1.get_field("new_field"),
-            Some(&Value::String("new_value".to_string()))
+            entity1
+                .get_field("new_field")
+                .map(TypedFieldValue::to_value),
+            Some(Value::String("new_value".to_string()))
         );
     }
 
@@ -688,15 +694,15 @@ mod tests {
         let mut merged = complete.clone();
         assert!(!merged.merge(&summary).unwrap());
         assert_eq!(
-            merged.get_field("detail"),
-            Some(&Value::String("full".into()))
+            merged.get_field("detail").map(TypedFieldValue::to_value),
+            Some(Value::String("full".into()))
         );
 
         assert!(summary.merge(&complete).unwrap());
         assert_eq!(summary.completeness, EntityCompleteness::Complete);
         assert_eq!(
-            summary.get_field("detail"),
-            Some(&Value::String("full".into()))
+            summary.get_field("detail").map(TypedFieldValue::to_value),
+            Some(Value::String("full".into()))
         );
     }
 

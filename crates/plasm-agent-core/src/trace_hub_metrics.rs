@@ -3,9 +3,9 @@
 
 use std::sync::OnceLock;
 
-use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Histogram};
+use opentelemetry::KeyValue;
 
 struct TraceHubInstruments {
     completed_queue_depth: Histogram<u64>,

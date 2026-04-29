@@ -2,22 +2,21 @@
 //! [`render_domain_prompt_bundle`](plasm_core::prompt_render::render_domain_prompt_bundle) for DOMAIN metadata.
 
 use plasm_compile::{
-    CapabilityTemplate, PaginationConfig, PaginationLocation, PaginationParam,
     pagination_config_for_capability, parse_capability_template, path_var_names_from_request,
-    template_var_names,
+    template_var_names, CapabilityTemplate, PaginationConfig, PaginationLocation, PaginationParam,
 };
 use plasm_core::discovery::CatalogEntryMeta;
 use plasm_core::prompt_render::{
-    DomainLineKind, DomainLineMeta, DomainPromptModel, PromptRenderMode, RenderConfig,
-    render_domain_prompt_bundle,
+    render_domain_prompt_bundle, DomainLineKind, DomainLineMeta, DomainPromptModel,
+    PromptRenderMode, RenderConfig,
 };
 use plasm_core::schema::{
-    AuthScheme, CGS, EntityDef, FieldSchema, InputFieldSchema, OauthExtension, OutputType,
-    RelationMaterialization, RelationSchema, StringSemantics,
+    AuthScheme, EntityDef, FieldSchema, InputFieldSchema, OauthExtension, OutputType,
+    RelationMaterialization, RelationSchema, StringSemantics, CGS,
 };
 use plasm_core::symbol_tuning::FocusSpec;
-use plasm_core::{CapabilityKind, CapabilitySchema, FieldType, capability_method_label_kebab};
-use plasm_core::{CatalogConnectProfile, catalog_connect_profile};
+use plasm_core::{capability_method_label_kebab, CapabilityKind, CapabilitySchema, FieldType};
+use plasm_core::{catalog_connect_profile, CatalogConnectProfile};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
@@ -1458,11 +1457,9 @@ mod tests {
         assert!(m.auth.connect_profile.oauth.provider_present);
         let oauth = m.auth.oauth.as_ref().expect("gmail oauth block");
         assert_eq!(oauth.provider, "google");
-        assert!(
-            oauth
-                .default_scope_sets
-                .contains_key("plasm_gmail_integrator_bundle")
-        );
+        assert!(oauth
+            .default_scope_sets
+            .contains_key("plasm_gmail_integrator_bundle"));
         assert!(oauth.requirements.capabilities.contains_key("message_list"));
     }
 

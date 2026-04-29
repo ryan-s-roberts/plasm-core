@@ -1,6 +1,6 @@
 use plasm_core::{
-    AgentPresentation, CGS, EntityName, FieldType, PLASM_ATTACHMENT_KEY, Value,
-    ValueTableCellBudget,
+    AgentPresentation, EntityName, FieldType, Value, ValueTableCellBudget, CGS,
+    PLASM_ATTACHMENT_KEY,
 };
 use plasm_runtime::{CachedEntity, ExecutionResult};
 use std::collections::BTreeSet;
@@ -10,7 +10,7 @@ mod presentation_fields;
 mod summary;
 
 pub use in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
-pub(crate) use presentation_fields::{LossySummaryFieldNames, lossy_summary_field_names};
+pub(crate) use presentation_fields::{lossy_summary_field_names, LossySummaryFieldNames};
 pub(crate) use summary::format_result_tsv_with_cgs;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -274,8 +274,9 @@ pub(super) fn format_summary_column_cell(
     }
     if let Some(base) = col.strip_suffix("_ref").filter(|b| !b.is_empty()) {
         if field_type_is_blob(cgs, &entity.reference.entity_type, base) {
+            let blob_val = entity.fields.get(base).map(|tf| tf.to_value());
             return format_blob_ref_column_cell(
-                entity.fields.get(base),
+                blob_val.as_ref(),
                 cgs,
                 &entity.reference.entity_type,
                 base,
@@ -286,8 +287,9 @@ pub(super) fn format_summary_column_cell(
     }
     if let Some(base) = col.strip_suffix("_mime").filter(|b| !b.is_empty()) {
         if field_type_is_blob(cgs, &entity.reference.entity_type, base) {
+            let blob_val = entity.fields.get(base).map(|tf| tf.to_value());
             return format_blob_mime_column_cell(
-                entity.fields.get(base),
+                blob_val.as_ref(),
                 cgs,
                 &entity.reference.entity_type,
                 base,
@@ -301,7 +303,8 @@ pub(super) fn format_summary_column_cell(
         .fields
         .get(col)
         .map(|v| {
-            format_value_for_summary_cell_impl(v, pres, mime_hint, omitted, col, report, false)
+            let wire = v.to_value();
+            format_value_for_summary_cell_impl(&wire, pres, mime_hint, omitted, col, report, false)
         })
         .unwrap_or_default()
 }
@@ -417,9 +420,10 @@ fn entity_to_json_with_cgs(
     for (k, v) in &entity.fields {
         let pres = field_presentation(cgs, &entity.reference.entity_type, k);
         let mime_hint = field_mime_hint(cgs, &entity.reference.entity_type, k);
+        let wire = v.to_value();
         let out_val = match pres {
             Some(AgentPresentation::ReferenceOnly) => {
-                if let Some(cell) = try_plasm_attachment_cell(v) {
+                if let Some(cell) = try_plasm_attachment_cell(&wire) {
                     serde_json::Value::String(cell)
                 } else {
                     omitted.insert(k.clone());
@@ -431,12 +435,12 @@ fn entity_to_json_with_cgs(
                 }
             }
             Some(AgentPresentation::Lossy) => {
-                serde_json::Value::String(v.format_for_table_cell(&ValueTableCellBudget {
+                serde_json::Value::String(wire.format_for_table_cell(&ValueTableCellBudget {
                     max_total_len: 72,
                     ..Default::default()
                 }))
             }
-            _ => serde_json::to_value(v).unwrap_or(serde_json::Value::Null),
+            _ => serde_json::to_value(&wire).unwrap_or(serde_json::Value::Null),
         };
         map.insert(k.clone(), out_val);
     }
@@ -538,7 +542,7 @@ mod tests {
     use plasm_compile::DecodedRelation;
     use plasm_core::{
         AgentPresentation, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema,
-        FieldType, PLASM_ATTACHMENT_KEY, Ref, ResourceSchema, StringSemantics,
+        FieldType, Ref, ResourceSchema, StringSemantics, PLASM_ATTACHMENT_KEY,
     };
     use plasm_runtime::{ExecutionSource, ExecutionStats};
 

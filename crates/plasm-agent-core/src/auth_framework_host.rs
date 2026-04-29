@@ -12,12 +12,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use auth_framework::AuthFramework;
 use auth_framework::config::{AuthConfig, SecurityConfig, StorageConfig};
 use auth_framework::methods::{AuthMethodEnum, JwtMethod};
-use auth_framework::storage::MemoryStorage;
 use auth_framework::storage::postgres::PostgresStorage;
+use auth_framework::storage::MemoryStorage;
 use auth_framework::storage::{AuthStorage, EncryptedStorage, StorageEncryption};
+use auth_framework::AuthFramework;
 
 use crate::mcp_api_key_registry::McpApiKeyRegistry;
 
@@ -42,8 +42,8 @@ enum AuthStorageMode {
 
 /// Prefer `PLASM_AUTH_STORAGE_URL`, then `DATABASE_URL`. Without either, use in-memory storage
 /// (API key hashes and framework KV are not durable across process restarts).
-async fn create_auth_storage()
--> Result<(Arc<dyn AuthStorage>, AuthStorageMode), auth_framework::AuthError> {
+async fn create_auth_storage(
+) -> Result<(Arc<dyn AuthStorage>, AuthStorageMode), auth_framework::AuthError> {
     let in_k8s = std::env::var("KUBERNETES_SERVICE_HOST")
         .ok()
         .filter(|s| !s.trim().is_empty())

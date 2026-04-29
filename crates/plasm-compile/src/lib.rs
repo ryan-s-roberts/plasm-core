@@ -33,6 +33,10 @@ pub use predicate_compiler::*;
 use plasm_core::{CapabilitySchema, QueryExpr, CGS};
 
 /// Canonical compile-plugin hook trait objects (shared by `plasm-runtime` and `plasm-plugin-host`).
+///
+/// [`CmlEnv`] remains a map of [`plasm_core::value::Value`]. Invoke/create IR may hold structured
+/// [`plasm_core::InvokeInputPayload`] internally; execution lowers that to [`Value`] before building the
+/// env, so plugins see the same wire shapes as the built-in [`compile_operation`] path.
 pub type CompileOperationHook =
     dyn Fn(&CapabilityTemplate, &CmlEnv) -> Result<CompiledOperation, CmlError> + Send + Sync;
 pub type CompileQueryHook =

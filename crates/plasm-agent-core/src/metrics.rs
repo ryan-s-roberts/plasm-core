@@ -6,9 +6,9 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Histogram};
+use opentelemetry::KeyValue;
 
 const METER_NAME: &str = "plasm-agent";
 
