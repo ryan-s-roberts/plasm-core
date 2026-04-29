@@ -733,7 +733,8 @@ impl PlasmMcpHandler {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
                 description: Some(
-                    "**Open or extend** one logical session. Send a stable **`intent`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick**. **List every pick on the first open** — several **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Adding picks:** call again with **additional** `{api, entity}` rows when you discover more integrations. **Same `seeds` again** is only for refreshing teaching text / symbols — not a substitute for picks you still need.".into(),
+                    "**Open or extend** one logical session. Send a stable **`intent`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick**. **List every pick on the first open** — several **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Adding picks:** call again with **additional** `{api, entity}` rows when you discover more integrations. **Same `seeds` again** is only for refreshing teaching text / symbols — not a substitute for picks you still need.\n\n\
+                    **Federation / symbols:** `e#` / `m#` / `p#` are **session-local and append-only**. **`p#` tokens are scoped by registry `entry_id`, owning CGS entity, and slot identity** — same wire name on **different** entities or catalogs gets **distinct** opaque `p#` values (no structural sharing across unrelated rows). **`e#` order follows exposed entity rows** in DOMAIN. Prefer **canonical constructor keys** from the CGS (e.g. `owner=`, `repo=`) when multiple integrations load. **Postfix projections** use the **row entity** of that expression; bracket chains like `author[login]` normalize to dotted paths (`author.login`). **`m#` methods are per `(catalog entry_id, domain entity, kebab)`** — resolve `eN` from the current DOMAIN heading before calling `eN.mK()`. Response **`_meta.plasm`** may include **`domain_revision`**, **`domain_wave_count`**, and **`catalog_entry_ids`** so you can verify new teaching text shipped.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["intent".into(), "seeds".into()],
@@ -2239,6 +2240,25 @@ impl ServerHandler for PlasmMcpHandler {
                         json!(rec.intent.as_str()),
                     );
                     plasm.insert("tenant_scope".to_string(), json!(rec.tenant_scope));
+                    plasm.insert(
+                        "domain_wave_count".to_string(),
+                        json!(out.waves.len()),
+                    );
+                    if let Some(sess_arc) = self
+                        .plasm
+                        .sessions
+                        .get_by_strs(&out.prompt_hash, &out.session_id)
+                        .await
+                    {
+                        plasm.insert(
+                            "domain_revision".to_string(),
+                            json!(sess_arc.domain_revision),
+                        );
+                        let mut loaded: Vec<String> =
+                            sess_arc.contexts_by_entry.keys().cloned().collect();
+                        loaded.sort();
+                        plasm.insert("catalog_entry_ids".to_string(), json!(loaded));
+                    }
                     if text.is_empty() {
                         text = format!("`{logical_session_ref}`\n");
                     }

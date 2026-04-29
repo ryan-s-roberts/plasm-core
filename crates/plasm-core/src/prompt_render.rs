@@ -42,7 +42,7 @@ use crate::{
     },
     symbol_tuning::{
         symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, DomainExposureSession,
-        FocusSpec, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+        FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
     },
     CapabilityKind, CapabilityName, EntityName, Expr, FieldType, InputType, ParameterRole,
     ValueWireFormat, CGS,
@@ -565,7 +565,6 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
         config.uses_symbols(),
     );
     let full_entities: Vec<&str> = full_entity_names.iter().map(|s| s.as_str()).collect();
-    let spec = prompt_contract_spec_resolved(|_| cgs, &full_entities, config.uses_symbols());
     let bundle = render_domain_prompt_bundle(cgs, config);
     let ident_meta = if config.uses_symbols() {
         let mut acc = HashMap::new();
@@ -580,11 +579,12 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
         crate::symbol_tuning::symbol_map_for_prompt(cgs, config.focus, config.uses_symbols());
     render_prompt_tsv_from_bundle(
         &bundle,
-        spec,
         &full_entities,
         symbol_map.as_ref(),
         ident_meta.as_ref(),
         DomainWaveSurface::InitialTeaching,
+        config.uses_symbols(),
+        |_| cgs,
     )
 }
 
@@ -593,21 +593,21 @@ pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
     render_mode: PromptRenderMode,
     full_entities: &[&str],
     symbol_map: Option<&SymbolMap>,
-    ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
+    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     resolve: F,
     wave_surface: DomainWaveSurface,
 ) -> String
 where
     F: FnMut(&str) -> &'b CGS,
 {
-    let spec = prompt_contract_spec_resolved(resolve, full_entities, render_mode.uses_symbols());
     render_prompt_tsv_from_bundle(
         bundle,
-        spec,
         full_entities,
         symbol_map,
         ident_meta,
         wave_surface,
+        render_mode.uses_symbols(),
+        resolve,
     )
 }
 
@@ -637,14 +637,19 @@ struct ParsedFieldGloss {
     description: String,
 }
 
-fn render_prompt_tsv_from_bundle(
+fn render_prompt_tsv_from_bundle<'b, F>(
     bundle: &DomainPromptBundle,
-    spec: PromptContractSpec,
     full_entities: &[&str],
     symbol_map: Option<&SymbolMap>,
-    ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
+    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     wave_surface: DomainWaveSurface,
-) -> String {
+    symbolic: bool,
+    mut resolve: F,
+) -> String
+where
+    F: FnMut(&str) -> &'b CGS,
+{
+    let spec = prompt_contract_spec_resolved(&mut resolve, full_entities, symbolic);
     let mut out = String::new();
     if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
         out.push_str(&comment_prefix_block(&render_prompt_contract(spec)));
@@ -655,8 +660,14 @@ fn render_prompt_tsv_from_bundle(
     let blocks = collect_domain_blocks(&prompt_lines);
     for (idx, (heading, block_lines)) in blocks.into_iter().enumerate() {
         let canonical_entity = full_entities.get(idx).copied().unwrap_or_default();
-        let field_gloss_rows =
-            parse_field_gloss_rows(&block_lines, canonical_entity, symbol_map, ident_meta);
+        let catalog_entry_id = resolve(canonical_entity).entry_id.as_deref().unwrap_or("");
+        let field_gloss_rows = parse_field_gloss_rows(
+            &block_lines,
+            canonical_entity,
+            catalog_entry_id,
+            symbol_map,
+            ident_meta,
+        );
         let mut field_gloss_by_symbol: HashMap<String, ParsedFieldGloss> = HashMap::new();
         for g in field_gloss_rows {
             field_gloss_by_symbol.insert(g.symbol.clone(), g);
@@ -906,8 +917,9 @@ fn parse_trailing_projection_bracket(expr: &str) -> Option<String> {
 fn parse_field_gloss_rows(
     lines: &[&str],
     canonical_entity: &str,
+    catalog_entry_id: &str,
     symbol_map: Option<&SymbolMap>,
-    ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
+    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
 ) -> Vec<ParsedFieldGloss> {
     let mut out = Vec::new();
     for line in lines {
@@ -925,6 +937,7 @@ fn parse_field_gloss_rows(
             .to_string();
         let meta = ident_meta.and_then(|m| {
             m.get(&(
+                catalog_entry_id.to_string(),
                 EntityName::from(canonical_entity.to_string()),
                 field_name.clone(),
             ))
@@ -1736,7 +1749,8 @@ fn collect_capability_compact_arg_glosses(
     anchor_entity: &str,
     cap: &crate::CapabilitySchema,
     map: &SymbolMap,
-    ident_meta: &HashMap<(EntityName, String), IdentMetadata>,
+    ident_meta: &HashMap<IdentMetaKey, IdentMetadata>,
+    catalog_entry_id: &str,
 ) -> Vec<crate::symbol_tuning::CompactArgSlotGloss> {
     let Some(is) = cap.input_schema.as_ref() else {
         return Vec::new();
@@ -1755,7 +1769,11 @@ fn collect_capability_compact_arg_glosses(
             continue;
         }
         let sym = map.ident_sym_cap_param(en, capn, f.name.as_str());
-        let mkey = (EntityName::from(en.to_string()), f.name.clone());
+        let mkey = (
+            catalog_entry_id.to_string(),
+            EntityName::from(en.to_string()),
+            f.name.clone(),
+        );
         let Some(meta) = ident_meta.get(&mkey) else {
             continue;
         };
@@ -1777,7 +1795,8 @@ fn format_capability_legend_line(
     map: &SymbolMap,
     cap: &crate::CapabilitySchema,
     anchor_entity: &str,
-    ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
+    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
+    catalog_entry_id: &str,
 ) -> String {
     const MAX_DESC: usize = 100;
     let kebab = capability_method_label_kebab(cap);
@@ -1788,7 +1807,8 @@ fn format_capability_legend_line(
         truncate_inline_desc(raw, MAX_DESC)
     };
     let sig = if let Some(im) = ident_meta {
-        let frags = collect_capability_compact_arg_glosses(anchor_entity, cap, map, im);
+        let frags =
+            collect_capability_compact_arg_glosses(anchor_entity, cap, map, im, catalog_entry_id);
         if let Some(args_s) = crate::symbol_tuning::join_compact_invocation_arg_fragments(frags) {
             // `args:` already tags each slot req/opt — omit the redundant `optional params: p#,…` list.
             let scope_only = map.capability_scope_legend_gloss(cap);
@@ -1817,9 +1837,10 @@ fn capability_legend_for_domain(
     map: Option<&SymbolMap>,
     cap: &crate::CapabilitySchema,
     anchor_entity: &str,
-    ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
+    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
-    map.map(|m| format_capability_legend_line(m, cap, anchor_entity, ident_meta))
+    map.map(|m| format_capability_legend_line(m, cap, anchor_entity, ident_meta, catalog_entry_id))
 }
 
 /// One `key=value` for dotted-call `method(k=v,…)` — equality/entity forms parse as invoke args (not query `>=` predicates).
@@ -2134,7 +2155,7 @@ fn collect_entity_domain_block(
     cgs: &CGS,
     ename: &str,
     map: Option<&SymbolMap>,
-    ident_meta: Option<&HashMap<(EntityName, String), IdentMetadata>>,
+    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     collect_meta: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
 ) -> EntityDomainBlock {
@@ -2150,6 +2171,7 @@ fn collect_entity_domain_block(
         };
     };
     let es = ent_sym(map, ename);
+    let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
 
     let primary_get_projection_bracket: Option<String> =
         cgs.domain_projection_heading_fields(ename, ent).map(|f| {
@@ -2183,7 +2205,7 @@ fn collect_entity_domain_block(
         let ms = met_sym(map, ename, &label);
         let expr = format!("{es}.{ms}()");
         let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
-        let cap_leg = capability_legend_for_domain(map, cap, ename, ident_meta);
+        let cap_leg = capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id);
         try_push_domain_example(
             &mut lines,
             &mut line_metas,
@@ -2337,7 +2359,8 @@ fn collect_entity_domain_block(
                 format!("{recv}.{ms}()")
             };
             let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
-            let cap_leg = capability_legend_for_domain(map, cap, ename, ident_meta);
+            let cap_leg =
+                capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id);
             try_push_domain_example(
                 &mut lines,
                 &mut line_metas,
@@ -2355,7 +2378,9 @@ fn collect_entity_domain_block(
     }
     for (cap_name, line) in collect_multi_arity_method_lines(cgs, ename, &es, map) {
         let cap_ref = cgs.capabilities.get(&cap_name);
-        let cap_leg = cap_ref.and_then(|c| capability_legend_for_domain(map, c, ename, ident_meta));
+        let cap_leg = cap_ref.and_then(|c| {
+            capability_legend_for_domain(map, c, ename, ident_meta, catalog_entry_id)
+        });
         let gloss =
             cap_ref.and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map));
         try_push_domain_example(
@@ -2385,7 +2410,8 @@ fn collect_entity_domain_block(
                 break;
             }
             let qgloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
-            let cap_leg = capability_legend_for_domain(map, cap, ename, ident_meta);
+            let cap_leg =
+                capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id);
             let mut added = false;
             if let Some(line) = query_expr_maximal(cap, &es, cgs, map) {
                 let work = domain_line_work_string(&line, map);
@@ -2500,8 +2526,9 @@ fn collect_entity_domain_block(
             .or_else(|| search_caps.first().copied());
         let sg =
             scap.and_then(|cap| crate::result_gloss::result_gloss_for_capability(cap, cgs, map));
-        let cap_leg =
-            scap.and_then(|cap| capability_legend_for_domain(map, cap, ename, ident_meta));
+        let cap_leg = scap.and_then(|cap| {
+            capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id)
+        });
         try_push_domain_example(
             &mut lines,
             &mut line_metas,
@@ -2743,7 +2770,7 @@ fn cgs_slice_has_structured_string_semantics(cgs: &CGS, full_entities: &[&str]) 
 }
 
 fn prompt_contract_spec_resolved<'b, F>(
-    mut resolve: F,
+    resolve: &mut F,
     full_entities: &[&str],
     symbolic: bool,
 ) -> PromptContractSpec
@@ -3043,17 +3070,19 @@ fn emit_field_def_lines_before_example(
     line: &str,
     map: &SymbolMap,
     entity: &str,
-    ident_meta: &HashMap<(EntityName, String), IdentMetadata>,
+    catalog_entry_id: &str,
+    ident_meta: &HashMap<IdentMetaKey, IdentMetadata>,
     defined: &mut HashMap<String, IdentMetadata>,
 ) {
     let en = EntityName::from(entity.to_string());
+    let cid = catalog_entry_id.to_string();
     for sym in crate::symbol_tuning::field_syms_for_domain_line(line) {
         let field_name = map.resolve_ident(&sym).unwrap_or(&sym);
         let meta = map
             .capability_param_key_for_p_sym(&sym)
             .as_ref()
-            .and_then(|(dom, w)| ident_meta.get(&(dom.clone(), w.clone())))
-            .or_else(|| ident_meta.get(&(en.clone(), field_name.to_string())));
+            .and_then(|(dom, w)| ident_meta.get(&(cid.clone(), dom.clone(), w.clone())))
+            .or_else(|| ident_meta.get(&(cid.clone(), en.clone(), field_name.to_string())));
         let should_emit = match (meta, defined.get(&sym)) {
             (Some(m), None) => {
                 defined.insert(sym.clone(), m.clone());
@@ -3074,6 +3103,7 @@ fn emit_field_def_lines_before_example(
                 defined.insert(
                     sym.clone(),
                     IdentMetadata {
+                        catalog_entry_id: cid.clone(),
                         field_type: FieldType::String,
                         string_semantics: None,
                         array_items: None,
@@ -3191,11 +3221,13 @@ fn render_domain_table_resolved<'b, F>(
             ent_desc.as_deref(),
         );
         if let (Some(m), Some(meta)) = (map, ident_meta.as_ref()) {
+            let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
             emit_field_def_lines_before_example(
                 out,
                 &heading_line,
                 m,
                 ename,
+                catalog_entry_id,
                 meta,
                 &mut defined_field_syms,
             );
@@ -3210,11 +3242,13 @@ fn render_domain_table_resolved<'b, F>(
                     }
                 }
                 if let (Some(m), Some(meta)) = (map, ident_meta.as_ref()) {
+                    let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
                     emit_field_def_lines_before_example(
                         out,
                         line,
                         m,
                         ename,
+                        catalog_entry_id,
                         meta,
                         &mut defined_field_syms,
                     );
@@ -3417,6 +3451,7 @@ mod tests {
         let user = EntityName::from("User".to_string());
         let issue = EntityName::from("Issue".to_string());
         let rel_meta = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::EntityRef {
                 target: user.clone(),
             },
@@ -3441,6 +3476,7 @@ mod tests {
             &rel_meta
         ));
         let title_meta = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::String,
             string_semantics: None,
             array_items: None,
@@ -4507,9 +4543,9 @@ mod tests {
         );
     }
 
-    /// Identical description + type for shared wire `id` — only one `p#` gloss before first use per symbol.
+    /// Same-shaped `id` slots on different entities are distinct opaque `p#` rows (qualified symbols).
     #[test]
-    fn compact_domain_suppresses_p_slot_redefinition_when_identity_unchanged() {
+    fn compact_domain_emits_distinct_p_slot_glosses_for_same_shaped_id_fields() {
         let same = "P_SLOT_REIDENT_SAME";
         let cgs = p_slot_redefinition_fixture_cgs(same, same);
         let prompt = render_prompt_with_config(
@@ -4528,8 +4564,8 @@ mod tests {
             })
             .count();
         assert_eq!(
-            count, 1,
-            "expected exactly one p# gloss for shared id slot when description is identical; domain excerpt:\n{domain}"
+            count, 2,
+            "expected two p# gloss rows for the same wire name on two entities; domain excerpt:\n{domain}"
         );
     }
 

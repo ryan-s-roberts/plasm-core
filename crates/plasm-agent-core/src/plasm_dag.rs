@@ -12,6 +12,7 @@ use crate::plasm_plan::{
 };
 use crate::plasm_plan_run::parse_plasm_surface_line_program;
 use plasm_core::expr_parser::{peel_postfix_suffixes, try_parse_bracket_render, PlasmPostfixOp};
+use plasm_core::schema::EntityDef;
 use plasm_core::ChainStep;
 use plasm_core::Expr;
 use plasm_core::PlasmInputRef;
@@ -22,6 +23,7 @@ use plasm_core::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
+use std::sync::Arc;
 
 /// Program RHS after session-scoped DOMAIN expansion (`e#` / `p#` / `m#` → wire/catalog text).
 ///
@@ -420,7 +422,97 @@ fn split_tail_postfix_flags(
     (ops, singleton, page_size)
 }
 
+fn cgs_for_qualified_entity(
+    session: &ExecuteSession,
+    qe: &QualifiedEntityKey,
+) -> Option<Arc<plasm_core::schema::CGS>> {
+    session
+        .contexts_by_entry
+        .get(qe.entry_id.as_str())
+        .map(|c| c.cgs.clone())
+        .or_else(|| (session.entry_id == qe.entry_id).then(|| session.cgs.clone()))
+}
+
+/// Logical row keys materialized by entity decode (`FieldDecoder` stores each field under its CGS name).
+fn logical_row_field_paths_for_entity(ent: &EntityDef) -> BTreeSet<Vec<String>> {
+    let mut set = BTreeSet::new();
+    for name in ent.fields.keys() {
+        set.insert(vec![name.as_str().to_string()]);
+    }
+    for rel_name in ent.relations.keys() {
+        set.insert(vec![rel_name.as_str().to_string()]);
+    }
+    set
+}
+
+fn validate_compute_paths_for_entity(
+    session: &ExecuteSession,
+    qe: &QualifiedEntityKey,
+    paths: &[FieldPath],
+    op_label: &str,
+) -> Result<(), String> {
+    let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
+        format!(
+            "Plasm program internal: catalog `{}` is not loaded for entity `{}`",
+            qe.entry_id, qe.entity
+        )
+    })?;
+    let ent = cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
+        format!(
+            "Plasm program internal: unknown entity `{}` in catalog `{}`",
+            qe.entity, qe.entry_id
+        )
+    })?;
+    let allowed = logical_row_field_paths_for_entity(ent);
+    for path in paths {
+        let segs: Vec<String> = path.segments().to_vec();
+        if allowed.contains(&segs) {
+            continue;
+        }
+        return Err(format!(
+            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use DOMAIN field names or `p#` symbols that refer to this entity's fields — mixing another entity's symbols yields null columns.",
+            path.dotted(),
+            qe.entity,
+            qe.entry_id
+        ));
+    }
+    Ok(())
+}
+
+/// Walk [`DagNodeSource::Compute`] chains to the nearest surface or relation node that carries a
+/// [`QualifiedEntityKey`] (the row entity after decode).
+fn resolve_qualified_entity_for_dag_source(
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    mut node_id: String,
+) -> Option<QualifiedEntityKey> {
+    for _ in 0..512 {
+        let node = staged
+            .iter()
+            .find(|n| n.id == node_id)
+            .or_else(|| state.get(node_id.as_str()))?;
+        match &node.source {
+            DagNodeSource::Surface {
+                qualified_entity, ..
+            }
+            | DagNodeSource::RelationTraversal {
+                qualified_entity, ..
+            } => {
+                return Some(qualified_entity.clone());
+            }
+            DagNodeSource::Compute { source, .. } => node_id = source.clone(),
+            DagNodeSource::Derive { .. }
+            | DagNodeSource::Data(_)
+            | DagNodeSource::ForEach { .. } => return None,
+        }
+    }
+    None
+}
+
 fn postfix_op_to_compute(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
     op: &PlasmPostfixOp,
     source: &str,
     id: &str,
@@ -455,9 +547,20 @@ fn postfix_op_to_compute(
                 return Err("sort(...) requires a non-empty field".into());
             }
             let descending = parse_sort_direction(&parts)?;
+            let key_fp = FieldPath::from_dotted(key)?;
+            if let Some(qe) =
+                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
+            {
+                validate_compute_paths_for_entity(
+                    session,
+                    &qe,
+                    std::slice::from_ref(&key_fp),
+                    "sort(...)",
+                )?;
+            }
             Ok(mk(
                 ComputeOp::Sort {
-                    key: FieldPath::from_dotted(key)?,
+                    key: key_fp,
                     descending,
                 },
                 single_unknown_schema("PlanSort"),
@@ -466,6 +569,13 @@ fn postfix_op_to_compute(
         }
         PlasmPostfixOp::Aggregate { args } => {
             let aggregates = parse_aggregates(args)?;
+            if let Some(qe) =
+                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
+            {
+                let paths: Vec<FieldPath> =
+                    aggregates.iter().filter_map(|a| a.field.clone()).collect();
+                validate_compute_paths_for_entity(session, &qe, &paths, "aggregate(...)")?;
+            }
             let schema = schema_from_aggregates("PlanAggregate", &aggregates);
             Ok(mk(ComputeOp::Aggregate { aggregates }, schema, true))
         }
@@ -481,10 +591,18 @@ fn postfix_op_to_compute(
                 parts[1..].join(",")
             };
             let aggregates = parse_aggregates(rest.as_str())?;
+            let key_fp = FieldPath::from_dotted(key)?;
+            if let Some(qe) =
+                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
+            {
+                let mut paths = vec![key_fp.clone()];
+                paths.extend(aggregates.iter().filter_map(|a| a.field.clone()));
+                validate_compute_paths_for_entity(session, &qe, &paths, "group_by(...)")?;
+            }
             let schema = schema_from_aggregates("PlanGroup", &aggregates);
             Ok(mk(
                 ComputeOp::GroupBy {
-                    key: FieldPath::from_dotted(key)?,
+                    key: key_fp,
                     aggregates,
                 },
                 schema,
@@ -498,6 +616,12 @@ fn postfix_op_to_compute(
                     OutputName::new(field.clone())?,
                     FieldPath::from_dotted(&field)?,
                 );
+            }
+            if let Some(qe) =
+                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
+            {
+                let paths: Vec<FieldPath> = map.values().cloned().collect();
+                validate_compute_paths_for_entity(session, &qe, &paths, "postfix projection")?;
             }
             let schema =
                 schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
@@ -551,7 +675,8 @@ fn compile_postfix_plan(
         } else {
             format!("__plasm_{binding_id}_s{i}")
         };
-        let mut node = postfix_op_to_compute(op, &cur_source, &nid, full_rhs)?;
+        let mut node =
+            postfix_op_to_compute(session, state, &out, op, &cur_source, &nid, full_rhs)?;
         if i + 1 < compute_ops.len() {
             node.expr = format!("{full_rhs}::__step{i}");
         }
@@ -1511,7 +1636,12 @@ fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
 fn parse_field_list(fields: &str) -> Result<Vec<String>, String> {
     let out = split_top_level(fields, ',')?
         .into_iter()
-        .map(|s| s.trim().to_string())
+        .map(|s| {
+            let t = s.trim();
+            plasm_core::expr_parser::normalize_nested_projection_field(t)
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>();
     if out.is_empty() {
@@ -2597,7 +2727,13 @@ x"#;
 
     #[test]
     fn group_by_postfix_accepts_canonical_key_and_aggs() {
+        let session = test_session();
+        let pipeline = PromptPipelineConfig::default();
+        let state = super::CompileState::new(&pipeline, None);
         let node = super::postfix_op_to_compute(
+            &session,
+            &state,
+            &[],
             &plasm_core::expr_parser::PlasmPostfixOp::GroupBy {
                 args: "author, n=count".into(),
             },
@@ -2625,7 +2761,13 @@ x"#;
 
     #[test]
     fn sort_unknown_direction_errors() {
+        let session = test_session();
+        let pipeline = PromptPipelineConfig::default();
+        let state = super::CompileState::new(&pipeline, None);
         let err = super::postfix_op_to_compute(
+            &session,
+            &state,
+            &[],
             &plasm_core::expr_parser::PlasmPostfixOp::Sort {
                 args: "created_at, newest".into(),
             },
@@ -2639,7 +2781,13 @@ x"#;
 
     #[test]
     fn sort_accepts_direction_aliases() {
+        let session = test_session();
+        let pipeline = PromptPipelineConfig::default();
+        let state = super::CompileState::new(&pipeline, None);
         let asc = super::postfix_op_to_compute(
+            &session,
+            &state,
+            &[],
             &plasm_core::expr_parser::PlasmPostfixOp::Sort {
                 args: "x, ascending".into(),
             },
@@ -2656,6 +2804,9 @@ x"#;
             _ => panic!("expected compute sort"),
         }
         let desc = super::postfix_op_to_compute(
+            &session,
+            &state,
+            &[],
             &plasm_core::expr_parser::PlasmPostfixOp::Sort {
                 args: "x, descending".into(),
             },
@@ -2670,6 +2821,103 @@ x"#;
                 ..
             } => assert!(descending),
             _ => panic!("expected compute sort"),
+        }
+    }
+
+    /// DOMAIN `p#` indices are session-global; mixing another entity's symbols into a Commit projection
+    /// must fail at compile time instead of producing all-null columns at runtime.
+    #[test]
+    fn postfix_projection_rejects_foreign_entity_domain_symbols() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_repo = map.ident_sym_entity_field("Repository", "open_issues_count");
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let source = format!(
+            r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits.limit(20)
+commits[{p_repo},{p_sha}]
+commits"#,
+            p_repo = p_repo,
+            p_sha = p_sha,
+        );
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "foreign-field-proj",
+            &source,
+        )
+        .expect_err("cross-entity symbols must not compile");
+        assert!(
+            err.contains("open_issues_count") && err.contains("Commit"),
+            "{err}"
+        );
+    }
+
+    mod projection_props {
+        use super::*;
+        use proptest::prelude::*;
+        use std::sync::OnceLock;
+
+        fn github_session_cached() -> &'static ExecuteSession {
+            static CELL: OnceLock<ExecuteSession> = OnceLock::new();
+            CELL.get_or_init(github_repository_commit_session)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(48))]
+
+            #[test]
+            fn nonempty_commit_field_subset_always_compiles(
+                picks in prop::collection::vec(0usize..4usize, 1usize..=8usize)
+            ) {
+                let fields = ["sha", "message", "stats_additions", "total_changes"];
+                let mut set = BTreeSet::new();
+                for i in picks {
+                    set.insert(fields[i % fields.len()]);
+                }
+                let proj = set.into_iter().collect::<Vec<_>>().join(",");
+                let session = github_session_cached();
+                let source = format!(
+                    r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits.limit(3)
+commits[{proj}]
+commits"#
+                );
+                compile_plasm_dag_to_plan(
+                    &PromptPipelineConfig::default(),
+                    None,
+                    session,
+                    "prop-commit-subset",
+                    &source,
+                )
+                .expect("projection");
+            }
+
+            #[test]
+            fn repository_field_name_literal_in_commit_projection_fails(
+                bad in "(open_issues_count|forks_count|stargazers_count)"
+            ) {
+                let session = github_session_cached();
+                let source = format!(
+                    r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits.limit(3)
+commits[{bad}]
+commits"#
+                );
+                let err = compile_plasm_dag_to_plan(
+                    &PromptPipelineConfig::default(),
+                    None,
+                    session,
+                    "prop-bad-commit-path",
+                    &source,
+                )
+                .expect_err("reject");
+                prop_assert!(
+                    err.contains("null columns") || err.contains("not a row field"),
+                    "{err}"
+                );
+            }
         }
     }
 }

@@ -2045,7 +2045,7 @@ capabilities:
     - comment_count
     - stats_additions
     - stats_deletions
-    - stats_total
+    - total_changes
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -2095,7 +2095,7 @@ capabilities:
     - comment_count
     - stats_additions
     - stats_deletions
-    - stats_total
+    - total_changes
   pr_review_query:
     kind: query
     entity: PullRequestReview

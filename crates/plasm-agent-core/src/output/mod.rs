@@ -1,5 +1,6 @@
+use indexmap::IndexMap;
 use plasm_core::{
-    AgentPresentation, EntityName, FieldType, Value, ValueTableCellBudget, CGS,
+    AgentPresentation, EntityName, FieldType, TypedFieldValue, Value, ValueTableCellBudget, CGS,
     PLASM_ATTACHMENT_KEY,
 };
 use plasm_runtime::{CachedEntity, ExecutionResult};
@@ -80,11 +81,39 @@ pub fn reference_only_omitted_field_names(
 }
 
 /// Strip fields not in the projection from each entity in the result.
+///
+/// Top-level wire keys match directly; **dotted paths** walk nested JSON/object shapes (e.g.
+/// `author.login` pulls `login` from the `author` object field).
 pub fn apply_projection(result: &mut ExecutionResult, fields: &[String]) {
-    let field_set: std::collections::HashSet<&str> = fields.iter().map(|s| s.as_str()).collect();
     for entity in &mut result.entities {
-        entity.fields.retain(|k, _| field_set.contains(k.as_str()));
+        let mut next: IndexMap<String, TypedFieldValue> = IndexMap::new();
+        for f in fields {
+            if let Some(v) = entity.fields.get(f.as_str()) {
+                next.insert(f.clone(), v.clone());
+            } else if f.contains('.') {
+                if let Some(v) = typed_field_value_at_dotted_path(&entity.fields, f.as_str()) {
+                    next.insert(f.clone(), v);
+                }
+            }
+        }
+        entity.fields = next;
     }
+}
+
+fn typed_field_value_at_dotted_path(
+    fields: &IndexMap<String, TypedFieldValue>,
+    path: &str,
+) -> Option<TypedFieldValue> {
+    let mut segments = path.split('.');
+    let first = segments.next()?;
+    let mut cur = fields.get(first)?.to_value();
+    for seg in segments {
+        cur = match cur {
+            Value::Object(m) => m.get(seg)?.clone(),
+            _ => return None,
+        };
+    }
+    Some(TypedFieldValue::from(cur))
 }
 
 /// JSON value for HTTP `POST /execute/...` bodies: entity rows only (no duration, count, or cache stats).

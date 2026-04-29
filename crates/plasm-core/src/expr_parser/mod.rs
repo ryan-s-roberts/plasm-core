@@ -58,7 +58,10 @@ pub mod value_expr;
 pub use value_expr::{RenderExpr, ValueExpr};
 
 pub mod postfix;
-pub use postfix::{peel_postfix_suffixes, try_parse_bracket_render, BracketRender, PlasmPostfixOp};
+pub use postfix::{
+    normalize_nested_projection_field, peel_postfix_suffixes, try_parse_bracket_render,
+    BracketRender, PlasmPostfixOp,
+};
 
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,

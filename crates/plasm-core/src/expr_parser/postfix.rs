@@ -28,14 +28,68 @@ pub struct BracketRender {
     pub template: String,
 }
 
+/// Byte index of `[` matching the closing `]` at `close_bracket_idx` (nested brackets balanced).
+pub(crate) fn matching_square_bracket_open(s: &str, close_bracket_idx: usize) -> Option<usize> {
+    if close_bracket_idx >= s.len() || !s[close_bracket_idx..].starts_with(']') {
+        return None;
+    }
+    let mut depth = 1i32;
+    let mut quote = None::<char>;
+    let prefix = &s[..close_bracket_idx];
+    for (idx, c) in prefix.char_indices().rev() {
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            _ if quote.is_some() => {}
+            ']' => depth += 1,
+            '[' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `author[login]` / nested chains → `author.login` for [`plasm_core::plasm_plan::FieldPath`].
+pub fn normalize_nested_projection_field(segment: &str) -> Result<String, String> {
+    let t = segment.trim();
+    if !t.contains('[') {
+        return Ok(t.to_string());
+    }
+    let close = t
+        .rfind(']')
+        .ok_or_else(|| format!("unbalanced `]` in projection `{segment}`"))?;
+    let open = matching_square_bracket_open(t, close)
+        .ok_or_else(|| format!("could not match `[` for trailing `]` in projection `{segment}`"))?;
+    let inner_raw = &t[open + 1..close];
+    let left = t[..open].trim_end();
+    if left.is_empty() {
+        return Err(format!(
+            "nested projection `[…]` requires a left-hand identifier (`{segment}`)"
+        ));
+    }
+    if left.contains('.') {
+        return Err(format!(
+            "nested projection `{segment}` must not use `.` to the left of `[…]`"
+        ));
+    }
+    let inner_norm = normalize_nested_projection_field(inner_raw)?;
+    Ok(format!("{left}.{inner_norm}"))
+}
+
 /// `ident[field,...]` with no trailing junk after `]` (same contract as program DAG `parse_projection`).
 fn parse_projection_head(head: &str) -> Option<(&str, &str)> {
     let head = head.trim_end();
-    let open = head.rfind('[')?;
     if !head.ends_with(']') {
         return None;
     }
-    Some((head[..open].trim_end(), &head[open + 1..head.len() - 1]))
+    let close = head.len() - 1;
+    let open = matching_square_bracket_open(head, close)?;
+    Some((head[..open].trim_end(), &head[open + 1..close]))
 }
 
 fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> {
@@ -195,10 +249,11 @@ fn strip_trailing_projection(s: &str) -> Result<Option<(String, String)>, String
     if !t.ends_with(']') {
         return Ok(None);
     }
-    let Some(open) = t[..t.len() - 1].rfind('[') else {
+    let close = t.len() - 1;
+    let Some(open) = matching_square_bracket_open(t, close) else {
         return Ok(None);
     };
-    let fields = t[open + 1..t.len() - 1].to_string();
+    let fields = t[open + 1..close].to_string();
     Ok(Some((t[..open].trim_end().to_string(), fields)))
 }
 
@@ -318,6 +373,37 @@ mod tests {
         assert!(
             e.contains("not closed") || e.contains("<<H"),
             "unexpected err: {e}"
+        );
+    }
+
+    #[test]
+    fn peel_projection_nested_brackets_on_primary() {
+        let (p, ops) = peel_postfix_suffixes("e1().limit(10)[commits[author[login]],sha]").unwrap();
+        assert_eq!(p, "e1()");
+        assert_eq!(
+            ops,
+            vec![
+                PlasmPostfixOp::Limit(10),
+                PlasmPostfixOp::Projection {
+                    fields: "commits[author[login]],sha".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_nested_projection_bracket_sugar() {
+        assert_eq!(
+            normalize_nested_projection_field("author[login]").unwrap(),
+            "author.login"
+        );
+        assert_eq!(
+            normalize_nested_projection_field("commits[author[login]]").unwrap(),
+            "commits.author.login"
+        );
+        assert_eq!(
+            normalize_nested_projection_field("p91[p68]").unwrap(),
+            "p91.p68"
         );
     }
 }

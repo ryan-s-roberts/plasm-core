@@ -71,6 +71,8 @@ pub enum IdentRole {
 /// `build_ident_gloss_map` + `build_ident_type_map` pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IdentMetadata {
+    /// Registry catalog row (`entry_id`) owning this slot — distinguishes federated graphs that reuse entity names.
+    pub catalog_entry_id: String,
     pub field_type: FieldType,
     /// When [`FieldType::String`], optional [`StringSemantics`] for DOMAIN `p#` type gloss.
     pub string_semantics: Option<StringSemantics>,
@@ -84,6 +86,9 @@ pub struct IdentMetadata {
     pub description: String,
     pub entity: EntityName,
 }
+
+/// Key for [`IdentMetadata`] maps: `(registry entry_id, CGS entity, wire name)`.
+pub type IdentMetaKey = (String, EntityName, String);
 use std::fmt::Write;
 
 /// Same 2-hop focus neighbourhood as prompt rendering: `Some(set)` when focus is set.
@@ -271,11 +276,10 @@ pub(crate) fn collect_ident_names(cgs: &CGS, full_entities: &[&str]) -> BTreeSet
     idents
 }
 
-/// Stable fingerprint for slot **identity**: structural type (field type, semantics, array/items,
-/// allowed values, role) plus description — **not** wire name alone. Entity-owning domain is
-/// **not** part of the fingerprint for entity fields and relations so the same shaped slot on
-/// different entities shares one opaque `p#` (monotonic session table). Capability inputs still key
-/// by domain + capability + param shape so identically named params on different capabilities split.
+/// Stable fingerprint for slot **identity**: catalog row (`catalog_entry_id`), owning entity,
+/// structural type (field type, semantics, array/items, allowed values, role), wire name, and
+/// description. Same-shaped slots on **different** entities or catalogs receive **distinct** opaque
+/// `p#` tokens; allocation remains append-only within a session.
 pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
     let role_tag = match &meta.role {
         IdentRole::EntityField => "ef".to_string(),
@@ -290,7 +294,9 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
     let av = serde_json::to_string(&meta.allowed_values).unwrap_or_else(|_| "null".to_string());
     let desc = meta.description.trim();
     format!(
-        "{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        meta.catalog_entry_id.as_str(),
+        meta.entity.as_str(),
         role_tag,
         meta.wire_name.as_str(),
         ft,
@@ -307,15 +313,22 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
 /// opaque `p#`.
 fn slot_occurrence_key(meta: &IdentMetadata) -> String {
     match &meta.role {
-        IdentRole::EntityField => format!("ef|{}|{}", meta.entity.as_str(), meta.wire_name),
+        IdentRole::EntityField => format!(
+            "ef|{}|{}|{}",
+            meta.catalog_entry_id.as_str(),
+            meta.entity.as_str(),
+            meta.wire_name
+        ),
         IdentRole::Relation { target } => format!(
-            "rel|{}|{}|{}",
+            "rel|{}|{}|{}|{}",
+            meta.catalog_entry_id.as_str(),
             meta.entity.as_str(),
             meta.wire_name,
             target.as_str()
         ),
         IdentRole::CapabilityParam { capability } => format!(
-            "cap|{}|{}|{}",
+            "cap|{}|{}|{}|{}",
+            meta.catalog_entry_id.as_str(),
             meta.entity.as_str(),
             capability.as_str(),
             meta.wire_name
@@ -325,9 +338,14 @@ fn slot_occurrence_key(meta: &IdentMetadata) -> String {
 
 /// One [`IdentMetadata`] per slot (entity field, relation, or capability input field) visible for
 /// `full_entities` — used for fingerprint-based `p#` allocation (not wire-name-only).
-fn collect_slot_metas(cgs: &CGS, full_entities: &[&str]) -> Vec<IdentMetadata> {
+fn collect_slot_metas(
+    cgs: &CGS,
+    full_entities: &[&str],
+    catalog_entry_id: &str,
+) -> Vec<IdentMetadata> {
     let full_set: HashSet<&str> = full_entities.iter().copied().collect();
     let mut out = Vec::new();
+    let cid = catalog_entry_id.to_string();
     for &ename in full_entities {
         let Some(ent) = cgs.get_entity(ename) else {
             continue;
@@ -335,6 +353,7 @@ fn collect_slot_metas(cgs: &CGS, full_entities: &[&str]) -> Vec<IdentMetadata> {
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
             out.push(IdentMetadata {
+                catalog_entry_id: cid.clone(),
                 field_type: f.field_type.clone(),
                 string_semantics: f.string_semantics,
                 array_items: f.array_items.clone(),
@@ -347,6 +366,7 @@ fn collect_slot_metas(cgs: &CGS, full_entities: &[&str]) -> Vec<IdentMetadata> {
         }
         for (rname, r) in &ent.relations {
             out.push(IdentMetadata {
+                catalog_entry_id: cid.clone(),
                 field_type: FieldType::EntityRef {
                     target: r.target_resource.clone(),
                 },
@@ -379,6 +399,7 @@ fn collect_slot_metas(cgs: &CGS, full_entities: &[&str]) -> Vec<IdentMetadata> {
             let en = cap.domain.clone();
             for f in fields {
                 out.push(IdentMetadata {
+                    catalog_entry_id: cid.clone(),
                     field_type: f.field_type.clone(),
                     string_semantics: f.string_semantics,
                     array_items: f.array_items.clone(),
@@ -401,9 +422,10 @@ fn collect_slot_metas(cgs: &CGS, full_entities: &[&str]) -> Vec<IdentMetadata> {
 pub(crate) fn build_ident_metadata(
     cgs: &CGS,
     full_entities: &[&str],
-) -> HashMap<(EntityName, String), IdentMetadata> {
+) -> HashMap<IdentMetaKey, IdentMetadata> {
     let full_set: HashSet<&str> = full_entities.iter().copied().collect();
-    let mut out: HashMap<(EntityName, String), IdentMetadata> = HashMap::new();
+    let mut out: HashMap<IdentMetaKey, IdentMetadata> = HashMap::new();
+    let cid = cgs.entry_id.clone().unwrap_or_default();
 
     for &ename in full_entities {
         let Some(ent) = cgs.get_entity(ename) else {
@@ -411,8 +433,9 @@ pub(crate) fn build_ident_metadata(
         };
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
-            out.entry((en.clone(), fname.as_str().to_string()))
+            out.entry((cid.clone(), en.clone(), fname.as_str().to_string()))
                 .or_insert_with(|| IdentMetadata {
+                    catalog_entry_id: cid.clone(),
                     field_type: f.field_type.clone(),
                     string_semantics: f.string_semantics,
                     array_items: f.array_items.clone(),
@@ -424,8 +447,9 @@ pub(crate) fn build_ident_metadata(
                 });
         }
         for (rname, r) in &ent.relations {
-            out.entry((en.clone(), rname.as_str().to_string()))
+            out.entry((cid.clone(), en.clone(), rname.as_str().to_string()))
                 .or_insert_with(|| IdentMetadata {
+                    catalog_entry_id: cid.clone(),
                     field_type: FieldType::EntityRef {
                         target: r.target_resource.clone(),
                     },
@@ -457,8 +481,9 @@ pub(crate) fn build_ident_metadata(
             };
             let en = cap.domain.clone();
             for f in fields {
-                out.entry((en.clone(), f.name.clone()))
+                out.entry((cid.clone(), en.clone(), f.name.clone()))
                     .or_insert_with(|| IdentMetadata {
+                        catalog_entry_id: cid.clone(),
                         field_type: f.field_type.clone(),
                         string_semantics: f.string_semantics,
                         array_items: f.array_items.clone(),
@@ -807,7 +832,8 @@ pub(crate) fn build_ident_type_map(
 #[derive(Debug, Clone)]
 pub struct SymbolMap {
     sym_to_entity: IndexMap<String, String>,
-    entity_to_sym: IndexMap<String, String>,
+    /// `(registry entry_id, CGS entity name)` → opaque `e#`. Duplicate entity names across catalogs are distinct rows.
+    qualified_entity_to_sym: IndexMap<(String, String), String>,
     /// method symbol -> (catalog entry_id, domain entity, kebab label)
     sym_to_method: IndexMap<String, (String, String, String)>,
     /// (registry entry_id or `""`, domain entity, kebab method label)
@@ -818,12 +844,12 @@ pub struct SymbolMap {
     sym_to_ident: IndexMap<String, String>,
     /// Wire name → first-assigned `p#` when multiple slots share a label (feedback collapse / legacy).
     ident_to_sym: IndexMap<String, String>,
-    /// `(entity, field)` → `p#` for entity fields.
-    entity_field_to_sym: HashMap<(String, String), String>,
-    /// `(entity, relation_or_ref_name)` → `p#` for relations and entity-ref nav.
-    relation_to_sym: HashMap<(String, String), String>,
-    /// `(domain_entity, capability_name, param)` → `p#` for capability inputs.
-    cap_param_to_sym: HashMap<(String, String, String), String>,
+    /// `(entry_id, entity, field)` → `p#` for entity fields.
+    entity_field_to_sym: HashMap<(String, String, String), String>,
+    /// `(entry_id, entity, relation_or_ref_name)` → `p#` for relations and entity-ref nav.
+    relation_to_sym: HashMap<(String, String, String), String>,
+    /// `(entry_id, domain_entity, capability_name, param)` → `p#` for capability inputs.
+    cap_param_to_sym: HashMap<(String, String, String, String), String>,
 }
 
 impl SymbolMap {
@@ -844,7 +870,13 @@ impl SymbolMap {
     /// Structured DOMAIN token when `canonical` is in this map.
     #[inline]
     pub fn try_entity_domain_term(&self, canonical: &str) -> Option<DomainTerm> {
-        let sym_str = self.entity_to_sym.get(canonical)?;
+        let mut matches: Vec<_> = self
+            .qualified_entity_to_sym
+            .iter()
+            .filter(|((_, ent), _)| ent.as_str() == canonical)
+            .collect();
+        matches.sort_by_key(|((eid, _), sym)| (eid.clone(), (*sym).clone()));
+        let sym_str = matches.first()?.1;
         let idx = Symbol::parse_index(sym_str, 'e')?;
         Some(DomainTerm::Entity(
             EntityRef {
@@ -886,18 +918,24 @@ impl SymbolMap {
         name: &str,
     ) -> Option<DomainTerm> {
         let slot = resolve_parameter_slot(cgs, full_entities, name)?;
+        let entry_key = cgs.entry_id.as_deref().unwrap_or("");
         let sym_str = match &slot {
-            ParameterSlot::EntityField { entity, field } => self
-                .entity_field_to_sym
-                .get(&(entity.as_str().to_string(), field.clone())),
-            ParameterSlot::Relation { entity, name: rel } => self
-                .relation_to_sym
-                .get(&(entity.as_str().to_string(), rel.clone())),
+            ParameterSlot::EntityField { entity, field } => self.entity_field_to_sym.get(&(
+                entry_key.to_string(),
+                entity.as_str().to_string(),
+                field.clone(),
+            )),
+            ParameterSlot::Relation { entity, name: rel } => self.relation_to_sym.get(&(
+                entry_key.to_string(),
+                entity.as_str().to_string(),
+                rel.clone(),
+            )),
             ParameterSlot::CapabilityInput {
                 domain,
                 capability,
                 param,
             } => self.cap_param_to_sym.get(&(
+                entry_key.to_string(),
                 domain.as_str().to_string(),
                 capability.as_str().to_string(),
                 param.clone(),
@@ -918,18 +956,28 @@ impl SymbolMap {
     /// Opaque `p#` for an **entity field** (scoped; preferred over [`Self::ident_sym`] when the entity is known).
     #[inline]
     pub fn ident_sym_entity_field(&self, entity: &str, field: &str) -> String {
-        self.entity_field_to_sym
-            .get(&(entity.to_string(), field.to_string()))
-            .cloned()
+        let mut v: Vec<_> = self
+            .entity_field_to_sym
+            .iter()
+            .filter(|((_, e, f), _)| e.as_str() == entity && f.as_str() == field)
+            .collect();
+        v.sort_by_key(|((a, b, c), s)| (a.clone(), b.clone(), c.clone(), (*s).clone()));
+        v.first()
+            .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| field.to_string())
     }
 
     /// Opaque `p#` for a **relation** (or entity-ref nav segment) on `entity`.
     #[inline]
     pub fn ident_sym_relation(&self, entity: &str, relation: &str) -> String {
-        self.relation_to_sym
-            .get(&(entity.to_string(), relation.to_string()))
-            .cloned()
+        let mut v: Vec<_> = self
+            .relation_to_sym
+            .iter()
+            .filter(|((_, e, r), _)| e.as_str() == entity && r.as_str() == relation)
+            .collect();
+        v.sort_by_key(|((a, b, c), s)| (a.clone(), b.clone(), c.clone(), (*s).clone()));
+        v.first()
+            .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| relation.to_string())
     }
 
@@ -941,13 +989,18 @@ impl SymbolMap {
         capability: &str,
         param: &str,
     ) -> String {
-        self.cap_param_to_sym
-            .get(&(
-                domain_entity.to_string(),
-                capability.to_string(),
-                param.to_string(),
-            ))
-            .cloned()
+        let mut v: Vec<_> = self
+            .cap_param_to_sym
+            .iter()
+            .filter(|((_, dom, cap, p), _)| {
+                dom.as_str() == domain_entity && cap.as_str() == capability && p.as_str() == param
+            })
+            .collect();
+        v.sort_by_key(|((a, b, c, d), s)| {
+            (a.clone(), b.clone(), c.clone(), d.clone(), (*s).clone())
+        });
+        v.first()
+            .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| param.to_string())
     }
 
@@ -956,7 +1009,7 @@ impl SymbolMap {
     /// different `p#` tokens.
     pub fn ident_sym_unambiguous(&self, name: &str) -> Option<String> {
         let mut resolved: Option<&String> = None;
-        for ((_, field), sym) in &self.entity_field_to_sym {
+        for ((_, _, field), sym) in &self.entity_field_to_sym {
             if field != name {
                 continue;
             }
@@ -966,7 +1019,7 @@ impl SymbolMap {
                 Some(_) => return None,
             }
         }
-        for ((_, relation), sym) in &self.relation_to_sym {
+        for ((_, _, relation), sym) in &self.relation_to_sym {
             if relation != name {
                 continue;
             }
@@ -976,7 +1029,7 @@ impl SymbolMap {
                 Some(_) => return None,
             }
         }
-        for ((_, _, param), sym) in &self.cap_param_to_sym {
+        for ((_, _, _, param), sym) in &self.cap_param_to_sym {
             if param != name {
                 continue;
             }
@@ -1008,7 +1061,7 @@ impl SymbolMap {
 
     /// If `sym` maps a capability input parameter, return the `(capability domain entity, param wire)`.
     pub fn capability_param_key_for_p_sym(&self, sym: &str) -> Option<(EntityName, String)> {
-        for ((dom, _cap, pname), s) in &self.cap_param_to_sym {
+        for ((_eid, dom, _cap, pname), s) in &self.cap_param_to_sym {
             if s == sym {
                 return Some((EntityName::from(dom.as_str()), pname.clone()));
             }
@@ -1019,12 +1072,16 @@ impl SymbolMap {
     /// Rewrite canonical entity and field names in a short snippet into opaque `e#` / `p#` tokens for
     /// LLM-facing recovery text (inverse of [`expand_path_symbols`] for identifier-shaped spans).
     pub fn collapse_tokens_for_feedback(&self, input: &str) -> String {
-        let mut keys: Vec<String> = self.entity_to_sym.keys().cloned().collect();
+        let mut keys: Vec<String> = self
+            .qualified_entity_to_sym
+            .keys()
+            .map(|(_, ent)| ent.clone())
+            .collect();
         keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+        keys.dedup();
         let mut s = scan_replace(input, &keys, |k| {
-            self.entity_to_sym
-                .get(k)
-                .cloned()
+            self.try_entity_domain_term(k)
+                .map(|t| t.to_string())
                 .unwrap_or_else(|| k.to_string())
         });
         let mut idents: Vec<String> = self.ident_to_sym.keys().cloned().collect();
@@ -1611,7 +1668,8 @@ pub struct DomainExposureSession {
     /// Owning [`CGS`] per catalog `entry_id` (same keys as [`Self::entity_catalog_entry_ids`] values).
     catalog_cgs: IndexMap<String, Arc<CGS>>,
     sym_to_entity: IndexMap<String, String>,
-    entity_to_sym: IndexMap<String, String>,
+    /// `(registry entry_id, CGS entity name)` → opaque `e#`.
+    qualified_entity_to_sym: IndexMap<(String, String), String>,
     method_to_sym: IndexMap<(String, String, String), String>,
     sym_to_method: IndexMap<String, (String, String, String)>,
     ident_to_sym: IndexMap<String, String>,
@@ -1624,9 +1682,9 @@ pub struct DomainExposureSession {
     /// Concrete slot occurrence → metadata. Preserves every `(entity, slot)` binding even when
     /// multiple occurrences intentionally share one fingerprint / `p#`.
     slot_occurrence_meta: IndexMap<String, IdentMetadata>,
-    entity_field_to_sym: HashMap<(String, String), String>,
-    relation_to_sym: HashMap<(String, String), String>,
-    cap_param_to_sym: HashMap<(String, String, String), String>,
+    entity_field_to_sym: HashMap<(String, String, String), String>,
+    relation_to_sym: HashMap<(String, String, String), String>,
+    cap_param_to_sym: HashMap<(String, String, String, String), String>,
     /// Memoized [`SymbolMap`] for this session; cleared in [`Self::expose_entities`].
     symbol_map_cache: RwLock<Option<Arc<SymbolMap>>>,
 }
@@ -1638,7 +1696,7 @@ impl Clone for DomainExposureSession {
             entity_catalog_entry_ids: self.entity_catalog_entry_ids.clone(),
             catalog_cgs: self.catalog_cgs.clone(),
             sym_to_entity: self.sym_to_entity.clone(),
-            entity_to_sym: self.entity_to_sym.clone(),
+            qualified_entity_to_sym: self.qualified_entity_to_sym.clone(),
             method_to_sym: self.method_to_sym.clone(),
             sym_to_method: self.sym_to_method.clone(),
             ident_to_sym: self.ident_to_sym.clone(),
@@ -1664,7 +1722,7 @@ impl DomainExposureSession {
             entity_catalog_entry_ids: Vec::new(),
             catalog_cgs: IndexMap::new(),
             sym_to_entity: IndexMap::new(),
-            entity_to_sym: IndexMap::new(),
+            qualified_entity_to_sym: IndexMap::new(),
             method_to_sym: IndexMap::new(),
             sym_to_method: IndexMap::new(),
             ident_to_sym: IndexMap::new(),
@@ -1703,7 +1761,8 @@ impl DomainExposureSession {
             .write()
             .expect("symbol_map_cache lock poisoned") = None;
         for n in names {
-            if self.entity_to_sym.contains_key(*n) {
+            let qkey = (catalog_entry_id.to_string(), (*n).to_string());
+            if self.qualified_entity_to_sym.contains_key(&qkey) {
                 continue;
             }
             let Some(ent) = owning_cgs.get_entity(n) else {
@@ -1717,7 +1776,7 @@ impl DomainExposureSession {
             self.entities.push((*n).to_string());
             self.entity_catalog_entry_ids
                 .push(catalog_entry_id.to_string());
-            self.entity_to_sym.insert((*n).to_string(), sym.clone());
+            self.qualified_entity_to_sym.insert(qkey, sym.clone());
             self.sym_to_entity.insert(sym, (*n).to_string());
         }
         self.assign_new_methods_and_idents(cgs_layers);
@@ -1773,7 +1832,7 @@ impl DomainExposureSession {
             let Some(cgs) = self.catalog_cgs.get(entry_id) else {
                 continue;
             };
-            collected.extend(collect_slot_metas(cgs.as_ref(), &[dom]));
+            collected.extend(collect_slot_metas(cgs.as_ref(), &[dom], entry_id));
         }
         let mut by_fp: IndexMap<String, IdentMetadata> = IndexMap::new();
         for m in collected {
@@ -1826,19 +1885,28 @@ impl DomainExposureSession {
             match &meta.role {
                 IdentRole::EntityField => {
                     self.entity_field_to_sym.insert(
-                        (meta.entity.as_str().to_string(), meta.wire_name.clone()),
+                        (
+                            meta.catalog_entry_id.clone(),
+                            meta.entity.as_str().to_string(),
+                            meta.wire_name.clone(),
+                        ),
                         sym.clone(),
                     );
                 }
                 IdentRole::Relation { .. } => {
                     self.relation_to_sym.insert(
-                        (meta.entity.as_str().to_string(), meta.wire_name.clone()),
+                        (
+                            meta.catalog_entry_id.clone(),
+                            meta.entity.as_str().to_string(),
+                            meta.wire_name.clone(),
+                        ),
                         sym.clone(),
                     );
                 }
                 IdentRole::CapabilityParam { capability } => {
                     self.cap_param_to_sym.insert(
                         (
+                            meta.catalog_entry_id.clone(),
                             meta.entity.as_str().to_string(),
                             capability.as_str().to_string(),
                             meta.wire_name.clone(),
@@ -1856,19 +1924,28 @@ impl DomainExposureSession {
             match &meta.role {
                 IdentRole::EntityField => {
                     self.entity_field_to_sym.insert(
-                        (meta.entity.as_str().to_string(), meta.wire_name.clone()),
+                        (
+                            meta.catalog_entry_id.clone(),
+                            meta.entity.as_str().to_string(),
+                            meta.wire_name.clone(),
+                        ),
                         sym.clone(),
                     );
                 }
                 IdentRole::Relation { .. } => {
                     self.relation_to_sym.insert(
-                        (meta.entity.as_str().to_string(), meta.wire_name.clone()),
+                        (
+                            meta.catalog_entry_id.clone(),
+                            meta.entity.as_str().to_string(),
+                            meta.wire_name.clone(),
+                        ),
                         sym.clone(),
                     );
                 }
                 IdentRole::CapabilityParam { capability } => {
                     self.cap_param_to_sym.insert(
                         (
+                            meta.catalog_entry_id.clone(),
                             meta.entity.as_str().to_string(),
                             capability.as_str().to_string(),
                             meta.wire_name.clone(),
@@ -1954,7 +2031,7 @@ impl DomainExposureSession {
     fn build_symbol_map_snapshot(&self) -> SymbolMap {
         SymbolMap {
             sym_to_entity: self.sym_to_entity.clone(),
-            entity_to_sym: self.entity_to_sym.clone(),
+            qualified_entity_to_sym: self.qualified_entity_to_sym.clone(),
             sym_to_method: self.sym_to_method.clone(),
             method_to_sym: self.method_to_sym.clone(),
             anchor_scoped_method_sym: self.anchor_scoped_method_sym.clone(),
@@ -1970,14 +2047,18 @@ impl DomainExposureSession {
     pub(crate) fn ident_metadata_for_exposure_entities(
         &self,
         full_entities: &[&str],
-    ) -> HashMap<(EntityName, String), IdentMetadata> {
+    ) -> HashMap<IdentMetaKey, IdentMetadata> {
         let set: HashSet<&str> = full_entities.iter().copied().collect();
         let mut out = HashMap::new();
         for meta in self.slot_occurrence_meta.values() {
             if !set.contains(meta.entity.as_str()) {
                 continue;
             }
-            let k = (meta.entity.clone(), meta.wire_name.clone());
+            let k = (
+                meta.catalog_entry_id.clone(),
+                meta.entity.clone(),
+                meta.wire_name.clone(),
+            );
             out.entry(k).or_insert_with(|| meta.clone());
         }
         out
@@ -2244,6 +2325,7 @@ mod tests {
     fn slot_allocation_fingerprint_splits_same_wire_different_field_types() {
         let en = EntityName::from("N".to_string());
         let meta = |ft: FieldType| IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: ft,
             string_semantics: None,
             array_items: None,
@@ -2261,10 +2343,10 @@ mod tests {
         a.entity = EntityName::from("Alpha".to_string());
         let mut b = meta(FieldType::Integer);
         b.entity = EntityName::from("Beta".to_string());
-        assert_eq!(
+        assert_ne!(
             slot_allocation_fingerprint(&a),
             slot_allocation_fingerprint(&b),
-            "same structural slot on different entities should share a fingerprint (one p# table slot)"
+            "same-shaped field on different entities must not share a p# fingerprint"
         );
     }
 
@@ -2279,9 +2361,9 @@ mod tests {
         let capture_item_id = map.ident_sym_entity_field("CaptureItem", "id");
         let profile_id = map.ident_sym_entity_field("Profile", "id");
         let pipeline_snapshot_id = map.ident_sym_entity_field("PipelineSnapshot", "id");
-        assert_eq!(
+        assert_ne!(
             capture_item_id, profile_id,
-            "identical integer `id` slots may intentionally share one p#"
+            "same-shaped `id` fields on different entities must not share one p#"
         );
         assert_ne!(
             capture_item_id, pipeline_snapshot_id,
@@ -2477,6 +2559,7 @@ mod tests {
     #[test]
     fn render_gloss_capability_param_uses_wire_name_without_description() {
         let m = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::String,
             string_semantics: None,
             array_items: None,
@@ -2494,6 +2577,7 @@ mod tests {
     #[test]
     fn render_gloss_capability_param_uses_description_when_set() {
         let m = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::String,
             string_semantics: None,
             array_items: None,
@@ -2511,6 +2595,7 @@ mod tests {
     #[test]
     fn render_gloss_string_semantics_markdown_replaces_str_label() {
         let m = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::String,
             string_semantics: Some(StringSemantics::Markdown),
             array_items: None,
@@ -2528,6 +2613,7 @@ mod tests {
     #[test]
     fn render_gloss_array_param_shows_element_type() {
         let m = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::Array,
             string_semantics: None,
             array_items: Some(ArrayItemsSchema {
@@ -2551,6 +2637,7 @@ mod tests {
     #[test]
     fn render_gloss_select_shows_allowed_values_not_wire_name() {
         let m = IdentMetadata {
+            catalog_entry_id: String::new(),
             field_type: FieldType::Select,
             string_semantics: None,
             array_items: None,
@@ -2633,5 +2720,31 @@ mod tests {
         let m = super::args_line_suppressible_capability_syms(line).expect("m");
         assert_eq!(m.get("p1"), Some(&true));
         assert_eq!(m.get("p2"), Some(&false));
+    }
+
+    #[test]
+    fn federation_duplicate_entity_name_allocates_distinct_e_symbols() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let mut cgs_a = load_schema_dir(dir).unwrap();
+        cgs_a.entry_id = Some("alpha".into());
+        let mut cgs_b = cgs_a.clone();
+        cgs_b.entry_id = Some("beta".into());
+        let arc_b = std::sync::Arc::new(cgs_b);
+        let mut s = DomainExposureSession::new(&cgs_a, "alpha", &["Pet"]);
+        s.expose_entities(&[arc_b.as_ref()], arc_b.clone(), "beta", &["Pet"]);
+        assert_eq!(s.entities.len(), 2);
+        let map = s.to_symbol_map();
+        let sa = map
+            .qualified_entity_to_sym
+            .get(&("alpha".into(), "Pet".into()))
+            .expect("alpha Pet");
+        let sb = map
+            .qualified_entity_to_sym
+            .get(&("beta".into(), "Pet".into()))
+            .expect("beta Pet");
+        assert_ne!(sa, sb);
     }
 }

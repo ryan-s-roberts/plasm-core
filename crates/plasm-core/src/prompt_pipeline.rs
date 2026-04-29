@@ -13,7 +13,7 @@ use crate::prompt_render::{
 use crate::schema::CGS;
 use crate::symbol_tuning::{
     expand_expr_for_domain_session, expand_expr_for_parse, DomainExposureSession, FocusSpec,
-    IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+    IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ impl Default for PromptPipelineConfig {
     }
 }
 
-type IdentMetadataMap = HashMap<(crate::identity::EntityName, String), IdentMetadata>;
+type IdentMetadataMap = HashMap<IdentMetaKey, IdentMetadata>;
 
 struct FederatedExposureResolver<'exposure, 'cgs> {
     by_entity: HashMap<&'exposure str, &'cgs CGS>,
