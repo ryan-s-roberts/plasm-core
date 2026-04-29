@@ -2146,12 +2146,9 @@ mod tests {
         .unwrap();
 
         let visit = cgs.get_entity("Visit").unwrap();
-        let row = Value::Object(
-            [("noise".into(), Value::String("x".into()))]
-                .into_iter()
-                .collect::<IndexMap<_, _>>(),
-        );
-        let pred = Predicate::eq("pet_ref", row);
+        // Not an object / not narrowable to Pet identity — booleans are never EntityRef-compatible,
+        // unlike arbitrary `{ name: "x" }` maps which can accidentally satisfy EntityRefPayload shape.
+        let pred = Predicate::eq("pet_ref", true);
         let err = type_check_predicate(&pred, visit, &[], &cgs).unwrap_err();
         let TypeError::IncompatibleValue { field_type, .. } = err else {
             panic!("expected IncompatibleValue, got {err:?}");
