@@ -1,4 +1,5 @@
 use crate::cgs_federation::FederationDispatch;
+use crate::entity_ref_value::try_narrow_entity_row_to_entity_ref_value;
 use crate::{
     ArrayItemsSchema, CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr,
     EntityDef, EntityKey, Expr, FieldType, GetExpr, InputFieldSchema, InvokeExpr, PageExpr,
@@ -31,6 +32,59 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
             "a value matching {:?} for this slot — never the literal `$`",
             field_type
         ),
+    }
+}
+
+/// Like [`Value::is_compatible_with_field_type`], plus entity-row narrowing for [`FieldType::EntityRef`]
+/// when the CGS declares scalar identity fields on the target entity (see
+/// [`crate::entity_ref_value::try_narrow_entity_row_to_entity_ref_value`]).
+fn value_fits_field_type_entity_ref_aware(
+    value: &Value,
+    field_type: &FieldType,
+    cgs: &CGS,
+) -> bool {
+    if value.is_compatible_with_field_type(field_type) {
+        return true;
+    }
+    let FieldType::EntityRef { target } = field_type else {
+        return false;
+    };
+    let Some(ent) = cgs.get_entity(target) else {
+        return false;
+    };
+    try_narrow_entity_row_to_entity_ref_value(value, ent)
+        .map(|v| v.is_compatible_with_field_type(field_type))
+        .unwrap_or(false)
+}
+
+fn entity_ref_predicate_hint(target_name: &str, cgs: &CGS) -> String {
+    let Some(ent) = cgs.get_entity(target_name) else {
+        return format!("EntityRef({target_name})");
+    };
+    let keys = if ent.key_vars.is_empty() {
+        ent.id_field.as_str().to_string()
+    } else {
+        ent.key_vars
+            .iter()
+            .map(|k| k.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "EntityRef({target_name}) — expected an entity reference or scalar identity ({keys}); use a DOMAIN constructor, `anchor.<relation>`, or those identity fields — values that look like full entity rows without extractable scalars for those slots are not accepted here"
+    )
+}
+
+fn entity_ref_incompatible_value(
+    field_name: &str,
+    target_name: &str,
+    value: &Value,
+    cgs: &CGS,
+) -> TypeError {
+    TypeError::IncompatibleValue {
+        field: field_name.to_string(),
+        value_type: value.type_name().to_string(),
+        field_type: entity_ref_predicate_hint(target_name, cgs),
     }
 }
 
@@ -532,7 +586,7 @@ pub fn type_check_predicate(
         Predicate::True | Predicate::False => Ok(()),
 
         Predicate::Comparison { field, op, value } => {
-            type_check_comparison(field, *op, value, entity, cap_params)
+            type_check_comparison(field, *op, value, entity, cap_params, cgs)
         }
 
         Predicate::And { args } | Predicate::Or { args } => {
@@ -567,6 +621,7 @@ fn type_check_comparison(
     value: &crate::TypedComparisonValue,
     entity: &EntityDef,
     cap_params: &[InputFieldSchema],
+    cgs: &CGS,
 ) -> Result<(), TypeError> {
     let value = value.to_value();
     // DOMAIN teaching form: `p#=` with no RHS parses as null — skip strict checks so
@@ -623,11 +678,16 @@ fn type_check_comparison(
                 validate_multiselect_value(&value, av, field_name)?;
             }
         }
-        if !value.is_compatible_with_field_type(&param.field_type) {
-            return Err(TypeError::IncompatibleValue {
-                field: field_name.to_string(),
-                value_type: value.type_name().to_string(),
-                field_type: format!("{:?}", param.field_type),
+        if !value_fits_field_type_entity_ref_aware(&value, &param.field_type, cgs) {
+            return Err(match &param.field_type {
+                FieldType::EntityRef { target } => {
+                    entity_ref_incompatible_value(field_name, target.as_str(), &value, cgs)
+                }
+                _ => TypeError::IncompatibleValue {
+                    field: field_name.to_string(),
+                    value_type: value.type_name().to_string(),
+                    field_type: format!("{:?}", param.field_type),
+                },
             });
         }
         return Ok(());
@@ -663,11 +723,16 @@ fn type_check_comparison(
             return validate_multiselect_value(&value, allowed, field_name);
         }
 
-        if !value.is_compatible_with_field_type(&field.field_type) {
-            return Err(TypeError::IncompatibleValue {
-                field: field_name.to_string(),
-                value_type: value.type_name().to_string(),
-                field_type: format!("{:?}", field.field_type),
+        if !value_fits_field_type_entity_ref_aware(&value, &field.field_type, cgs) {
+            return Err(match &field.field_type {
+                FieldType::EntityRef { target } => {
+                    entity_ref_incompatible_value(field_name, target.as_str(), &value, cgs)
+                }
+                _ => TypeError::IncompatibleValue {
+                    field: field_name.to_string(),
+                    value_type: value.type_name().to_string(),
+                    field_type: format!("{:?}", field.field_type),
+                },
             });
         }
 
@@ -1172,6 +1237,7 @@ mod tests {
         EntityFieldName, Expr, FieldSchema, GetExpr, Predicate, QueryExpr, RelationSchema,
         ResourceSchema,
     };
+    use indexmap::IndexMap;
 
     fn create_test_schema() -> CGS {
         let mut cgs = CGS::new();
@@ -1922,6 +1988,179 @@ mod tests {
             matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
             "expected IncompatibleValue for limit, got {err:?}"
         );
+    }
+
+    #[test]
+    fn entity_ref_predicate_accepts_row_when_target_identity_scalars_present() {
+        let mut cgs = CGS::new();
+        let minimal_string_field = |name: &str| FieldSchema {
+            name: name.into(),
+            description: String::new(),
+            field_type: FieldType::String,
+            value_format: None,
+            allowed_values: None,
+            required: true,
+            array_items: None,
+            string_semantics: None,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+        };
+        cgs.add_resource(ResourceSchema {
+            name: "Pet".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![minimal_string_field("id")],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        })
+        .unwrap();
+
+        cgs.add_resource(ResourceSchema {
+            name: "Visit".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![
+                minimal_string_field("id"),
+                FieldSchema {
+                    name: "pet_ref".into(),
+                    description: String::new(),
+                    field_type: FieldType::EntityRef {
+                        target: "Pet".into(),
+                    },
+                    value_format: None,
+                    allowed_values: None,
+                    required: false,
+                    array_items: None,
+                    string_semantics: None,
+                    agent_presentation: None,
+                    mime_type_hint: None,
+                    attachment_media: None,
+                    wire_path: None,
+                    derive: None,
+                },
+            ],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        })
+        .unwrap();
+
+        let visit = cgs.get_entity("Visit").unwrap();
+        let row = Value::Object(
+            [
+                ("id".into(), Value::String("pet-99".into())),
+                ("noise".into(), Value::Integer(1)),
+            ]
+            .into_iter()
+            .collect::<IndexMap<_, _>>(),
+        );
+        let pred = Predicate::eq("pet_ref", row);
+        type_check_predicate(&pred, visit, &[], &cgs).unwrap();
+    }
+
+    #[test]
+    fn entity_ref_predicate_error_hints_identity_slots() {
+        let mut cgs = CGS::new();
+        let minimal_string_field = |name: &str| FieldSchema {
+            name: name.into(),
+            description: String::new(),
+            field_type: FieldType::String,
+            value_format: None,
+            allowed_values: None,
+            required: true,
+            array_items: None,
+            string_semantics: None,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+        };
+        cgs.add_resource(ResourceSchema {
+            name: "Pet".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![minimal_string_field("id")],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        })
+        .unwrap();
+
+        cgs.add_resource(ResourceSchema {
+            name: "Visit".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![
+                minimal_string_field("id"),
+                FieldSchema {
+                    name: "pet_ref".into(),
+                    description: String::new(),
+                    field_type: FieldType::EntityRef {
+                        target: "Pet".into(),
+                    },
+                    value_format: None,
+                    allowed_values: None,
+                    required: false,
+                    array_items: None,
+                    string_semantics: None,
+                    agent_presentation: None,
+                    mime_type_hint: None,
+                    attachment_media: None,
+                    wire_path: None,
+                    derive: None,
+                },
+            ],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        })
+        .unwrap();
+
+        let visit = cgs.get_entity("Visit").unwrap();
+        let row = Value::Object(
+            [("noise".into(), Value::String("x".into()))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        );
+        let pred = Predicate::eq("pet_ref", row);
+        let err = type_check_predicate(&pred, visit, &[], &cgs).unwrap_err();
+        let TypeError::IncompatibleValue { field_type, .. } = err else {
+            panic!("expected IncompatibleValue, got {err:?}");
+        };
+        assert!(
+            field_type.contains("EntityRef(Pet)"),
+            "field_type={field_type:?}"
+        );
+        assert!(field_type.contains("id"), "field_type={field_type:?}");
     }
 
     #[test]

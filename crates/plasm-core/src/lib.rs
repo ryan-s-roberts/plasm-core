@@ -136,7 +136,9 @@ pub use domain_term::{
     method_ref_for_domain_segment, resolve_parameter_slot, DomainTerm, EntityRef, MethodRef,
     ParameterSlot, Symbol,
 };
-pub use entity_ref_value::{EntityRefAtom, EntityRefPayload, EntityRefValueError};
+pub use entity_ref_value::{
+    try_narrow_entity_row_to_entity_ref_value, EntityRefAtom, EntityRefPayload, EntityRefValueError,
+};
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{
     lift_invoke_payloads_in_expr, ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr,

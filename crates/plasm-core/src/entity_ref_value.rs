@@ -4,6 +4,7 @@
 //! for values that are *intended* as `FieldType::EntityRef` payloads after parse/coercion — see
 //! [`EntityRefPayload::try_from_value`] and [`EntityRefPayload::to_value`].
 
+use crate::EntityDef;
 use crate::value::Value;
 use indexmap::IndexMap;
 use thiserror::Error;
@@ -82,9 +83,122 @@ impl EntityRefPayload {
     }
 }
 
+/// If `value` is a row-shaped object whose **top-level** fields include scalar identity slots for
+/// `target` (per [`EntityDef::key_vars`] or [`EntityDef::id_field`]), return an equivalent
+/// [`Value`] that satisfies [`EntityRefPayload::value_is_legal_shape`] for `EntityRef(target)`.
+///
+/// Used when a predicate RHS carries a bound **entity row** (get/query result) but the slot
+/// expects an **entity reference**: narrow to the canonical key shape without nested embeds.
+#[must_use]
+pub fn try_narrow_entity_row_to_entity_ref_value(
+    value: &Value,
+    target: &EntityDef,
+) -> Option<Value> {
+    let Value::Object(map) = value else {
+        return None;
+    };
+
+    fn scalar_atom(v: &Value) -> Option<Value> {
+        match v {
+            Value::String(_) | Value::Integer(_) | Value::Float(_) | Value::Bool(_) => {
+                Some(v.clone())
+            }
+            _ => None,
+        }
+    }
+
+    if target.key_vars.len() >= 2 {
+        let mut out = IndexMap::new();
+        for k in &target.key_vars {
+            let v = map.get(k.as_str())?;
+            out.insert(k.to_string(), scalar_atom(v)?);
+        }
+        let candidate = Value::Object(out);
+        return EntityRefPayload::value_is_legal_shape(&candidate).then_some(candidate);
+    }
+
+    if target.key_vars.len() == 1 {
+        let v = map.get(target.key_vars[0].as_str())?;
+        return scalar_atom(v);
+    }
+
+    let v = map.get(target.id_field.as_str())?;
+    scalar_atom(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EntityDef;
+    use crate::EntityFieldName;
+
+    #[test]
+    fn narrow_row_to_entity_ref_compound_keys() {
+        let target = EntityDef {
+            name: "Repo".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![
+                EntityFieldName::from("owner"),
+                EntityFieldName::from("name"),
+            ],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        };
+        let row = Value::Object(
+            vec![
+                ("owner".into(), Value::String("a".into())),
+                ("name".into(), Value::String("b".into())),
+                ("extra".into(), Value::String("noise".into())),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let narrow = try_narrow_entity_row_to_entity_ref_value(&row, &target).unwrap();
+        assert!(EntityRefPayload::value_is_legal_shape(&narrow));
+    }
+
+    #[test]
+    fn narrow_row_fails_when_keys_nested_not_scalar() {
+        let target = EntityDef {
+            name: "Repo".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![
+                EntityFieldName::from("owner"),
+                EntityFieldName::from("name"),
+            ],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+        };
+        let row = Value::Object(
+            vec![(
+                "owner".into(),
+                Value::Object(
+                    vec![("login".into(), Value::String("x".into()))]
+                        .into_iter()
+                        .collect(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        assert!(try_narrow_entity_row_to_entity_ref_value(&row, &target).is_none());
+    }
 
     #[test]
     fn roundtrip_compound() {

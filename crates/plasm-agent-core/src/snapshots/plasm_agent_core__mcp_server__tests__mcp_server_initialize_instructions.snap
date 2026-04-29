@@ -38,7 +38,7 @@ ident/node_ref/field ::= agent-chosen names for bound nodes and fields
 literal      ::= quoted string | number | bool | null | heredoc
 
 Node-ref continuation:
-- **Postfix transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, bracket projections, `.singleton()`, `.page_size`, heredoc render tails) are **one language** with `plasm_expr`: you may write `e1{{…}}.limit(20)` on a single line without an intermediate binding when the postfix applies to that surface expression.
+- **Postfix transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, bracket projections, `.singleton()`, `.page_size`, heredoc render tails) are **one language** with `plasm_expr`: you may write `e1{…}.limit(20)` on a single line without an intermediate binding when the postfix applies to that surface expression.
 - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`ident[field,…]`, `.limit`, `.aggregate`, `.group_by`, derive/`=>`, etc.) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.
 
 Program construction discipline:
