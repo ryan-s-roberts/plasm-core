@@ -2,6 +2,9 @@
 //!
 //! This module **only** splits a string into a primary fragment and a left-to-right sequence of
 //! postfix operations. It does not parse entity/query syntax — that remains [`super::parse`].
+//!
+//! **Bracket render** (`source[field,...] <<TAG … TAG`) is recognized by [`try_parse_bracket_render`]
+//! using delimiter depth so `<<` inside calls/parens is not mistaken for a render opener.
 
 /// Postfix operations peeled from the right of an expression, in **application order**
 /// (index `0` applies first to the primary, then `1`, …).
@@ -14,6 +17,76 @@ pub enum PlasmPostfixOp {
     Aggregate { args: String },
     GroupBy { args: String },
     Projection { fields: String },
+}
+
+/// `source[field,...] <<TAG` … `TAG` render surface (program DAG lowering).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BracketRender {
+    pub source: String,
+    /// Comma-separated field names from `[…]` (trimmed segments).
+    pub fields: String,
+    pub template: String,
+}
+
+/// `ident[field,...]` with no trailing junk after `]` (same contract as program DAG `parse_projection`).
+fn parse_projection_head(head: &str) -> Option<(&str, &str)> {
+    let head = head.trim_end();
+    let open = head.rfind('[')?;
+    if !head.ends_with(']') {
+        return None;
+    }
+    Some((head[..open].trim_end(), &head[open + 1..head.len() - 1]))
+}
+
+fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> {
+    let mut lines = rest.lines();
+    let tag = lines
+        .next()
+        .map(str::trim)
+        .ok_or_else(|| "render heredoc missing tag".to_string())?;
+    if tag.is_empty() {
+        return Err("render heredoc missing tag".to_string());
+    }
+    let body = lines.collect::<Vec<_>>().join("\n");
+    let end = body
+        .rfind(&format!("\n{tag}"))
+        .or_else(|| (body.trim() == tag).then_some(0))
+        .ok_or_else(|| format!("render heredoc <<{tag} is not closed"))?;
+    Ok(if end == 0 {
+        String::new()
+    } else {
+        body[..end].to_string()
+    })
+}
+
+/// If `rhs` is `source[field,...] <<TAG` … `TAG` at **delimiter depth 0** (so `<<` inside `method(…)`
+/// is not treated as render), return the parts. Otherwise `Ok(None)`.
+///
+/// Chooses the **rightmost** `<<` at depth 0 that yields a valid projection head and closed template.
+pub fn try_parse_bracket_render(rhs: &str) -> Result<Option<BracketRender>, String> {
+    let mut positions: Vec<usize> = rhs.match_indices("<<").map(|(i, _)| i).collect();
+    if positions.is_empty() {
+        return Ok(None);
+    }
+    positions.sort_unstable_by_key(|&i| std::cmp::Reverse(i));
+
+    for j in positions {
+        if delimiter_depth_before(rhs, j) != 0 {
+            continue;
+        }
+        let head = rhs[..j].trim_end();
+        let Some((source, fields)) = parse_projection_head(head) else {
+            continue;
+        };
+        let rest = &rhs[j + 2..];
+        let template = parse_render_template_after_tag_opener(rest)?;
+        return Ok(Some(BracketRender {
+            source: source.to_string(),
+            fields: fields.to_string(),
+            template,
+        }));
+    }
+    Ok(None)
 }
 
 /// Peel trailing postfix operators from `rhs`, returning `(primary, ops)`.
@@ -221,6 +294,30 @@ mod tests {
                     fields: "sha,message".into()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn bracket_render_parses_at_depth_zero() {
+        let r = try_parse_bracket_render("repo[p1,p2]<<T\nline one\nT").unwrap();
+        let br = r.expect("bracket render");
+        assert_eq!(br.source, "repo");
+        assert_eq!(br.fields, "p1,p2");
+        assert_eq!(br.template, "line one");
+    }
+
+    #[test]
+    fn bracket_render_ignores_heredoc_inside_parens() {
+        let r = try_parse_bracket_render("e3.m12(p76=<<M\nx\nM)").unwrap();
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn bracket_render_err_when_projection_ok_but_heredoc_unclosed() {
+        let e = try_parse_bracket_render("row[a,b]<<H\nno close").unwrap_err();
+        assert!(
+            e.contains("not closed") || e.contains("<<H"),
+            "unexpected err: {e}"
         );
     }
 }

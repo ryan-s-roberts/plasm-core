@@ -11,7 +11,7 @@ use crate::plasm_plan::{
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 use crate::plasm_plan_run::parse_plasm_surface_line_program;
-use plasm_core::expr_parser::{peel_postfix_suffixes, PlasmPostfixOp};
+use plasm_core::expr_parser::{peel_postfix_suffixes, try_parse_bracket_render, PlasmPostfixOp};
 use plasm_core::ChainStep;
 use plasm_core::Expr;
 use plasm_core::PlasmInputRef;
@@ -632,9 +632,9 @@ fn compile_node_expr(
             },
         }]);
     }
-    if let Some((source, fields, template)) = parse_render(rhs)? {
-        if state.contains(source) {
-            let columns = parse_field_list(fields)?
+    if let Some(br) = try_parse_bracket_render(rhs)? {
+        if state.contains(br.source.as_str()) {
+            let columns = parse_field_list(br.fields.as_str())?
                 .into_iter()
                 .map(OutputName::new)
                 .collect::<Result<Vec<_>, _>>()?;
@@ -644,8 +644,11 @@ fn compile_node_expr(
                 singleton: true,
                 page_size: None,
                 source: DagNodeSource::Compute {
-                    source: source.to_string(),
-                    op: ComputeOp::Render { columns, template },
+                    source: br.source,
+                    op: ComputeOp::Render {
+                        columns,
+                        template: br.template,
+                    },
                     schema: SyntheticResultSchema {
                         entity: Some("PlanRender".to_string()),
                         fields: vec![SyntheticFieldSchema {
@@ -1503,46 +1506,6 @@ fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
     } else {
         Err(format!("unknown Plasm program node `{node}`"))
     }
-}
-
-fn parse_projection(rhs: &str) -> Result<Option<(&str, &str)>, String> {
-    let Some(open) = rhs.rfind('[') else {
-        return Ok(None);
-    };
-    if !rhs.ends_with(']') {
-        return Ok(None);
-    }
-    Ok(Some((&rhs[..open], &rhs[open + 1..rhs.len() - 1])))
-}
-
-fn parse_render(rhs: &str) -> Result<Option<(&str, &str, String)>, String> {
-    let Some((head, rest)) = rhs.split_once("<<") else {
-        return Ok(None);
-    };
-    let head = head.trim();
-    if head.is_empty() {
-        // Heredoc-only / value RHS starts with `<<TAG` — not `source[field] <<TAG` render.
-        return Ok(None);
-    }
-    let Some((source, fields)) = parse_projection(head)? else {
-        return Err("render syntax must be source[field,...] <<TAG".to_string());
-    };
-    let mut lines = rest.lines();
-    let tag = lines
-        .next()
-        .map(str::trim)
-        .ok_or_else(|| "render heredoc missing tag".to_string())?;
-    let body = lines.collect::<Vec<_>>().join("\n");
-    let end = body
-        .rfind(&format!("\n{tag}"))
-        .or_else(|| (body.trim() == tag).then_some(0))
-        .ok_or_else(|| format!("render heredoc <<{tag} is not closed"))?;
-    let template = if end == 0 {
-        String::new()
-    } else {
-        body[..end].to_string()
-    };
-    Ok(Some((source, fields, template)))
 }
 
 fn parse_field_list(fields: &str) -> Result<Vec<String>, String> {
