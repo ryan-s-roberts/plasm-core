@@ -3668,7 +3668,7 @@ mod tests {
         let (c2, t2) = split_tsv_domain_contract_and_table(&table);
         assert_eq!(c2, None, "table-only TSV has no contract prefix");
         assert_eq!(t2, table);
-        exp.expose_entities(&[&cgs], &cgs, "", &["Order"]);
+        exp.expose_entities(&[&cgs], std::sync::Arc::new(cgs.clone()), "", &["Order"]);
         let delta = pipeline.render_domain_exposure_delta(&cgs, &exp, &["Order"], None);
         assert!(
             !delta.contains(DOMAIN_VALID_EXPR_MARKER),

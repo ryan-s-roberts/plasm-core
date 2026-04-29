@@ -13,18 +13,17 @@
 //! One MCP transport may host **many** logical sessions; `MCP-Session-Id` is transport correlation only.
 //! If the server-side execute session expires while the MCP transport stays open, the next
 //! `plasm_context` opens a **new** `(prompt_hash, session_id)` and refreshes the binding.
-//! For an active binding, `plasm_context` calls are **additive**: call it
-//! with the same `logical_session_ref` to append more `{api, entity}` capability picks (JSON field `seeds`) to the existing symbol
-//! space. Do not reinitialize or send a smaller pick list to "narrow" the session; that creates a new
-//! symbol space only when the prior binding is gone or the primary open truly changes.
+//! For an active binding, additional `plasm_context` calls may **append** new `{api, entity}`
+//! capability picks (`seeds`), or repeat the **same** `seeds` to refresh teaching text without adding picks.
+//! Do not shrink or rotate picks to “narrow” the session; that only makes sense when opening a new binding.
 //! Tenant MCP policy
 //! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
 //! Tool text includes
 //! the full Plasm instructions body only when the session is newly created server-side (`reused: false`); repeated
 //! opens with the same entry + capability picks omit the instruction body to avoid token churn.
-//! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` are append-only across
-//! successive `plasm_context` updates; they do not reshuffle. A new primary catalog open or logical session
-//! starts a new symbol space—always read tokens from the current session `prompt` / Plasm language text.
+//! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` grow **append-only**
+//! when you add new picks; they do not reshuffle. A new primary catalog open or logical session starts a new
+//! symbol space — always read tokens from the current session `prompt` / Plasm language text.
 //! A soft cap evicts one arbitrary older binding when the map grows past [`MAX_MCP_EXEC_BINDINGS`].
 //!
 //! Plasm language / instructions body (first update on `plasm_context` open plus append-only deltas when you add
@@ -64,6 +63,7 @@ use rust_mcp_sdk::schema::{
 use rust_mcp_sdk::McpServer;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
     apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
     ApplyCapabilitySeedsOutcome, CapabilitySeed,
@@ -84,47 +84,39 @@ use crate::plasm_plan_run::{
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
-    parse_plasm_session_short_resource_uri, plasm_code_plan_resource_uri, plasm_session_short_plan_uri,
-    ArtifactPayload, CodePlanArchiveDocument, LogicalSessionUriSegment,
+    parse_plasm_session_short_resource_uri, plasm_code_plan_resource_uri,
+    plasm_session_short_plan_uri, ArtifactPayload, CodePlanArchiveDocument,
+    LogicalSessionUriSegment,
 };
-use crate::execute_session::ExecuteSession;
-use chrono::Utc;
-use sha2::{Digest, Sha256};
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
+use chrono::Utc;
 use plasm_trace::RunArtifactArchiveRef;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 const MAX_MCP_EXEC_BINDINGS: usize = 512;
 
 /// Model-facing **`plasm`** tool description: **plan-only** program construction (session setup is in initialize instructions).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = "**Plan Plasm** (dry-run only) with **`program`** and **`logical_session_ref`** from **`plasm_context`**. \
-     Each call returns a **reviewable dry-run program plan** (topology + expected shapes). **No live API execution** — use **`plasm_run`** with the same arguments after the plan matches your intent. \
-     Use the Plasm syntax guide in initialize instructions and the **syntax table rows** from **`plasm_context`** (each row teaches symbols for one capability pick). \
-     **Mandatory for compositional programs:** any `plasm_program` with **more than one physical line of source** (multiple bindings and/or bindings plus final roots) MUST encode **literal U+000A newlines** inside the JSON `program` string—**never** rely on spaces between statements. Models often flatten multi-step programs onto one line; that breaks compilation. Self-check: split `program` on `\n`—you should see **one statement per line** until final comma-separated roots (which stay on their own line). \
-     For one direct read/search/get/relation/method/action whose result is already the answer, send one taught `plasm_expr`. For reports, joins, writes, markdown/html payloads, or any multi-step task, send **one multi-line `plasm_program`** in **one** `plasm` call. \
-     Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. \
-     **Postfix transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]` projection, `.singleton()`, `.page_size`) apply to the **same** surface expression language: e.g. `e1{p4=repo}.limit(20)` is valid on one line without an extra binding. **Aggregates / group_by** use explicit output names in each spec: e.g. `commits.group_by(author, n=count)` and `orders.aggregate(total=sum(amount), lo=min(price))`. **Brace predicates (`{…}`):** slots typed as **entity references** toward another resource expect a DOMAIN **constructor**, scalar identity fields, or **`anchor.<relation>`** — not an opaque full row unless its top-level identity fields match that entity’s keys (see schema `key_vars` / id). **Node-ref continuation:** when a binding is a taught surface row, `next = repo.<relation>` continues that row’s Plasm (same as inlining the anchor expression before `.<relation>`); the plan keeps an edge from `repo` to `next`. Do not extend **compute-only** nodes (`…[fields]`, `.limit`, …) with `ident.<relation>`—write the full expression from DOMAIN or bind a fresh surface node first. \
-     Tagged `<<TAG` heredocs require real newlines: opener line, body lines, then closing `TAG` line (or `TAG)` / `TAG,` / `TAG}`). Commas inside a heredoc body never split parallel roots. \
-     Reuse the same **`logical_session_ref`** for follow-ups; call **`plasm_context`** again only to append **new capability picks** (`api` + `entity` per pick; JSON field **`seeds`**).";
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = concat!(
+    include_str!("mcp_prompt/plasm_tool_head.txt"),
+    include_str!("mcp_prompt/shared_program_newlines.txt"),
+    include_str!("mcp_prompt/plasm_tool_tail.txt"),
+);
 
 /// Model-facing **`plasm_run`** tool description: live execution after plan review.
-pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str = "**Run Plasm** (live execution) with the same **`logical_session_ref`**, **`program`**, and optional **`reasoning`** as **`plasm`**. \
-     Call **only after** reviewing the **`plasm`** dry-run plan. This tool performs real HTTP/API work and may return **`resource_link`** / `_meta.plasm` snapshot references. \
-     **Same newline discipline as `plasm`:** compositional programs MUST use literal U+000A between physical lines—never space-separate multiple bindings on one line. Surface bindings may use **`ident.<relation>`** continuation like **`plasm`** (see `plasm` tool description). Bare comma-separated **multi-root** final expressions are supported here (not on **`plasm`**, which is plan-only for a single composed surface).";
+pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str =
+    include_str!("mcp_prompt/plasm_run_tool.txt");
 
 /// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
-pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = "Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** returns a **dry-run plan** for programs inside it; **`plasm_run`** performs **live execution** after you review that plan; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need. \
-     **`discover_capabilities`**: pass **`query`** as one short string (what the user wants) or as several strings. The reply is a small fenced **table**: **`api`** (which integration), **`entity`** (which resource type there), **`description`**. Each row is one **capability pick** — use them to fill **`plasm_context`**’s **`seeds`** array (same columns per object). \
-     **`plasm_context`**: pass a stable **`intent`** string and a non-empty **`seeds`** array. Each object is **one capability pick**: **`api`** names the integration, **`entity`** names the resource type (same shape as discovery rows). **List every pick your program needs on the first call**—if the task spans more than one integration, put **all** picks in the **same** **`seeds`** array; that is still **one** session and **one** program surface for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** on each object. **Append-only:** call again **only** with **new** picks you discover later; do not resend the full list every turn, do not shrink the set to “narrow”, and do not rotate **intent** per user message. The response gives **`logical_session_ref`** (`s0`, …). When several distinct **`api`** values load, one primary **`api`** orders the teaching table (alphabetically smallest name); symbols for every loaded capability stay in one program. \
-     Whenever **`plasm_context`** returns **new syntax table rows**, read that teaching table; it binds the syntax guide below to the symbols for those APIs. \
-     **`plasm`**: pass **`logical_session_ref`** and one **`program`** string. **Before you compose `program`:** if the task needs **more than one physical line** (multiple bindings and/or separate final roots), you MUST insert real newlines (U+000A) in that string—this is the most common agent failure mode. JSON/MCP serialize those as `\\n` on the wire; the server expects actual newline characters after parsing. **Never** emit multiple bindings separated only by spaces on one line. Good shape: `repo = e2(...)\ncommits = e1{p4=repo}.limit(20)\ncommits`. Bad shape: `repo = e2(...) commits = e1{p4=repo}.limit(20) commits`. Heredocs need a real newline right after `<<TAG`, then body lines, then the closing **`TAG`** line. This tool is **plan-only** (dry-run topology + expected shapes); it never performs live API calls. For reports, analysis, or writes, prefer **one composed multi-line `plasm_program`** over many one-line **`plasm`** calls. **Final roots** in one `plasm` call should be a **single** expression or one multi-line program; bare comma-separated **multi-root** programs belong on **`plasm_run`** after review. Never prefix final roots with `return`. Response order follows the final roots; execution order follows Plasm/runtime dependencies. \
-     **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs). \
-     **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows. \
-     **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.";
+pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
+    include_str!("mcp_prompt/workflow_head.txt"),
+    include_str!("mcp_prompt/shared_program_newlines.txt"),
+    include_str!("mcp_prompt/workflow_tail.txt"),
+);
 
 fn mcp_server_initialize_instructions() -> String {
     format!(
@@ -226,6 +218,7 @@ fn plan_node_count_from_dag(plan_dag: &serde_json::Value) -> usize {
         .unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)] // trace archive carries full execute-session + plan context
 async fn trace_archive_and_emit_code_plan_evaluate(
     hub: &crate::trace_hub::TraceHub,
     store: &crate::run_artifacts::RunArtifactStore,
@@ -304,6 +297,7 @@ async fn trace_archive_and_emit_code_plan_evaluate(
     .await;
 }
 
+#[allow(clippy::too_many_arguments)] // trace archive carries full execute-session + plan context
 async fn trace_archive_and_emit_code_plan_execute(
     hub: &crate::trace_hub::TraceHub,
     store: &crate::run_artifacts::RunArtifactStore,
@@ -712,7 +706,7 @@ impl PlasmMcpHandler {
         context_props.insert(
             "seeds".into(),
             json_schema_non_empty_object_array(
-                "Non-empty **`seeds`** array — each object is **one capability pick**: **`api`** (integration id) and **`entity`** (resource type). Include **every** pick this program needs in this call; different **`api`** values belong in the **same** array. Example: [{\"api\":\"github\",\"entity\":\"Issue\"},{\"api\":\"slack\",\"entity\":\"Channel\"}]. Per object you may use **`entry_id`** instead of **`api`**.",
+                "Non-empty **`seeds`** — each object is **one capability pick**: **`api`** (integration id) and **`entity`** (resource type). Include **every** pick this program needs on first open; several **`api`** values belong in the **same** array. Example: [{\"api\":\"github\",\"entity\":\"Issue\"},{\"api\":\"slack\",\"entity\":\"Channel\"}]. Per object you may use **`entry_id`** instead of **`api`**.",
                 vec!["api", "entity"],
             ),
         );
@@ -726,7 +720,7 @@ impl PlasmMcpHandler {
         plasm_program_props.insert(
             "program".into(),
             json_schema_string_type(
-                "JSON string: one Plasm line, a full multi-line `plasm_program`, or (on **`plasm_run` only`) comma-separated final roots. **Compositional programs:** MUST use literal newlines (U+000A) between physical lines—one `ident = ...` binding per line, then roots—never multiple bindings separated only by spaces on one line. Good: `repo = e2(...)\\ncommits = ...\\ncommits`. Bad: `repo = ... commits = ...` on one line. Heredocs span multiple physical lines inside this string. Use syntax rows from `plasm_context`. **Entity reference** fields in brace predicates: prefer constructors, scalar keys from DOMAIN, or `binding.<relation>` — full entity rows only when extractable identity fields match the target entity.",
+                "JSON string: one Plasm line, a full multi-line `plasm_program`, or (on **`plasm_run` only`) comma-separated final roots. **Compositional programs:** literal newlines (U+000A) between physical lines — one `ident = …` binding per line, then roots — never multiple bindings separated only by spaces on one line. Good: `repo = e2(...)\\ncommits = …\\ncommits`. Bad: `repo = … commits = …` on one line. Heredocs span multiple physical lines inside this string; use teaching rows from `plasm_context`. In brace predicates, entity-reference slots: DOMAIN constructors, scalar keys, or `binding.<relation>` — full rows only when identity fields match the target entity.",
             ),
         );
         plasm_program_props.insert(
@@ -739,7 +733,7 @@ impl PlasmMcpHandler {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
                 description: Some(
-                    "**Open or extend** one logical session. Send a stable **`intent`** string and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick** (integration + resource type). **Put every pick the program will use into `seeds` on the first open**—several different **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Append-only:** call again only with **new** picks; do not resend unchanged **`seeds`** entries each turn or shrink the list.".into(),
+                    "**Open or extend** one logical session. Send a stable **`intent`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick**. **List every pick on the first open** — several **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Adding picks:** call again with **additional** `{api, entity}` rows when you discover more integrations. **Same `seeds` again** is only for refreshing teaching text / symbols — not a substitute for picks you still need.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
                     vec!["intent".into(), "seeds".into()],
@@ -1431,9 +1425,9 @@ impl PlasmMcpHandler {
                                             let guidance = plasm_plan_review_guidance_lines(&dry);
                                             let markdown = format!(
                                                 "# Plasm program plan (dry-run)\n\n\
-Each **`plasm`** call is **plan-only** (no live API execution). \
+Each **`plasm`** response is **plan-only** (no live API execution). \
 Call **`plasm_run`** with the same **`logical_session_ref`** and **`program`** after this topology and result shapes match your intent. \
-After execution, follow **`resource_link`** / `_meta.plasm` when snapshots apply.\n\n\
+After **`plasm_run`**, follow **`resource_link`** / `_meta.plasm` when snapshots apply.\n\n\
 ```text\n{dry_text}\n```"
                                             );
                                             let plan_json = plasm_plan_dag_json(&dry);
@@ -2455,7 +2449,7 @@ fn mcp_initialize_result() -> InitializeResult {
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "Stable `intent` for the whole task; `plasm_context` once with capability picks (`seeds`), then `plasm` (dry-run plan) and `plasm_run` (execute) with the same `logical_session_ref`. Call `plasm_context` again only to append new picks—not every turn."
+                "Stable **`intent`**; **`plasm_context`** with **`seeds`**, then **`plasm`** (dry-run) and **`plasm_run`** (execute) with the same **`logical_session_ref`**. Call **`plasm_context`** again to **append** new picks or repeat **`seeds`** to refresh symbols — not every turn."
                     .into(),
             ),
             icons: vec![],
@@ -2595,6 +2589,20 @@ mod tests {
             .expect("plasm_context description")
             .clone();
         insta::assert_snapshot!("plasm_context_tool_description", context);
+    }
+
+    #[test]
+    fn plasm_context_tool_description_contract_append_vs_refresh() {
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let desc = tools
+            .iter()
+            .find(|t| t.name == "plasm_context")
+            .and_then(|t| t.description.as_deref())
+            .expect("plasm_context description");
+        assert!(
+            desc.contains("**Adding picks:**") && desc.contains("**Same `seeds` again**"),
+            "expected append vs same-seeds refresh distinction in plasm_context description"
+        );
     }
 
     #[test]

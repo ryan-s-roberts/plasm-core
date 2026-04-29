@@ -1740,10 +1740,11 @@ async fn run_validated_plan_phased(
         let mat = match node {
             ValidatedPlanNode::Surface(surface) => {
                 let parsed = if let Some(ir) = &surface.ir {
-                    ParsedExpr {
+                    let pe = ParsedExpr {
                         expr: ir.expr.clone(),
                         projection: ir.projection.clone(),
-                    }
+                    };
+                    instantiate_parsed_expr_plan_inputs(pe, &surface.uses_result, &materialized)?
                 } else if let Some(template) = &surface.ir_template {
                     let input_rows =
                         materialized_result_use_inputs(&materialized, &surface.uses_result)?;
@@ -1867,10 +1868,12 @@ async fn run_validated_plan_phased(
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
                 let _ = materialized_rows(&materialized, &relation.relation.source)?;
-                let parsed = ParsedExpr {
+                let pe = ParsedExpr {
                     expr: relation.relation.ir.expr.clone(),
                     projection: relation.relation.ir.projection.clone(),
                 };
+                let parsed =
+                    instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, &materialized)?;
                 let expr_label = relation
                     .relation
                     .ir
@@ -2219,6 +2222,34 @@ fn materialized_result_use_inputs(
         );
     }
     Ok(out)
+}
+
+/// Deserialize → [`instantiate_expr_template_value`] → deserialize so predicate/CML env holes (e.g.
+/// `__plasm_hole` `node_input`) become concrete row JSON **before** HTTP compile — parity with dry-run
+/// topology checks that assumed splattable scope rows.
+fn instantiate_parsed_expr_plan_inputs(
+    parsed: ParsedExpr,
+    uses_result: &[PlanResultUse],
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<ParsedExpr, String> {
+    if uses_result.is_empty() {
+        return Ok(parsed);
+    }
+    let input_rows = materialized_result_use_inputs(materialized, uses_result)?;
+    let scope = EvalScope::Root {
+        row: &serde_json::Value::Null,
+    };
+    let inputs = InputEnv { rows: &input_rows };
+    let env = PlanEvalEnv { scope, inputs };
+    let expr_json = serde_json::to_value(&parsed.expr)
+        .map_err(|e| format!("serialize expr for hole instantiation: {e}"))?;
+    let expr_json = instantiate_expr_template_value(&expr_json, &env)?;
+    let expr: Expr = serde_json::from_value(expr_json)
+        .map_err(|e| format!("deserialize expr after hole instantiation: {e}"))?;
+    Ok(ParsedExpr {
+        expr,
+        projection: parsed.projection,
+    })
 }
 
 fn instantiate_expr_template(

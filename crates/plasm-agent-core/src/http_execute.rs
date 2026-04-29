@@ -985,7 +985,7 @@ pub async fn federate_execute_session(
         .collect();
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     let n0 = exp.entities.len();
-    exp.expose_entities(&layers, ctx_arc.cgs.as_ref(), new_entry_id.as_str(), &refs);
+    exp.expose_entities(&layers, ctx_arc.cgs.clone(), new_entry_id.as_str(), &refs);
     let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
 
     if added.is_empty() {
@@ -1048,10 +1048,10 @@ pub async fn federate_execute_session(
 /// Markdown reminder so MCP clients see current `e#` bounds after each append wave (including no-op expands).
 fn expand_session_symbol_reminder(n: usize) -> String {
     if n == 0 {
-        "_Follow the session instruction text for valid `e#` / `m#` / `p#` shapes._\n".to_string()
+        "_Follow the DOMAIN table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n".to_string()
     } else {
         format!(
-            "_Entity symbols: `e1`…`e{n}` ({n} exposed, append-only order). Use them with the session instruction text from your open._\n",
+            "_Symbols `e1`…`e{n}` are append-only for this logical session. Use them only with the DOMAIN table in **this** response; if it is absent, call `plasm_context` again with the same seeds._\n",
             n = n
         )
     }
@@ -1132,22 +1132,36 @@ pub async fn expand_execute_domain_session(
             .clone();
         let normalized = normalize_execute_entity_names(group);
         let refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
-        exp.expose_entities(&layers, ctx.cgs.as_ref(), eid.as_str(), &refs);
+        exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
     }
     let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
 
     let n_total = exp.entities.len();
 
     if added.is_empty() {
+        let prompt_snapshot = sess.prompt_text.clone();
         sess.entities = exp.entities.clone();
         sess.domain_exposure = Some(exp);
         st.sessions
             .replace_session(&prompt_hash_p, &session_id_p, sess)
             .await;
-        return Ok(format!(
-            "_No new entities in this wave (already exposed)._\n\n{}",
-            expand_session_symbol_reminder(n_total)
-        ));
+        let mut out = String::from("_No new entities in this wave (already exposed)._\n\n");
+        out.push_str(&expand_session_symbol_reminder(n_total));
+        let mode = st.engine.prompt_pipeline().render_mode;
+        if mode.is_tsv() {
+            if let Some(inner) =
+                markdown_domain_fence_body(&prompt_snapshot, mode.markdown_fence_info_string())
+            {
+                let (_contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
+                let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
+                out.push_str("\n\n");
+                out.push_str(&wrapped);
+            }
+        } else {
+            out.push_str("\n\n");
+            out.push_str(&prompt_snapshot);
+        }
+        return Ok(out);
     }
 
     let cgs_primary = sess.cgs.as_ref();
@@ -1281,31 +1295,27 @@ pub async fn apply_capability_seeds(
             open_md.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
-            } else {
-                let mode = st.engine.prompt_pipeline().render_mode;
-                if mode.is_tsv() {
-                    if let Some(inner) = markdown_domain_fence_body(
-                        &created.prompt,
-                        mode.markdown_fence_info_string(),
-                    ) {
-                        let (_contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
-                        let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
-                        open_md.push_str("\n\n");
-                        open_md.push_str(&wrapped);
-                    } else {
-                        open_md.push_str("\n\n");
-                        open_md.push_str(&created.prompt);
-                    }
+            }
+            // Reused or fresh: always restate the current DOMAIN symbol table from the execute session
+            // prompt so MCP clients need not rely on earlier chat turns for `e#` / `m#` / `p#`.
+            let mode = st.engine.prompt_pipeline().render_mode;
+            if mode.is_tsv() {
+                if let Some(inner) =
+                    markdown_domain_fence_body(&created.prompt, mode.markdown_fence_info_string())
+                {
+                    let (_contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
+                    let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
+                    open_md.push_str("\n\n");
+                    open_md.push_str(&wrapped);
                 } else {
                     open_md.push_str("\n\n");
                     open_md.push_str(&created.prompt);
                 }
-            }
-            let domain_prompt_chars_added = if created.reused {
-                0u64
             } else {
-                open_md.chars().count() as u64
-            };
+                open_md.push_str("\n\n");
+                open_md.push_str(&created.prompt);
+            }
+            let domain_prompt_chars_added = open_md.chars().count() as u64;
             waves.push(CapabilityWaveOutcome {
                 mode: "open".to_string(),
                 entry_id: created.entry_id.clone(),

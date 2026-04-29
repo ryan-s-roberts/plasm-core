@@ -2010,7 +2010,7 @@ mod tests {
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
         let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Product"]);
-        exp.expose_entities(&layers, cgs.as_ref(), "linear", &["Category"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["Category"]);
         let session = ExecuteSession::new(
             "ph".into(),
             "p".into(),

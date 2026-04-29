@@ -808,9 +808,10 @@ pub(crate) fn build_ident_type_map(
 pub struct SymbolMap {
     sym_to_entity: IndexMap<String, String>,
     entity_to_sym: IndexMap<String, String>,
-    /// method symbol -> (domain entity, kebab label)
-    sym_to_method: IndexMap<String, (String, String)>,
-    method_to_sym: IndexMap<(String, String), String>,
+    /// method symbol -> (catalog entry_id, domain entity, kebab label)
+    sym_to_method: IndexMap<String, (String, String, String)>,
+    /// (registry entry_id or `""`, domain entity, kebab method label)
+    method_to_sym: IndexMap<(String, String, String), String>,
     /// Dotted-call alias map: `(path anchor entity, m#)` → kebab when method is registered on another domain
     /// (`Team(42).m22` → kebab when `m22` maps to a child-domain method on a path anchor).
     anchor_scoped_method_sym: HashMap<(String, String), String>,
@@ -861,9 +862,16 @@ impl SymbolMap {
         entity: &str,
         kebab: &str,
     ) -> Option<DomainTerm> {
+        let entry_key = cgs.entry_id.as_deref().unwrap_or("");
         let sym_str = self
             .method_to_sym
-            .get(&(entity.to_string(), kebab.to_string()))?;
+            .get(&(entry_key.to_string(), entity.to_string(), kebab.to_string()))
+            .or_else(|| {
+                self.method_to_sym.iter().find_map(|((eid, e, k), s)| {
+                    (e == entity && k == kebab && (eid.is_empty() || eid.as_str() == entry_key))
+                        .then_some(s)
+                })
+            })?;
         let idx = Symbol::parse_index(sym_str, 'm')?;
         let mref = method_ref_for_domain_segment(cgs, entity, kebab)?;
         Some(DomainTerm::Method(mref, idx))
@@ -1032,8 +1040,9 @@ impl SymbolMap {
     #[inline]
     pub fn method_sym(&self, entity: &str, kebab: &str) -> String {
         self.method_to_sym
-            .get(&(entity.to_string(), kebab.to_string()))
-            .cloned()
+            .iter()
+            .find(|((_, e, k), _)| e == entity && k == kebab)
+            .map(|(_, s)| s.clone())
             .unwrap_or_else(|| kebab.to_string())
     }
 
@@ -1053,7 +1062,7 @@ impl SymbolMap {
         }
         self.sym_to_method
             .get(label)
-            .map(|(d, k)| (d.as_str(), k.as_str()))
+            .map(|(_, d, k)| (d.as_str(), k.as_str()))
     }
 
     /// `[scope …]` fragment for DOMAIN `;;` legends only (no `optional params:` list).
@@ -1344,7 +1353,7 @@ fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
                 let boundary_ok =
                     after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
                 if boundary_ok {
-                    if let Some((ent, kebab)) = map.sym_to_method.get(sym.as_str()) {
+                    if let Some((_, ent, kebab)) = map.sym_to_method.get(sym.as_str()) {
                         if let Some(left_ent) = find_entity_before_dot(input, i) {
                             if left_ent == *ent {
                                 out.push('.');
@@ -1599,10 +1608,12 @@ pub struct DomainExposureSession {
     /// Catalog registry `entry_id` for each row in [`Self::entities`] (same length). Disambiguates
     /// which [`crate::CgsContext`] owns the CGS entity when multiple catalogs are federated.
     pub entity_catalog_entry_ids: Vec<String>,
+    /// Owning [`CGS`] per catalog `entry_id` (same keys as [`Self::entity_catalog_entry_ids`] values).
+    catalog_cgs: IndexMap<String, Arc<CGS>>,
     sym_to_entity: IndexMap<String, String>,
     entity_to_sym: IndexMap<String, String>,
-    method_to_sym: IndexMap<(String, String), String>,
-    sym_to_method: IndexMap<String, (String, String)>,
+    method_to_sym: IndexMap<(String, String, String), String>,
+    sym_to_method: IndexMap<String, (String, String, String)>,
     ident_to_sym: IndexMap<String, String>,
     sym_to_ident: IndexMap<String, String>,
     anchor_scoped_method_sym: HashMap<(String, String), String>,
@@ -1625,6 +1636,7 @@ impl Clone for DomainExposureSession {
         Self {
             entities: self.entities.clone(),
             entity_catalog_entry_ids: self.entity_catalog_entry_ids.clone(),
+            catalog_cgs: self.catalog_cgs.clone(),
             sym_to_entity: self.sym_to_entity.clone(),
             entity_to_sym: self.entity_to_sym.clone(),
             method_to_sym: self.method_to_sym.clone(),
@@ -1650,6 +1662,7 @@ impl DomainExposureSession {
         let mut s = Self {
             entities: Vec::new(),
             entity_catalog_entry_ids: Vec::new(),
+            catalog_cgs: IndexMap::new(),
             sym_to_entity: IndexMap::new(),
             entity_to_sym: IndexMap::new(),
             method_to_sym: IndexMap::new(),
@@ -1665,7 +1678,8 @@ impl DomainExposureSession {
             cap_param_to_sym: HashMap::new(),
             symbol_map_cache: RwLock::new(None),
         };
-        s.expose_entities(&[cgs], cgs, catalog_entry_id, entity_names_in_order);
+        let arc = Arc::new(cgs.clone());
+        s.expose_entities(&[cgs], arc, catalog_entry_id, entity_names_in_order);
         s
     }
 
@@ -1675,13 +1689,15 @@ impl DomainExposureSession {
     pub fn expose_entities(
         &mut self,
         cgs_layers: &[&CGS],
-        entity_defs: &CGS,
+        owning_cgs: Arc<CGS>,
         catalog_entry_id: &str,
         names: &[&str],
     ) {
         if cgs_layers.is_empty() {
             return;
         }
+        self.catalog_cgs
+            .insert(catalog_entry_id.to_string(), owning_cgs.clone());
         *self
             .symbol_map_cache
             .write()
@@ -1690,7 +1706,7 @@ impl DomainExposureSession {
             if self.entity_to_sym.contains_key(*n) {
                 continue;
             }
-            let Some(ent) = entity_defs.get_entity(n) else {
+            let Some(ent) = owning_cgs.get_entity(n) else {
                 continue;
             };
             if ent.abstract_entity {
@@ -1710,43 +1726,54 @@ impl DomainExposureSession {
 
     fn assign_new_methods_and_idents(&mut self, cgs_layers: &[&CGS]) {
         let full_refs: Vec<String> = self.entities.clone();
-        let full_refs: Vec<&str> = full_refs.iter().map(|s| s.as_str()).collect();
-        let full_set: HashSet<&str> = full_refs.iter().copied().collect();
+        let full_refs_str: Vec<&str> = full_refs.iter().map(|s| s.as_str()).collect();
 
-        let mut new_pairs: Vec<(String, String)> = Vec::new();
-        for cgs in cgs_layers {
-            for dom in &full_set {
-                let Some(names) = cgs.capability_names_by_domain().get(*dom) else {
+        let mut new_triples: Vec<(String, String, String)> = Vec::new();
+        for (dom, entry_id) in full_refs.iter().zip(self.entity_catalog_entry_ids.iter()) {
+            let dom = dom.as_str();
+            let entry_id = entry_id.as_str();
+            let Some(cgs) = self.catalog_cgs.get(entry_id) else {
+                continue;
+            };
+            let Some(names) = cgs.capability_names_by_domain().get(dom) else {
+                continue;
+            };
+            for cap_name in names {
+                let Some(cap) = cgs.capabilities.get(cap_name) else {
                     continue;
                 };
-                for cap_name in names {
-                    let Some(cap) = cgs.capabilities.get(cap_name) else {
-                        continue;
-                    };
-                    let kebab = capability_method_label_kebab(cap);
-                    let pair = (cap.domain.to_string(), kebab);
-                    if !self.method_to_sym.contains_key(&pair) {
-                        new_pairs.push(pair);
-                    }
+                let kebab = capability_method_label_kebab(cap);
+                let triple = (entry_id.to_string(), cap.domain.to_string(), kebab.clone());
+                if !self.method_to_sym.contains_key(&triple) {
+                    new_triples.push(triple);
                 }
             }
         }
-        new_pairs.sort();
+        new_triples.sort();
         let mut next_m = self.sym_to_method.len() + 1;
-        for pair in new_pairs {
+        for triple in new_triples {
             let sym = format!("m{next_m}");
             next_m += 1;
-            self.method_to_sym.insert(pair.clone(), sym.clone());
-            self.sym_to_method.insert(sym, pair);
+            self.method_to_sym.insert(triple.clone(), sym.clone());
+            self.sym_to_method.insert(sym, triple);
         }
 
-        self.assign_new_slot_symbols(cgs_layers, &full_refs);
+        self.assign_new_slot_symbols(cgs_layers, &full_refs_str);
     }
 
-    fn assign_new_slot_symbols(&mut self, cgs_layers: &[&CGS], full_refs: &[&str]) {
+    fn assign_new_slot_symbols(&mut self, _cgs_layers: &[&CGS], full_refs: &[&str]) {
         let mut collected: Vec<IdentMetadata> = Vec::new();
-        for cgs in cgs_layers {
-            collected.extend(collect_slot_metas(cgs, full_refs));
+        let full_set: HashSet<&str> = full_refs.iter().copied().collect();
+        for i in 0..self.entities.len() {
+            let dom = self.entities[i].as_str();
+            if !full_set.contains(dom) {
+                continue;
+            }
+            let entry_id = self.entity_catalog_entry_ids[i].as_str();
+            let Some(cgs) = self.catalog_cgs.get(entry_id) else {
+                continue;
+            };
+            collected.extend(collect_slot_metas(cgs.as_ref(), &[dom]));
         }
         let mut by_fp: IndexMap<String, IdentMetadata> = IndexMap::new();
         for m in collected {
@@ -1854,64 +1881,72 @@ impl DomainExposureSession {
     }
 
     fn rebuild_anchor_scoped_method_labels(&mut self, cgs_layers: &[&CGS]) {
+        let _ = cgs_layers;
         self.anchor_scoped_method_sym.clear();
         let full_refs: Vec<&str> = self.entities.iter().map(|s| s.as_str()).collect();
         let full_set: HashSet<&str> = full_refs.iter().copied().collect();
-        for cgs in cgs_layers {
-            for dom in &full_set {
-                let Some(names) = cgs.capability_names_by_domain().get(*dom) else {
+        for i in 0..self.entities.len() {
+            let dom = self.entities[i].as_str();
+            if !full_set.contains(dom) {
+                continue;
+            }
+            let entry_id = self.entity_catalog_entry_ids[i].as_str();
+            let Some(cgs) = self.catalog_cgs.get(entry_id) else {
+                continue;
+            };
+            let Some(names) = cgs.capability_names_by_domain().get(dom) else {
+                continue;
+            };
+            for cap_name in names {
+                let Some(cap) = cgs.capabilities.get(cap_name) else {
                     continue;
                 };
-                for cap_name in names {
-                    let Some(cap) = cgs.capabilities.get(cap_name) else {
-                        continue;
-                    };
-                    if cap.kind != CapabilityKind::Create {
-                        continue;
-                    }
-                    let pvars =
-                        crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0);
-                    if pvars.len() != 1 {
-                        continue;
-                    }
-                    let pv = pvars[0].as_str();
-                    let Some(anchor_lower) = pv.strip_suffix("_id") else {
-                        continue;
-                    };
-                    let Some(anchor_entity) = cgs
-                        .entities
-                        .keys()
-                        .find(|e| e.as_str().to_lowercase() == anchor_lower)
-                    else {
-                        continue;
-                    };
-                    let anchor = anchor_entity.as_str();
-                    if !full_set.contains(anchor) {
-                        continue;
-                    }
-                    if cap.domain.as_str() == anchor {
-                        continue;
-                    }
-                    let Some(is) = cap.input_schema.as_ref() else {
-                        continue;
-                    };
-                    let InputType::Object { fields, .. } = &is.input_type else {
-                        continue;
-                    };
-                    let req: Vec<_> = fields.iter().filter(|f| f.required).collect();
-                    if req.len() != 1 || req[0].field_type != FieldType::String {
-                        continue;
-                    }
-                    let kebab = capability_method_label_kebab(cap);
-                    let Some(sym) = self
-                        .method_to_sym
-                        .get(&(cap.domain.to_string(), kebab.clone()))
-                    else {
-                        continue;
-                    };
-                    self.anchor_scoped_method_sym
-                        .insert((anchor.to_string(), sym.clone()), kebab);
+                if cap.kind != CapabilityKind::Create {
+                    continue;
                 }
+                let pvars =
+                    crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0);
+                if pvars.len() != 1 {
+                    continue;
+                }
+                let pv = pvars[0].as_str();
+                let Some(anchor_lower) = pv.strip_suffix("_id") else {
+                    continue;
+                };
+                let Some(anchor_entity) = cgs
+                    .entities
+                    .keys()
+                    .find(|e| e.as_str().to_lowercase() == anchor_lower)
+                else {
+                    continue;
+                };
+                let anchor = anchor_entity.as_str();
+                if !full_set.contains(anchor) {
+                    continue;
+                }
+                if cap.domain.as_str() == anchor {
+                    continue;
+                }
+                let Some(is) = cap.input_schema.as_ref() else {
+                    continue;
+                };
+                let InputType::Object { fields, .. } = &is.input_type else {
+                    continue;
+                };
+                let req: Vec<_> = fields.iter().filter(|f| f.required).collect();
+                if req.len() != 1 || req[0].field_type != FieldType::String {
+                    continue;
+                }
+                let kebab = capability_method_label_kebab(cap);
+                let Some(sym) = self.method_to_sym.get(&(
+                    entry_id.to_string(),
+                    cap.domain.to_string(),
+                    kebab.clone(),
+                )) else {
+                    continue;
+                };
+                self.anchor_scoped_method_sym
+                    .insert((anchor.to_string(), sym.clone()), kebab);
             }
         }
     }
@@ -2282,7 +2317,7 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let mut s = DomainExposureSession::new(&cgs, "", &["Pet"]);
         let pet_sym = s.to_symbol_map().entity_sym("Pet");
-        s.expose_entities(&[&cgs], &cgs, "", &["Store"]);
+        s.expose_entities(&[&cgs], Arc::new(cgs.clone()), "", &["Store"]);
         assert_eq!(pet_sym, s.to_symbol_map().entity_sym("Pet"));
         assert_ne!(pet_sym, s.to_symbol_map().entity_sym("Store"));
     }
@@ -2300,7 +2335,7 @@ mod tests {
         let map0 = s.to_symbol_map();
         let display_p = map0.ident_sym_entity_field("Profile", "display_name");
         let get_m = map0.method_sym("Profile", "get");
-        s.expose_entities(&[&cgs], &cgs, "", &["RecordedContent"]);
+        s.expose_entities(&[&cgs], Arc::new(cgs.clone()), "", &["RecordedContent"]);
         let map1 = s.to_symbol_map();
         assert_eq!(
             map1.ident_sym_entity_field("Profile", "display_name"),
