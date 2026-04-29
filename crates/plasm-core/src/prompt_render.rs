@@ -2886,7 +2886,7 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     let structure_lines = format!(
         "Output choice:\n\
   - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.\n\
-  - For **compositional** work (multiple steps, joins, reporting, summarization, writes, or any structured payload like markdown/html), use a **multi-line `plasm_program`** by default—do not chain many one-line `plasm` calls.\n\
+  - For **compositional** work (multiple steps, joins, reporting, summarization, writes, or any structured textual payload—markdown, HTML, plain text, JSON text, CSV-like lines, etc.), use a **multi-line `plasm_program`** by default—do not chain many one-line `plasm` calls.\n\
   - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, narrow with `projection` and `postfix` (including `transform` and bracket/heredoc tails), then return a small synthesized result.\n\
 \n\
 Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
@@ -2923,11 +2923,13 @@ Examples (illustrations only; `agg_spec` / `agg_specs` / `transform` above are a
 Node-ref continuation:\n\
   - **`postfix`** (see `postfix` and `transform` above) applies to the same surface expression as `plasm_expr`; you may chain suffixes on one line without an intermediate binding when they attach to that expression (e.g. `e1{{…}}.limit(20)`).\n\
   - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`projection`, `transform`, derive `=>`, …) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.\n\
+  - **`[fields] <<TAG … TAG`** is postfix like `.limit`: suffix it after the expression whose projected **`rows`** you want to render (Minijinja); see **Bracket render / synthesis** below.\n\
 \n\
 Program construction discipline:\n\
   - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `\n` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)\n\
   - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.\n\
   - Prefer narrowing with `projection` and `postfix` (including `transform`) and heredoc render tails over returning raw broad lists.\n\
+  - When **summarizing or formatting rows from queries/relations in this program**, prefer **bracket-render** (`…[fields] <<TAG …`) so the plan owns the transformation; **static** tagged heredocs remain appropriate for **fixed** payloads not derived from those rows.\n\
   - Return at most small final roots unless the user explicitly asks for raw rows.\n\
   - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
   - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
@@ -2984,7 +2986,7 @@ Catalogue rules:\n\
         "  - {projection_form} — non-empty scalar subset. Dot after `{entity}(id)` means relations or taught `{method}`, not scalar fields."
     );
     s.push_str(
-        "  - **Bracket render** (`label[p#,…] <<TAG … TAG` after projection): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. Output is one synthetic row shaped like `{\"content\": \"…\"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.\n",
+        "  - **Bracket render / synthesis** (`label[p#,…] <<TAG … TAG` after projection): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. The rendered **`content`** may be **any** textual format (plain text, markdown, HTML fragments, structured snippets, JSON **text**, logs—not markdown-specific); guard accidental Jinja tokens with `{% raw %}…{% endraw %}`. Output is one synthetic row shaped like `{\"content\": \"…\"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.\n",
     );
     let _ = writeln!(
         s,
