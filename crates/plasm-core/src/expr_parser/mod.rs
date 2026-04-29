@@ -2272,6 +2272,36 @@ mod tests {
         );
     }
 
+    /// Short `TAG` closes on the first matching line — an interior line equal to `TAG` truncates the body (RFC822/MIME hazard).
+    #[test]
+    fn parse_structured_heredoc_tag_collision_truncates_at_first_matching_line() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let input = "<<T\nbefore\nT\nafter\nT";
+        let mut p = Parser::new(input, &cgs);
+        assert!(p.structured_heredoc_starts_here());
+        let v = p.parse_structured_heredoc().unwrap();
+        assert_eq!(v, Value::String("before\n".into()));
+        assert_eq!(&p.input[p.pos..], "\nafter\nT");
+    }
+
+    /// Long opaque tag: interior line `T` does not close — full payload until final close line.
+    #[test]
+    fn parse_structured_heredoc_opaque_tag_preserves_interior_close_like_line() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let input = "<<PLASM_T\nbefore\nT\nafter\nPLASM_T";
+        let mut p = Parser::new(input, &cgs);
+        assert!(p.structured_heredoc_starts_here());
+        let v = p.parse_structured_heredoc().unwrap();
+        assert_eq!(v, Value::String("before\nT\nafter\n".into()));
+        assert!(p.input[p.pos..].is_empty());
+    }
+
     #[test]
     fn parse_structured_heredoc_tagged_glued_close_paren_fragment() {
         if !has_petstore() {

@@ -343,7 +343,7 @@ fn correction_unterminated_heredoc(prefix: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "Tagged heredoc `<<{tag}` is not closed: after the body, add `{tag}` with a **hard newline** after it before `)` / `,` / `}}`, or put `{tag}` immediately before that delimiter on the same line. For normal `\"…\"` add the closing quote.",
+        "Tagged heredoc `<<{tag}` is not closed: after the body, add `{tag}` with a **hard newline** after it before `)` / `,` / `}}`, or put `{tag}` immediately before that delimiter on the same line. For normal `\"…\"` add the closing quote. If you already wrote `{tag}` but parse still reaches end-of-input here, check whether **another line inside the body trimmed to `{tag}`** — the heredoc closes on the **first** such line; use a longer opaque `TAG` for MIME/RFC822 or unconstrained text.",
         tag = tag
     ))
 }
@@ -2166,6 +2166,11 @@ mod tests {
         assert!(
             se.correction.contains("`NOTE`") && se.correction.contains("hard newline"),
             "expected explicit tag and newline hint in correction: {}",
+            se.correction
+        );
+        assert!(
+            se.correction.contains("first") && se.correction.contains("opaque"),
+            "expected tag-collision hint for unterminated tagged heredoc: {}",
             se.correction
         );
     }
