@@ -1420,9 +1420,9 @@ fn trace_expr_api_meta(expr: &plasm_core::Expr) -> (Option<String>, String) {
 
 fn trace_api_entry_id_for_execute_root(sess: &ExecuteSession, root_entity: &str) -> String {
     if let Some(fed) = sess.federation_dispatch() {
-        fed.catalog_entry_id_for_entity(root_entity)
-            .unwrap_or(sess.entry_id.as_str())
-            .to_string()
+        fed.qualified_entity_for_exposed_entity(root_entity)
+            .map(|qk| qk.catalog_entry_id)
+            .unwrap_or_else(|| sess.entry_id.clone())
     } else {
         sess.entry_id.clone()
     }

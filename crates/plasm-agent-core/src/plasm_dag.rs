@@ -17,6 +17,7 @@ use plasm_core::expr_parser::{
 use plasm_core::schema::EntityDef;
 use plasm_core::ChainStep;
 use plasm_core::Expr;
+use plasm_core::CGS;
 use plasm_core::PlasmInputRef;
 use plasm_core::Predicate;
 use plasm_core::PromptPipelineConfig;
@@ -1051,7 +1052,12 @@ fn lookup_relation_chain_meta(
     chain: &plasm_core::ChainExpr,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
     let source_entity = chain.source.primary_entity();
-    let ent = session.cgs.get_entity(source_entity).ok_or_else(|| {
+    let fed_holder = session.federation_dispatch();
+    let cgs: &CGS = match fed_holder.as_ref() {
+        Some(fed) => fed.resolve_cgs(source_entity, session.cgs.as_ref()),
+        None => session.cgs.as_ref(),
+    };
+    let ent = cgs.get_entity(source_entity).ok_or_else(|| {
         format!("unknown entity `{source_entity}` (Plasm program relation continuation)")
     })?;
     let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
@@ -1061,23 +1067,20 @@ fn lookup_relation_chain_meta(
         )
     })?;
     let target_ent = rel.target_resource.as_str();
-    let entry_id: String = session
+    let qe = session
         .domain_exposure
         .as_ref()
-        .and_then(|e| e.catalog_entry_id_for_entity(target_ent))
-        .map(str::to_string)
-        .unwrap_or_else(|| session.entry_id.clone());
+        .and_then(|e| e.qualified_entity_for_exposed_entity(target_ent))
+        .map(QualifiedEntityKey::from)
+        .unwrap_or_else(|| QualifiedEntityKey {
+            entry_id: session.entry_id.clone(),
+            entity: target_ent.to_string(),
+        });
     let cardinality = match rel.cardinality {
         plasm_core::Cardinality::One => RelationCardinality::One,
         plasm_core::Cardinality::Many => RelationCardinality::Many,
     };
-    Ok((
-        QualifiedEntityKey {
-            entry_id,
-            entity: target_ent.to_string(),
-        },
-        cardinality,
-    ))
+    Ok((qe, cardinality))
 }
 
 fn compile_surface_node(
@@ -2093,23 +2096,40 @@ fn infer_surface_contract(
     ),
     String,
 > {
+    if let Expr::Chain(chain) = expr {
+        let (qe, cardinality) = lookup_relation_chain_meta(session, chain)?;
+        let shape = match cardinality {
+            RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
+            RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
+        };
+        return Ok((PlanNodeKind::Query, qe, EffectClass::Read, shape));
+    }
+
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
     if let Expr::Query(q) = expr {
         if let Some(capability_name) = q.capability_name.as_ref() {
-            if let Some(cap) = session.cgs.capabilities.get(capability_name.as_str()) {
+            let fed_holder = session.federation_dispatch();
+            let q_cgs: &CGS = match fed_holder.as_ref() {
+                Some(fed) => fed.resolve_cgs(q.entity.as_str(), session.cgs.as_ref()),
+                None => session.cgs.as_ref(),
+            };
+            if let Some(cap) = q_cgs.capabilities.get(capability_name.as_str()) {
                 if cap.kind == plasm_core::CapabilityKind::Search {
                     kind = PlanNodeKind::Search;
                 }
             }
         }
     }
-    let entry_id = session
+    let qe = session
         .domain_exposure
         .as_ref()
-        .and_then(|e| e.catalog_entry_id_for_entity(entity.as_str()))
-        .map(str::to_string)
-        .unwrap_or_else(|| session.entry_id.clone());
-    Ok((kind, QualifiedEntityKey { entry_id, entity }, effect, shape))
+        .and_then(|e| e.qualified_entity_for_exposed_entity(entity.as_str()))
+        .map(QualifiedEntityKey::from)
+        .unwrap_or_else(|| QualifiedEntityKey {
+            entry_id: session.entry_id.clone(),
+            entity,
+        });
+    Ok((kind, qe, effect, shape))
 }
 
 fn infer_surface_contract_from_expr(
@@ -2154,11 +2174,8 @@ fn infer_surface_contract_from_expr(
             EffectClass::SideEffect,
             crate::plasm_plan::ResultShape::SideEffectAck,
         ),
-        Expr::Chain(_) => (
-            PlanNodeKind::Query,
-            "Chain".to_string(),
-            EffectClass::Read,
-            crate::plasm_plan::ResultShape::List,
+        Expr::Chain(_) => unreachable!(
+            "infer_surface_contract routes Expr::Chain before infer_surface_contract_from_expr"
         ),
         Expr::Page(_) => (
             PlanNodeKind::Query,

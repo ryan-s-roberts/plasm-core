@@ -73,7 +73,19 @@ impl FederationDispatch {
         self.by_entry.get(eid)
     }
 
+    /// Owning `(catalog entry id, CGS entity name)` for an exposed federation entity name.
+    ///
+    /// Prefer this over [`Self::catalog_entry_id_for_entity`] at planner boundaries.
+    pub fn qualified_entity_for_exposed_entity(&self, entity: &str) -> Option<QualifiedEntityKey> {
+        self.entity_to_entry
+            .get(entity)
+            .map(|eid| QualifiedEntityKey::new(eid.clone(), entity.to_string()))
+    }
+
     /// Owning registry `entry_id` for an exposed entity name (trace / dispatch labeling).
+    #[deprecated(
+        note = "use qualified_entity_for_exposed_entity — catalog ownership is (entry_id, entity)"
+    )]
     pub fn catalog_entry_id_for_entity(&self, entity: &str) -> Option<&str> {
         self.entity_to_entry.get(entity).map(|s| s.as_str())
     }

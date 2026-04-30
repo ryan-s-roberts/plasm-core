@@ -143,6 +143,15 @@ pub struct QualifiedEntityKey {
     pub entity: String,
 }
 
+impl From<plasm_core::QualifiedEntityKey> for QualifiedEntityKey {
+    fn from(q: plasm_core::QualifiedEntityKey) -> Self {
+        Self {
+            entry_id: q.catalog_entry_id,
+            entity: q.entity,
+        }
+    }
+}
+
 /// Reference to a prior node for symbolic `uses_result` edges.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanResultUse {

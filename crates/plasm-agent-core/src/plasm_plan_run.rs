@@ -1435,11 +1435,11 @@ fn ensure_relation_expr_matches_plan(
         ));
     }
     let source_entity = chain.source.primary_entity();
-    let source_cgs = es
-        .contexts_by_entry
-        .get(&relation.relation.target.entry_id)
-        .map(|ctx| ctx.cgs.as_ref())
-        .unwrap_or(es.cgs.as_ref());
+    let fed_holder = es.federation_dispatch();
+    let source_cgs: &CGS = match fed_holder.as_ref() {
+        Some(fed) => fed.resolve_cgs(source_entity, es.cgs.as_ref()),
+        None => es.cgs.as_ref(),
+    };
     let Some(source_def) = source_cgs.get_entity(source_entity) else {
         return Err(format!(
             "plan.nodes[{index}].relation source entity {source_entity:?} is not present"

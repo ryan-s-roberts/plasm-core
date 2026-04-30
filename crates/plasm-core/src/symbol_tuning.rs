@@ -2112,11 +2112,28 @@ impl DomainExposureSession {
         (*self.symbol_map_arc()).clone()
     }
 
+    /// Owning `(catalog entry id, CGS entity name)` for an exposed **entity name** (aligned with
+    /// `e#` / DOMAIN rows). Prefer this over [`Self::catalog_entry_id_for_entity`] — catalog
+    /// ownership is always a pair, never “catalog derivable from entity string alone.”
+    pub fn qualified_entity_for_exposed_entity(
+        &self,
+        entity_name: &str,
+    ) -> Option<crate::QualifiedEntityKey> {
+        self.entities
+            .iter()
+            .zip(self.entity_catalog_entry_ids.iter())
+            .find(|(e, _)| e.as_str() == entity_name)
+            .map(|(_, id)| crate::QualifiedEntityKey::new(id.clone(), entity_name.to_string()))
+    }
+
     /// Registry `entry_id` for an exposed **entity name** (aligned with `e#` / DOMAIN table order).
     ///
     /// In federated sessions, each exposed row is tied to one loaded catalog; this is the
     /// authoritative owning id for that symbol row. Returns `None` if `entity` is not in
     /// [`Self::entities`].
+    #[deprecated(
+        note = "use qualified_entity_for_exposed_entity — catalog ownership is (entry_id, entity)"
+    )]
     pub fn catalog_entry_id_for_entity(&self, entity: &str) -> Option<&str> {
         self.entities
             .iter()
