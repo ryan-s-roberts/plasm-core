@@ -2261,6 +2261,13 @@ fn looks_like_plasm_effect_template(rhs: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    //! DAG compile + dry-run **unit** tests (no HTTP).
+    //!
+    //! Prefer `cargo test -p plasm-e2e --test plasm_language_matrix` for **author-visible**
+    //! “this program means X” semantics on the language-matrix fixture. Keep tests here for
+    //! **compiler/plan invariants** (splitting, diagnostics, federation quirks, GitHub-shaped
+    //! graphs). When a case overlaps the matrix, cite the matrix row id on the test (e.g.
+    //! `lang_domain_symbol_page_size`).
     use super::*;
     use crate::plasm_plan_run::{evaluate_plasm_plan_dry, symbol_map_for_plasm_surface_parse};
     use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig, CGS};
@@ -2349,6 +2356,7 @@ mod tests {
         assert_eq!(qe["entity"], "LangLine");
     }
 
+    /// Matrix analogue: parallel comma roots + search sugar (`lang_derive_map_parallel`, `lang_search`).
     #[test]
     fn splits_bare_comma_plasm_roots() {
         let roots = split_bare_plasm_roots(r#"LangItem, LangItem~"Alpha""#).expect("split");
@@ -2393,6 +2401,7 @@ mod tests {
         );
     }
 
+    /// Matrix: `lang_domain_symbol_page_size` (surface `e#.page_size` + plan node `page_size`).
     #[test]
     fn surface_line_plan_compiles_e1_with_page_size() {
         let session = test_session();
@@ -2463,6 +2472,7 @@ mod tests {
         );
     }
 
+    /// Matrix: heredoc / render delimiter hygiene (`lang_bindings_render`, `lang_heredoc_binding`).
     #[test]
     fn split_top_level_does_not_split_commas_inside_tagged_heredoc() {
         let parts = split_top_level("fn(<<T\na,b,c\nT\n), bar", ',').expect("split");
@@ -2500,6 +2510,7 @@ mod tests {
         );
     }
 
+    /// Matrix: heredoc binding + parallel roots (`lang_heredoc_binding`).
     #[test]
     fn multiline_heredoc_binding_then_parallel_roots_compiles() {
         let session = test_session();

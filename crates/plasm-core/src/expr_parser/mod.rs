@@ -2060,6 +2060,10 @@ fn extract_primary_id(expr: &Expr) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    //! Micro **parser** tests: tokenization, postfix peel interaction, error paths, tiny AST shapes.
+    //! Prefer **minimal** CGS (petstore when present). Anything that states “this **author program**
+    //! means X” end-to-end should have a counterpart row in `plasm-e2e` `plasm_language_matrix`
+    //! — cite the matrix row id on semantic parallels (e.g. `lang_query_all`).
     use super::*;
     use crate::schema::capability_method_label_kebab;
     use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
@@ -2097,6 +2101,7 @@ mod tests {
         assert_eq!(g.reference.primary_slot_str(), u);
     }
 
+    /// Semantic parallel: matrix `lang_get_by_id` (LangItem); petstore Get shape only.
     #[test]
     fn parse_get_by_id() {
         if !has_petstore() {
@@ -2124,6 +2129,7 @@ mod tests {
         }
     }
 
+    /// Semantic parallel: matrix `lang_query_all` (bare entity query).
     #[test]
     fn parse_query_all() {
         if !has_petstore() {
@@ -2138,6 +2144,7 @@ mod tests {
         }
     }
 
+    /// Pagination IR micro-case; matrix touches paging via `lang_domain_symbol_page_size`.
     #[test]
     fn parse_page_continuation() {
         if !has_petstore() {

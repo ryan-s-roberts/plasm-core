@@ -343,6 +343,9 @@ fn matching_paren_close(s: &str, open_idx: usize) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
+    //! Postfix **peel order** only (no full DAG). Full `.limit` / `.sort` semantics live in
+    //! `plasm-e2e` `plasm_language_matrix` rows such as `lang_sort_limit`, `lang_limit_projection`,
+    //! `lang_surface_line_limit`.
     use super::*;
 
     #[test]
@@ -353,6 +356,7 @@ mod tests {
         assert_eq!(ops, vec![PlasmPostfixOp::Limit(20)]);
     }
 
+    /// Matrix analogue: `lang_sort_limit` / postfix ordering (peel vs planner lowering).
     #[test]
     fn peel_limit_then_sort() {
         let (p, ops) = peel_postfix_suffixes("a.limit(5).sort(x, desc)").unwrap();
@@ -381,6 +385,7 @@ mod tests {
         );
     }
 
+    /// Matrix analogue: `lang_limit_projection` (projection token peel).
     #[test]
     fn peel_projection_and_limit() {
         let (p, ops) = peel_postfix_suffixes("e1{}.limit(10)[sha,message]").unwrap();

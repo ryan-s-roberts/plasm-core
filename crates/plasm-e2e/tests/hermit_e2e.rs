@@ -1,5 +1,15 @@
 //! End-to-end tests using hermit as an in-process OpenAPI mock server.
 //! No Docker, no testcontainers — hermit runs inside the test process.
+//!
+//! ## Scope (integration, not language catalog)
+//!
+//! Keep these tests focused on **integration**: Hermit routing, [`ExecutionEngine`] live calls,
+//! hydration / pagination / cache behavior, and generic CLI surface shape over loaded CGS.
+//!
+//! **Do not** grow this file into a catalog of Plasm **surface syntax** or unified language
+//! semantics (parse → DAG → plan → IR meaning). That belongs in `tests/plasm_language_matrix.rs`
+//! (Hermit matrix) and its fixtures. Compiler-only invariants live in `plasm-agent-core`
+//! `plasm_dag` tests; lexer/parser micro-cases live in `plasm-core` `expr_parser`.
 
 mod common;
 
