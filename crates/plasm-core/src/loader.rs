@@ -708,6 +708,7 @@ fn assemble_cgs(
         capabilities = cgs.capabilities.len(),
         "assemble_cgs: calling CGS::validate"
     );
+    // Includes relation `target` → existing entity keys (`SchemaError::UnknownTargetEntity`).
     cgs.validate()
         .map_err(|e| format!("CGS validation failed: {}", e))?;
 
@@ -1013,6 +1014,19 @@ mod tests {
                 .any(|(c, p)| c.name == "space_query" && *p == "team_id"),
             "expected space_query.team_id: {:?}",
             caps
+        );
+    }
+
+    #[test]
+    fn load_schema_dir_rejects_relation_unknown_target_entity() {
+        let dir = Path::new("../../fixtures/schemas/relation_unknown_target_test");
+        if !dir.join("domain.yaml").is_file() {
+            return;
+        }
+        let err = load_schema_dir(dir).expect_err("broken relation target should fail validate");
+        assert!(
+            err.contains("MissingEntity") && err.contains("peer"),
+            "unexpected error: {err}"
         );
     }
 

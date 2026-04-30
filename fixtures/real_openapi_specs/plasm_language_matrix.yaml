@@ -1,0 +1,313 @@
+openapi: 3.0.3
+info:
+  title: Plasm Language Matrix API
+  version: "1.0.0"
+paths:
+  /language/v1/items:
+    get:
+      summary: List items
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: owner
+          in: query
+          schema:
+            type: string
+        - name: score
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LangItem"
+              example:
+                - id: "i1"
+                  title: "Alpha"
+                  score: 10
+                  owner: "alice"
+                - id: "i2"
+                  title: "Beta"
+                  score: 20
+                  owner: "bob"
+    post:
+      summary: Create item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LangItemCreate"
+            example:
+              title: "Created"
+              score: 99
+              owner: "tester"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangItem"
+              example:
+                id: "i-new"
+                title: "Created"
+                score: 99
+                owner: "tester"
+  /language/v1/items/search:
+    get:
+      summary: Search items
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LangItem"
+              example:
+                - id: "i1"
+                  title: "Alpha"
+                  score: 10
+                  owner: "alice"
+  /language/v1/items/{id}:
+    get:
+      summary: Get item by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangItemWithLines"
+              example:
+                id: "i1"
+                title: "Alpha"
+                score: 10
+                owner: "alice"
+                lines:
+                  - id: "l1"
+                    item_id: "i1"
+                    note: "line-a"
+                  - id: "l2"
+                    item_id: "i1"
+                    note: "line-b"
+    patch:
+      summary: Patch item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LangItemPatch"
+            example:
+              title: "Patched"
+              score: 11
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangItem"
+              example:
+                id: "i1"
+                title: "Patched"
+                score: 11
+                owner: "alice"
+    delete:
+      summary: Delete item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+  /language/v1/items/{id}/ping:
+    post:
+      summary: Ping item (side-effect)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ack
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+              example:
+                ok: true
+  /language/v1/tags:
+    get:
+      summary: Tags for an item
+      parameters:
+        - name: item_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LangTag"
+              example:
+                - id: "t1"
+                  item_id: "i1"
+                  label: "urgent"
+                - id: "t2"
+                  item_id: "i1"
+                  label: "review"
+  /language/v1/lines/{line_id}:
+    get:
+      summary: Get line by id
+      parameters:
+        - name: line_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangLine"
+              example:
+                id: "l1"
+                item_id: "i1"
+                note: "line-a"
+  /language/v1/lines:
+    get:
+      summary: Lines for an item (list form; also embedded on item GET)
+      parameters:
+        - name: item_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LangLine"
+              example:
+                - id: "l1"
+                  item_id: "i1"
+                  note: "line-a"
+                - id: "l2"
+                  item_id: "i1"
+                  note: "line-b"
+components:
+  schemas:
+    LangItem:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        score:
+          type: integer
+        owner:
+          type: string
+    LangItemCreate:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        score:
+          type: integer
+        owner:
+          type: string
+    LangItemPatch:
+      type: object
+      properties:
+        title:
+          type: string
+        score:
+          type: integer
+        owner:
+          type: string
+    LangLine:
+      type: object
+      required: [id, item_id, note]
+      properties:
+        id:
+          type: string
+        item_id:
+          type: string
+        note:
+          type: string
+    LangItemWithLines:
+      allOf:
+        - $ref: "#/components/schemas/LangItem"
+        - type: object
+          properties:
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/LangLine"
+    LangTag:
+      type: object
+      required: [id, item_id, label]
+      properties:
+        id:
+          type: string
+        item_id:
+          type: string
+        label:
+          type: string

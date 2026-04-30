@@ -1,0 +1,151 @@
+langitem_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+
+langitem_query_owner:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  query:
+    type: object
+    fields:
+    - ["owner", { type: var, name: owner }]
+
+langitem_search:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: literal
+    value: search
+  query:
+    type: object
+    fields:
+    - ["q", { type: var, name: q }]
+
+langitem_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+
+langitem_create:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  body:
+    type: object
+    fields:
+    - ["title", { type: var, name: title }]
+    - ["score", { type: var, name: score }]
+    - ["owner", { type: var, name: owner }]
+
+langitem_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+  body:
+    type: object
+    fields:
+    - ["title", { type: var, name: title }]
+    - ["score", { type: var, name: score }]
+    - ["owner", { type: var, name: owner }]
+
+langitem_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+
+langitem_ping:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+  - type: literal
+    value: ping
+
+langtag_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: tags
+  query:
+    type: object
+    fields:
+    - ["item_id", { type: var, name: item_id }]
+
+langline_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: lines
+  query:
+    type: object
+    fields:
+    - ["item_id", { type: var, name: item_id }]
+
+langline_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: lines
+  - type: var
+    name: id

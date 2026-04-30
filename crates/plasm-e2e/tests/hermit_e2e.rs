@@ -1,105 +1,25 @@
-#![cfg(test)]
-
 //! End-to-end tests using hermit as an in-process OpenAPI mock server.
 //! No Docker, no testcontainers — hermit runs inside the test process.
 
+mod common;
+
+use common::hermit;
 use plasm_core::{Expr, Predicate, QueryExpr, QueryPagination, CGS};
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache, StreamConsumeOpts,
 };
 use std::path::Path;
-use tokio::sync::OnceCell;
 
-static HERMIT: OnceCell<String> = OnceCell::const_new();
-/// Separate petstore hermit for tests that issue many follow-up HTTP calls (avoids cross-test contention on [`HERMIT`]).
-static HERMIT_PETSTORE_HYDRATE: OnceCell<String> = OnceCell::const_new();
-static POKEAPI_HERMIT: OnceCell<String> = OnceCell::const_new();
-
-/// Start hermit in-process on a random port, return the base URL.
 async fn hermit_base_url() -> &'static String {
-    HERMIT
-        .get_or_init(|| async {
-            let spec_path = find_spec_path().expect("petstore_api.json");
-            let spec = beavuck_hermit::spec_loader::load(Path::new(&spec_path));
-            let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
-            let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
-
-            // Bind to port 0 for a random available port
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let base_url = format!("http://127.0.0.1:{}/api/v3", addr.port());
-
-            // Spawn the server in the background
-            tokio::spawn(async move {
-                axum::serve(listener, router).await.unwrap();
-            });
-
-            // Brief settle
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-            base_url
-        })
-        .await
+    hermit::petstore_hermit_base_url().await
 }
 
 async fn hermit_petstore_hydrate_base_url() -> &'static String {
-    HERMIT_PETSTORE_HYDRATE
-        .get_or_init(|| async {
-            let spec_path = find_spec_path().expect("petstore_api.json");
-            let spec = beavuck_hermit::spec_loader::load(Path::new(&spec_path));
-            let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
-            let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
-
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let base_url = format!("http://127.0.0.1:{}/api/v3", addr.port());
-
-            tokio::spawn(async move {
-                axum::serve(listener, router).await.unwrap();
-            });
-
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-            base_url
-        })
-        .await
+    hermit::petstore_hermit_hydrate_base_url().await
 }
 
 async fn pokeapi_hermit_base_url() -> &'static String {
-    POKEAPI_HERMIT
-        .get_or_init(|| async {
-            let spec_path = find_pokeapi_spec_path();
-            let spec = beavuck_hermit::spec_loader::load(Path::new(&spec_path));
-            let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
-            let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
-
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            // OpenAPI paths are absolute from host root (e.g. /api/v2/berry/).
-            let base_url = format!("http://127.0.0.1:{}", addr.port());
-
-            tokio::spawn(async move {
-                axum::serve(listener, router).await.unwrap();
-            });
-
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-            base_url
-        })
-        .await
-}
-
-fn find_pokeapi_spec_path() -> String {
-    let candidates = [
-        "fixtures/real_openapi_specs/pokeapi.yaml",
-        "../../fixtures/real_openapi_specs/pokeapi.yaml",
-    ];
-    for path in &candidates {
-        if Path::new(path).exists() {
-            return path.to_string();
-        }
-    }
-    panic!("Cannot find pokeapi.yaml");
+    hermit::pokeapi_hermit_base_url().await
 }
 
 fn load_pokeapi_mini_cgs() -> CGS {
@@ -116,17 +36,8 @@ fn load_pokeapi_mini_cgs() -> CGS {
     panic!("fixtures/schemas/pokeapi_mini not found");
 }
 
-fn find_spec_path() -> Option<String> {
-    let candidates = [
-        "fixtures/real_openapi_specs/petstore_api.json",
-        "../../fixtures/real_openapi_specs/petstore_api.json",
-    ];
-    for path in &candidates {
-        if Path::new(path).exists() {
-            return Some(path.to_string());
-        }
-    }
-    None
+fn find_spec_path() -> Option<std::path::PathBuf> {
+    hermit::petstore_spec_path()
 }
 
 fn load_petstore_cgs() -> Option<CGS> {

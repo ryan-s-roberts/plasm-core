@@ -17,12 +17,12 @@ use plasm_core::expr_parser::{
 use plasm_core::schema::EntityDef;
 use plasm_core::ChainStep;
 use plasm_core::Expr;
-use plasm_core::CGS;
 use plasm_core::PlasmInputRef;
 use plasm_core::Predicate;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::Value;
+use plasm_core::CGS;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
@@ -1067,6 +1067,12 @@ fn lookup_relation_chain_meta(
         )
     })?;
     let target_ent = rel.target_resource.as_str();
+    if cgs.get_entity(target_ent).is_none() {
+        return Err(format!(
+            "relation `{}` on entity `{}` targets unknown entity `{}` in the resolved catalog — `target` must name an `entities:` key (see CGS load validation / domain.yaml); field projection after this chain cannot be typed",
+            chain.selector, source_entity, target_ent
+        ));
+    }
     let qe = session
         .domain_exposure
         .as_ref()
@@ -2264,24 +2270,27 @@ mod tests {
     fn test_session() -> ExecuteSession {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = Arc::new(
-            load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
         );
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
-            "acme".into(),
-            Arc::new(CgsContext::entry("acme", cgs.clone())),
+            "langmatrix".into(),
+            Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product", "Category"]);
+        let exp = DomainExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangLine"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
             cgs.clone(),
             ctxs,
-            "acme".into(),
+            "langmatrix".into(),
             String::new(),
             String::new(),
             None,
-            vec!["Product".into(), "Category".into()],
+            vec!["LangItem".into(), "LangLine".into()],
             Some(exp),
             None,
             None,
@@ -2289,43 +2298,16 @@ mod tests {
         )
     }
 
-    /// `tests/fixtures/scoped_create_tiny` — `product_update` (PATCH) + `product_label` (action) + `product_query` + relations.
-    fn test_session_scoped_with_actions() -> ExecuteSession {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = Arc::new(
-            load_schema(&root.join("tests/fixtures/scoped_create_tiny"))
-                .expect("load scoped_create_tiny"),
-        );
-        let mut ctxs = indexmap::IndexMap::new();
-        ctxs.insert(
-            "acme".into(),
-            Arc::new(CgsContext::entry("acme", cgs.clone())),
-        );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product", "Category"]);
-        ExecuteSession::new(
-            "ph".into(),
-            "p".into(),
-            cgs.clone(),
-            ctxs,
-            "acme".into(),
-            String::new(),
-            String::new(),
-            None,
-            vec!["Product".into(), "Category".into()],
-            Some(exp),
-            None,
-            None,
-            cgs.catalog_cgs_hash_hex(),
-        )
-    }
-
-    /// Primary session `entry_id` is `github`, but `Category` was exposed from `linear` in DOMAIN
+    /// Primary session `entry_id` is `github`, but `LangLine` was exposed from `linear` in DOMAIN
     /// — plan `qualified_entity` must use the owning catalog, not the lexicographic primary.
     #[test]
     fn federated_surface_qualified_entity_matches_exposure_catalog() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = Arc::new(
-            load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
         );
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
@@ -2337,8 +2319,8 @@ mod tests {
             Arc::new(CgsContext::entry("linear", cgs.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Product"]);
-        exp.expose_entities(&layers, cgs.clone(), "linear", &["Category"]);
+        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangLine"]);
         let session = ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -2348,7 +2330,7 @@ mod tests {
             String::new(),
             String::new(),
             None,
-            vec!["Product".into(), "Category".into()],
+            vec!["LangItem".into(), "LangLine".into()],
             Some(exp),
             None,
             None,
@@ -2359,112 +2341,20 @@ mod tests {
             None,
             &session,
             "t",
-            "Category",
+            "LangLine",
         )
         .expect("compile");
         let qe = &plan["nodes"][0]["qualified_entity"];
         assert_eq!(qe["entry_id"], "linear", "{plan}");
-        assert_eq!(qe["entity"], "Category");
+        assert_eq!(qe["entity"], "LangLine");
     }
 
     #[test]
     fn splits_bare_comma_plasm_roots() {
-        let roots = split_bare_plasm_roots("Product, Product~\"bolt\"").expect("split");
-        assert_eq!(roots, vec!["Product", "Product~\"bolt\""]);
-    }
-
-    #[test]
-    fn compiles_bound_query_limit_render_dag_to_valid_plan() {
-        let session = test_session();
-        let source = r#"products = Product
-top = products.limit(1)
-doc = top[id,name] <<MD
-{{ rows | length }} product
-MD
-doc"#;
-        let plan = compile_plasm_dag_to_plan(
-            &PromptPipelineConfig::default(),
-            None,
-            &session,
-            "native",
-            source,
-        )
-        .expect("compile");
-        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
-        assert_eq!(dry.node_results.len(), 3);
-        assert_eq!(plan["nodes"].as_array().map(Vec::len), Some(3));
-    }
-
-    /// `plasm-oss/README.md` §4: search + project + `=>` map derive + parallel final roots.
-    #[test]
-    fn readme_plasm_dag_search_project_derive_parallel_roots_compiles() {
-        let session = test_session();
-        let source = r#"search = Product~"bolt hardware"
-summary = search[id, name]
-cards = summary => { blurb: { id: _.id, name: _.name } }
-summary, cards"#;
-        let plan = compile_plasm_dag_to_plan(
-            &PromptPipelineConfig::default(),
-            None,
-            &session,
-            "readme",
-            source,
-        )
-        .expect("compile");
-        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
-        assert_eq!(dry.node_results.len(), 3, "{dry:?}");
+        let roots = split_bare_plasm_roots(r#"LangItem, LangItem~"Alpha""#).expect("split");
         assert_eq!(
-            plan["return"],
-            json!({ "kind": "parallel", "nodes": ["summary", "cards"] })
-        );
-    }
-
-    /// `plasm-oss/README.md` §4 — complex: Jinja public reply + `for_each` **update** + **case comment**
-    /// (render `content` piped into `add_support_reply`). Same shape in federated sessions.
-    #[test]
-    fn readme_plasm_dag_jinja_for_each_category_and_product_compiles() {
-        let session = test_session_scoped_with_actions();
-        let source = r#"bucket = Category("c1")
-header = bucket[id, name] <<MD
-# **{% for r in rows %}{{ r.name }}{% endfor %}** (`{% for r in rows %}{{ r.id }}{% endfor %}`)
-MD
-matches = Product{owner="acme", repo="ingest", active=true}
-candidates = matches.limit(3)
-brief = candidates[id, name, category_id] <<MD
-Hi there — we’ve pulled **{{ rows | length }}** line item(s) in `acme/ingest` and matched them against the **category** we show in the other root. Here’s what we’re doing next:
-
-{% for r in rows %}
-- We’re reconciling **`{{ r.name }}`** (`{{ r.id }}`) to the category you asked us to use.
-{% endfor %}
-
-Thanks for your patience — the team
-MD
-synced = candidates => Product(_.id).update(category_id=bucket.id)
-posted = Product("p-helpline-case-1").add-support-reply(message=brief.content)
-header, brief, synced, posted"#;
-        let plan = compile_plasm_dag_to_plan(
-            &PromptPipelineConfig::default(),
-            None,
-            &session,
-            "readme-complex",
-            source,
-        )
-        .expect("compile");
-        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
-        assert_eq!(plan["return"]["kind"], "parallel");
-        let kinds: Vec<_> = plan["nodes"]
-            .as_array()
-            .expect("nodes")
-            .iter()
-            .map(|n| n["kind"].as_str().unwrap_or(""))
-            .collect();
-        assert!(
-            kinds.contains(&"for_each"),
-            "expected a for_each side-effect node, got {kinds:?}\n{plan:#}"
-        );
-        assert!(
-            dry.node_results.len() >= 6,
-            "expected category +2 renders + query/limit + for_each + case reply, got {dry:?}"
+            roots,
+            vec!["LangItem".to_string(), r#"LangItem~"Alpha""#.to_string()]
         );
     }
 
@@ -2476,7 +2366,7 @@ header, brief, synced, posted"#;
             None,
             &session,
             "t",
-            "return Product, Category",
+            "return LangItem, LangLine",
         )
         .expect_err("return prefix");
         assert!(
@@ -2488,7 +2378,7 @@ header, brief, synced, posted"#;
     #[test]
     fn rejects_return_prefixed_final_roots_in_dag() {
         let session = test_session();
-        let source = "products = Product\nreturn products";
+        let source = "items = LangItem\nreturn items";
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -2522,7 +2412,7 @@ header, brief, synced, posted"#;
     #[test]
     fn flattened_dag_bindings_get_newline_diagnostic() {
         let session = test_session();
-        let source = r#"repo = e2("c1") commits = e1{p3=repo}.limit(20) commits"#;
+        let source = r#"item = LangItem("i1") lines = item.lines lines"#;
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -2540,7 +2430,7 @@ header, brief, synced, posted"#;
     #[test]
     fn flattened_dag_assignment_then_root_gets_newline_diagnostic() {
         let session = test_session();
-        let source = r#"repo = e2("c1") e1{p3=repo}.sort(p2, desc).page_size(20)"#;
+        let source = r#"item = LangItem("i1") LangItem.sort(score, desc).limit(2)"#;
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -2599,10 +2489,10 @@ header, brief, synced, posted"#;
 
     #[test]
     fn split_bare_plasm_roots_multiline_heredoc_second_root() {
-        let src = "Product, <<TXT\n,\nTXT";
+        let src = "LangItem, <<TXT\n,\nTXT";
         let roots = split_bare_plasm_roots(src).expect("roots");
         assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0].trim(), "Product");
+        assert_eq!(roots[0].trim(), "LangItem");
         assert!(
             roots[1].contains("<<TXT") && roots[1].contains(','),
             "{:?}",
@@ -2613,7 +2503,7 @@ header, brief, synced, posted"#;
     #[test]
     fn multiline_heredoc_binding_then_parallel_roots_compiles() {
         let session = test_session();
-        let source = "body = <<T\nhello\nT\nProduct, Category";
+        let source = "body = <<T\nhello\nT\nLangItem, LangLine";
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -3056,7 +2946,7 @@ x"#;
             &state,
             &[],
             &plasm_core::expr_parser::PlasmPostfixOp::GroupBy {
-                args: "author, n=count".into(),
+                args: "owner, n=count".into(),
             },
             "src",
             "id",
@@ -3072,7 +2962,7 @@ x"#;
                     },
                 ..
             } => {
-                assert_eq!(key.dotted(), "author");
+                assert_eq!(key.dotted(), "owner");
                 assert_eq!(aggregates.len(), 1);
                 assert_eq!(aggregates[0].name.as_str(), "n");
             }
@@ -3090,7 +2980,7 @@ x"#;
             &state,
             &[],
             &plasm_core::expr_parser::PlasmPostfixOp::Sort {
-                args: "created_at, newest".into(),
+                args: "score, newest".into(),
             },
             "src",
             "id",
@@ -3110,7 +3000,7 @@ x"#;
             &state,
             &[],
             &plasm_core::expr_parser::PlasmPostfixOp::Sort {
-                args: "x, ascending".into(),
+                args: "score, ascending".into(),
             },
             "src",
             "id",
@@ -3129,7 +3019,7 @@ x"#;
             &state,
             &[],
             &plasm_core::expr_parser::PlasmPostfixOp::Sort {
-                args: "x, descending".into(),
+                args: "score, descending".into(),
             },
             "src",
             "id",

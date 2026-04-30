@@ -1,0 +1,7 @@
+widget_get:
+  method: GET
+  path:
+  - type: literal
+    value: "/widgets"
+  - type: var
+    name: id
