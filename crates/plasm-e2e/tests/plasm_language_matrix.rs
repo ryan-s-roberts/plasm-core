@@ -19,7 +19,9 @@
 //! - DOMAIN: `e#` symbols where applicable.
 //!
 //! Hermit returns **schema-generated** bodies; live assertions use stable planner markdown cues, not
-//! OpenAPI `example` literals.
+//! OpenAPI `example` literals. Multi-digit **numeric** `.sort` ordering is covered in
+//! `plasm-agent-core` (`plan_sort_compute_orders_integer_scores_numerically`) because Hermit list
+//! payloads are not example-stable.
 //!
 //! **Planning:** dry-run [`DryPlasmPlanEvaluation::node_results`] `ir.expr` JSON is deserialized into
 //! typed [`plasm_core::Expr`]; compute stages deserialize into [`plasm_agent::plasm_plan::ComputeOp`].

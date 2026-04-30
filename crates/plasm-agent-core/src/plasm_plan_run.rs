@@ -2565,7 +2565,7 @@ fn eval_compute(
         ComputeOp::Sort { key, descending } => {
             let mut sorted = rows;
             sorted.sort_by(|a, b| {
-                json_sort_key(value_at_path(a, key)).cmp(&json_sort_key(value_at_path(b, key)))
+                cmp_json_sort_values(value_at_path(a, key), value_at_path(b, key))
             });
             if *descending {
                 sorted.reverse();
@@ -2972,8 +2972,36 @@ fn json_plasm_literal_display(v: &serde_json::Value) -> String {
     }
 }
 
-fn json_sort_key(v: Option<&serde_json::Value>) -> String {
+fn sort_display_key(v: Option<&serde_json::Value>) -> String {
     v.map(json_scalar_display).unwrap_or_default()
+}
+
+/// Compare two JSON cell values for deterministic `.sort(...)` ordering.
+///
+/// When both values are numeric (JSON numbers or strings that parse as integers/floats), ordering is
+/// numeric so multi-digit values sort correctly (`87` before `300`). Otherwise ordering follows the
+/// legacy string collation used by [`sort_display_key`] (including missing/`null` → empty string).
+fn cmp_json_sort_values(
+    a: Option<&serde_json::Value>,
+    b: Option<&serde_json::Value>,
+) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(va), Some(vb)) => {
+            if let (Some(na), Some(nb)) = (json_number(va), json_number(vb)) {
+                return na.total_cmp(&nb);
+            }
+            if let (Some(sa), Some(sb)) = (va.as_str(), vb.as_str()) {
+                if let (Ok(ia), Ok(ib)) = (sa.parse::<i64>(), sb.parse::<i64>()) {
+                    return ia.cmp(&ib);
+                }
+                if let (Ok(fa), Ok(fb)) = (sa.parse::<f64>(), sb.parse::<f64>()) {
+                    return fa.total_cmp(&fb);
+                }
+            }
+            sort_display_key(Some(va)).cmp(&sort_display_key(Some(vb)))
+        }
+        _ => sort_display_key(a).cmp(&sort_display_key(b)),
+    }
 }
 
 fn json_rows_to_entities(entity: &str, rows: &[serde_json::Value]) -> Vec<CachedEntity> {
@@ -3130,6 +3158,57 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
         )
+    }
+
+    #[test]
+    fn cmp_json_sort_values_orders_multi_digit_numbers_numerically() {
+        use std::cmp::Ordering;
+        let n87 = serde_json::json!(87);
+        let n300 = serde_json::json!(300);
+        assert_eq!(
+            cmp_json_sort_values(Some(&n87), Some(&n300)),
+            Ordering::Less
+        );
+        let s87 = serde_json::json!("87");
+        let s300 = serde_json::json!("300");
+        assert_eq!(
+            cmp_json_sort_values(Some(&s87), Some(&s300)),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn cmp_json_sort_values_string_collates_non_numeric_strings_lexically() {
+        use std::cmp::Ordering;
+        let apple = serde_json::json!("apple");
+        let banana = serde_json::json!("banana");
+        assert_eq!(
+            cmp_json_sort_values(Some(&apple), Some(&banana)),
+            Ordering::Less
+        );
+    }
+
+    /// Regression: `.sort(score)` must not stringify numbers and compare lexicographically (where
+    /// `87` sorts after `300`). Keeps parity with [`eval_compute`] `ComputeOp::Sort` staging.
+    #[test]
+    fn plan_sort_compute_orders_integer_scores_numerically() {
+        let key = FieldPath::from_dotted("score").expect("score path");
+        let mut rows = [
+            serde_json::json!({"id": "n300", "score": 300}),
+            serde_json::json!({"id": "n87", "score": 87}),
+            serde_json::json!({"id": "n100", "score": 100}),
+        ];
+        rows.sort_by(|a, b| {
+            cmp_json_sort_values(value_at_path(a, &key), value_at_path(b, &key))
+        });
+        assert_eq!(rows[0]["id"], "n87");
+        assert_eq!(rows[1]["id"], "n100");
+        assert_eq!(rows[2]["id"], "n300");
+
+        rows.reverse();
+        assert_eq!(rows[0]["id"], "n300");
+        assert_eq!(rows[1]["id"], "n100");
+        assert_eq!(rows[2]["id"], "n87");
     }
 
     fn github_repository_commit_session() -> ExecuteSession {

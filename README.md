@@ -354,6 +354,19 @@ id  name        base_experience  height  is_default  order  weight  species
 
 That is the point: the model asked for `Pokemon{}`; Plasm handled the index call plus hydration calls and returned a single table.
 
+**`.sort(...)`** on numeric JSON cells orders **numerically** (including multi-digit integers, so `87` sorts before `300`). Non-numeric strings still collate lexicographically using the scalar display form.
+
+For a second transform on the same catalog, **Grass-type Pokémon** (via `Type("grass").pokemon`) can be **grouped by `is_default`** with counts and total experience. Variant **`Pokemon.forms`** carry their own `PokemonForm.is_default`; **`base_experience` lives on `Pokemon`**, so this example groups parent **`Pokemon`** rows for that typing:
+
+```text
+plasm> Type("grass").pokemon.group_by(is_default, n=count, xp=sum(base_experience))
+→ … group + aggregate …
+key    n    xp
+-----  ---  -----
+false  …    …
+true   …    …
+```
+
 The first column is the stable ref key for follow-up work. The runtime keeps the full entity ref (`AbilityScore("str")`, or for GitHub `Issue(owner="plasm", repo="plasm", number=42)`) even when the table only displays selected columns.
 
 That lets a later expression mutate or traverse by ref instead of rebuilding a raw API payload:
