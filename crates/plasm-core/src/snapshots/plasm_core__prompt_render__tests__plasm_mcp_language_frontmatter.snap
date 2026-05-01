@@ -4,12 +4,11 @@ expression: render_plasm_mcp_language_frontmatter()
 ---
 This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
 
-Output choice:
-- Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.
-- For **compositional** work (multiple steps, joins, reporting, summarization, writes, or any structured textual payload—markdown, HTML, plain text, JSON text, CSV-like lines, etc.), use a **multi-line `plasm_program`** by default—do not chain many one-line `plasm` calls.
-- Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, narrow with `projection` and `postfix` (including `transform` and bracket/heredoc tails), then return a small synthesized result.
+Output:
+- Single `plasm_expr` iff one lookup/query/search/relation/method/action is the whole answer.
+- Else one multi-line `plasm_program`: bind → narrow (projection/postfix/bracket-render) → small bare roots—not many one-line tool calls.
 
-Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):
+Grammar (pseudo-EBNF; DOMAIN rows instantiate `plasm_expr` atoms):
 plasm_program ::= plasm_roots | binding+ plasm_roots
 binding       ::= ident "=" plasm_node
 plasm_roots   ::= plasm_return ("," plasm_return)*
@@ -23,6 +22,7 @@ query         ::= e#{p#=v, …}
 relation      ::= e#(id).p#
 method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
 create_action ::= e#.m#(args)
+search        ::= e#~"text"
 projection    ::= e#(id)[p#,…] | "[" fields "]"
 postfix       ::= transform | "[" fields "]"
 bracket_render_tail ::= ( "[" fields "]" )? "<<TAG" heredoc_body "TAG"
@@ -36,59 +36,34 @@ fields        ::= [p#,…]
 plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]
 effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)
 ident/node_ref/field ::= agent-chosen names for bound nodes and fields
-literal      ::= quoted string | number | bool | null | heredoc
+literal       ::= quoted string | number | bool | null | heredoc
 
-Examples (illustrations only; `agg_spec` / `agg_specs` / `transform` above are authoritative):
-- `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.
+Aggregates (examples): `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.
 
-Node-ref continuation:
-- **`postfix`** (see `postfix` and `transform` above) applies to the same surface expression as `plasm_expr`; you may chain suffixes on one line without an intermediate binding when they attach to that expression (e.g. `e1{…}.limit(20)`).
-- When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`projection`, `transform`, derive `=>`, …) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.
-- **`[fields] <<TAG … TAG`** or **`<<TAG … TAG`** after a bound row-producing node (`binding <<TAG`) are postfix like `.limit`: they suffix the expression whose **`rows`** you want to render (Minijinja); explicit `[fields]` selects columns—otherwise columns are inferred from the bound node’s narrowed row shape after transforms; see **Bracket render / synthesis** below.
+Continuation:
+- Postfix (transforms, `[fields]`, `<<TAG…TAG`) may chain on one surface `plasm_expr`.
+- `ident.<relation>` only after surface row bindings (get/query/relation); after projection/transform/`=>`, repeat full DOMAIN expr or rebind. Bracket-render = Minijinja `rows`; optional `[fields]` narrows columns → row `{"content":"…"}` — use **`binding.content`** for string/body args.
 
-Program construction discipline:
-- **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `
-` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)
-- Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.
-- Prefer narrowing with `projection` and `postfix` (including `transform`) and heredoc render tails over returning raw broad lists.
-- When **summarizing or formatting rows from queries/relations in this program**, prefer **bracket-render** (`…[fields] <<TAG …`) so the plan owns the transformation; **static** tagged heredocs remain appropriate for **fixed** payloads not derived from those rows.
-- Return at most small final roots unless the user explicitly asks for raw rows.
-- Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.
-- Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.
-- MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—**never** one space-concatenated line for multiple bindings. A **tagged heredoc** is still **one logical statement**: after `<<TAG` you must have a newline immediately after `TAG` on the opener line, then the body lines, then a closing line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}` on that line). That spans multiple physical lines—**do not** squash `<<TAG` onto the same line as the body.
-- **Final roots** may be comma-separated on one line **or** split across lines; commas **inside** a heredoc body never separate roots. Example: `e1.m2(p3=<<B
-Hello
-B
-), e2` (comma after the heredoc closes on its `B` line, then the next root).
+MCP `program` (JSON string):
+- Literal U+000A between statements (one `ident = …` per line; bare roots last). Spaces never separate statements.
+- Heredoc: newline after `<<TAG` opener; close line trims to `TAG` / `TAG)` / `TAG,` / `TAG}`; first matching trimmed interior line closes—opaque `TAG` for blobs. Commas inside heredocs never split roots (e.g. `…<<B` / `Hello` / `B` / `), e2`).
 
-Catalogue rules:
-- TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.
-- Final program roots are **bare** comma-separated `plasm_expr` / `node_ref` lines (e.g. `e1, e2{...}`); do **not** prefix with `return` — that word is not Plasm syntax.
-- Never paste `Meaning`. Compose taught atoms with bindings/final roots only when a program is needed.
-- All semantic symbols you use must be taught in this prompt.
-- Projection uses a minimal non-empty subset from `[p#,…]`; the identity row teaches the full set once.
-- Leading `p#` rows are metadata for slots when `args:` on a method line is not enough.
+Discipline:
+- Plan shape first; small roots unless raw rows requested; bracket-render row-derived text, static `<<TAG` for fixed payloads.
+- `page(sN_pgM)` continues a chosen list only; DOMAIN is the shape contract—no probe calls.
 
-  - e#, m#, p# are session-local aliases. Use the aliases **exactly** as shown in expression cells.
-- Pick rows by `Meaning`, then copy the `plasm_expr` shape. Bind args by keyed slot (`p12=value`), never by position or by renumbering.
-- Aliases are session-local. If a new prompt teaches new aliases, discard older e#/m#/p# meanings.
-  - e#(id) or e#(p#=v, p#=v) — get one entity by id or compound key (examples below use `v=$`, not concrete API values).
-  - Use TSV `plasm_expr` shapes exactly, substituting concrete values for placeholders.
-  - For compound-key forms such as `e#(id) or e#(p#=v, p#=v)`, keep keyed args (`p#=v` / `name=value`); never rewrite them as positional.
-  - e#{p#=v, …} — list query; `e#` alone queries all.
-  - e#(id).p# — relation. e#(id).m#() or e#(id).m#(p#=v,..) — method call.
-  - For list/query goals, use brace predicates `e#{p#=v, …}`. Use dotted `e#(id).m#() or e#(id).m#(p#=v,..)` only when the goal asks to mutate or call a method.
-  - e#.m#(args) — standalone create/action (no anchor id needed).
-  - e#(id)[p#,…] — non-empty scalar subset. Dot after `e#(id)` means relations or taught `m#`, not scalar fields.
-  - **Bracket render / synthesis** (`label[p#,…] <<TAG … TAG`, or `binding <<TAG … TAG` after narrowing **`binding`** with projection/transforms): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. The rendered **`content`** may be **any** textual format (plain text, markdown, HTML fragments, structured snippets, JSON **text**, logs—not markdown-specific); guard accidental Jinja tokens with `{% raw %}…{% endraw %}`. Output is one synthetic row shaped like `{"content": "…"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.
-  - To list X scoped by parent Y, use `X{p#=AnchorEntity(id)}` from X's rows; do not invent `Y(id).p#`.
-  - `[v, …]` — array value inside method args, e.g. `p#=[e#($)]`.
-  - Plain `str` values use double quotes. In quoted strings only `\"` and `\\` are escapes.
-  - `select` chooses one listed allowed value; `multiselect` chooses zero or more as `[v, …]`.
-  - When `Meaning` marks a slot used in an input value as `markdown`, `html`, `document`, `json_text`, or `blob`, use tagged heredoc only: `<<TAG` ... `TAG`.
-- Example: `m#(..., p#=<<TXT` newline body newline `TXT` newline `)`.
-  - e#~"text" — full-text search on entities whose teaching rows include a `~` example (same entities only).
-  - `p#`-only rows predeclare slots; they are metadata, not expressions to output.
-  - `$` is only a fill-in cue. Substitute a real value; never send `$`.
-- `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.
-  - TSV rows are teaching rows. `plasm_expr` teaches syntax; `Meaning` teaches selection and argument semantics.
+DOMAIN / catalogue:
+- `plasm_expr` = atoms; `Meaning` = how to pick/fill—never paste `Meaning`. Bare comma-separated roots (no `return`); every symbol taught here.
+- Projection: minimal non-empty `[p#,…]`; identity row lists full fields once. Leading `p#` rows = slot metadata when method `args:` is insufficient.
+- e#, m#, p# are session-local aliases — copy them exactly; new prompts supersede old meanings.
+- Pick by `Meaning`, copy `plasm_expr`, bind keyed slot (`p12=value`) only; never positional or renumbered args.
+- Instantiate grammar lines from DOMAIN only; keyed `p#=v` never positional. `v=$` in tables is a fill cue.
+- `e#{p#=v, …}` / `e#` list/filter; `e#(id) or e#(p#=v, p#=v)` fetch one; `e#(id).p#` relate; `e#(id).m#() or e#(id).m#(p#=v,..)` call; `e#.m#(args)` without id; `e#(id)[p#,…]` projects—after `e#(id)`, `.` is relation or taught `m#` only.
+- Scoped child lists: `X{p#=AnchorEntity(id)}` from the child entity’s DOMAIN rows; never invent `Y(id).p#`.
+- Arrays in args: `[v, …]` (e.g. `p#=[e#($)]`). Quoted strings: only `\"` and `\\` escapes.
+- `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.
+- `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
+- Search `e#~"text"` only where DOMAIN teaches `~` on that entity.
+- `p#`-only rows declare slots (metadata), not expressions to emit.
+- `$` marks fill-ins — substitute real values; never send `$`.
+- `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional.

@@ -1,6 +1,6 @@
 ---
 source: plasm-oss/crates/plasm-core/src/prompt_render.rs
-expression: out
+expression: prompt
 ---
 # This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
 #
@@ -15,13 +15,14 @@ expression: out
 # plasm_return  ::= node_ref | plasm_expr
 # plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref "=>" plasm_value | node_ref "=>" effect_expr
 # plasm_expr    ::= entity_expr [projection]
-# entity_expr   ::= query_all | get | query | relation | method | create_action
+# entity_expr   ::= query_all | get | query | relation | method | create_action | search
 # query_all     ::= e#
 # get           ::= e#(id) or e#(p#=v, p#=v)
 # query         ::= e#{p#=v, …}
 # relation      ::= e#(id).p#
 # method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
 # create_action ::= e#.m#(args)
+# search        ::= e#~"text"
 # projection    ::= e#(id)[p#,…] | "[" fields "]"
 # postfix       ::= transform | "[" fields "]"
 # bracket_render_tail ::= ( "[" fields "]" )? "<<TAG" heredoc_body "TAG"
@@ -61,18 +62,40 @@ expression: out
 # - Scoped child lists: `X{p#=AnchorEntity(id)}` from the child entity’s DOMAIN rows; never invent `Y(id).p#`.
 # - Arrays in args: `[v, …]` (e.g. `p#=[e#($)]`). Quoted strings: only `\"` and `\\` escapes.
 # - `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.
+# - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
+# - Search `e#~"text"` only where DOMAIN teaches `~` on that entity.
 # - `p#`-only rows declare slots (metadata), not expressions to emit.
 # - `$` marks fill-ins — substitute real values; never send `$`.
 # - `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional.
 #
 
 plasm_expr	Meaning
-p2	str · Type name (unique key)
-p1	int · Numeric type identifier
-p3	str · API resource URL
-e1($)[p2,p1,p3]	returns e1 · An elemental type (Fire, Water, etc.)
-e1	returns [e1] · List all elemental types
-e1($).p4	returns Generation · Generation this type was introduced
-e1($).p5	returns MoveDamageClass · Default damage class for this type
-e1($).p6	returns [Move] · Moves of this elemental type
-e1($).p7	returns [Pokemon] · Pokémon with this type
+p6	int · id
+p5	select · allowed: ui, ocr, audio, document
+p7	str · text_preview
+e1(p6=$, p5=$)[p6,p5,p7]	returns e1 · One capture pipeline item.
+e1{p3=$, p1=$, p4=$, p2=$}	returns [e1] · args: p3 limit int opt; p1 app_name str opt; p4 start_time date opt; p2 end_time date opt · capture-item-query
+p8	str · id
+p9	bool · screen_capture_running
+e2.m3()	returns e2 · projection [p8,p9] · Capture running or paused. · capture-session-get
+e3{p16=$, p10=$, p15=$, p11=$, p13=$, p12=$, p14=$}	returns [e3] · A detected question with optional answers. · args: p16 unresolved_only bool opt; p10 app_name str opt; p15 speaker_id int opt; p11 include_answers bool opt; p13 min_answer_similarity float opt; p12 limit int opt; p14 offset int opt · detected-question-query
+p25	str · meeting_uuid
+p24	int · meeting_id
+p26	select · allowed: active, ended, cancelled
+p27	markdown · summary
+e4($)[p25,p24,p26,p27]	returns e4 · A detected meeting.
+e4{p23=$, p22=$, p20=$, p21=$}	returns [e4] · args: p23 status sel[active,ended,cancelled] opt; p22 start_date date opt; p20 end_date date opt; p21 limit int opt · query
+e5{p30=$, p31=$, p29=$, p28=$}	returns [e5] · One pipeline bus event. · args: p30 names str opt; p31 sources str opt; p29 min_severity sel[debug,info,warning,error,critical] opt; p28 limit int opt · pipeline-event-query
+p35	str · id
+p36	str · workers
+e6.m8()	returns e6 · projection [p35,p36] · Pipeline health snapshot. · pipeline-snapshot-get
+p40	int · id
+p39	str · display_name
+p41	select · allowed: person, organisation, project
+e7($)[p40,p39,p41]	returns e7 · A person, organisation, or project profile.
+e7{p38=$, p37=$}	returns [e7] · args: p38 profile_type sel[person,organisation,project] opt; p37 limit int opt · query
+e7($).p42	returns [e9] · Content scoped to this profile.
+e8.m11(p47=$,..)	returns () · Action prompt execution result. · args: p47 slug str req; p45 meeting_id int opt; p46 meeting_uuid str opt; p44 meeting_ids array[int] opt; p48 start_time date opt; p43 end_time date opt · prompt-run-create
+e9($).profile_id	returns e7 · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
+e9{p54=e7($), p55=$, p52=$, p53=$}	returns [e9] · args: p54 profile_id ref:e7 req; p55 query str opt; p52 limit int opt; p53 mode sel[auto,keyword,natural] opt · Search content scoped to one profile.
+e9~$	returns [e9] · args: p57 content_type sel[all,ocr,audio,ui] opt; p59 limit int opt; p62 offset int opt; p64 start_time date opt; p58 end_time date opt; p56 app_name str opt; p65 window_name str opt; p61 min_length int opt; p60 max_length int opt · Search recorded OCR, transcripts, and UI text.

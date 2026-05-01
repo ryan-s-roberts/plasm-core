@@ -1,6 +1,8 @@
 
-For one direct read/search/get/relation/method/action whose result is already the answer, send one taught **`plasm_expr`**. For reports, joins, writes, markdown/html/plain-text payloads, or any multi-step task, send **one multi-line `plasm_program`** in **one** **`plasm`** call.
-**Postfix** on the same surface expression: **transforms** (`.limit`, `.sort`, `.aggregate`, `.group_by`, `.singleton()`, `.page_size`), **`[…]` projection**, and **`[fields] <<TAG … TAG` bracket-render** (Minijinja over **`rows`**, then `.content` for string slots)—e.g. `e1{p4=repo}.limit(20)` or `commits[p15,p12] <<TAG … TAG` without an extra binding when chained legally. **Aggregates / group_by** use explicit output names in each spec: e.g. `commits.group_by(author, n=count)` and `orders.aggregate(total=sum(amount), lo=min(price))`.
-**Brace predicates (`{…}`):** slots typed as **entity references** toward another resource expect a DOMAIN **constructor**, scalar identity fields, or **`anchor.<relation>`** — not an opaque full row unless its top-level identity fields match that entity's keys (see schema `key_vars` / id).
-**Continuation:** when a binding is a taught surface row, `next = repo.<relation>` continues that row's Plasm (same as inlining the anchor expression before `.<relation>`); the plan keeps an edge from `repo` to `next`. Do not extend **projection/limit** chains (`…[fields]`, `.limit`, …) with `ident.<relation>` — bind a fresh surface node first.
-Reuse **`logical_session_ref`** for follow-ups. Call **`plasm_context`** again only to **append** new `{api, entity}` picks or when continuity / **`_meta.plasm`** shows a stale binding or new symbol space—not on every turn.
+**Program:** See initialize **Plasm syntax guide** for full grammar. Prefer **one multi-line `program`** with **literal newlines** between bindings when composing; **single-line** only for one taught `plasm_expr`. Bracket-render yields **`binding.content`** for string slots. Postfix (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]`, `[fields] <<TAG…TAG`) chains on the same surface expr when legal.
+
+**Brace `{…}` predicates:** Entity-ref slots expect DOMAIN constructors, scalar ids, or **`anchor.<relation>`** — not opaque rows unless keys match that entity.
+
+**Continuation:** `next = row.<relation>` continues taught surface rows only—not after projection/limit/etc.; rebind a surface node first.
+
+Reuse **`logical_session_ref`**. Call **`plasm_context`** again only to append picks or when **`_meta.plasm`** shows stale binding—not every turn.

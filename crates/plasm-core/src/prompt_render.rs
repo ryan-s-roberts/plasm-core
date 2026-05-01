@@ -2871,163 +2871,186 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     } else {
         "Entity~\"text\""
     };
-    let symbol_line = if spec.symbolic {
-        Some(
-            "  - e#, m#, p# are session-local aliases. Use the aliases **exactly** as shown in expression cells.\n\
-  - Pick rows by `Meaning`, then copy the `plasm_expr` shape. Bind args by keyed slot (`p12=value`), never by position or by renumbering.\n\
-  - Aliases are session-local. If a new prompt teaches new aliases, discard older e#/m#/p# meanings.\n",
-        )
+
+    let entity_expr_rhs: &str = if spec.include_search_line {
+        "query_all | get | query | relation | method | create_action | search"
     } else {
-        Some(
-            "  - Entity names, method labels, and slot names — use exactly as shown in this prompt.\n\
-  - A slot name may denote an entity field, a relation, or a capability parameter depending on context.\n",
-        )
+        "query_all | get | query | relation | method | create_action"
     };
-    let structure_lines = format!(
-        "Output choice:\n\
-  - Use a single `plasm_expr` only for one direct lookup/read/search/relation/method/action whose result is already the answer.\n\
-  - For **compositional** work (multiple steps, joins, reporting, summarization, writes, or any structured textual payload—markdown, HTML, plain text, JSON text, CSV-like lines, etc.), use a **multi-line `plasm_program`** by default—do not chain many one-line `plasm` calls.\n\
-  - Prefer a multi-line `plasm_program` for imperative/analytical/reporting goals: bind inputs, narrow with `projection` and `postfix` (including `transform` and bracket/heredoc tails), then return a small synthesized result.\n\
-\n\
-Syntax contract (pseudo-EBNF; TSV rows bind the catalogue-specific `plasm_expr` atoms):\n\
-  plasm_program ::= plasm_roots | binding+ plasm_roots\n\
-  binding       ::= ident \"=\" plasm_node\n\
-  plasm_roots   ::= plasm_return (\",\" plasm_return)*\n\
-  plasm_return  ::= node_ref | plasm_expr\n\
-  plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref \"=>\" plasm_value | node_ref \"=>\" effect_expr\n\
-  plasm_expr    ::= entity_expr [projection]\n\
-  entity_expr   ::= query_all | get | query | relation | method | create_action{search_rule}\n\
-  query_all     ::= {query_all_form}\n\
-  get           ::= {get_form}\n\
-  query         ::= {query_form}\n\
-  relation      ::= {nav_form}\n\
-  method        ::= {method_form}\n\
-  create_action ::= {create_form}\n\
-  projection    ::= {projection_form} | \"[\" fields \"]\"\n\
-  postfix       ::= transform | \"[\" fields \"]\"\n\
-  bracket_render_tail ::= ( \"[\" fields \"]\" )? \"<<TAG\" heredoc_body \"TAG\"\n\
-  positive_int  ::= non-zero decimal integer literal\n\
-  agg_func      ::= \"sum\" | \"avg\" | \"min\" | \"max\"\n\
-  agg_spec      ::= ident \"=\" ( \"count\" | agg_func \"(\" field \")\" )\n\
-  agg_specs     ::= agg_spec (\",\" agg_spec)*\n\
-  sort_dir      ::= omitted | \"desc\" | \"asc\" | \"ascending\" | \"descending\"\n\
-  transform     ::= \".limit(\" positive_int \")\" | \".sort(\" field [\",\" sort_dir] \")\" | \".aggregate(\" agg_specs \")\" | \".group_by(\" field \",\" agg_specs \")\" | \".singleton()\" | \".page_size(\" positive_int \")\"\n\
-  fields        ::= {projection}\n\
-  plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]\n\
-  effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)\n\
-  ident/node_ref/field ::= agent-chosen names for bound nodes and fields\n\
-  literal      ::= quoted string | number | bool | null | heredoc\n\
-\n\
-Examples (illustrations only; `agg_spec` / `agg_specs` / `transform` above are authoritative):\n\
-  - `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.\n\
-\n\
-Node-ref continuation:\n\
-  - **`postfix`** (see `postfix` and `transform` above) applies to the same surface expression as `plasm_expr`; you may chain suffixes on one line without an intermediate binding when they attach to that expression (e.g. `e1{{…}}.limit(20)`).\n\
-  - When `ident` is bound to a **surface Plasm** row (get/query/relation result), writing `ident.<relation>` on the RHS continues that row’s expression—the compiler substitutes the bound anchor text and records a dependency on `ident`. Semantics match **repeating the full taught `plasm_expr` for that binding** and appending `.<relation>`. **Compute-only** steps (`projection`, `transform`, derive `=>`, …) are **not** relation anchors: do not append `ident.<relation>` after them—repeat the full expression from DOMAIN or bind a fresh surface node first.\n\
-  - **`[fields] <<TAG … TAG`** or **`<<TAG … TAG`** after a bound row-producing node (`binding <<TAG`) are postfix like `.limit`: they suffix the expression whose **`rows`** you want to render (Minijinja); explicit `[fields]` selects columns—otherwise columns are inferred from the bound node’s narrowed row shape after transforms; see **Bracket render / synthesis** below.\n\
-\n\
-Program construction discipline:\n\
-  - **MCP `program` newline contract (read first):** For **compositional** work—anything that is **not** a single taught `plasm_expr` on one physical line—you MUST put **literal newline characters (U+000A)** in the JSON `program` string between physical lines: **one line per `ident = …` binding**, then final bare roots on their own line(s). **Spaces do not separate statements.** If you would write two bindings side-by-side with only spaces, that shape is **always wrong**; split with `\n` before calling `plasm` / `plasm_run`. (Single-expression calls and single-line heredocs already satisfy this; multi-binding programs are where agents most often flatten incorrectly.)\n\
-  - Plan before executing: choose the final answer shape first, then bind only the necessary intermediate nodes.\n\
-  - Prefer narrowing with `projection` and `postfix` (including `transform`) and heredoc render tails over returning raw broad lists.\n\
-  - When **summarizing or formatting rows from queries/relations in this program**, prefer **bracket-render** (`…[fields] <<TAG …`) so the plan owns the transformation; **static** tagged heredocs remain appropriate for **fixed** payloads not derived from those rows.\n\
-  - Return at most small final roots unless the user explicitly asks for raw rows.\n\
-  - Use `page(sN_pgM)` only to continue a previously chosen list, not as exploratory browsing.\n\
-  - Do not perform probe calls whose only purpose is to inspect shape; the DOMAIN table is the contract.\n\
-  - MCP tool `plasm`: the JSON `program` field is one string that may include literal newlines (U+000A). For a `plasm_program`, write one physical line per `ident = …` binding and final bare roots on their own line(s)—**never** one space-concatenated line for multiple bindings. A **tagged heredoc** is still **one logical statement**: after `<<TAG` you must have a newline immediately after `TAG` on the opener line, then the body lines, then a closing line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}}` on that line). That spans multiple physical lines—**do not** squash `<<TAG` onto the same line as the body.\n\
-  - **Final roots** may be comma-separated on one line **or** split across lines; commas **inside** a heredoc body never separate roots. Example: `e1.m2(p3=<<B\nHello\nB\n), e2` (comma after the heredoc closes on its `B` line, then the next root).\n\
-\n\
-Catalogue rules:\n\
-  - TSV `plasm_expr` cells teach executable catalogue atoms; `Meaning` explains how to choose and fill them.\n\
-  - Final program roots are **bare** comma-separated `plasm_expr` / `node_ref` lines (e.g. `e1, e2{{...}}`); do **not** prefix with `return` — that word is not Plasm syntax.\n\
-  - Never paste `Meaning`. Compose taught atoms with bindings/final roots only when a program is needed.\n\
-  - All semantic symbols you use must be taught in this prompt.\n\
-  - Projection uses a minimal non-empty subset from `{projection}`; the identity row teaches the full set once.\n\
-  - Leading `{field}` rows are metadata for slots when `args:` on a method line is not enough.\n\n",
-        search_rule = if spec.include_search_line { " | search" } else { "" }
-    );
-    let field_hint_line = format!(
-        "  - `{field}`-only rows predeclare slots; they are metadata, not expressions to output.\n"
-    );
 
     let mut s = String::new();
     s.push_str(DOMAIN_VALID_EXPR_MARKER);
     s.push_str("\n\n");
-    s.push_str(&structure_lines);
-    if let Some(symbol_line) = symbol_line {
-        s.push_str(symbol_line);
+
+    s.push_str("Output:\n");
+    s.push_str(
+        "- Single `plasm_expr` iff one lookup/query/search/relation/method/action is the whole answer.\n\
+- Else one multi-line `plasm_program`: bind → narrow (projection/postfix/bracket-render) → small bare roots—not many one-line tool calls.\n\n",
+    );
+
+    let _ = writeln!(
+        s,
+        "Grammar (pseudo-EBNF; DOMAIN rows instantiate `plasm_expr` atoms):"
+    );
+    let _ = writeln!(s, "plasm_program ::= plasm_roots | binding+ plasm_roots");
+    let _ = writeln!(s, "binding       ::= ident \"=\" plasm_node");
+    let _ = writeln!(s, "plasm_roots   ::= plasm_return (\",\" plasm_return)*");
+    let _ = writeln!(s, "plasm_return  ::= node_ref | plasm_expr");
+    let _ = writeln!(
+        s,
+        "plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref \"=>\" plasm_value | node_ref \"=>\" effect_expr"
+    );
+    let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection]");
+    let _ = writeln!(s, "entity_expr   ::= {}", entity_expr_rhs);
+    let _ = writeln!(s, "query_all     ::= {}", query_all_form);
+    let _ = writeln!(s, "get           ::= {}", get_form);
+    let _ = writeln!(s, "query         ::= {}", query_form);
+    let _ = writeln!(s, "relation      ::= {}", nav_form);
+    let _ = writeln!(s, "method        ::= {}", method_form);
+    let _ = writeln!(s, "create_action ::= {}", create_form);
+    if spec.include_search_line {
+        let _ = writeln!(s, "search        ::= {}", search_form);
     }
     let _ = writeln!(
         s,
-        "  - {get_form} — get one entity by id or compound key (examples below use `v=$`, not concrete API values)."
+        "projection    ::= {} | \"[\" fields \"]\"",
+        projection_form
+    );
+    let _ = writeln!(s, "postfix       ::= transform | \"[\" fields \"]\"");
+    let _ = writeln!(
+        s,
+        "bracket_render_tail ::= ( \"[\" fields \"]\" )? \"<<TAG\" heredoc_body \"TAG\""
+    );
+    let _ = writeln!(s, "positive_int  ::= non-zero decimal integer literal");
+    let _ = writeln!(s, "agg_func      ::= \"sum\" | \"avg\" | \"min\" | \"max\"");
+    let _ = writeln!(
+        s,
+        "agg_spec      ::= ident \"=\" ( \"count\" | agg_func \"(\" field \")\" )"
+    );
+    let _ = writeln!(s, "agg_specs     ::= agg_spec (\",\" agg_spec)*");
+    let _ = writeln!(
+        s,
+        "sort_dir      ::= omitted | \"desc\" | \"asc\" | \"ascending\" | \"descending\""
     );
     let _ = writeln!(
         s,
-        "  - Use TSV `plasm_expr` shapes exactly, substituting concrete values for placeholders."
+        "transform     ::= \".limit(\" positive_int \")\" | \".sort(\" field [\",\" sort_dir] \")\" | \".aggregate(\" agg_specs \")\" | \".group_by(\" field \",\" agg_specs \")\" | \".singleton()\" | \".page_size(\" positive_int \")\""
+    );
+    let _ = writeln!(s, "fields        ::= {}", projection);
+    let _ = writeln!(
+        s,
+        "plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]"
     );
     let _ = writeln!(
         s,
-        "  - For compound-key forms such as `{get_form}`, keep keyed args (`p#=v` / `name=value`); never rewrite them as positional."
+        "effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)"
     );
     let _ = writeln!(
         s,
-        "  - {query_form} — list query; `{query_all_form}` alone queries all."
-    );
-    let _ = writeln!(s, "  - {nav_form} — relation. {method_form} — method call.");
-    let _ = writeln!(
-        s,
-        "  - For list/query goals, use brace predicates `{query_form}`. Use dotted `{method_form}` only when the goal asks to mutate or call a method."
+        "ident/node_ref/field ::= agent-chosen names for bound nodes and fields"
     );
     let _ = writeln!(
         s,
-        "  - {create_form} — standalone create/action (no anchor id needed)."
+        "literal       ::= quoted string | number | bool | null | heredoc"
     );
-    let _ = writeln!(
-        s,
-        "  - {projection_form} — non-empty scalar subset. Dot after `{entity}(id)` means relations or taught `{method}`, not scalar fields."
-    );
+    s.push_str("\nAggregates (examples): `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.\n\n");
+
+    s.push_str("Continuation:\n");
     s.push_str(
-        "  - **Bracket render / synthesis** (`label[p#,…] <<TAG … TAG`, or `binding <<TAG … TAG` after narrowing **`binding`** with projection/transforms): heredoc body is **Minijinja** with `rows` (projected row dicts). Use `{% for r in rows %}…{% endfor %}`, `{{ r.p15 }}`, `{{ rows | length }}` as needed. The rendered **`content`** may be **any** textual format (plain text, markdown, HTML fragments, structured snippets, JSON **text**, logs—not markdown-specific); guard accidental Jinja tokens with `{% raw %}…{% endraw %}`. Output is one synthetic row shaped like `{\"content\": \"…\"}` — for **string**/body parameters use **`binding.content`**, not bare **`binding`**.\n",
+        "- Postfix (transforms, `[fields]`, `<<TAG…TAG`) may chain on one surface `plasm_expr`.\n\
+- `ident.<relation>` only after surface row bindings (get/query/relation); after projection/transform/`=>`, repeat full DOMAIN expr or rebind. Bracket-render = Minijinja `rows`; optional `[fields]` narrows columns → row `{\"content\":\"…\"}` — use **`binding.content`** for string/body args.\n\n",
     );
-    let _ = writeln!(
-        s,
-        "  - To list X scoped by parent Y, use `{scoped_form}` from X's rows; do not invent `Y(id).{field}`."
-    );
-    let _ = writeln!(
-        s,
-        "  - `[v, …]` — array value inside method args, e.g. `{array_form}`."
-    );
-    let _ = writeln!(
-        s,
-        "  - Plain `str` values use double quotes. In quoted strings only `\\\"` and `\\\\` are escapes."
-    );
+
+    s.push_str("MCP `program` (JSON string):\n");
     s.push_str(
-        "  - `select` chooses one listed allowed value; `multiselect` chooses zero or more as `[v, …]`.\n",
+        "- Literal U+000A between statements (one `ident = …` per line; bare roots last). Spaces never separate statements.\n\
+- Heredoc: newline after `<<TAG` opener; close line trims to `TAG` / `TAG)` / `TAG,` / `TAG}`; first matching trimmed interior line closes—opaque `TAG` for blobs. Commas inside heredocs never split roots (e.g. `…<<B` / `Hello` / `B` / `), e2`).\n\n",
     );
+
+    s.push_str("Discipline:\n");
+    s.push_str(
+        "- Plan shape first; small roots unless raw rows requested; bracket-render row-derived text, static `<<TAG` for fixed payloads.\n\
+- `page(sN_pgM)` continues a chosen list only; DOMAIN is the shape contract—no probe calls.\n\n",
+    );
+
+    s.push_str("DOMAIN / catalogue:\n");
+    let _ = writeln!(
+        s,
+        "- `plasm_expr` = atoms; `Meaning` = how to pick/fill—never paste `Meaning`. Bare comma-separated roots (no `return`); every symbol taught here."
+    );
+    let _ = writeln!(
+        s,
+        "- Projection: minimal non-empty `{}`; identity row lists full fields once. Leading `{field}` rows = slot metadata when method `args:` is insufficient.",
+        projection,
+        field = field
+    );
+
+    if spec.symbolic {
+        s.push_str(
+            "- e#, m#, p# are session-local aliases — copy them exactly; new prompts supersede old meanings.\n\
+- Pick by `Meaning`, copy `plasm_expr`, bind keyed slot (`p12=value`) only; never positional or renumbered args.\n",
+        );
+    } else {
+        s.push_str(
+            "- Entity names, methods, and slots — use exactly as shown; a slot may be field, relation, or parameter by context.\n",
+        );
+    }
+
+    s.push_str(&format!(
+        "- Instantiate grammar lines from DOMAIN only; keyed `{field}=v` never positional. `v=$` in tables is a fill cue.\n\
+- `{query_form}` / `{query_all_form}` list/filter; `{get_form}` fetch one; `{nav_form}` relate; `{method_form}` call; `{create_form}` without id; `{projection_form}` projects—after `{entity}(id)`, `.` is relation or taught `{method}` only.\n",
+        field = field,
+        entity = entity,
+        method = method,
+        query_form = query_form,
+        query_all_form = query_all_form,
+        get_form = get_form,
+        nav_form = nav_form,
+        method_form = method_form,
+        create_form = create_form,
+        projection_form = projection_form,
+    ));
+    let _ = writeln!(
+        s,
+        "- Scoped child lists: `{scoped_form}` from the child entity’s DOMAIN rows; never invent `Y(id).{field}`.",
+        field = field
+    );
+    let _ = writeln!(
+        s,
+        "- Arrays in args: `[v, …]` (e.g. `{array_form}`). Quoted strings: only `\\\"` and `\\\\` escapes."
+    );
+    s.push_str("- `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.\n");
     if spec.include_rich_string_guidance {
         s.push_str(&render_rich_string_guidance_tsv());
     }
     if spec.include_search_line {
         let _ = writeln!(
             s,
-            "  - {search_form} — full-text search on entities whose teaching rows include a `~` example (same entities only)."
+            "- Search `{search_form}` only where DOMAIN teaches `~` on that entity.",
+            search_form = search_form
         );
     }
-    s.push_str(&field_hint_line);
-    s.push_str(
-        "  - `$` is only a fill-in cue. Substitute a real value; never send `$`.\n\
-  - `..` — optional params may follow (`optional params:` lists them, comma-separated). `..` can appear alone when all args are optional.\n",
+    let _ = writeln!(
+        s,
+        "- `{field}`-only rows declare slots (metadata), not expressions to emit.",
+        field = field
     );
-    s.push_str(
-        "  - TSV rows are teaching rows. `plasm_expr` teaches syntax; `Meaning` teaches selection and argument semantics.\n\n",
+    let _ = writeln!(
+        s,
+        "- `$` marks fill-ins — substitute real values; never send `$`."
     );
+    let _ = writeln!(
+        s,
+        "- `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional."
+    );
+    s.push_str("\n");
+
     s
 }
 
 /// Heredoc rules for TSV prompts: same semantics as markdown — one minimal tagged exemplar.
 fn render_rich_string_guidance_tsv() -> String {
-    "  - When `Meaning` marks a slot used in an input value as `markdown`, `html`, `document`, `json_text`, or `blob`, use tagged heredoc only: `<<TAG` ... `TAG`.\n\
-  - Example: `m#(..., p#=<<TXT` newline body newline `TXT` newline `)`.\n"
+    "- `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.\n"
         .to_string()
 }
 
@@ -4670,8 +4693,10 @@ mod tests {
         );
     }
 
+    /// Locks compact DOMAIN + symbol preamble for `fixtures/schemas/overshow_tools`.
+    /// Update with `INSTA_UPDATE=always cargo test -p plasm-core overshow_tools_compact_prompt_snapshot -- --exact`.
     #[test]
-    fn p_symbol_verbosity_uses_args_summary_and_short_alias_preamble() {
+    fn overshow_tools_compact_prompt_snapshot() {
         let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
@@ -4681,32 +4706,22 @@ mod tests {
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
-        assert!(
-            prompt.contains("args:") && prompt.contains("req"),
-            "expected compact args: p# type req|opt in DOMAIN `;;` hints"
-        );
-        assert!(
-            prompt.contains("session-local aliases")
-                && prompt.contains("keyed slot")
-                && !prompt
-                    .lines()
-                    .any(|l| l.contains("Reuse a `p#` only when the taught slot meaning")),
-            "preamble should use the short alias model (no long p# reuse paragraph)"
-        );
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!("overshow_tools_compact_prompt", prompt);
+        });
     }
 
+    /// Locks TSV DOMAIN render for the same fixture (review diffs with compact snapshot above).
     #[test]
-    fn tsv_parity_includes_compact_args_in_meaning_when_in_domain_legend() {
+    fn overshow_tools_prompt_tsv_snapshot() {
         let dir = fixtures_schemas_dir("overshow_tools");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        let body = tsv.split(TSV_DOMAIN_TABLE_HEADER).nth(1).expect("tsv body");
-        assert!(
-            body.contains("args:"),
-            "TSV `Meaning` should carry the same `args:` fragment as compact DOMAIN"
-        );
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!("overshow_tools_prompt_tsv", tsv);
+        });
     }
 }
