@@ -39,6 +39,12 @@ mkdocs serve   # http://127.0.0.1:8000
 mkdocs build --strict
 ```
 
+## Essays (not in the sidebar)
+
+Long-form pieces live under `docs/essay/` and are **omitted from `nav:`** so the technical IA stays tight. They are still built, searchable, and reachable by URL—for example:
+
+- `/essay/plasm-typed-interaction-layer/` — companion to the [Medium launch essay](https://medium.com/@ryansroberts/plasm-a-typed-interaction-layer-for-agents-working-across-apis-38d9d90066a7).
+
 ## Navigation (MkDocs Material)
 
 The theme uses a **nested left sidebar** for all `nav:` levels (Language → Specification, MCP → …, etc.). Header **tabs** are intentionally disabled: with `navigation.tabs`, Material lifts every top-level entry into the header bar and the sidebar tends to look **flat / fragmented**. **`navigation.expand`** opens subsections by default; **`navigation.path`** adds breadcrumbs for nested pages.
