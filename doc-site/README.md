@@ -1,11 +1,22 @@
 # GitHub Pages documentation (`doc-site/`)
 
-Static site for **[plasm-core](https://github.com/ryan-s-roberts/plasm-core)** — published via GitHub Actions to **`gh-pages`**.
+Static site for **plasm-core** — built by `.github/workflows/docs.yml` and deployed with **`actions/deploy-pages`** (artifact upload, not a legacy `gh-pages` branch checkout).
 
 ## Publish target
 
-- **Repository:** `ryan-s-roberts/plasm-core` (this tree when used as the public OSS repo).
-- **Public URL:** `https://ryan-s-roberts.github.io/plasm-core/` (GitHub Pages project site).
+- **Repository:** whichever repo runs the workflow (e.g. [`ryan-s-roberts/plasm-core`](https://github.com/ryan-s-roberts/plasm-core) or an org fork such as [`PlasmTools/plasm-core`](https://github.com/PlasmTools/plasm-core)).
+- **Public URL:** typically `https://<owner>.github.io/<repo>/` — keep `site_url` / `repo_url` in `mkdocs.yml` aligned with that owner/repo.
+
+### GitHub Pages must use “GitHub Actions”
+
+If **`deploy-pages`** fails with **`HttpError: Not Found`** / **Creating Pages deployment failed**:
+
+1. Open **Settings → Pages** for the **same repository** that runs the workflow.
+2. Under **Build and deployment**, set **Source** to **GitHub Actions** (not “Deploy from a branch”).
+3. Re-run the workflow (or push to `main`). GitHub creates the **`github-pages`** environment when this source is selected.
+
+Org-owned repos: confirm **Pages** is enabled under organization policy and that you have permission to change Pages settings.
+
 - **Versioning:** docs track **`main`**; tag **`docs-vYYYY.MM.dd`** or release tags when you need a frozen snapshot (optional **mike** integration — not enabled by default).
 
 ## Doc inclusion policy

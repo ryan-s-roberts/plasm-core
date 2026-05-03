@@ -1,3 +1,11 @@
+# Publishes MkDocs to GitHub Pages via Actions artifact.
+#
+# One-time per repository: Settings → Pages → Build and deployment → Source:
+# **GitHub Actions**. If Source is still “Deploy from a branch”, deploy-pages
+# fails with HTTP 404 when creating the deployment.
+#
+# Org repos: ensure Pages is allowed for the repo (org policy may disable it).
+
 name: docs
 
 on:
@@ -40,6 +48,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
