@@ -1,0 +1,142 @@
+# Cloudflare REST API v4 — CML for edge-security slice (zones, rulesets, WAF packages).
+# Semantic model: domain.yaml. Base URL matches OpenAPI servers (client/v4 origin).
+#
+# Responses use the standard v4 envelope { success, errors, messages, result, result_info? }.
+# List bodies decode from `result`; single-object endpoints use `result` with `single: true`.
+#
+# Auth: Bearer `CLOUDFLARE_API_TOKEN` (see domain.yaml).
+
+zone_query:
+  method: GET
+  path:
+    - { type: literal, value: zones }
+  response:
+    items: result
+  query:
+    type: object
+    fields:
+      - - "account.id"
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - name
+        - type: if
+          condition: { type: exists, var: name }
+          then_expr: { type: var, name: name }
+          else_expr: { type: const, value: null }
+      - - status
+        - type: if
+          condition: { type: exists, var: status }
+          then_expr: { type: var, name: status }
+          else_expr: { type: const, value: null }
+      - - type
+        - type: if
+          condition: { type: exists, var: type }
+          then_expr: { type: var, name: type }
+          else_expr: { type: const, value: null }
+      - - page
+        - type: if
+          condition: { type: exists, var: page }
+          then_expr: { type: var, name: page }
+          else_expr: { type: const, value: null }
+      - - per_page
+        - type: if
+          condition: { type: exists, var: per_page }
+          then_expr: { type: var, name: per_page }
+          else_expr: { type: const, value: null }
+
+zone_get:
+  method: GET
+  path:
+    - { type: literal, value: zones }
+    - { type: var, name: zone_id }
+  response:
+    items: result
+    single: true
+
+ruleset_query:
+  method: GET
+  path:
+    - { type: literal, value: zones }
+    - { type: var, name: zone_id }
+    - { type: literal, value: rulesets }
+  response:
+    items: result
+  query:
+    type: object
+    fields:
+      - - per_page
+        - type: if
+          condition: { type: exists, var: per_page }
+          then_expr: { type: var, name: per_page }
+          else_expr: { type: const, value: null }
+  pagination:
+    params:
+      cursor: {from_response: after}
+      per_page: {fixed: 50}
+    response_prefix: [result_info, cursors]
+
+ruleset_get:
+  method: GET
+  path:
+    - { type: literal, value: zones }
+    - { type: var, name: zone_id }
+    - { type: literal, value: rulesets }
+    - { type: var, name: ruleset_id }
+  response:
+    items: result
+    single: true
+
+ruleset_entrypoint_get:
+  method: GET
+  path:
+    - { type: literal, value: zones }
+    - { type: var, name: zone_id }
+    - { type: literal, value: rulesets }
+    - { type: literal, value: phases }
+    - { type: var, name: ruleset_phase }
+    - { type: literal, value: entrypoint }
+  response:
+    items: result
+    single: true
+
+ruleset_entrypoint_update:
+  method: PUT
+  path:
+    - { type: literal, value: zones }
+    - { type: var, name: zone_id }
+    - { type: literal, value: rulesets }
+    - { type: literal, value: phases }
+    - { type: var, name: ruleset_phase }
+    - { type: literal, value: entrypoint }
+  body:
+    type: var
+    name: input
+  response:
+    items: result
+    single: true
+
+waf_package_query:
+  method: GET
+  path:
+    - { type: literal, value: zones }
+    - { type: var, name: zone_id }
+    - { type: literal, value: firewall }
+    - { type: literal, value: waf }
+    - { type: literal, value: packages }
+  response:
+    items: result
+  query:
+    type: object
+    fields:
+      - - page
+        - type: if
+          condition: { type: exists, var: page }
+          then_expr: { type: var, name: page }
+          else_expr: { type: const, value: null }
+      - - per_page
+        - type: if
+          condition: { type: exists, var: per_page }
+          then_expr: { type: var, name: per_page }
+          else_expr: { type: const, value: null }

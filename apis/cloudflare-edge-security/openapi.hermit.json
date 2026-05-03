@@ -1,0 +1,345 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Cloudflare v4 (edge-security slice for Hermit)",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "https://api.cloudflare.com/client/v4" }],
+  "paths": {
+    "/zones": {
+      "get": {
+        "summary": "List zones",
+        "parameters": [
+          { "name": "account.id", "in": "query", "schema": { "type": "string" } },
+          { "name": "name", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "per_page", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ZoneListResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": [
+                    {
+                      "id": "zone_hermit_1",
+                      "name": "example.com",
+                      "status": "active",
+                      "paused": false,
+                      "type": "full"
+                    }
+                  ],
+                  "result_info": { "page": 1, "per_page": 20, "count": 1, "total_count": 1, "total_pages": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/zones/{zone_id}": {
+      "get": {
+        "summary": "Zone detail",
+        "parameters": [{ "name": "zone_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ZoneSingleResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": {
+                    "id": "zone_hermit_1",
+                    "name": "example.com",
+                    "status": "active",
+                    "paused": false,
+                    "type": "full"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/zones/{zone_id}/rulesets": {
+      "get": {
+        "summary": "List zone rulesets",
+        "parameters": [
+          { "name": "zone_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "per_page", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RulesetListResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": [
+                    {
+                      "id": "rs_1",
+                      "name": "Cloudflare Managed Ruleset",
+                      "description": "",
+                      "kind": "managed",
+                      "phase": "http_request_firewall_managed",
+                      "version": "12",
+                      "last_updated": "2024-01-01T00:00:00Z"
+                    }
+                  ],
+                  "result_info": { "cursors": { "after": "" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/zones/{zone_id}/rulesets/{ruleset_id}": {
+      "get": {
+        "summary": "Get zone ruleset",
+        "parameters": [
+          { "name": "zone_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "ruleset_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RulesetSingleResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": {
+                    "id": "rs_1",
+                    "name": "Custom rules",
+                    "description": "",
+                    "kind": "zone",
+                    "phase": "http_request_firewall_custom",
+                    "version": "3",
+                    "last_updated": "2024-01-01T00:00:00Z",
+                    "rules": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/zones/{zone_id}/rulesets/phases/{ruleset_phase}/entrypoint": {
+      "get": {
+        "summary": "Get entrypoint ruleset",
+        "parameters": [
+          { "name": "zone_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "ruleset_phase", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RulesetSingleResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": {
+                    "id": "rs_entry",
+                    "name": "DDoS L7",
+                    "description": "",
+                    "kind": "managed",
+                    "phase": "ddos_l7",
+                    "version": "1",
+                    "last_updated": "2024-01-01T00:00:00Z",
+                    "rules": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update entrypoint ruleset",
+        "parameters": [
+          { "name": "zone_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "ruleset_phase", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" },
+              "example": { "name": "DDoS L7", "kind": "managed", "phase": "ddos_l7", "rules": [] }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RulesetSingleResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": {
+                    "id": "rs_entry",
+                    "name": "DDoS L7",
+                    "description": "",
+                    "kind": "managed",
+                    "phase": "ddos_l7",
+                    "version": "2",
+                    "last_updated": "2024-01-02T00:00:00Z",
+                    "rules": []
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/zones/{zone_id}/firewall/waf/packages": {
+      "get": {
+        "summary": "List WAF packages",
+        "parameters": [
+          { "name": "zone_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "per_page", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WafPackageListResponse" },
+                "example": {
+                  "success": true,
+                  "errors": [],
+                  "messages": [],
+                  "result": [
+                    {
+                      "id": "waf_pkg_1",
+                      "name": "OWASP ModSecurity Core Rule Set",
+                      "description": "CRS",
+                      "detection_mode": "traditional",
+                      "zone_id": "zone_hermit_1"
+                    }
+                  ],
+                  "result_info": { "page": 1, "per_page": 20, "count": 1, "total_count": 1, "total_pages": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ZoneListResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "errors": { "type": "array", "items": { "type": "object" } },
+          "messages": { "type": "array", "items": { "type": "string" } },
+          "result": { "type": "array", "items": { "$ref": "#/components/schemas/Zone" } },
+          "result_info": { "type": "object" }
+        }
+      },
+      "ZoneSingleResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "errors": { "type": "array", "items": { "type": "object" } },
+          "messages": { "type": "array", "items": { "type": "string" } },
+          "result": { "$ref": "#/components/schemas/Zone" }
+        }
+      },
+      "Zone": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string" },
+          "paused": { "type": "boolean" },
+          "type": { "type": "string" }
+        },
+        "required": ["id", "name"]
+      },
+      "RulesetListResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "errors": { "type": "array", "items": { "type": "object" } },
+          "messages": { "type": "array", "items": { "type": "string" } },
+          "result": { "type": "array", "items": { "$ref": "#/components/schemas/Ruleset" } },
+          "result_info": { "type": "object" }
+        }
+      },
+      "RulesetSingleResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "errors": { "type": "array", "items": { "type": "object" } },
+          "messages": { "type": "array", "items": { "type": "string" } },
+          "result": { "$ref": "#/components/schemas/Ruleset" }
+        }
+      },
+      "Ruleset": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "kind": { "type": "string" },
+          "phase": { "type": "string" },
+          "version": { "type": "string" },
+          "last_updated": { "type": "string", "format": "date-time" },
+          "rules": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["id", "name", "kind", "phase"]
+      },
+      "WafPackageListResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "errors": { "type": "array", "items": { "type": "object" } },
+          "messages": { "type": "array", "items": { "type": "string" } },
+          "result": { "type": "array", "items": { "$ref": "#/components/schemas/WafPackage" } },
+          "result_info": { "type": "object" }
+        }
+      },
+      "WafPackage": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "detection_mode": { "type": "string" },
+          "zone_id": { "type": "string" }
+        },
+        "required": ["id", "name", "zone_id"]
+      }
+    }
+  }
+}

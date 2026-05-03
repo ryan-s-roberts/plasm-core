@@ -20,6 +20,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 | Directory                           | Role                                                                                                       |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | [clickup](clickup/)                 | ClickUp REST v2 (workspaces, tasks, lists, …)                                                              |
+| [cloudflare-edge-security](cloudflare-edge-security/) | Cloudflare REST v4 — zones, rulesets, phase entrypoints, WAF packages (Bearer token; Hermit slice in-tree) |
 | [dnd5e](dnd5e/)                     | D&D 5e SRD public API                                                                                      |
 | [evm-erc20](evm-erc20/)             | EVM ERC-20 reads (on-chain, not REST)                                                                      |
 | [github](github/)                   | GitHub REST (repos, issues, PRs, commits, branches, reviews, files—see README)                             |
