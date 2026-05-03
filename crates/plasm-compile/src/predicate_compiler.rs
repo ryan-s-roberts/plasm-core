@@ -194,12 +194,110 @@ pub fn compile_query(
 mod tests {
     use super::*;
     use plasm_core::{
-        Cardinality, FieldSchema, FieldType, Predicate, QueryExpr, RelationSchema, ResourceSchema,
-        Value,
+        Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, Predicate,
+        QueryExpr, RelationSchema, ResourceSchema, StringSemantics, Value, ValueDomainKey,
     };
+
+    fn registry_field(wire_name: &str, values_key: &str, required: bool) -> FieldSchema {
+        FieldSchema {
+            name: wire_name.into(),
+            kind: FieldValueKind::Registry(
+                ValueDomainKey::new(values_key).expect("test values key"),
+            ),
+            description: String::new(),
+            required,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+        }
+    }
 
     fn create_test_cgs() -> CGS {
         let mut cgs = CGS::new();
+
+        cgs.values.insert(
+            "nv_pred_account_id".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "nv_pred_account_name".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "nv_pred_account_revenue".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "nv_pred_account_region".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec![
+                    "EMEA".to_string(),
+                    "APAC".to_string(),
+                    "AMER".to_string(),
+                ]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "nv_pred_contact_id".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "nv_pred_contact_name".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "nv_pred_contact_role".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
 
         // Account entity
         let account = ResourceSchema {
@@ -209,70 +307,10 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "name".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "revenue".into(),
-                    description: String::new(),
-                    field_type: FieldType::Number,
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "region".into(),
-                    description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec![
-                        "EMEA".to_string(),
-                        "APAC".to_string(),
-                        "AMER".to_string(),
-                    ]),
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_field("id", "nv_pred_account_id", true),
+                registry_field("name", "nv_pred_account_name", true),
+                registry_field("revenue", "nv_pred_account_revenue", false),
+                registry_field("region", "nv_pred_account_region", false),
             ],
             relations: vec![RelationSchema {
                 name: "contacts".into(),
@@ -297,51 +335,9 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "name".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "role".into(),
-                    description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_field("id", "nv_pred_contact_id", true),
+                registry_field("name", "nv_pred_contact_name", true),
+                registry_field("role", "nv_pred_contact_role", false),
             ],
             relations: vec![],
             expression_aliases: vec![],

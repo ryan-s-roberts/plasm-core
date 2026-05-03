@@ -167,7 +167,8 @@ fn field_type_is_blob(cgs: Option<&CGS>, entity_type: &EntityName, field: &str) 
     cgs.entities
         .get(entity_type.as_str())
         .and_then(|e| e.fields.get(field))
-        .is_some_and(|fs| matches!(fs.field_type, FieldType::Blob))
+        .and_then(|fs| cgs.named_value_for_slot(fs).ok())
+        .is_some_and(|nv| matches!(nv.field_type, FieldType::Blob))
 }
 
 /// Column order for table/TSV: CGS `blob` fields expand to `{name}_ref` + `{name}_mime`.
@@ -360,8 +361,9 @@ pub(super) fn field_presentation(
     let cgs = cgs?;
     let ent = cgs.entities.get(entity_type.as_str())?;
     let fs = ent.fields.get(field_name)?;
-    if matches!(fs.field_type, FieldType::String | FieldType::Blob) {
-        Some(fs.effective_agent_presentation())
+    let nv = cgs.named_value_for_slot(fs).ok()?;
+    if matches!(nv.field_type, FieldType::String | FieldType::Blob) {
+        Some(fs.effective_agent_presentation(cgs))
     } else {
         None
     }
@@ -571,7 +573,8 @@ mod tests {
     use plasm_compile::DecodedRelation;
     use plasm_core::{
         AgentPresentation, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema,
-        FieldType, Ref, ResourceSchema, StringSemantics, PLASM_ATTACHMENT_KEY,
+        FieldType, FieldValueKind, NamedValueSchema, Ref, ResourceSchema, StringSemantics,
+        ValueDomainKey, PLASM_ATTACHMENT_KEY,
     };
     use plasm_runtime::{ExecutionSource, ExecutionStats};
 
@@ -579,6 +582,17 @@ mod tests {
 
     fn tiny_cgs_markdown_reference_only() -> CGS {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "out_note_id".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Markdown),
+                array_items: None,
+            },
+        );
         cgs.add_resource(ResourceSchema {
             name: "Note".into(),
             description: String::new(),
@@ -587,13 +601,9 @@ mod tests {
             id_from: None,
             fields: vec![FieldSchema {
                 name: "id".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("out_note_id").expect("key")),
                 description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
                 required: true,
-                array_items: None,
-                string_semantics: Some(StringSemantics::Markdown),
                 agent_presentation: Some(AgentPresentation::ReferenceOnly),
                 mime_type_hint: None,
                 attachment_media: None,
@@ -631,6 +641,23 @@ mod tests {
 
     fn tiny_cgs_lossy_desc() -> CGS {
         let mut cgs = CGS::new();
+        for (k, sem) in [
+            ("out_spell_id", StringSemantics::Short),
+            ("out_spell_name", StringSemantics::Short),
+            ("out_spell_desc", StringSemantics::Document),
+        ] {
+            cgs.values.insert(
+                k.into(),
+                NamedValueSchema {
+                    description: String::new(),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                    string_semantics: Some(sem),
+                    array_items: None,
+                },
+            );
+        }
         cgs.add_resource(ResourceSchema {
             name: "Spell".into(),
             description: String::new(),
@@ -640,13 +667,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("out_spell_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: Some(StringSemantics::Short),
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -655,13 +680,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("out_spell_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: Some(StringSemantics::Short),
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -670,13 +693,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "desc".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("out_spell_desc").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: false,
-                    array_items: None,
-                    string_semantics: Some(StringSemantics::Document),
                     agent_presentation: Some(AgentPresentation::Lossy),
                     mime_type_hint: None,
                     attachment_media: None,
@@ -792,6 +813,28 @@ mod tests {
     #[test]
     fn reference_only_with_mime_hint_includes_mime_in_table_cell() {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "out_file_id".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "out_file_content".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Blob,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         cgs.add_resource(ResourceSchema {
             name: "File".into(),
             description: String::new(),
@@ -801,13 +844,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("out_file_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: Some(StringSemantics::Short),
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -816,13 +857,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "content".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("out_file_content").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::Blob,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: Some("application/pdf".into()),
                     attachment_media: None,

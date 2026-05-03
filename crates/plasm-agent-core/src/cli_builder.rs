@@ -211,7 +211,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
     // Primary query subcommand: the unscoped query capability (if any) gets "query" verb.
     if let Some(query_cap) = cgs.primary_query_capability(name) {
         let mut query_cmd = Command::new("query").about(format!("Query {} resources", name));
-        for arg in build_query_param_args(query_cap) {
+        for arg in build_query_param_args(query_cap, cgs) {
             query_cmd = query_cmd.arg(arg);
         }
         if let Some(ref pconf) = pagination_config_for_capability(query_cap) {
@@ -233,7 +233,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
     // Primary search subcommand: the unscoped search capability (if any) gets "search" verb.
     if let Some(search_cap) = cgs.primary_search_capability(name) {
         let mut search_cmd = Command::new("search").about(format!("Search {} by relevance", name));
-        for arg in build_query_param_args(search_cap) {
+        for arg in build_query_param_args(search_cap, cgs) {
             search_cmd = search_cmd.arg(arg);
         }
         if let Some(ref pconf) = pagination_config_for_capability(search_cap) {
@@ -253,7 +253,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
         };
         let mut scoped_cmd =
             Command::new(leak(sub_kebab)).about(format!("{} (scoped {})", cap.name, kind_label));
-        for arg in build_query_param_args(cap) {
+        for arg in build_query_param_args(cap, cgs) {
             scoped_cmd = scoped_cmd.arg(arg);
         }
         if let Some(ref pconf) = pagination_config_for_capability(cap) {
@@ -324,7 +324,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
                 ),
             };
         if let Some(qcap) = qcap {
-            for arg in build_query_param_args(qcap) {
+            for arg in build_query_param_args(qcap, cgs) {
                 if skip_params.iter().any(|p| arg.get_id() == p.as_str()) {
                     continue;
                 }
@@ -376,7 +376,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
             ));
 
             if let Some(qcap) = cgs.find_capability(cap.domain.as_str(), CapabilityKind::Query) {
-                for arg in build_query_param_args(qcap) {
+                for arg in build_query_param_args(qcap, cgs) {
                     rev_cmd = rev_cmd.arg(arg);
                 }
             }
@@ -403,7 +403,10 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
 
     // EntityRef field navigation subcommands (FK auto-resolve)
     for (field_name, field_schema) in &entity.fields {
-        if let FieldType::EntityRef { ref target } = field_schema.field_type {
+        let Ok(nv) = cgs.named_value_for_slot(field_schema) else {
+            continue;
+        };
+        if let FieldType::EntityRef { ref target } = nv.field_type {
             let kebab: &'static str = leak(field_subcommand_kebab(field_name));
             if entity.relations.contains_key(field_name.as_str()) {
                 continue;
@@ -440,7 +443,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
             CapabilityKind::Create => {
                 let mut create_cmd =
                     Command::new(leak(sub_kebab.clone())).about(format!("Create a new {name}"));
-                for arg in build_invoke_args(cap) {
+                for arg in build_invoke_args(cap, cgs) {
                     create_cmd = create_cmd.arg(arg);
                 }
                 // Path vars for create come from the input object (runtime merges into CML env).
@@ -461,7 +464,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
             CapabilityKind::Update | CapabilityKind::Action => {
                 let mut action_cmd =
                     Command::new(leak(sub_kebab.clone())).about(cap.name.to_string());
-                for arg in build_invoke_args(cap) {
+                for arg in build_invoke_args(cap, cgs) {
                     action_cmd = action_cmd.arg(arg);
                 }
                 if let Some(cml) = http_template_request(&cap.mapping.template) {
@@ -616,6 +619,72 @@ mod tests {
     use super::*;
     use plasm_core::*;
 
+    fn nv_string(cgs: &mut CGS, key: &str) {
+        cgs.values.insert(
+            key.into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+    }
+    fn nv_number(cgs: &mut CGS, key: &str) {
+        cgs.values.insert(
+            key.into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
+    fn nv_select(cgs: &mut CGS, key: &str, allowed: Vec<String>) {
+        cgs.values.insert(
+            key.into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(allowed),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
+    fn nv_integer(cgs: &mut CGS, key: &str) {
+        cgs.values.insert(
+            key.into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Integer,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
+    fn nv_entity_ref(cgs: &mut CGS, key: &str, target: EntityName) {
+        cgs.values.insert(
+            key.into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef { target },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
+
     /// Build a test CGS with:
     /// - Account entity (fields: id, name, revenue, region)
     /// - Contact entity (fields: id, name, role)
@@ -624,6 +693,21 @@ mod tests {
     /// - query_contacts: declares `role` as a query filter parameter (so relation filter works)
     fn test_cgs() -> CGS {
         let mut cgs = CGS::new();
+        nv_string(&mut cgs, "cb_account_id");
+        nv_string(&mut cgs, "cb_account_name");
+        nv_number(&mut cgs, "cb_account_revenue");
+        nv_select(
+            &mut cgs,
+            "cb_account_region",
+            vec!["EMEA".into(), "APAC".into(), "AMER".into()],
+        );
+        nv_string(&mut cgs, "cb_contact_id");
+        nv_string(&mut cgs, "cb_contact_name");
+        nv_select(
+            &mut cgs,
+            "cb_contact_role",
+            vec!["Manager".into(), "Employee".into()],
+        );
 
         cgs.add_resource(ResourceSchema {
             name: "Account".into(),
@@ -634,13 +718,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_account_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -649,13 +731,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_account_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -664,13 +744,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "revenue".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_account_revenue").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::Number,
-                    value_format: None,
-                    allowed_values: None,
                     required: false,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -679,13 +757,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "region".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_account_region").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
                     required: false,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -718,13 +794,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_contact_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -733,13 +807,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_contact_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -748,13 +820,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "role".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_contact_role").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec!["Manager".into(), "Employee".into()]),
                     required: false,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -801,12 +871,10 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "region".into(),
-                        field_type: FieldType::Select,
-                        value_format: None,
+                        kind: FieldValueKind::Registry(
+                            ValueDomainKey::new("cb_account_region").expect("key"),
+                        ),
                         required: false,
-                        allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
-                        array_items: None,
-                        string_semantics: None,
                         description: Some("Filter by region".into()),
                         default: None,
                         role: None,
@@ -846,12 +914,8 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "role".into(),
-                        field_type: FieldType::Select,
-                        value_format: None,
+                        kind: FieldValueKind::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
                         required: false,
-                        allowed_values: Some(vec!["Manager".into(), "Employee".into()]),
-                        array_items: None,
-                        string_semantics: None,
                         description: Some("Filter by role".into()),
                         default: None,
                         role: None,
@@ -977,7 +1041,8 @@ mod tests {
         let query_cap = cgs
             .find_capability("Account", CapabilityKind::Query)
             .unwrap();
-        let pred = crate::query_args::args_to_query_predicate(sub_matches, query_cap).unwrap();
+        let pred =
+            crate::query_args::args_to_query_predicate(sub_matches, query_cap, &cgs).unwrap();
         if let Predicate::Comparison { field, value, .. } = &pred {
             assert_eq!(field, "region");
             assert_eq!(value.to_value(), plasm_core::Value::String("EMEA".into()));
@@ -1024,6 +1089,8 @@ mod tests {
 
     fn test_cgs_with_evm_get_var() -> CGS {
         let mut cgs = CGS::new();
+        nv_string(&mut cgs, "cb_evm_account");
+        nv_string(&mut cgs, "cb_evm_balance");
 
         cgs.add_resource(ResourceSchema {
             name: "Balance".into(),
@@ -1034,13 +1101,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "account".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_evm_account").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -1049,13 +1114,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "balance".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_evm_balance").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -1102,6 +1165,10 @@ mod tests {
 
     fn test_cgs_with_entity_ref() -> CGS {
         let mut cgs = CGS::new();
+        nv_integer(&mut cgs, "cb_order_id");
+        nv_entity_ref(&mut cgs, "cb_order_pet_ref", "Pet".into());
+        nv_integer(&mut cgs, "cb_pet_id");
+        nv_string(&mut cgs, "cb_pet_name");
 
         cgs.add_resource(ResourceSchema {
             name: "Order".into(),
@@ -1112,13 +1179,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_order_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -1127,15 +1192,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "petId".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_order_pet_ref").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::EntityRef {
-                        target: "Pet".into(),
-                    },
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -1162,13 +1223,9 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(ValueDomainKey::new("cb_pet_id").expect("key")),
                     description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -1177,13 +1234,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("cb_pet_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -1278,12 +1333,8 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "petId".into(),
-                        field_type: FieldType::EntityRef { target: "Pet".into() },
-                        value_format: None,
+                        kind: FieldValueKind::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),
                         required: false,
-                        allowed_values: None,
-                        array_items: None,
-                        string_semantics: None,
                         description: None,
                         default: None,
                         role: None,

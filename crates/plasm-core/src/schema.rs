@@ -178,8 +178,7 @@ impl FieldValueKind {
 }
 
 /// Registry-backed slots ([`FieldValueKind::Registry`]) share a single canonical wire definition in [`CGS::values`].
-/// Prefer [`CGS::named_value_for_slot`] when reasoning about wire shape; duplicate `field_type` / `allowed_values`
-/// on [`FieldSchema`] / [`InputFieldSchema`] exist for serde/interchange and are checked by [`CGS::validate`].
+/// Use [`CGS::named_value_for_slot`] (or [`FieldSchema::named_value`] / [`InputFieldSchema::named_value`]) for wire shape.
 pub trait ValueDomainSlot {
     fn value_domain_key(&self) -> &ValueDomainKey;
 }
@@ -297,7 +296,7 @@ pub struct NamedValueSchema {
 /// Definition of a single field within a resource.
 ///
 /// `field_type`, `allowed_values`, and related keys mirror [`CGS::values`][`NamedValueSchema`] for interchange;
-/// use [`CGS::named_value_for_slot`] for the canonical row when enforcing agreement.
+/// `string_semantics` / `array_items` live only on the registry row — use [`CGS::named_value_for_slot`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSchema {
     pub name: EntityFieldName,
@@ -307,21 +306,8 @@ pub struct FieldSchema {
     /// What this field represents.
     #[serde(default)]
     pub description: String,
-    #[serde(with = "serde_yaml::with::singleton_map")]
-    pub field_type: FieldType,
-    /// Required when `field_type` is [`FieldType::Date`]: on-wire shape for **predicate and input
-    /// expression** values (path parser coercion). Does **not** govern how responses are shown.
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value_format: Option<ValueWireFormat>,
-    pub allowed_values: Option<Vec<String>>,
+    /// Wire shape (`field_type`, `value_format`, `allowed_values`) lives under [`CGS::values`] for this slot's `value_ref`.
     pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub array_items: Option<ArrayItemsSchema>,
-    /// When `field_type` is [`FieldType::String`], classifies payload shape for prompts and summaries.
-    /// For [`FieldType::Blob`], omit this key (opaque binary / attachment payloads).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub string_semantics: Option<StringSemantics>,
     /// Override for how table/compact formatters show this string (`None` → derived from semantics).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_presentation: Option<AgentPresentation>,
@@ -331,7 +317,7 @@ pub struct FieldSchema {
     /// decoded value (reserved `__plasm_attachment` object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type_hint: Option<String>,
-    /// When `field_type` is [`FieldType::Blob`], optional hint for images/audio/video vs generic binary.
+    /// When the registry row's wire type is [`FieldType::Blob`], optional hint for images/audio/video vs generic binary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_media: Option<AttachmentMediaKind>,
     /// JSON object key path for decoding this field from API responses (e.g. `owner.login`).
@@ -391,19 +377,39 @@ pub enum FieldDeriveRule {
 }
 
 impl FieldSchema {
-    pub fn effective_string_semantics(&self) -> StringSemantics {
-        self.string_semantics.unwrap_or(StringSemantics::Short)
+    /// Canonical [`NamedValueSchema`] row for this slot's `value_ref`.
+    #[inline]
+    pub fn named_value<'a>(&self, cgs: &'a CGS) -> Result<&'a NamedValueSchema, SchemaError> {
+        cgs.named_value_for_slot(self)
+    }
+
+    /// [`NamedValueSchema::string_semantics`] for this slot's `value_ref` (defaults to [`StringSemantics::Short`]).
+    pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
+        match cgs.named_value_for_slot(self) {
+            Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
+            Err(_) => StringSemantics::Short,
+        }
+    }
+
+    /// Element typing when this slot's wire type is [`FieldType::Array`], from [`CGS::values`].
+    pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
+        cgs.named_value_for_slot(self)
+            .ok()
+            .and_then(|nv| nv.array_items.as_ref())
     }
 
     /// When unset: [`StringSemantics::Short`] → [`AgentPresentation::Default`]; any other semantics → [`AgentPresentation::ReferenceOnly`].
     /// [`FieldType::Blob`] defaults to [`AgentPresentation::ReferenceOnly`] (same as non-`short` strings).
-    pub fn effective_agent_presentation(&self) -> AgentPresentation {
+    pub fn effective_agent_presentation(&self, cgs: &CGS) -> AgentPresentation {
         if let Some(p) = self.agent_presentation {
             return p;
         }
-        match &self.field_type {
+        let Ok(nv) = cgs.named_value_for_slot(self) else {
+            return AgentPresentation::Default;
+        };
+        match &nv.field_type {
             FieldType::Blob => AgentPresentation::ReferenceOnly,
-            FieldType::String => match self.effective_string_semantics() {
+            FieldType::String => match self.effective_string_semantics(cgs) {
                 StringSemantics::Short => AgentPresentation::Default,
                 _ => AgentPresentation::ReferenceOnly,
             },
@@ -813,22 +819,8 @@ pub struct InputFieldSchema {
     /// Wire shape is defined under [`CGS::values`]; YAML key is `value_ref`.
     #[serde(rename = "value_ref")]
     pub kind: FieldValueKind,
-    #[serde(with = "serde_yaml::with::singleton_map")]
-    pub field_type: FieldType,
-    /// Required when `field_type` is [`FieldType::Date`]: wire shape for **input** (query params /
-    /// body fields built from expressions), not display formatting.
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value_format: Option<ValueWireFormat>,
     #[serde(default)]
     pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_values: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub array_items: Option<ArrayItemsSchema>,
-    /// When `field_type` is [`FieldType::String`], classifies payload shape for prompts and summaries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub string_semantics: Option<StringSemantics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Default value if not provided
@@ -845,8 +837,22 @@ fn is_default_role(r: &Option<ParameterRole>) -> bool {
 }
 
 impl InputFieldSchema {
-    pub fn effective_string_semantics(&self) -> StringSemantics {
-        self.string_semantics.unwrap_or(StringSemantics::Short)
+    #[inline]
+    pub fn named_value<'a>(&self, cgs: &'a CGS) -> Result<&'a NamedValueSchema, SchemaError> {
+        cgs.named_value_for_slot(self)
+    }
+
+    pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
+        match cgs.named_value_for_slot(self) {
+            Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
+            Err(_) => StringSemantics::Short,
+        }
+    }
+
+    pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
+        cgs.named_value_for_slot(self)
+            .ok()
+            .and_then(|nv| nv.array_items.as_ref())
     }
 }
 
@@ -1449,8 +1455,8 @@ impl CGS {
 
     /// Canonical [`NamedValueSchema`] row for a registry-backed slot (`FieldSchema`, [`InputFieldSchema`], [`ArrayItemsSchema`]).
     ///
-    /// Duplicate `field_type` / `allowed_values` on those structs are a serde/cache mirror; this lookup is the single
-    /// registry source of truth (mirrors are enforced by [`Self::validate`]).
+    /// Wire shape (`field_type`, `value_format`, `allowed_values`) and `string_semantics` / `array_items`
+    /// live on the registry row — slots carry only `value_ref` plus use-site fields.
     pub fn named_value_for_slot(
         &self,
         slot: &impl ValueDomainSlot,
@@ -1679,13 +1685,14 @@ impl CGS {
         // EntityRef targets on entity fields; typed arrays / multi_select
         for (entity_name, entity) in &self.entities {
             for (field_name, field) in &entity.fields {
-                if matches!(field.field_type, FieldType::Blob) && field.string_semantics.is_some() {
+                let nv = self.named_value_for_slot(field)?;
+                if matches!(nv.field_type, FieldType::Blob) && nv.string_semantics.is_some() {
                     return Err(SchemaError::StringSemanticsOnNonString {
                         entity: entity_name.to_string(),
                         field: field_name.to_string(),
                     });
-                } else if !matches!(field.field_type, FieldType::String | FieldType::Blob) {
-                    if field.string_semantics.is_some() {
+                } else if !matches!(nv.field_type, FieldType::String | FieldType::Blob) {
+                    if nv.string_semantics.is_some() {
                         return Err(SchemaError::StringSemanticsOnNonString {
                             entity: entity_name.to_string(),
                             field: field_name.to_string(),
@@ -1704,7 +1711,7 @@ impl CGS {
                         });
                     }
                 }
-                if let FieldType::EntityRef { target } = &field.field_type {
+                if let FieldType::EntityRef { target } = &nv.field_type {
                     if !self.entities.contains_key(target) {
                         return Err(SchemaError::EntityRefUnknownTarget {
                             target: target.to_string(),
@@ -1712,21 +1719,21 @@ impl CGS {
                         });
                     }
                 }
-                if matches!(field.field_type, FieldType::Array) && field.array_items.is_none() {
+                if matches!(nv.field_type, FieldType::Array) && nv.array_items.is_none() {
                     return Err(SchemaError::ArrayFieldMissingItems {
                         entity: entity_name.to_string(),
                         field: field_name.to_string(),
                     });
                 }
-                if matches!(field.field_type, FieldType::MultiSelect)
-                    && field.allowed_values.as_ref().is_none_or(|v| v.is_empty())
+                if matches!(nv.field_type, FieldType::MultiSelect)
+                    && nv.allowed_values.as_ref().is_none_or(|v| v.is_empty())
                 {
                     return Err(SchemaError::MultiSelectFieldMissingAllowedValues {
                         entity: entity_name.to_string(),
                         field: field_name.to_string(),
                     });
                 }
-                if let Some(ai) = &field.array_items {
+                if let Some(ai) = nv.array_items.as_ref() {
                     if let FieldType::EntityRef { target } = &ai.field_type {
                         if !self.entities.contains_key(target) {
                             return Err(SchemaError::EntityRefUnknownTarget {
@@ -1751,15 +1758,14 @@ impl CGS {
             let domain_entity = self.entities.get(&cap.domain);
 
             for param in fields {
-                if !matches!(param.field_type, FieldType::String)
-                    && param.string_semantics.is_some()
-                {
+                let nv = self.named_value_for_slot(param)?;
+                if !matches!(nv.field_type, FieldType::String) && nv.string_semantics.is_some() {
                     return Err(SchemaError::StringSemanticsOnNonStringParam {
                         capability: cap_name.to_string(),
                         param: param.name.clone(),
                     });
                 }
-                if let FieldType::EntityRef { target } = &param.field_type {
+                if let FieldType::EntityRef { target } = &nv.field_type {
                     if !self.entities.contains_key(target) {
                         return Err(SchemaError::EntityRefUnknownTarget {
                             target: target.to_string(),
@@ -1770,21 +1776,21 @@ impl CGS {
                         });
                     }
                 }
-                if matches!(param.field_type, FieldType::Array) && param.array_items.is_none() {
+                if matches!(nv.field_type, FieldType::Array) && nv.array_items.is_none() {
                     return Err(SchemaError::ArrayParamMissingItems {
                         capability: cap_name.to_string(),
                         param: param.name.clone(),
                     });
                 }
-                if matches!(param.field_type, FieldType::MultiSelect)
-                    && param.allowed_values.as_ref().is_none_or(|v| v.is_empty())
+                if matches!(nv.field_type, FieldType::MultiSelect)
+                    && nv.allowed_values.as_ref().is_none_or(|v| v.is_empty())
                 {
                     return Err(SchemaError::MultiSelectParamMissingAllowedValues {
                         capability: cap_name.to_string(),
                         param: param.name.clone(),
                     });
                 }
-                if let Some(ai) = &param.array_items {
+                if let Some(ai) = nv.array_items.as_ref() {
                     if let FieldType::EntityRef { target } = &ai.field_type {
                         if !self.entities.contains_key(target) {
                             return Err(SchemaError::EntityRefUnknownTarget {
@@ -1801,13 +1807,14 @@ impl CGS {
                 if cap.kind == CapabilityKind::Query {
                     if let FieldType::EntityRef {
                         target: param_target,
-                    } = &param.field_type
+                    } = &nv.field_type
                     {
                         if let Some(ent) = domain_entity {
                             if let Some(entity_field) = ent.fields.get(param.name.as_str()) {
+                                let field_nv = self.named_value_for_slot(entity_field)?;
                                 if let FieldType::EntityRef {
                                     target: field_target,
-                                } = &entity_field.field_type
+                                } = &field_nv.field_type
                                 {
                                     if param_target != field_target {
                                         return Err(SchemaError::EntityRefNameMismatch {
@@ -2000,8 +2007,14 @@ impl CGS {
         let mut out = Vec::new();
         for (entity_name, entity) in &self.entities {
             for (field_name, field) in &entity.fields {
-                if matches!(field.field_type, FieldType::String) && field.string_semantics.is_none()
-                {
+                let key = field.kind.registry_key().as_str();
+                let Some(nv) = self.values.get(key) else {
+                    continue;
+                };
+                if !matches!(nv.field_type, FieldType::String) {
+                    continue;
+                }
+                if nv.string_semantics.is_none() {
                     out.push(format!(
                         "entity '{}', field '{}': string field must declare string_semantics (short, markdown, document, html, json_text, or blob); use field_type: blob for opaque binary instead of string_semantics: blob",
                         entity_name, field_name
@@ -2014,8 +2027,14 @@ impl CGS {
                 continue;
             };
             for param in fields {
-                if matches!(param.field_type, FieldType::String) && param.string_semantics.is_none()
-                {
+                let key = param.kind.registry_key().as_str();
+                let Some(nv) = self.values.get(key) else {
+                    continue;
+                };
+                if !matches!(nv.field_type, FieldType::String) {
+                    continue;
+                }
+                if nv.string_semantics.is_none() {
                     out.push(format!(
                         "capability '{}', parameter '{}': string parameter must declare string_semantics (short, markdown, document, html, json_text, or blob)",
                         cap_name, param.name
@@ -2090,13 +2109,13 @@ impl CGS {
         for (entity_name, ent) in &self.entities {
             for (field_name, f) in &ent.fields {
                 let k = f.kind.registry_key();
-                if !self.values.contains_key(k.as_str()) {
+                let Some(nv) = self.values.get(k.as_str()) else {
                     return Err(SchemaError::UnknownValueDomain {
                         key: k.as_str().to_string(),
                         context: format!("entity '{entity_name}' field '{field_name}'"),
                     });
-                }
-                if let Some(ref ai) = f.array_items {
+                };
+                if let Some(ref ai) = nv.array_items {
                     check_array_items(
                         self,
                         ai,
@@ -2111,7 +2130,7 @@ impl CGS {
                 if let InputType::Object { fields, .. } = &is.input_type {
                     for p in fields {
                         let k = p.kind.registry_key();
-                        if !self.values.contains_key(k.as_str()) {
+                        let Some(nv) = self.values.get(k.as_str()) else {
                             return Err(SchemaError::UnknownValueDomain {
                                 key: k.as_str().to_string(),
                                 context: format!(
@@ -2119,8 +2138,8 @@ impl CGS {
                                     cap_name, p.name
                                 ),
                             });
-                        }
-                        if let Some(ref ai) = p.array_items {
+                        };
+                        if let Some(ref ai) = nv.array_items {
                             check_array_items(
                                 self,
                                 ai,
@@ -2141,8 +2160,7 @@ impl CGS {
         Ok(())
     }
 
-    /// Ensures denormalized `field_type` / `allowed_values` / … on entity fields and capability inputs
-    /// match the canonical [`NamedValueSchema`] in [`Self::values`] (catches hand-edited interchange drift).
+    /// Ensures nested [`ArrayItemsSchema`] mirrors agree with their [`NamedValueSchema`] rows.
     fn validate_registry_denormalization(&self) -> Result<(), SchemaError> {
         fn array_items_agree_with_values(
             cgs: &CGS,
@@ -2184,61 +2202,6 @@ impl CGS {
             Ok(())
         }
 
-        fn slot_agrees_with_values(
-            cgs: &CGS,
-            key: &str,
-            ctx: &str,
-            nv: &NamedValueSchema,
-            field_type: &FieldType,
-            value_format: &Option<ValueWireFormat>,
-            allowed_values: &Option<Vec<String>>,
-            string_semantics: Option<StringSemantics>,
-            array_items: &Option<ArrayItemsSchema>,
-        ) -> Result<(), SchemaError> {
-            if field_type != &nv.field_type {
-                return Err(SchemaError::RegistryDenormalizationMismatch {
-                    key: key.to_string(),
-                    context: ctx.to_string(),
-                    detail: format!(
-                        "field_type {:?} on slot vs {:?} in values",
-                        field_type, nv.field_type
-                    ),
-                });
-            }
-            if value_format != &nv.value_format {
-                return Err(SchemaError::RegistryDenormalizationMismatch {
-                    key: key.to_string(),
-                    context: ctx.to_string(),
-                    detail: "value_format vs values mismatch".to_string(),
-                });
-            }
-            if allowed_values != &nv.allowed_values {
-                return Err(SchemaError::RegistryDenormalizationMismatch {
-                    key: key.to_string(),
-                    context: ctx.to_string(),
-                    detail: "allowed_values vs values mismatch".to_string(),
-                });
-            }
-            if string_semantics != nv.string_semantics {
-                return Err(SchemaError::RegistryDenormalizationMismatch {
-                    key: key.to_string(),
-                    context: ctx.to_string(),
-                    detail: "string_semantics vs values mismatch".to_string(),
-                });
-            }
-            if nv.array_items.is_some() != array_items.is_some() {
-                return Err(SchemaError::RegistryDenormalizationMismatch {
-                    key: key.to_string(),
-                    context: ctx.to_string(),
-                    detail: "array_items presence on slot vs values mismatch".to_string(),
-                });
-            }
-            if let Some(a) = array_items {
-                array_items_agree_with_values(cgs, a, ctx)?;
-            }
-            Ok(())
-        }
-
         for (entity_name, ent) in &self.entities {
             for (field_name, f) in &ent.fields {
                 let key = f.kind.registry_key().as_str();
@@ -2249,17 +2212,13 @@ impl CGS {
                         key: key.to_string(),
                         context: format!("entity '{entity_name}' field '{field_name}'"),
                     })?;
-                slot_agrees_with_values(
-                    self,
-                    key,
-                    &format!("entity '{entity_name}' field '{field_name}'"),
-                    nv,
-                    &f.field_type,
-                    &f.value_format,
-                    &f.allowed_values,
-                    f.string_semantics,
-                    &f.array_items,
-                )?;
+                if let Some(a) = nv.array_items.as_ref() {
+                    array_items_agree_with_values(
+                        self,
+                        a,
+                        &format!("entity '{entity_name}' field '{field_name}'"),
+                    )?;
+                }
             }
         }
 
@@ -2274,17 +2233,13 @@ impl CGS {
                                 context: format!("capability '{cap_name}' parameter '{}'", p.name),
                             }
                         })?;
-                        slot_agrees_with_values(
-                            self,
-                            key,
-                            &format!("capability '{cap_name}' parameter '{}'", p.name),
-                            nv,
-                            &p.field_type,
-                            &p.value_format,
-                            &p.allowed_values,
-                            p.string_semantics,
-                            &p.array_items,
-                        )?;
+                        if let Some(a) = nv.array_items.as_ref() {
+                            array_items_agree_with_values(
+                                self,
+                                a,
+                                &format!("capability '{cap_name}' parameter '{}'", p.name),
+                            )?;
+                        }
                     }
                 }
             }
@@ -2302,8 +2257,9 @@ impl CGS {
     fn validate_temporal_value_formats(&self) -> Result<(), SchemaError> {
         for (entity_name, ent) in &self.entities {
             for (field_name, field) in &ent.fields {
-                match &field.field_type {
-                    FieldType::Date => match &field.value_format {
+                let nv = self.named_value_for_slot(field)?;
+                match &nv.field_type {
+                    FieldType::Date => match &nv.value_format {
                         Some(ValueWireFormat::Temporal(_)) => {}
                         None => {
                             return Err(SchemaError::DateFieldMissingValueFormat {
@@ -2313,13 +2269,13 @@ impl CGS {
                         }
                     },
                     FieldType::Array => {
-                        if field.value_format.is_some() {
+                        if nv.value_format.is_some() {
                             return Err(SchemaError::ValueFormatOnNonDateField {
                                 entity: entity_name.to_string(),
                                 field: field_name.to_string(),
                             });
                         }
-                        if let Some(ai) = &field.array_items {
+                        if let Some(ai) = nv.array_items.as_ref() {
                             match &ai.field_type {
                                 FieldType::Date => match &ai.value_format {
                                     Some(ValueWireFormat::Temporal(_)) => {}
@@ -2342,7 +2298,7 @@ impl CGS {
                         }
                     }
                     _ => {
-                        if field.value_format.is_some() {
+                        if nv.value_format.is_some() {
                             return Err(SchemaError::ValueFormatOnNonDateField {
                                 entity: entity_name.to_string(),
                                 field: field_name.to_string(),
@@ -2359,8 +2315,9 @@ impl CGS {
             };
             if let InputType::Object { fields, .. } = &input.input_type {
                 for param in fields {
-                    match &param.field_type {
-                        FieldType::Date => match &param.value_format {
+                    let nv = self.named_value_for_slot(param)?;
+                    match &nv.field_type {
+                        FieldType::Date => match &nv.value_format {
                             Some(ValueWireFormat::Temporal(_)) => {}
                             None => {
                                 return Err(SchemaError::DateParamMissingValueFormat {
@@ -2370,13 +2327,13 @@ impl CGS {
                             }
                         },
                         FieldType::Array => {
-                            if param.value_format.is_some() {
+                            if nv.value_format.is_some() {
                                 return Err(SchemaError::ValueFormatOnNonDateParam {
                                     capability: cap_name.to_string(),
                                     param: param.name.clone(),
                                 });
                             }
-                            if let Some(ai) = &param.array_items {
+                            if let Some(ai) = nv.array_items.as_ref() {
                                 match &ai.field_type {
                                     FieldType::Date => match &ai.value_format {
                                         Some(ValueWireFormat::Temporal(_)) => {}
@@ -2399,7 +2356,7 @@ impl CGS {
                             }
                         }
                         _ => {
-                            if param.value_format.is_some() {
+                            if nv.value_format.is_some() {
                                 return Err(SchemaError::ValueFormatOnNonDateParam {
                                     capability: cap_name.to_string(),
                                     param: param.name.clone(),
@@ -2467,7 +2424,10 @@ impl CGS {
 
             for rel_name in ent.relations.keys() {
                 if let Some(f) = ent.fields.get(rel_name.as_str()) {
-                    if matches!(f.field_type, FieldType::EntityRef { .. }) {
+                    if let Ok(nv) = self.named_value_for_slot(f) {
+                        if !matches!(&nv.field_type, FieldType::EntityRef { .. }) {
+                            continue;
+                        }
                         return Err(SchemaError::PipelineSegmentConflict {
                             entity: entity_name.to_string(),
                             segment: rel_name.to_string(),
@@ -2497,7 +2457,10 @@ impl CGS {
                 continue;
             };
             for p in fields {
-                if let FieldType::EntityRef { target } = &p.field_type {
+                let Ok(nv) = self.named_value_for_slot(p) else {
+                    continue;
+                };
+                if let FieldType::EntityRef { target } = &nv.field_type {
                     if target.as_str() == source_entity {
                         out.push((cap, p.name.as_str()));
                     }
@@ -2515,7 +2478,8 @@ impl CGS {
         ent.fields
             .values()
             .filter_map(|f| {
-                if let FieldType::EntityRef { target } = &f.field_type {
+                let nv = self.named_value_for_slot(f).ok()?;
+                if let FieldType::EntityRef { target } = &nv.field_type {
                     Some((f, target.as_str()))
                 } else {
                     None
@@ -3015,17 +2979,12 @@ pub mod registry_test_util {
         required: bool,
         description: impl Into<String>,
     ) -> FieldSchema {
-        let nv = nv_or_panic(cgs, values_key);
+        let _ = nv_or_panic(cgs, values_key);
         FieldSchema {
             name: EntityFieldName::from(wire_name.to_string()),
             kind: FieldValueKind::Registry(ValueDomainKey::new(values_key).expect("values key")),
             description: description.into(),
-            field_type: nv.field_type.clone(),
-            value_format: nv.value_format.clone(),
-            allowed_values: nv.allowed_values.clone(),
             required,
-            array_items: nv.array_items.clone(),
-            string_semantics: nv.string_semantics,
             agent_presentation: None,
             mime_type_hint: None,
             attachment_media: None,
@@ -3040,16 +2999,11 @@ pub mod registry_test_util {
         param_name: &str,
         required: bool,
     ) -> InputFieldSchema {
-        let nv = nv_or_panic(cgs, values_key);
+        let _ = nv_or_panic(cgs, values_key);
         InputFieldSchema {
             name: param_name.to_string(),
             kind: FieldValueKind::Registry(ValueDomainKey::new(values_key).expect("values key")),
-            field_type: nv.field_type.clone(),
-            value_format: nv.value_format.clone(),
             required,
-            allowed_values: nv.allowed_values.clone(),
-            array_items: nv.array_items.clone(),
-            string_semantics: nv.string_semantics,
             description: None,
             default: None,
             role: None,

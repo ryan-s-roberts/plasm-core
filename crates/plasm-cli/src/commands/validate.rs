@@ -98,7 +98,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
         // 2. Query — every entity with a Query capability
         if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Query) {
             // 2a. Query with required params (should succeed)
-            let required_pred = build_required_predicate(cap, entity);
+            let required_pred = build_required_predicate(cap, entity, &cgs);
             let query_expr = match required_pred {
                 Some(p) => QueryExpr::filtered(entity_name, p),
                 None => QueryExpr::all(entity_name),
@@ -167,7 +167,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
 
         // 3. Create
         if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Create) {
-            let input = build_fake_input(cap);
+            let input = build_fake_input(cap, &cgs);
             results.push(
                 check_execution(
                     &format!("create {entity_name}"),
@@ -204,7 +204,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
             if !matches!(cap.kind, CapabilityKind::Update | CapabilityKind::Action) {
                 continue;
             }
-            let input = build_fake_input(cap);
+            let input = build_fake_input(cap, &cgs);
             results.push(
                 check_execution(
                     &format!(
@@ -533,6 +533,7 @@ fn extract_var(msg: &str) -> String {
 fn build_required_predicate(
     cap: &plasm_core::CapabilitySchema,
     _entity: &plasm_core::EntityDef,
+    cgs: &plasm_core::CGS,
 ) -> Option<Predicate> {
     let input_schema = cap.input_schema.as_ref()?;
     let InputType::Object { fields, .. } = &input_schema.input_type else {
@@ -543,7 +544,8 @@ fn build_required_predicate(
         .iter()
         .filter(|f| f.required)
         .map(|f| {
-            let val = fake_value_for_type(&f.field_type, f.allowed_values.as_deref());
+            let nv = cgs.named_value_for_slot(f).expect("param value_ref");
+            let val = fake_value_for_type(&nv.field_type, nv.allowed_values.as_deref());
             Predicate::eq(f.name.clone(), val)
         })
         .collect();
@@ -555,7 +557,7 @@ fn build_required_predicate(
     }
 }
 
-fn build_fake_input(cap: &plasm_core::CapabilitySchema) -> Value {
+fn build_fake_input(cap: &plasm_core::CapabilitySchema, cgs: &plasm_core::CGS) -> Value {
     let Some(input_schema) = &cap.input_schema else {
         return Value::Null;
     };
@@ -565,9 +567,10 @@ fn build_fake_input(cap: &plasm_core::CapabilitySchema) -> Value {
 
     let mut obj = IndexMap::new();
     for f in fields.iter().filter(|f| f.required) {
+        let nv = cgs.named_value_for_slot(f).expect("param value_ref");
         obj.insert(
             f.name.clone(),
-            fake_value_for_type(&f.field_type, f.allowed_values.as_deref()),
+            fake_value_for_type(&nv.field_type, nv.allowed_values.as_deref()),
         );
     }
     if obj.is_empty() {

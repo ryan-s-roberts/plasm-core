@@ -1,6 +1,6 @@
 //! Structured invoke/create inputs aligned with [`crate::schema::InputType`] (typed IR migration).
 
-use crate::schema::{InputFieldSchema, InputType};
+use crate::schema::{InputFieldSchema, InputType, CGS};
 use crate::typed_literal::TypedLiteral;
 use crate::value::{PlasmInputRef, Value};
 use indexmap::IndexMap;
@@ -80,8 +80,8 @@ impl InvokeInputPayload {
     }
 
     /// Lift from a validated [`Value`] using the capability input schema root [`InputType`].
-    pub fn lift(value: &Value, input_type: &InputType) -> Self {
-        match lift_inner(value, input_type) {
+    pub fn lift(value: &Value, input_type: &InputType, cgs: &CGS) -> Self {
+        match lift_inner(value, input_type, cgs) {
             Ok(t) => Self::Typed(t),
             Err(_) => Self::Raw(value.clone()),
         }
@@ -113,7 +113,7 @@ impl<'de> Deserialize<'de> for InvokeInputPayload {
     }
 }
 
-fn lift_inner(value: &Value, input_type: &InputType) -> Result<TypedInvokeInput, ()> {
+fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedInvokeInput, ()> {
     if matches!(value, Value::PlasmInputRef(_)) {
         let r = match value {
             Value::PlasmInputRef(r) => r.clone(),
@@ -150,8 +150,8 @@ fn lift_inner(value: &Value, input_type: &InputType) -> Result<TypedInvokeInput,
             for f in fields {
                 match obj.get(&f.name) {
                     Some(fv) => {
-                        let nested_ty = field_input_schema_to_input_type(f)?;
-                        out.insert(f.name.clone(), lift_inner(fv, &nested_ty)?);
+                        let nested_ty = field_input_schema_to_input_type(f, cgs)?;
+                        out.insert(f.name.clone(), lift_inner(fv, &nested_ty, cgs)?);
                     }
                     None => {
                         if f.required {
@@ -187,13 +187,13 @@ fn lift_inner(value: &Value, input_type: &InputType) -> Result<TypedInvokeInput,
             let arr = value.as_array().ok_or(())?;
             let mut out = Vec::with_capacity(arr.len());
             for item in arr {
-                out.push(lift_inner(item, element_type)?);
+                out.push(lift_inner(item, element_type, cgs)?);
             }
             Ok(TypedInvokeInput::Array(out))
         }
         InputType::Union { variants } => {
             for (i, variant) in variants.iter().enumerate() {
-                if let Ok(inner) = lift_inner(value, variant) {
+                if let Ok(inner) = lift_inner(value, variant, cgs) {
                     return Ok(TypedInvokeInput::Union {
                         variant_index: i,
                         value: Box::new(inner),
@@ -205,11 +205,12 @@ fn lift_inner(value: &Value, input_type: &InputType) -> Result<TypedInvokeInput,
     }
 }
 
-fn field_input_schema_to_input_type(f: &InputFieldSchema) -> Result<InputType, ()> {
+fn field_input_schema_to_input_type(f: &InputFieldSchema, cgs: &CGS) -> Result<InputType, ()> {
     use crate::FieldType;
-    match &f.field_type {
+    let nv = cgs.named_value_for_slot(f).map_err(|_| ())?;
+    match &nv.field_type {
         FieldType::Array => {
-            let spec = f.array_items.as_ref().ok_or(())?;
+            let spec = nv.array_items.as_ref().ok_or(())?;
             Ok(InputType::Array {
                 element_type: Box::new(InputType::Value {
                     field_type: spec.field_type.clone(),
@@ -221,11 +222,11 @@ fn field_input_schema_to_input_type(f: &InputFieldSchema) -> Result<InputType, (
         }
         FieldType::MultiSelect => Ok(InputType::Value {
             field_type: FieldType::MultiSelect,
-            allowed_values: f.allowed_values.clone(),
+            allowed_values: nv.allowed_values.clone(),
         }),
         _ => Ok(InputType::Value {
-            field_type: f.field_type.clone(),
-            allowed_values: f.allowed_values.clone(),
+            field_type: nv.field_type.clone(),
+            allowed_values: nv.allowed_values.clone(),
         }),
     }
 }
@@ -233,23 +234,30 @@ fn field_input_schema_to_input_type(f: &InputFieldSchema) -> Result<InputType, (
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{FieldValueKind, ValueDomainKey};
+    use crate::schema::{FieldValueKind, NamedValueSchema, StringSemantics, ValueDomainKey};
     use crate::FieldType;
 
     #[test]
     fn lifts_simple_object() {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "typed_invoke_title".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "title".into(),
                 kind: FieldValueKind::Registry(
                     ValueDomainKey::new("typed_invoke_title").expect("key"),
                 ),
-                field_type: FieldType::String,
-                value_format: None,
                 required: true,
-                allowed_values: None,
-                array_items: None,
-                string_semantics: None,
                 description: None,
                 default: None,
                 role: None,
@@ -261,7 +269,7 @@ mod tests {
             m.insert("title".into(), Value::String("hi".into()));
             m
         });
-        let p = InvokeInputPayload::lift(&v, &input_type);
+        let p = InvokeInputPayload::lift(&v, &input_type, &cgs);
         match p {
             InvokeInputPayload::Typed(TypedInvokeInput::Object { fields, .. }) => {
                 assert!(fields.contains_key("title"));

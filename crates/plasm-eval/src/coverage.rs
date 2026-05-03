@@ -213,7 +213,11 @@ pub fn required_form_buckets(cgs: &CGS) -> HashMap<EvalFormId, String> {
     let mut has_entity_ref = false;
     for ent in cgs.entities.values() {
         for f in ent.fields.values() {
-            if matches!(f.field_type, plasm_core::FieldType::EntityRef { .. }) {
+            if cgs
+                .named_value_for_slot(f)
+                .ok()
+                .is_some_and(|nv| matches!(nv.field_type, plasm_core::FieldType::EntityRef { .. }))
+            {
                 has_entity_ref = true;
                 break;
             }

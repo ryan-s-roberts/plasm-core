@@ -262,9 +262,16 @@ fn resolve_chain_target<'a>(
     source_entity_name: &str,
     source_entity: &'a EntityDef,
     selector: &str,
+    cgs: &CGS,
 ) -> Result<(String, Option<&'a RelationSchema>), TypeError> {
     if let Some(field) = source_entity.fields.get(selector) {
-        let target = match &field.field_type {
+        let nv = cgs
+            .named_value_for_slot(field)
+            .map_err(|_| TypeError::FieldNotFound {
+                field: selector.to_string(),
+                entity: source_entity_name.to_string(),
+            })?;
+        let target = match &nv.field_type {
             FieldType::EntityRef { target } => target.to_string(),
             other => {
                 return Err(TypeError::IncompatibleOperator {
@@ -336,8 +343,12 @@ fn type_check_chain_federated(
                 entity: source_entity_name.to_string(),
             })?;
 
-    let (target_entity_name, relation) =
-        resolve_chain_target(source_entity_name, source_entity, chain.selector.as_str())?;
+    let (target_entity_name, relation) = resolve_chain_target(
+        source_entity_name,
+        source_entity,
+        chain.selector.as_str(),
+        cgs_src,
+    )?;
 
     let cgs_tgt = fed.resolve_cgs(&target_entity_name, fallback);
     cgs_tgt
@@ -541,8 +552,12 @@ pub fn type_check_chain(chain: &ChainExpr, cgs: &CGS) -> Result<(), TypeError> {
             })?;
 
     // Resolve target via EntityRef field or declared relation.
-    let (target_entity_name, relation) =
-        resolve_chain_target(source_entity_name, source_entity, chain.selector.as_str())?;
+    let (target_entity_name, relation) = resolve_chain_target(
+        source_entity_name,
+        source_entity,
+        chain.selector.as_str(),
+        cgs,
+    )?;
 
     cgs.get_entity(&target_entity_name)
         .ok_or_else(|| TypeError::EntityNotFound {
@@ -639,9 +654,16 @@ fn type_check_comparison(
     // Reject `$` for comparisons that target entity fields only (not a cap param name).
     if value.is_domain_example_placeholder() {
         if let Some(f) = entity.fields.get(field_name) {
+            let ft = &cgs
+                .named_value_for_slot(f)
+                .map_err(|_| TypeError::FieldNotFound {
+                    field: field_name.to_string(),
+                    entity: entity.name.to_string(),
+                })?
+                .field_type;
             return Err(domain_placeholder_literal_error(
                 field_name,
-                &f.field_type,
+                ft,
                 Some(f.description.as_str()),
             ));
         }
@@ -655,9 +677,15 @@ fn type_check_comparison(
     // We do NOT enforce operator compatibility — the operator is just a hint for
     // how the CLI flag was built; the CML template determines the actual HTTP encoding.
     if let Some(param) = cap_params.iter().find(|p| p.name == field_name) {
+        let pnv = cgs
+            .named_value_for_slot(param)
+            .map_err(|_| TypeError::FieldNotFound {
+                field: field_name.to_string(),
+                entity: entity.name.to_string(),
+            })?;
         // Enforce allowed_values for select-typed params
-        if matches!(param.field_type, FieldType::Select) {
-            if let (Some(av), Some(sv)) = (&param.allowed_values, value.as_str()) {
+        if matches!(pnv.field_type, FieldType::Select) {
+            if let (Some(av), Some(sv)) = (&pnv.allowed_values, value.as_str()) {
                 if !av.contains(&sv.to_string()) {
                     return Err(TypeError::IncompatibleValue {
                         field: field_name.to_string(),
@@ -667,25 +695,31 @@ fn type_check_comparison(
                 }
             }
         }
-        if matches!(param.field_type, FieldType::Array) {
-            if let Some(spec) = param.array_items.as_ref() {
-                validate_typed_array_value(&value, spec, field_name, cgs)?;
-            }
+        if matches!(pnv.field_type, FieldType::Array) {
+            let spec = pnv.array_items.as_ref();
+            let Some(spec) = spec else {
+                return Err(TypeError::IncompatibleValue {
+                    field: field_name.to_string(),
+                    value_type: value.type_name().to_string(),
+                    field_type: "array (missing items schema)".to_string(),
+                });
+            };
+            validate_typed_array_value(&value, spec, field_name, cgs)?;
         }
-        if matches!(param.field_type, FieldType::MultiSelect) {
-            if let Some(av) = param.allowed_values.as_deref() {
+        if matches!(pnv.field_type, FieldType::MultiSelect) {
+            if let Some(av) = pnv.allowed_values.as_deref() {
                 validate_multiselect_value(&value, av, field_name)?;
             }
         }
-        if !value_fits_field_type_entity_ref_aware(&value, &param.field_type, cgs) {
-            return Err(match &param.field_type {
+        if !value_fits_field_type_entity_ref_aware(&value, &pnv.field_type, cgs) {
+            return Err(match &pnv.field_type {
                 FieldType::EntityRef { target } => {
                     entity_ref_incompatible_value(field_name, target.as_str(), &value, cgs)
                 }
                 _ => TypeError::IncompatibleValue {
                     field: field_name.to_string(),
                     value_type: value.type_name().to_string(),
-                    field_type: format!("{:?}", param.field_type),
+                    field_type: format!("{:?}", pnv.field_type),
                 },
             });
         }
@@ -694,12 +728,18 @@ fn type_check_comparison(
 
     // ── 2. Entity field ──────────────────────────────────────────────────────
     if let Some(field) = entity.fields.get(field_name) {
+        let fnv = cgs
+            .named_value_for_slot(field)
+            .map_err(|_| TypeError::FieldNotFound {
+                field: field_name.to_string(),
+                entity: entity.name.to_string(),
+            })?;
         // Operator compatibility
-        if !field.field_type.compatible_operators().contains(&op) {
+        if !fnv.field_type.compatible_operators().contains(&op) {
             return Err(TypeError::IncompatibleOperator {
                 field: field_name.to_string(),
                 op: format!("{:?}", op),
-                field_type: format!("{:?}", field.field_type),
+                field_type: format!("{:?}", fnv.field_type),
             });
         }
 
@@ -707,8 +747,9 @@ fn type_check_comparison(
             return Ok(());
         }
 
-        if matches!(field.field_type, FieldType::Array) {
-            let Some(spec) = field.array_items.as_ref() else {
+        if matches!(fnv.field_type, FieldType::Array) {
+            let spec = fnv.array_items.as_ref();
+            let Some(spec) = spec else {
                 return Err(TypeError::IncompatibleValue {
                     field: field_name.to_string(),
                     value_type: value.type_name().to_string(),
@@ -717,27 +758,26 @@ fn type_check_comparison(
             };
             return validate_typed_array_value(&value, spec, field_name, cgs);
         }
-        if matches!(field.field_type, FieldType::MultiSelect) {
-            let allowed = field.allowed_values.as_deref().unwrap_or(&[]);
+        if matches!(fnv.field_type, FieldType::MultiSelect) {
+            let allowed = fnv.allowed_values.as_deref().unwrap_or(&[]);
             return validate_multiselect_value(&value, allowed, field_name);
         }
 
-        if !value_fits_field_type_entity_ref_aware(&value, &field.field_type, cgs) {
-            return Err(match &field.field_type {
+        if !value_fits_field_type_entity_ref_aware(&value, &fnv.field_type, cgs) {
+            return Err(match &fnv.field_type {
                 FieldType::EntityRef { target } => {
                     entity_ref_incompatible_value(field_name, target.as_str(), &value, cgs)
                 }
                 _ => TypeError::IncompatibleValue {
                     field: field_name.to_string(),
                     value_type: value.type_name().to_string(),
-                    field_type: format!("{:?}", field.field_type),
+                    field_type: format!("{:?}", fnv.field_type),
                 },
             });
         }
 
-        if matches!(field.field_type, FieldType::Select) {
-            if let (Some(allowed_values), Some(string_val)) =
-                (&field.allowed_values, value.as_str())
+        if matches!(fnv.field_type, FieldType::Select) {
+            if let (Some(allowed_values), Some(string_val)) = (&fnv.allowed_values, value.as_str())
             {
                 if !allowed_values.contains(&string_val.to_string()) {
                     return Err(TypeError::IncompatibleValue {
@@ -913,9 +953,16 @@ fn validate_input_type(
                 match object.get(&field_schema.name) {
                     Some(field_value) => {
                         if !field_value.is_domain_example_placeholder() {
-                            match &field_schema.field_type {
+                            let fnv = cgs.named_value_for_slot(field_schema).map_err(|_| {
+                                TypeError::FieldNotFound {
+                                    field: field_path.clone(),
+                                    entity: "input object".to_string(),
+                                }
+                            })?;
+                            match &fnv.field_type {
                                 FieldType::Array => {
-                                    let Some(spec) = field_schema.array_items.as_ref() else {
+                                    let spec = fnv.array_items.as_ref();
+                                    let Some(spec) = spec else {
                                         return Err(TypeError::IncompatibleValue {
                                             field: field_path.clone(),
                                             value_type: field_value.type_name().to_string(),
@@ -930,17 +977,16 @@ fn validate_input_type(
                                     )?;
                                 }
                                 FieldType::MultiSelect => {
-                                    let allowed =
-                                        field_schema.allowed_values.as_deref().unwrap_or(&[]);
+                                    let allowed = fnv.allowed_values.as_deref().unwrap_or(&[]);
                                     validate_multiselect_value(field_value, allowed, &field_path)?;
                                 }
                                 _ => {
                                     if !value_fits_field_type_entity_ref_aware(
                                         field_value,
-                                        &field_schema.field_type,
+                                        &fnv.field_type,
                                         cgs,
                                     ) {
-                                        return Err(match &field_schema.field_type {
+                                        return Err(match &fnv.field_type {
                                             FieldType::EntityRef { target } => {
                                                 entity_ref_incompatible_value(
                                                     &field_path,
@@ -952,16 +998,13 @@ fn validate_input_type(
                                             _ => TypeError::IncompatibleValue {
                                                 field: field_path.clone(),
                                                 value_type: field_value.type_name().to_string(),
-                                                field_type: format!(
-                                                    "{:?}",
-                                                    field_schema.field_type
-                                                ),
+                                                field_type: format!("{:?}", fnv.field_type),
                                             },
                                         });
                                     }
 
                                     if let (Some(allowed), Some(str_val)) =
-                                        (&field_schema.allowed_values, field_value.as_str())
+                                        (&fnv.allowed_values, field_value.as_str())
                                     {
                                         if !allowed.contains(&str_val.to_string()) {
                                             return Err(TypeError::IncompatibleValue {
@@ -1728,8 +1771,26 @@ mod tests {
     /// (GitHub `RepositoryTag`). DOMAIN lines use `$` in those slots; they must type-check.
     #[test]
     fn placeholder_dollar_ok_when_scope_param_shadows_entity_field() {
-        use crate::schema::{FieldSchema, InputFieldSchema, ParameterRole};
+        use crate::schema::{FieldSchema, InputFieldSchema, NamedValueSchema, ParameterRole};
         use indexmap::IndexMap;
+
+        let mut cgs = CGS::new();
+        for (key, desc) in [
+            ("tc_ph_owner", "entity owner"),
+            ("tc_ph_owner_cap", "cap owner"),
+        ] {
+            cgs.values.insert(
+                key.into(),
+                NamedValueSchema {
+                    description: desc.into(),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                    string_semantics: None,
+                    array_items: None,
+                },
+            );
+        }
 
         let mut fields = IndexMap::new();
         fields.insert(
@@ -1738,12 +1799,7 @@ mod tests {
                 name: "owner".into(),
                 kind: FieldValueKind::Registry(ValueDomainKey::new("tc_ph_owner").expect("key")),
                 description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
                 required: true,
-                array_items: None,
-                string_semantics: None,
                 agent_presentation: None,
                 mime_type_hint: None,
                 attachment_media: None,
@@ -1769,18 +1825,12 @@ mod tests {
         let cap_params = [InputFieldSchema {
             name: "owner".to_string(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("tc_ph_owner_cap").expect("key")),
-            field_type: FieldType::String,
-            value_format: None,
             required: true,
-            allowed_values: None,
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: Some(ParameterRole::Scope),
         }];
         let pred = Predicate::eq("owner", "$");
-        let cgs = CGS::new();
         type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap();
     }
 
@@ -1788,7 +1838,34 @@ mod tests {
     /// GitHub list filters), not the entity field (`Issue.state` is only open/closed).
     #[test]
     fn query_select_extra_values_ok_when_capability_shadows_entity_field() {
+        use crate::schema::NamedValueSchema;
         use indexmap::IndexMap;
+
+        let mut cgs = CGS::new();
+        let ent_allowed = vec!["open".into(), "closed".into()];
+        let cap_allowed = vec!["open".into(), "closed".into(), "all".into()];
+        cgs.values.insert(
+            "tc_qs_state_ent".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(ent_allowed),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_qs_state_cap".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(cap_allowed),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
 
         let mut fields = IndexMap::new();
         fields.insert(
@@ -1799,12 +1876,7 @@ mod tests {
                     ValueDomainKey::new("tc_qs_state_ent").expect("key"),
                 ),
                 description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["open".into(), "closed".into()]),
                 required: true,
-                array_items: None,
-                string_semantics: None,
                 agent_presentation: None,
                 mime_type_hint: None,
                 attachment_media: None,
@@ -1830,18 +1902,12 @@ mod tests {
         let cap_params = [InputFieldSchema {
             name: "state".to_string(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("tc_qs_state_cap").expect("key")),
-            field_type: FieldType::Select,
-            value_format: None,
             required: false,
-            allowed_values: Some(vec!["open".into(), "closed".into(), "all".into()]),
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }];
         let pred = Predicate::eq("state", "all");
-        let cgs = CGS::new();
         type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap();
     }
 
@@ -1849,6 +1915,7 @@ mod tests {
     /// mistaken for Gmail `includeSpamTrash`).
     #[test]
     fn capability_boolean_param_rejects_string() {
+        use crate::schema::NamedValueSchema;
         use indexmap::IndexMap;
 
         let entity = EntityDef {
@@ -1869,18 +1936,24 @@ mod tests {
         let cap_params = [InputFieldSchema {
             name: "includeSpamTrash".to_string(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_bool").expect("key")),
-            field_type: FieldType::Boolean,
-            value_format: None,
             required: false,
-            allowed_values: None,
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }];
         let pred = Predicate::eq("includeSpamTrash", "INBOX");
-        let cgs = CGS::new();
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tc_cap_bool".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Boolean,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
         assert!(
             matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "includeSpamTrash"),
@@ -1892,6 +1965,7 @@ mod tests {
     /// in [`Value::is_compatible_with_field_type`] (same as entity fields — numeric id literals).
     #[test]
     fn capability_string_param_rejects_boolean() {
+        use crate::schema::NamedValueSchema;
         use indexmap::IndexMap;
 
         let entity = EntityDef {
@@ -1912,18 +1986,24 @@ mod tests {
         let cap_params = [InputFieldSchema {
             name: "q".to_string(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_q_str").expect("key")),
-            field_type: FieldType::String,
-            value_format: None,
             required: false,
-            allowed_values: None,
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }];
         let pred = Predicate::eq("q", true);
-        let cgs = CGS::new();
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tc_cap_q_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
         assert!(
             matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "q"),
@@ -1933,6 +2013,7 @@ mod tests {
 
     #[test]
     fn capability_integer_param_rejects_string() {
+        use crate::schema::NamedValueSchema;
         use indexmap::IndexMap;
 
         let entity = EntityDef {
@@ -1953,18 +2034,24 @@ mod tests {
         let cap_params = [InputFieldSchema {
             name: "limit".to_string(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_limit_int").expect("key")),
-            field_type: FieldType::Integer,
-            value_format: None,
             required: false,
-            allowed_values: None,
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }];
         let pred = Predicate::eq("limit", "10");
-        let cgs = CGS::new();
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tc_cap_limit_int".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Integer,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
         assert!(
             matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),

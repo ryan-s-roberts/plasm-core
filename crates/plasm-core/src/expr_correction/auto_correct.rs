@@ -308,7 +308,10 @@ fn collect_all_scopes(cgs: &CGS, entity_name: &str) -> Vec<(String, String)> {
             if !matches!(f.role, Some(crate::ParameterRole::Scope)) {
                 continue;
             }
-            if let FieldType::EntityRef { target } = &f.field_type {
+            let Ok(nv) = cgs.named_value_for_slot(f) else {
+                continue;
+            };
+            if let FieldType::EntityRef { target } = &nv.field_type {
                 let entry = (f.name.clone(), target.to_string());
                 if !scopes.contains(&entry) {
                     scopes.push(entry);

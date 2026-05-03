@@ -1181,7 +1181,7 @@ fn cap_nav_counts_from_names(cgs: &CGS, names: &[String]) -> (usize, usize) {
     let mut navigation_tools = 0usize;
     for e in names {
         if let Some(ent) = cgs.get_entity(e.as_str()) {
-            navigation_tools += navigation_edge_count(ent);
+            navigation_tools += navigation_edge_count(cgs, ent);
         }
     }
     (capability_tools, navigation_tools)
@@ -1254,11 +1254,14 @@ pub fn prompt_surface_stats(
     }
 }
 
-fn navigation_edge_count(ent: &EntityDef) -> usize {
+fn navigation_edge_count(cgs: &CGS, ent: &EntityDef) -> usize {
     let rel_names: HashSet<&str> = ent.relations.keys().map(|s| s.as_str()).collect();
     let mut n = ent.relations.len();
     for (fname, f) in &ent.fields {
-        if matches!(f.field_type, FieldType::EntityRef { .. })
+        if cgs
+            .named_value_for_slot(f)
+            .ok()
+            .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
             && !rel_names.contains(fname.as_str())
         {
             n += 1;
@@ -1368,7 +1371,11 @@ fn query_param_slot_example(
     cgs: &CGS,
     map: Option<&SymbolMap>,
 ) -> String {
-    if matches!(f.field_type, FieldType::Array) {
+    let Ok(nv) = cgs.named_value_for_slot(f) else {
+        let n = id_sym_cap(map, cap, f.name.as_str());
+        return format!("{n}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+    };
+    if matches!(nv.field_type, FieldType::Array) {
         // Array predicates in DOMAIN teaching use bare `$` so query type-check can apply
         // capability-param placeholder relaxation (`field=$`) for list-like filters.
         let n = id_sym_cap(map, cap, f.name.as_str());
@@ -1377,7 +1384,7 @@ fn query_param_slot_example(
     invoke_dotted_call_arg_example(f, cap, cgs, map).unwrap_or_else(|| {
         let n = id_sym_cap(map, cap, f.name.as_str());
         let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
-        match &f.field_type {
+        match &nv.field_type {
             FieldType::Integer | FieldType::Number | FieldType::Boolean => {
                 format!("{n}={p}")
             }
@@ -1432,7 +1439,8 @@ fn compound_get_expr_line(
     for kv in &ent.key_vars {
         let f = ent.fields.get(kv)?;
         let sym = id_sym_entity(map, ent.name.as_str(), kv.as_str());
-        match &f.field_type {
+        let nv = cgs.named_value_for_slot(f).ok()?;
+        match &nv.field_type {
             FieldType::Integer
             | FieldType::Number
             | FieldType::Boolean
@@ -1793,6 +1801,7 @@ fn collect_capability_compact_arg_glosses(
 /// Falls back to `[scope …] optional params: …` only when compact `args:` is unavailable. Then ` — ` + description.
 fn format_capability_legend_line(
     map: &SymbolMap,
+    cgs: &CGS,
     cap: &crate::CapabilitySchema,
     anchor_entity: &str,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
@@ -1811,17 +1820,17 @@ fn format_capability_legend_line(
             collect_capability_compact_arg_glosses(anchor_entity, cap, map, im, catalog_entry_id);
         if let Some(args_s) = crate::symbol_tuning::join_compact_invocation_arg_fragments(frags) {
             // `args:` already tags each slot req/opt — omit the redundant `optional params: p#,…` list.
-            let scope_only = map.capability_scope_legend_gloss(cap);
+            let scope_only = map.capability_scope_legend_gloss(cgs, cap);
             if scope_only.is_empty() {
                 format!("args: {args_s}")
             } else {
                 format!("{scope_only} · args: {args_s}")
             }
         } else {
-            map.capability_input_signature_gloss(cap)
+            map.capability_input_signature_gloss(cgs, cap)
         }
     } else {
-        map.capability_input_signature_gloss(cap)
+        map.capability_input_signature_gloss(cgs, cap)
     };
     if sig.is_empty() {
         gloss
@@ -1835,12 +1844,15 @@ fn format_capability_legend_line(
 #[inline]
 fn capability_legend_for_domain(
     map: Option<&SymbolMap>,
+    cgs: &CGS,
     cap: &crate::CapabilitySchema,
     anchor_entity: &str,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    map.map(|m| format_capability_legend_line(m, cap, anchor_entity, ident_meta, catalog_entry_id))
+    map.map(|m| {
+        format_capability_legend_line(m, cgs, cap, anchor_entity, ident_meta, catalog_entry_id)
+    })
 }
 
 /// One `key=value` for dotted-call `method(k=v,…)` — equality/entity forms parse as invoke args (not query `>=` predicates).
@@ -1852,7 +1864,8 @@ fn invoke_dotted_call_arg_example(
 ) -> Option<String> {
     let n = id_sym_cap(map, cap, f.name.as_str());
     let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
-    match &f.field_type {
+    let nv = cgs.named_value_for_slot(f).ok()?;
+    match &nv.field_type {
         FieldType::Boolean
         | FieldType::String
         | FieldType::Blob
@@ -1864,7 +1877,7 @@ fn invoke_dotted_call_arg_example(
         FieldType::EntityRef { target } => {
             Some(format!("{n}={}", entity_ref_id_example(cgs, target, map)))
         }
-        FieldType::Date => match &f.value_format {
+        FieldType::Date => match &nv.value_format {
             // Same placeholder as strings — avoid teaching ISO literals in DOMAIN dotted-call invokes.
             Some(ValueWireFormat::Temporal(_)) => Some(format!(
                 "{n}={p}",
@@ -1873,7 +1886,7 @@ fn invoke_dotted_call_arg_example(
             )),
             _ => None,
         },
-        FieldType::Array => match f.array_items.as_ref() {
+        FieldType::Array => match f.resolved_array_items(cgs) {
             Some(_items) => Some(format!("{n}=[{p}]", n = n, p = p)),
             None => Some(format!(r#"{n}=[]"#)),
         },
@@ -2205,7 +2218,8 @@ fn collect_entity_domain_block(
         let ms = met_sym(map, ename, &label);
         let expr = format!("{es}.{ms}()");
         let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
-        let cap_leg = capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id);
+        let cap_leg =
+            capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
         try_push_domain_example(
             &mut lines,
             &mut line_metas,
@@ -2360,7 +2374,7 @@ fn collect_entity_domain_block(
             };
             let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
             let cap_leg =
-                capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id);
+                capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
             try_push_domain_example(
                 &mut lines,
                 &mut line_metas,
@@ -2379,7 +2393,7 @@ fn collect_entity_domain_block(
     for (cap_name, line) in collect_multi_arity_method_lines(cgs, ename, &es, map) {
         let cap_ref = cgs.capabilities.get(&cap_name);
         let cap_leg = cap_ref.and_then(|c| {
-            capability_legend_for_domain(map, c, ename, ident_meta, catalog_entry_id)
+            capability_legend_for_domain(map, cgs, c, ename, ident_meta, catalog_entry_id)
         });
         let gloss =
             cap_ref.and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map));
@@ -2411,7 +2425,7 @@ fn collect_entity_domain_block(
             }
             let qgloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
             let cap_leg =
-                capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id);
+                capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
             let mut added = false;
             if let Some(line) = query_expr_maximal(cap, &es, cgs, map) {
                 let work = domain_line_work_string(&line, map);
@@ -2527,7 +2541,7 @@ fn collect_entity_domain_block(
         let sg =
             scap.and_then(|cap| crate::result_gloss::result_gloss_for_capability(cap, cgs, map));
         let cap_leg = scap.and_then(|cap| {
-            capability_legend_for_domain(map, cap, ename, ident_meta, catalog_entry_id)
+            capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id)
         });
         try_push_domain_example(
             &mut lines,
@@ -2552,7 +2566,10 @@ fn collect_entity_domain_block(
     let rel_names: HashSet<&str> = ent.relations.keys().map(|s| s.as_str()).collect();
     for fname in ent.fields.keys() {
         if let Some(f) = ent.fields.get(fname) {
-            if matches!(f.field_type, FieldType::EntityRef { .. })
+            if cgs
+                .named_value_for_slot(f)
+                .ok()
+                .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
                 && !rel_names.contains(fname.as_str())
             {
                 nav_keys.push(fname.as_str().to_string());
@@ -2568,9 +2585,12 @@ fn collect_entity_domain_block(
                     && !many_relation_nav_emittable(rel_schema);
                 (rel_schema.target_resource.clone(), skip, Some(rel_schema))
             } else if let Some(f) = ent.fields.get(rel.as_str()) {
-                match &f.field_type {
-                    FieldType::EntityRef { target } => (target.clone(), false, None),
-                    _ => continue,
+                match cgs.named_value_for_slot(f) {
+                    Ok(nv) => match &nv.field_type {
+                        FieldType::EntityRef { target } => (target.clone(), false, None),
+                        _ => continue,
+                    },
+                    Err(_) => continue,
                 }
             } else {
                 continue;
@@ -2734,11 +2754,15 @@ fn cgs_slice_has_structured_string_semantics(cgs: &CGS, full_entities: &[&str]) 
     for &e in full_entities {
         if let Some(ent) = cgs.get_entity(e) {
             for f in ent.fields.values() {
-                if matches!(f.field_type, FieldType::Blob) {
+                let Ok(nv) = cgs.named_value_for_slot(f) else {
+                    continue;
+                };
+                if matches!(nv.field_type, FieldType::Blob) {
                     return true;
                 }
-                if matches!(f.field_type, FieldType::String)
-                    && f.effective_string_semantics().is_structured_or_multiline()
+                if matches!(nv.field_type, FieldType::String)
+                    && f.effective_string_semantics(cgs)
+                        .is_structured_or_multiline()
                 {
                     return true;
                 }
@@ -2756,11 +2780,15 @@ fn cgs_slice_has_structured_string_semantics(cgs: &CGS, full_entities: &[&str]) 
             continue;
         };
         for f in fields {
-            if matches!(f.field_type, FieldType::Blob) {
+            let Ok(nv) = cgs.named_value_for_slot(f) else {
+                continue;
+            };
+            if matches!(nv.field_type, FieldType::Blob) {
                 return true;
             }
-            if matches!(f.field_type, FieldType::String)
-                && f.effective_string_semantics().is_structured_or_multiline()
+            if matches!(nv.field_type, FieldType::String)
+                && f.effective_string_semantics(cgs)
+                    .is_structured_or_multiline()
             {
                 return true;
             }
@@ -4343,12 +4371,7 @@ mod tests {
             name: "id".into(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("fixture_str").expect("key")),
             description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
             required: true,
-            array_items: None,
-            string_semantics: None,
             agent_presentation: None,
             mime_type_hint: None,
             attachment_media: None,
@@ -4468,12 +4491,7 @@ mod tests {
             name: "id".into(),
             kind: FieldValueKind::Registry(ValueDomainKey::new("fixture_str").expect("key")),
             description: description.to_string(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
             required: true,
-            array_items: None,
-            string_semantics: None,
             agent_presentation: None,
             mime_type_hint: None,
             attachment_media: None,

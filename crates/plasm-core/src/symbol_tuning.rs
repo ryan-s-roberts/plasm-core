@@ -141,8 +141,10 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     s.insert(f);
     if let Some(ent) = cgs.get_entity(f) {
         for field in ent.fields.values() {
-            if let FieldType::EntityRef { target } = &field.field_type {
-                s.insert(target.as_str());
+            if let Ok(nv) = cgs.named_value_for_slot(field) {
+                if let FieldType::EntityRef { target } = &nv.field_type {
+                    s.insert(target.as_str());
+                }
             }
         }
         for rel in ent.relations.values() {
@@ -151,9 +153,11 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     }
     for (ename, ent) in &cgs.entities {
         for field in ent.fields.values() {
-            if let FieldType::EntityRef { target } = &field.field_type {
-                if target.as_str() == f {
-                    s.insert(ename.as_str());
+            if let Ok(nv) = cgs.named_value_for_slot(field) {
+                if let FieldType::EntityRef { target } = &nv.field_type {
+                    if target.as_str() == f {
+                        s.insert(ename.as_str());
+                    }
                 }
             }
         }
@@ -456,15 +460,18 @@ fn collect_slot_metas(
         };
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
+            let nv = cgs
+                .named_value_for_slot(f)
+                .expect("values row for entity field");
             out.push(IdentMetadata::RegistryBacked {
                 catalog_entry_id: cid.clone(),
                 entity: en.clone(),
                 role: IdentRegistryRole::EntityField,
                 value_registry_key: f.kind.registry_key().clone(),
-                field_type: f.field_type.clone(),
-                string_semantics: f.string_semantics,
-                array_items: f.array_items.clone(),
-                allowed_values: f.allowed_values.clone(),
+                field_type: nv.field_type.clone(),
+                string_semantics: nv.string_semantics,
+                array_items: nv.array_items.clone(),
+                allowed_values: nv.allowed_values.clone(),
                 wire_name: fname.as_str().to_string(),
                 description: f.description.clone(),
             });
@@ -495,6 +502,9 @@ fn collect_slot_metas(
             };
             let en = cap.domain.clone();
             for f in fields {
+                let nv = cgs
+                    .named_value_for_slot(f)
+                    .expect("values row for capability param");
                 out.push(IdentMetadata::RegistryBacked {
                     catalog_entry_id: cid.clone(),
                     entity: en.clone(),
@@ -502,10 +512,10 @@ fn collect_slot_metas(
                         capability: cap.name.clone(),
                     },
                     value_registry_key: f.kind.registry_key().clone(),
-                    field_type: f.field_type.clone(),
-                    string_semantics: f.string_semantics,
-                    array_items: f.array_items.clone(),
-                    allowed_values: f.allowed_values.clone(),
+                    field_type: nv.field_type.clone(),
+                    string_semantics: nv.string_semantics,
+                    array_items: nv.array_items.clone(),
+                    allowed_values: nv.allowed_values.clone(),
                     wire_name: f.name.clone(),
                     description: f.description.clone().unwrap_or_default(),
                 });
@@ -531,16 +541,19 @@ pub(crate) fn build_ident_metadata(
         };
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
+            let nv = cgs
+                .named_value_for_slot(f)
+                .expect("values row for entity field");
             out.entry((cid.clone(), en.clone(), fname.as_str().to_string()))
                 .or_insert_with(|| IdentMetadata::RegistryBacked {
                     catalog_entry_id: cid.clone(),
                     entity: en.clone(),
                     role: IdentRegistryRole::EntityField,
                     value_registry_key: f.kind.registry_key().clone(),
-                    field_type: f.field_type.clone(),
-                    string_semantics: f.string_semantics,
-                    array_items: f.array_items.clone(),
-                    allowed_values: f.allowed_values.clone(),
+                    field_type: nv.field_type.clone(),
+                    string_semantics: nv.string_semantics,
+                    array_items: nv.array_items.clone(),
+                    allowed_values: nv.allowed_values.clone(),
                     wire_name: fname.as_str().to_string(),
                     description: f.description.clone(),
                 });
@@ -572,6 +585,9 @@ pub(crate) fn build_ident_metadata(
             };
             let en = cap.domain.clone();
             for f in fields {
+                let nv = cgs
+                    .named_value_for_slot(f)
+                    .expect("values row for capability param");
                 out.entry((cid.clone(), en.clone(), f.name.clone()))
                     .or_insert_with(|| IdentMetadata::RegistryBacked {
                         catalog_entry_id: cid.clone(),
@@ -580,10 +596,10 @@ pub(crate) fn build_ident_metadata(
                             capability: cap.name.clone(),
                         },
                         value_registry_key: f.kind.registry_key().clone(),
-                        field_type: f.field_type.clone(),
-                        string_semantics: f.string_semantics,
-                        array_items: f.array_items.clone(),
-                        allowed_values: f.allowed_values.clone(),
+                        field_type: nv.field_type.clone(),
+                        string_semantics: nv.string_semantics,
+                        array_items: nv.array_items.clone(),
+                        allowed_values: nv.allowed_values.clone(),
                         wire_name: f.name.clone(),
                         description: f.description.clone().unwrap_or_default(),
                     });
@@ -985,10 +1001,12 @@ fn resolve_ident_type_string(
         };
         for f in fields {
             if f.name == name {
-                return Some(match f.field_type {
-                    FieldType::String => string_semantics_gloss_label(f.string_semantics),
+                let nv = cgs.named_value_for_slot(f).ok()?;
+                let sem = nv.string_semantics;
+                return Some(match nv.field_type {
+                    FieldType::String => string_semantics_gloss_label(sem),
                     FieldType::Blob => "blob".to_string(),
-                    _ => field_type_to_gloss_label(&f.field_type),
+                    _ => field_type_to_gloss_label(&nv.field_type),
                 });
             }
         }
@@ -996,10 +1014,12 @@ fn resolve_ident_type_string(
     for e in full_entities {
         if let Some(ent) = cgs.get_entity(e) {
             if let Some(f) = ent.fields.get(name) {
-                return Some(match f.field_type {
-                    FieldType::String => string_semantics_gloss_label(f.string_semantics),
+                let nv = cgs.named_value_for_slot(f).ok()?;
+                let sem = nv.string_semantics;
+                return Some(match nv.field_type {
+                    FieldType::String => string_semantics_gloss_label(sem),
                     FieldType::Blob => "blob".to_string(),
-                    _ => field_type_to_gloss_label(&f.field_type),
+                    _ => field_type_to_gloss_label(&nv.field_type),
                 });
             }
         }
@@ -1331,7 +1351,11 @@ impl SymbolMap {
 
     /// `[scope …]` fragment for DOMAIN `;;` legends only (no `optional params:` list).
     /// For [`CapabilityKind::Query`], returns empty (scope is not shown for query-style capabilities).
-    pub(crate) fn capability_scope_legend_gloss(&self, cap: &CapabilitySchema) -> String {
+    pub(crate) fn capability_scope_legend_gloss(
+        &self,
+        cgs: &CGS,
+        cap: &CapabilitySchema,
+    ) -> String {
         const MAX_SIG: usize = 96;
         let Some(is) = &cap.input_schema else {
             return String::new();
@@ -1349,7 +1373,10 @@ impl SymbolMap {
             if !matches!(f.role, Some(ParameterRole::Scope)) {
                 continue;
             }
-            if let FieldType::EntityRef { target } = &f.field_type {
+            let Ok(nv) = cgs.named_value_for_slot(f) else {
+                continue;
+            };
+            if let FieldType::EntityRef { target } = &nv.field_type {
                 let ps = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
                 let es = self.entity_sym(target.as_str());
                 scope_parts.push(format!("{ps}→{es}"));
@@ -1367,7 +1394,11 @@ impl SymbolMap {
     /// Optional / scope parameter symbols for DOMAIN `;;` legends. Required parameters are omitted — they
     /// are already shown in the example expression. For [`CapabilityKind::Query`], omits `[scope …]`.
     /// When compact `args:` is present, prefer [`capability_scope_legend_gloss`] + `args:` instead (no duplicate list).
-    pub(crate) fn capability_input_signature_gloss(&self, cap: &CapabilitySchema) -> String {
+    pub(crate) fn capability_input_signature_gloss(
+        &self,
+        cgs: &CGS,
+        cap: &CapabilitySchema,
+    ) -> String {
         const MAX_SIG: usize = 96;
         let Some(is) = &cap.input_schema else {
             return String::new();
@@ -1375,7 +1406,7 @@ impl SymbolMap {
         let InputType::Object { fields, .. } = &is.input_type else {
             return String::new();
         };
-        let mut scope_s = self.capability_scope_legend_gloss(cap);
+        let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
         let mut optional_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
@@ -2218,7 +2249,13 @@ impl DomainExposureSession {
                     continue;
                 };
                 let req: Vec<_> = fields.iter().filter(|f| f.required).collect();
-                if req.len() != 1 || req[0].field_type != FieldType::String {
+                if req.len() != 1 {
+                    continue;
+                }
+                let Ok(nv) = cgs.named_value_for_slot(req[0]) else {
+                    continue;
+                };
+                if nv.field_type != FieldType::String {
                     continue;
                 }
                 let kebab = capability_method_label_kebab(cap);

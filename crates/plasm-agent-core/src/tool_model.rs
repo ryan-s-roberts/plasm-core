@@ -451,12 +451,13 @@ fn type_label_from_parts(
     }
 }
 
-fn input_field_type_label(field: &InputFieldSchema) -> String {
+fn input_field_type_label(field: &InputFieldSchema, cgs: &CGS) -> String {
+    let nv = cgs.named_value_for_slot(field).expect("param value_ref");
     type_label_from_parts(
-        &field.field_type,
-        field.allowed_values.as_deref(),
-        field.effective_string_semantics(),
-        field.array_items.as_ref(),
+        &nv.field_type,
+        nv.allowed_values.as_deref(),
+        field.effective_string_semantics(cgs),
+        field.resolved_array_items(cgs),
     )
 }
 
@@ -470,7 +471,8 @@ fn navigable_entity_ref_target(cgs: &CGS, field_type: &FieldType) -> Option<Stri
 }
 
 fn ref_entity_for_input_field(cgs: &CGS, field: &InputFieldSchema) -> Option<String> {
-    navigable_entity_ref_target(cgs, &field.field_type)
+    let nv = cgs.named_value_for_slot(field).ok()?;
+    navigable_entity_ref_target(cgs, &nv.field_type)
 }
 
 fn field_type_compact_label(ft: &FieldType) -> String {
@@ -490,17 +492,21 @@ fn field_type_compact_label(ft: &FieldType) -> String {
     }
 }
 
-fn schema_field_type_label(field: &FieldSchema) -> String {
+fn schema_field_type_label(field: &FieldSchema, cgs: &CGS) -> String {
+    let nv = cgs
+        .named_value_for_slot(field)
+        .expect("entity field value_ref");
     type_label_from_parts(
-        &field.field_type,
-        field.allowed_values.as_deref(),
-        field.effective_string_semantics(),
-        field.array_items.as_ref(),
+        &nv.field_type,
+        nv.allowed_values.as_deref(),
+        field.effective_string_semantics(cgs),
+        field.resolved_array_items(cgs),
     )
 }
 
 fn ref_entity_for_field_schema(cgs: &CGS, field: &FieldSchema) -> Option<String> {
-    navigable_entity_ref_target(cgs, &field.field_type)
+    let nv = cgs.named_value_for_slot(field).ok()?;
+    navigable_entity_ref_target(cgs, &nv.field_type)
 }
 
 fn build_projection_fields(cgs: &CGS, entity: &EntityDef) -> Vec<ExplorerProjectionField> {
@@ -509,7 +515,7 @@ fn build_projection_fields(cgs: &CGS, entity: &EntityDef) -> Vec<ExplorerProject
         let Some(f) = entity.fields.get(fname.as_str()) else {
             continue;
         };
-        let type_label = schema_field_type_label(f);
+        let type_label = schema_field_type_label(f, cgs);
         let ref_entity = ref_entity_for_field_schema(cgs, f);
         let ref_entity_navigable = ref_entity.is_some();
         let description = f.description.trim().to_string();
@@ -529,7 +535,7 @@ fn explorer_arg_from_input_field(
     field: &InputFieldSchema,
     role: &str,
 ) -> ExplorerVerbArg {
-    let type_label = input_field_type_label(field);
+    let type_label = input_field_type_label(field, cgs);
     let ref_entity = ref_entity_for_input_field(cgs, field);
     let description = field
         .description
@@ -1288,7 +1294,10 @@ fn project_entity(
 
     let mut entity_ref_links = Vec::new();
     for (field_name, field_schema) in &entity.fields {
-        if let FieldType::EntityRef { ref target } = field_schema.field_type {
+        let Ok(nv) = cgs.named_value_for_slot(field_schema) else {
+            continue;
+        };
+        if let FieldType::EntityRef { ref target } = nv.field_type {
             let kebab = field_subcommand_kebab(field_name);
             if entity.relations.contains_key(field_name.as_str()) {
                 continue;

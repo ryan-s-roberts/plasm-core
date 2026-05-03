@@ -275,10 +275,11 @@ fn string_semantics_for_wire_param(
                 .get_entity(entity.as_str())?
                 .fields
                 .get(field.as_str())?;
-            if matches!(f.field_type, FieldType::Blob) {
+            let nv = cgs.named_value_for_slot(f).ok()?;
+            if matches!(nv.field_type, FieldType::Blob) {
                 Some(crate::StringSemantics::Blob)
-            } else if matches!(f.field_type, FieldType::String) {
-                Some(f.effective_string_semantics())
+            } else if matches!(nv.field_type, FieldType::String) {
+                Some(f.effective_string_semantics(cgs))
             } else {
                 None
             }
@@ -293,10 +294,11 @@ fn string_semantics_for_wire_param(
             })?;
             let fields = cap.object_params()?;
             let f = fields.iter().find(|p| p.name == param)?;
-            if matches!(f.field_type, FieldType::Blob) {
+            let nv = cgs.named_value_for_slot(f).ok()?;
+            if matches!(nv.field_type, FieldType::Blob) {
                 Some(crate::StringSemantics::Blob)
-            } else if matches!(f.field_type, FieldType::String) {
-                Some(f.effective_string_semantics())
+            } else if matches!(nv.field_type, FieldType::String) {
+                Some(f.effective_string_semantics(cgs))
             } else {
                 None
             }
@@ -1241,7 +1243,10 @@ fn correction_no_entity_ref_bridge(
     let mut pivots: Vec<String> = Vec::new();
     if let Some(ent) = cgs.get_entity(target) {
         for (fname, field) in &ent.fields {
-            if let FieldType::EntityRef { target: t } = &field.field_type {
+            let Ok(nv) = cgs.named_value_for_slot(field) else {
+                continue;
+            };
+            if let FieldType::EntityRef { target: t } = &nv.field_type {
                 pivots.push(match style {
                     FeedbackStyle::CanonicalDev => format!("{fname} (→ {})", t),
                     FeedbackStyle::SymbolicLlm { map } => {
@@ -1255,7 +1260,10 @@ fn correction_no_entity_ref_bridge(
         for cap in cgs.find_capabilities(target, CapabilityKind::Query) {
             if let Some(fields) = cap.object_params() {
                 for f in fields {
-                    if let FieldType::EntityRef { target: t } = &f.field_type {
+                    let Ok(nv) = cgs.named_value_for_slot(f) else {
+                        continue;
+                    };
+                    if let FieldType::EntityRef { target: t } = &nv.field_type {
                         pivots.push(match style {
                             FeedbackStyle::CanonicalDev => {
                                 format!("{} (→ {})", f.name, t)
@@ -1490,7 +1498,11 @@ fn navigable_entityrefs_and_relations_only(cgs: &CGS, entity: &str) -> Vec<Strin
     };
     let mut names = Vec::new();
     for (k, f) in &ent.fields {
-        if matches!(f.field_type, FieldType::EntityRef { .. }) {
+        if cgs
+            .named_value_for_slot(f)
+            .ok()
+            .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
+        {
             names.push(k.as_str().to_string());
         }
     }
@@ -1654,7 +1666,11 @@ fn nav_example_for_entity(cgs: &CGS, entity: &str, cands: &[String]) -> String {
 fn field_is_declared_scalar(cgs: &CGS, entity: &str, field: &str) -> bool {
     cgs.get_entity(entity)
         .and_then(|e| e.fields.get(field))
-        .map(|f| !matches!(f.field_type, FieldType::EntityRef { .. }))
+        .map(|f| {
+            !cgs.named_value_for_slot(f)
+                .ok()
+                .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
+        })
         .unwrap_or(false)
 }
 
@@ -1666,7 +1682,11 @@ fn scalar_field_names_for_projection(cgs: &CGS, entity: &str) -> Vec<String> {
         .fields
         .iter()
         .filter_map(|(k, f)| {
-            if matches!(f.field_type, FieldType::EntityRef { .. }) {
+            if cgs
+                .named_value_for_slot(f)
+                .ok()
+                .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
+            {
                 None
             } else {
                 Some(k.as_str().to_string())

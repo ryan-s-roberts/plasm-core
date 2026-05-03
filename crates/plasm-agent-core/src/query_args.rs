@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use plasm_core::{CapabilitySchema, Predicate};
+use plasm_core::{CapabilitySchema, Predicate, CGS};
 
 use crate::input_field_cli::{build_field_args, extend_query_predicates_for_field, FieldArgHelp};
 
@@ -11,8 +11,8 @@ use crate::input_field_cli::{build_field_args, extend_query_predicates_for_field
 ///
 /// No `parameters:` on the capability → empty vec (no filter flags; pagination
 /// flags are added separately by the CLI builder).
-pub fn build_query_param_args(cap: &CapabilitySchema) -> Vec<clap::Arg> {
-    build_field_args(cap, FieldArgHelp::Query)
+pub fn build_query_param_args(cap: &CapabilitySchema, cgs: &CGS) -> Vec<clap::Arg> {
+    build_field_args(cap, FieldArgHelp::Query, cgs)
 }
 
 /// Extract matched query arguments back into a typed `Predicate`.
@@ -21,7 +21,11 @@ pub fn build_query_param_args(cap: &CapabilitySchema) -> Vec<clap::Arg> {
 /// and assembles `Predicate::Eq` comparisons. Range/inequality semantics are
 /// left to APIs that expose distinct `_gt` / `_lt` parameters — each is an
 /// equality comparison against its own named flag.
-pub fn args_to_query_predicate(matches: &ArgMatches, cap: &CapabilitySchema) -> Option<Predicate> {
+pub fn args_to_query_predicate(
+    matches: &ArgMatches,
+    cap: &CapabilitySchema,
+    cgs: &CGS,
+) -> Option<Predicate> {
     let fields = cap.object_params()?;
 
     let mut comparisons = Vec::new();
@@ -33,7 +37,7 @@ pub fn args_to_query_predicate(matches: &ArgMatches, cap: &CapabilitySchema) -> 
         if !registered_ids.contains(&field.name) {
             continue;
         }
-        extend_query_predicates_for_field(matches, field, &mut comparisons);
+        extend_query_predicates_for_field(matches, field, &mut comparisons, cgs);
     }
 
     match comparisons.len() {
@@ -48,9 +52,117 @@ mod tests {
     use super::*;
     use clap::Command;
     use plasm_core::{
-        CapabilityKind, CapabilityMapping, CompOp, InputFieldSchema, InputSchema, InputType,
-        InputValidation, Value,
+        CapabilityKind, CapabilityMapping, CompOp, FieldType, FieldValueKind, InputFieldSchema,
+        InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, Value,
+        ValueDomainKey, CGS,
     };
+
+    fn query_test_cgs() -> CGS {
+        let mut cgs = CGS::new();
+        let mut add = |k: &str, nv: NamedValueSchema| {
+            cgs.values.insert(k.to_string(), nv);
+        };
+        add(
+            "qa_status_req",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        add(
+            "qa_status_rej",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["available".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        add(
+            "qa_team_id",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        add(
+            "qa_team_id_multi",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        add(
+            "qa_archived",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Boolean,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        add(
+            "qa_status_none",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["available".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        add(
+            "qa_region_gen",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        add(
+            "qa_revenue",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        add(
+            "qa_region_nf",
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["EMEA".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs
+    }
 
     fn make_query_cap(params: Vec<InputFieldSchema>) -> CapabilitySchema {
         CapabilitySchema {
@@ -94,9 +206,9 @@ mod tests {
         }
     }
 
-    fn parse_query(args: &[&str], cap: &CapabilitySchema) -> ArgMatches {
+    fn parse_query(args: &[&str], cap: &CapabilitySchema, cgs: &CGS) -> ArgMatches {
         let mut cmd = Command::new("test");
-        for arg in build_query_param_args(cap) {
+        for arg in build_query_param_args(cap, cgs) {
             cmd = cmd.arg(arg);
         }
         cmd.try_get_matches_from(args).unwrap()
@@ -104,40 +216,39 @@ mod tests {
 
     #[test]
     fn no_params_gives_empty_flags() {
+        let cgs = CGS::new();
         let cap = no_params_cap();
-        let flags = build_query_param_args(&cap);
+        let flags = build_query_param_args(&cap, &cgs);
         assert!(flags.is_empty());
     }
 
     #[test]
     fn no_params_gives_no_predicate() {
+        let cgs = CGS::new();
         let cap = no_params_cap();
         let cmd = Command::new("test");
         let matches = cmd.try_get_matches_from(["test"]).unwrap();
-        let pred = args_to_query_predicate(&matches, &cap);
+        let pred = args_to_query_predicate(&matches, &cap, &cgs);
         assert!(pred.is_none());
     }
 
     #[test]
     fn select_param_generates_typed_flag() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
-            field_type: plasm_core::FieldType::Select,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_status_req").expect("key")),
             required: true,
-            allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
-        let flags = build_query_param_args(&cap);
+        let flags = build_query_param_args(&cap, &cgs);
         assert_eq!(flags.len(), 1);
         assert_eq!(flags[0].get_id(), "status");
 
-        let matches = parse_query(&["test", "--status", "available"], &cap);
-        let pred = args_to_query_predicate(&matches, &cap).unwrap();
+        let matches = parse_query(&["test", "--status", "available"], &cap, &cgs);
+        let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
         if let Predicate::Comparison { field, op, value } = pred {
             assert_eq!(field, "status");
             assert_eq!(op, CompOp::Eq);
@@ -149,20 +260,17 @@ mod tests {
 
     #[test]
     fn rejects_invalid_select_value() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
-            field_type: plasm_core::FieldType::Select,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_status_rej").expect("key")),
             required: false,
-            allowed_values: Some(vec!["available".into()]),
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
         let mut cmd = Command::new("test");
-        for arg in build_query_param_args(&cap) {
+        for arg in build_query_param_args(&cap, &cgs) {
             cmd = cmd.arg(arg);
         }
         assert!(cmd
@@ -172,20 +280,17 @@ mod tests {
 
     #[test]
     fn required_param_enforced() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "team_id".into(),
-            field_type: plasm_core::FieldType::String,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_team_id").expect("key")),
             required: true,
-            allowed_values: None,
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
         let mut cmd = Command::new("test");
-        for arg in build_query_param_args(&cap) {
+        for arg in build_query_param_args(&cap, &cgs) {
             cmd = cmd.arg(arg);
         }
         assert!(cmd.try_get_matches_from(["test"]).is_err());
@@ -193,71 +298,60 @@ mod tests {
 
     #[test]
     fn multiple_params_become_and_predicate() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![
             InputFieldSchema {
                 name: "archived".into(),
-                field_type: plasm_core::FieldType::Boolean,
-                value_format: None,
+                kind: FieldValueKind::Registry(ValueDomainKey::new("qa_archived").expect("key")),
                 required: false,
-                allowed_values: None,
-                array_items: None,
-                string_semantics: None,
                 description: None,
                 default: None,
                 role: None,
             },
             InputFieldSchema {
                 name: "team_id".into(),
-                field_type: plasm_core::FieldType::String,
-                value_format: None,
+                kind: FieldValueKind::Registry(
+                    ValueDomainKey::new("qa_team_id_multi").expect("key"),
+                ),
                 required: false,
-                allowed_values: None,
-                array_items: None,
-                string_semantics: None,
                 description: None,
                 default: None,
                 role: None,
             },
         ]);
-        let matches = parse_query(&["test", "--archived", "--team_id", "abc"], &cap);
-        let pred = args_to_query_predicate(&matches, &cap).unwrap();
+        let matches = parse_query(&["test", "--archived", "--team_id", "abc"], &cap, &cgs);
+        let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
         assert!(matches!(pred, Predicate::And { .. }));
     }
 
     #[test]
     fn no_flags_given_returns_none_predicate() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
-            field_type: plasm_core::FieldType::Select,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_status_none").expect("key")),
             required: false,
-            allowed_values: Some(vec!["available".into()]),
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
-        let matches = parse_query(&["test"], &cap);
-        assert!(args_to_query_predicate(&matches, &cap).is_none());
+        let matches = parse_query(&["test"], &cap, &cgs);
+        assert!(args_to_query_predicate(&matches, &cap, &cgs).is_none());
     }
 
     #[test]
     fn generates_select_with_possible_values() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "region".into(),
-            field_type: plasm_core::FieldType::Select,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_region_gen").expect("key")),
             required: false,
-            allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
-        let matches = parse_query(&["test", "--region", "EMEA"], &cap);
-        let pred = args_to_query_predicate(&matches, &cap).unwrap();
+        let matches = parse_query(&["test", "--region", "EMEA"], &cap, &cgs);
+        let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
         if let Predicate::Comparison { field, op, value } = &pred {
             assert_eq!(field, "region");
             assert_eq!(*op, CompOp::Eq);
@@ -269,20 +363,17 @@ mod tests {
 
     #[test]
     fn number_param_flag() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "revenue".into(),
-            field_type: plasm_core::FieldType::Number,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_revenue").expect("key")),
             required: false,
-            allowed_values: None,
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
-        let matches = parse_query(&["test", "--revenue", "1000"], &cap);
-        let pred = args_to_query_predicate(&matches, &cap).unwrap();
+        let matches = parse_query(&["test", "--revenue", "1000"], &cap, &cgs);
+        let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
         if let Predicate::Comparison { field, op, value } = &pred {
             assert_eq!(field, "revenue");
             assert_eq!(*op, CompOp::Eq);
@@ -294,19 +385,16 @@ mod tests {
 
     #[test]
     fn no_filters_returns_none() {
+        let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "region".into(),
-            field_type: plasm_core::FieldType::Select,
-            value_format: None,
+            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_region_nf").expect("key")),
             required: false,
-            allowed_values: Some(vec!["EMEA".into()]),
-            array_items: None,
-            string_semantics: None,
             description: None,
             default: None,
             role: None,
         }]);
-        let matches = parse_query(&["test"], &cap);
-        assert!(args_to_query_predicate(&matches, &cap).is_none());
+        let matches = parse_query(&["test"], &cap, &cgs);
+        assert!(args_to_query_predicate(&matches, &cap, &cgs).is_none());
     }
 }

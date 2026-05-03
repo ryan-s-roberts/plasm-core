@@ -87,10 +87,26 @@ pub async fn start_server_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::{FieldSchema, FieldType, ResourceSchema, CGS};
+    use plasm_core::{
+        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
+        ValueDomainKey, CGS,
+    };
 
     fn create_test_store() -> MockStore {
         let mut schema = CGS::new();
+        for k in ["mock_srv_str_id", "mock_srv_str_name"] {
+            schema.values.insert(
+                k.into(),
+                NamedValueSchema {
+                    description: String::new(),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                    string_semantics: Some(StringSemantics::Short),
+                    array_items: None,
+                },
+            );
+        }
         let account = ResourceSchema {
             name: "Account".into(),
             description: String::new(),
@@ -100,13 +116,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_srv_str_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -115,13 +129,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_srv_str_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
