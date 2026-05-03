@@ -806,6 +806,15 @@ Today the language is mostly used for tool invocation: model emits expression, r
 
 A future direction is to use Plasm for **bidirectional agentic communication**: typed requests, replies, delegations, review comments, commitments, and handoff artifacts between agents. The same pieces that make tool calls tractable also matter there: compact symbols, declared domain semantics, projections, refs to archived context, and correction feedback when a message does not match the shared contract.
 
+## OSS desktop UI and appliance image
+
+- **`desktop/`** — Phoenix **Plasm Desktop** shell (single-user tool explorer + `/plasm/*` proxies). See [desktop/README.md](desktop/README.md).
+- **`docker/oss-appliance.Dockerfile`** — single-container PostgreSQL + OSS `plasm-mcp` + Plasm Desktop; see [docker/README.md](docker/README.md).
+
+## Published documentation (GitHub Pages)
+
+Integration-focused docs for **`plasm-mcp`**, HTTP/MCP protocols, authoring, and crates: **[ryan-s-roberts.github.io/plasm-core](https://ryan-s-roberts.github.io/plasm-core/)** — sources under [`doc-site/`](doc-site/README.md).
+
 ## License
 
 Plasm is licensed under the [Business Source License 1.1](LICENSE). The Change

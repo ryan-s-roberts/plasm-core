@@ -34,6 +34,9 @@ fixtures/**/eval/*.latest.json
 # Large GitHub REST OpenAPI bundle (curl from github/rest-api-description; see apis/github/README.md)
 fixtures/real_openapi_specs/github_api_github_com.json
 
+# Accidental pack-plugin cache trees at repo root (wrong cwd)
+90362_pd/
+
 # Local app bundles / scratch downloads at repo root (never commit)
 /Contents-1/
 /Contents/
