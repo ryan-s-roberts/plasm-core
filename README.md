@@ -12,22 +12,7 @@ Most agent stacks still center on **ad hoc JSON tools**: large schemas in contex
 
 ## Quick start
 
-Prerequisites: **Rust** (`cargo`). Clone this repo and work from its root.
-
-```bash
-cargo build --workspace
-cargo run -p plasm-cli --bin plasm -- schema validate apis/dnd5e
-cargo run -p plasm-repl -- --schema apis/dnd5e --backend https://www.dnd5eapi.co
-```
-
-**`plasm-mcp`** (HTTP + Streamable HTTP MCP on separate ports):
-
-```bash
-cargo build -p plasm-agent --release --bin plasm-mcp
-./target/release/plasm-mcp --schema apis/dnd5e --http --port 3001 --mcp --mcp-port 3000
-```
-
-Then `curl -sS http://127.0.0.1:3001/v1/health` should report `ok`.
+Prerequisites: **Docker**, **Elixir**, **Just** and **Rust** (`cargo`). Clone this repo and work from its root.
 
 **OSS appliance (Docker)** — PostgreSQL, packed `apis/` plugins, `plasm-mcp`, and Plasm Desktop in one image ([`docker/README.md`](docker/README.md) for Buildx setup, multi-arch builds, and env overrides):
 
@@ -48,6 +33,18 @@ just oss-desktop-dev
 ```
 
 Full flags, `/execute`, MCP tools, plugins, and catalog workflows are covered in **[the documentation](https://plasmtools.github.io/plasm-core/)**; contributor-oriented commands and boundaries are summarized in [`AGENTS.md`](AGENTS.md). Doc sources: [`doc-site/`](doc-site/README.md).
+
+## API catalogs
+
+Split CGS + CML trees live under [`apis/`](apis/README.md). The links below point at catalogs whose **own README** is the source of truth for **how to run**, **auth env vars**, and **stated scope**—many also spell out **`plasm-eval coverage`** or **`plasm schema validate`** flows. They are the usual “complete enough to trust the README” set, not an exhaustive inventory (see the **[full catalog table](apis/README.md#catalog)** for every directory). **Capability counts** in parentheses are the number of entries under `capabilities:` in that catalog’s `domain.yaml` (what the runtime loads).
+
+**Public (no API key):** [dnd5e](apis/dnd5e/README.md) (60) · [pokeapi](apis/pokeapi/README.md) (97) · [graphqlzero](apis/graphqlzero/README.md) (15) · [hackernews](apis/hackernews/README.md) (8) · [openbrewerydb](apis/openbrewerydb/README.md) (5) · [rickandmorty](apis/rickandmorty/README.md) (6) · [xkcd](apis/xkcd/README.md) (1) · [rawg](apis/rawg/README.md) (2; optional key for rate limits) · [openmeteo](apis/openmeteo/README.md) (1)
+
+**Auth’d integrations (README + eval / validate where noted):** [github](apis/github/README.md) (91) · [clickup](apis/clickup/README.md) (85) · [notion](apis/notion/README.md) (14) · [linear](apis/linear/README.md) (27; [`COVERAGE.md`](apis/linear/COVERAGE.md)) · [gitlab](apis/gitlab/README.md) (42) · [slack](apis/slack/README.md) (57) · [discord](apis/discord/README.md) (135) · [spotify](apis/spotify/README.md) (17) · [reddit](apis/reddit/README.md) (11) · [twitter / X](apis/twitter/README.md) (15) · [tavily](apis/tavily/README.md) (5) · [musixmatch](apis/musixmatch/README.md) (7)
+
+**Google Workspace** (OAuth; each README lists scopes and coverage commands): [gmail](apis/gmail/README.md) (30) · [calendar](apis/google-calendar/README.md) (4) · [docs](apis/google-docs/README.md) (3) · [drive](apis/google-drive/README.md) (45) · [sheets](apis/google-sheets/README.md) (17)
+
+**On-chain (native transport):** [evm-erc20](apis/evm-erc20/README.md) (2) — **intentionally narrow** (ERC-20 balance + `Transfer` logs): it exists to **demonstrate the interface** when the mapping target is **native EVM** (JSON-RPC to a chain URL), not OpenAPI/GraphQL over HTTP. Plasm is **not** HTTP-only—HTTP and GraphQL are the common catalog shapes today; this catalog shows the **same CGS → CML → runtime path** on a **non-HTTP wire**. Broader on-chain surfaces are orthogonal to proving that transport seam. Enable the **`evm`** Cargo feature (see README).
 
 ## License
 
