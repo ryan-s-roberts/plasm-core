@@ -185,30 +185,51 @@ mod tests {
     use super::*;
     use crate::identity::{CapabilityName, EntityName};
     use crate::schema::{
-        CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, FieldSchema,
-        InputFieldSchema, InputSchema, InputType, InputValidation, ResourceSchema, StringSemantics,
+        registry_test_util, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, FieldSchema, InputSchema, InputType, InputValidation,
+        NamedValueSchema, ResourceSchema, StringSemantics,
     };
     use crate::FieldType;
 
-    fn string_field(name: &str) -> FieldSchema {
-        FieldSchema {
-            name: name.into(),
-            description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
-            required: true,
-            array_items: None,
-            string_semantics: Some(StringSemantics::Short),
-            agent_presentation: None,
-            mime_type_hint: None,
-            attachment_media: None,
-            wire_path: None,
-            derive: None,
-        }
+    fn seed_repository_fixture(cgs: &mut CGS) {
+        cgs.values.insert(
+            "fx_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "fx_repo_ref".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: EntityName::from("Repository"),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
     }
 
-    fn repo_scope_cap(policy: ScopeAggregateKeyPolicy) -> CapabilitySchema {
+    fn string_field(cgs: &CGS, name: &str) -> FieldSchema {
+        registry_test_util::entity_field_from_values(cgs, "fx_str", name, true, "")
+    }
+
+    fn repo_scope_cap(cgs: &CGS, policy: ScopeAggregateKeyPolicy) -> CapabilitySchema {
+        let mut repository_param = registry_test_util::object_input_field_from_values(
+            cgs,
+            "fx_repo_ref",
+            "repository",
+            true,
+        );
+        repository_param.role = Some(ParameterRole::Scope);
         CapabilitySchema {
             name: CapabilityName::from("repo_forks_query"),
             description: String::new(),
@@ -219,20 +240,7 @@ mod tests {
             },
             input_schema: Some(InputSchema {
                 input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
-                        name: "repository".into(),
-                        field_type: FieldType::EntityRef {
-                            target: EntityName::from("Repository"),
-                        },
-                        value_format: None,
-                        required: true,
-                        allowed_values: None,
-                        array_items: None,
-                        string_semantics: None,
-                        description: None,
-                        default: None,
-                        role: Some(ParameterRole::Scope),
-                    }],
+                    fields: vec![repository_param],
                     additional_fields: true,
                 },
                 validation: InputValidation::default(),
@@ -249,6 +257,7 @@ mod tests {
     #[test]
     fn splat_object_and_omit_aggregate() {
         let mut cgs = CGS::new();
+        seed_repository_fixture(&mut cgs);
         cgs.add_resource(ResourceSchema {
             name: "Repository".into(),
             description: String::new(),
@@ -256,9 +265,9 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                string_field("id"),
-                string_field("owner"),
-                string_field("name"),
+                string_field(&cgs, "id"),
+                string_field(&cgs, "owner"),
+                string_field(&cgs, "name"),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -270,7 +279,7 @@ mod tests {
         })
         .unwrap();
 
-        let cap = repo_scope_cap(ScopeAggregateKeyPolicy::OmitWhenRedundant);
+        let cap = repo_scope_cap(&cgs, ScopeAggregateKeyPolicy::OmitWhenRedundant);
         let mut env = IndexMap::new();
         env.insert(
             "repository".into(),
@@ -293,6 +302,7 @@ mod tests {
     #[test]
     fn explicit_wins_no_overwrite() {
         let mut cgs = CGS::new();
+        seed_repository_fixture(&mut cgs);
         cgs.add_resource(ResourceSchema {
             name: "Repository".into(),
             description: String::new(),
@@ -300,9 +310,9 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                string_field("id"),
-                string_field("owner"),
-                string_field("name"),
+                string_field(&cgs, "id"),
+                string_field(&cgs, "owner"),
+                string_field(&cgs, "name"),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -314,7 +324,7 @@ mod tests {
         })
         .unwrap();
 
-        let cap = repo_scope_cap(ScopeAggregateKeyPolicy::Retain);
+        let cap = repo_scope_cap(&cgs, ScopeAggregateKeyPolicy::Retain);
         let mut env = IndexMap::new();
         env.insert("owner".into(), Value::String("pred".into()));
         env.insert(
@@ -338,6 +348,7 @@ mod tests {
     #[test]
     fn splat_full_name_object_normalizes_before_splat() {
         let mut cgs = CGS::new();
+        seed_repository_fixture(&mut cgs);
         cgs.add_resource(ResourceSchema {
             name: "Repository".into(),
             description: String::new(),
@@ -345,10 +356,10 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                string_field("id"),
-                string_field("owner"),
-                string_field("repo"),
-                string_field("full_name"),
+                string_field(&cgs, "id"),
+                string_field(&cgs, "owner"),
+                string_field(&cgs, "repo"),
+                string_field(&cgs, "full_name"),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -360,7 +371,7 @@ mod tests {
         })
         .unwrap();
 
-        let cap = repo_scope_cap(ScopeAggregateKeyPolicy::OmitWhenRedundant);
+        let cap = repo_scope_cap(&cgs, ScopeAggregateKeyPolicy::OmitWhenRedundant);
         let mut env = IndexMap::new();
         env.insert(
             "repository".into(),
@@ -385,6 +396,7 @@ mod tests {
     #[test]
     fn splat_owner_slash_name_string() {
         let mut cgs = CGS::new();
+        seed_repository_fixture(&mut cgs);
         cgs.add_resource(ResourceSchema {
             name: "Repository".into(),
             description: String::new(),
@@ -392,9 +404,9 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                string_field("id"),
-                string_field("owner"),
-                string_field("name"),
+                string_field(&cgs, "id"),
+                string_field(&cgs, "owner"),
+                string_field(&cgs, "name"),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -406,7 +418,7 @@ mod tests {
         })
         .unwrap();
 
-        let cap = repo_scope_cap(ScopeAggregateKeyPolicy::OmitWhenRedundant);
+        let cap = repo_scope_cap(&cgs, ScopeAggregateKeyPolicy::OmitWhenRedundant);
         let mut env = IndexMap::new();
         env.insert(
             "repository".into(),

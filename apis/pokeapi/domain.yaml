@@ -1,33 +1,24 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://pokeapi.co
-
 entities:
   Ability:
     id_field: name
     description: A special power a Pokémon can have
     fields:
       id:
-        description: Numeric ability identifier
-        field_type: integer
         required: false
+        value_ref: nv_ability_id
       name:
-        description: Ability name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_ability_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_ability_url
       is_main_series:
-        description: Whether this ability is from the main series
-        field_type: boolean
         required: false
+        value_ref: nv_ability_is_main_series
     relations:
       generation:
         description: Generation this ability was introduced
@@ -48,43 +39,32 @@ entities:
     description: A berry item found in the Pokémon world
     fields:
       id:
-        description: Numeric berry identifier
-        field_type: integer
         required: false
+        value_ref: nv_berry_id
       name:
-        description: Berry name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_berry_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_berry_url
       growth_time:
-        description: Hours for one growth stage
-        field_type: integer
         required: false
+        value_ref: nv_berry_growth_time
       max_harvest:
-        description: Maximum number harvestable at once
-        field_type: integer
         required: false
+        value_ref: nv_berry_max_harvest
       natural_gift_power:
-        description: Power of Natural Gift when held
-        field_type: integer
         required: false
+        value_ref: nv_berry_natural_gift_power
       size:
-        description: Size of the berry in millimeters
-        field_type: integer
         required: false
+        value_ref: nv_berry_size
       smoothness:
-        description: Smoothness value for Pokéblocks
-        field_type: integer
         required: false
+        value_ref: nv_berry_smoothness
       soil_dryness:
-        description: Rate at which soil dries with this berry
-        field_type: integer
         required: false
+        value_ref: nv_berry_soil_dryness
     relations:
       firmness:
         description: Firmness category of this berry
@@ -103,19 +83,14 @@ entities:
     description: Firmness rating for berries
     fields:
       id:
-        description: Numeric firmness identifier
-        field_type: integer
         required: false
+        value_ref: nv_berry_firmness_id
       name:
-        description: Firmness name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_berry_firmness_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_berry_firmness_url
     relations:
       berries:
         description: Berries with this firmness
@@ -126,19 +101,14 @@ entities:
     description: A flavor profile for berries
     fields:
       id:
-        description: Numeric flavor identifier
-        field_type: integer
         required: false
+        value_ref: nv_berry_flavor_id
       name:
-        description: Flavor name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_berry_flavor_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_berry_flavor_url
     relations:
       contest_type:
         description: Contest type linked to this flavor
@@ -149,24 +119,17 @@ entities:
     description: A genetic characteristic from IVs
     fields:
       id:
-        description: Numeric characteristic identifier
-        field_type: integer
         required: false
+        value_ref: nv_characteristic_id
       url:
-        description: API resource URL (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_characteristic_url
       gene_modulo:
-        description: Remainder when dividing highest IV by 5
-        field_type: integer
         required: false
+        value_ref: nv_characteristic_gene_modulo
       possible_values:
-        description: Possible IV values for this characteristic
-        field_type: array
         required: false
-        items:
-          type: string
+        value_ref: nv_characteristic_possible_values
     relations:
       highest_stat:
         description: Stat this characteristic indicates
@@ -177,19 +140,14 @@ entities:
     description: A Pokémon contest category
     fields:
       id:
-        description: Numeric contest type identifier
-        field_type: integer
         required: false
+        value_ref: nv_contest_type_id
       name:
-        description: Contest type name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_contest_type_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_contest_type_url
     relations:
       berry_flavor:
         description: Berry flavor linked to this contest type
@@ -200,40 +158,30 @@ entities:
     description: Effect of a move in a Pokémon contest
     fields:
       id:
-        description: Numeric contest effect identifier
-        field_type: integer
         required: false
+        value_ref: nv_contest_effect_id
       url:
-        description: API resource URL (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_contest_effect_url
       appeal:
-        description: Appeal points gained in contest
-        field_type: integer
         required: false
+        value_ref: nv_contest_effect_appeal
       jam:
-        description: Jam points caused to opponents
-        field_type: integer
         required: false
+        value_ref: nv_contest_effect_jam
   EggGroup:
     id_field: name
     description: A breeding compatibility group
     fields:
       id:
-        description: Numeric egg group identifier
-        field_type: integer
         required: false
+        value_ref: nv_egg_group_id
       name:
-        description: Egg group name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_egg_group_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_egg_group_url
     relations:
       pokemon_species:
         description: Species in this egg group
@@ -244,41 +192,30 @@ entities:
     description: Method of encountering wild Pokémon
     fields:
       id:
-        description: Numeric encounter method identifier
-        field_type: integer
         required: false
+        value_ref: nv_encounter_method_id
       name:
-        description: Method name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_encounter_method_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_encounter_method_url
       order:
-        description: Display sort order
-        field_type: integer
         required: false
+        value_ref: nv_encounter_method_order
   EncounterCondition:
     id_field: name
     description: A condition affecting wild encounters
     fields:
       id:
-        description: Numeric condition identifier
-        field_type: integer
         required: false
+        value_ref: nv_encounter_condition_id
       name:
-        description: Condition name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_encounter_condition_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_encounter_condition_url
     relations:
       values:
         description: Possible values for this condition
@@ -289,19 +226,14 @@ entities:
     description: A specific value for an encounter condition
     fields:
       id:
-        description: Numeric condition value identifier
-        field_type: integer
         required: false
+        value_ref: nv_encounter_condition_value_id
       name:
-        description: Value name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_encounter_condition_value_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_encounter_condition_value_url
     relations:
       condition:
         description: Parent encounter condition
@@ -312,14 +244,11 @@ entities:
     description: A chain of Pokémon evolution stages
     fields:
       id:
-        description: Numeric evolution chain identifier
-        field_type: integer
         required: false
+        value_ref: nv_evolution_chain_id
       url:
-        description: API resource URL (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_evolution_chain_url
     relations:
       baby_trigger_item:
         description: Item that triggers baby Pokémon breeding
@@ -330,19 +259,14 @@ entities:
     description: An event that triggers evolution
     fields:
       id:
-        description: Numeric trigger identifier
-        field_type: integer
         required: false
+        value_ref: nv_evolution_trigger_id
       name:
-        description: Trigger name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_evolution_trigger_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_evolution_trigger_url
     relations:
       pokemon_species:
         description: Species that evolve via this trigger
@@ -353,19 +277,14 @@ entities:
     description: A game generation (e.g. Gen I, Gen II)
     fields:
       id:
-        description: Numeric generation identifier
-        field_type: integer
         required: false
+        value_ref: nv_generation_id
       name:
-        description: Generation name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_generation_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_generation_url
     relations:
       main_region:
         description: Primary region for this generation
@@ -376,19 +295,14 @@ entities:
     description: A Pokémon gender option
     fields:
       id:
-        description: Numeric gender identifier
-        field_type: integer
         required: false
+        value_ref: nv_gender_id
       name:
-        description: Gender name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_gender_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_gender_url
     relations:
       pokemon_species_details:
         description: Species with gender-specific details
@@ -403,24 +317,17 @@ entities:
     description: An experience growth rate curve
     fields:
       id:
-        description: Numeric growth rate identifier
-        field_type: integer
         required: false
+        value_ref: nv_growth_rate_id
       name:
-        description: Growth rate name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_growth_rate_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_growth_rate_url
       formula:
-        description: Mathematical formula for leveling
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_growth_rate_formula
     relations:
       pokemon_species:
         description: Species that use this growth rate
@@ -431,27 +338,20 @@ entities:
     description: A collectible item in the Pokémon world
     fields:
       id:
-        description: Numeric item identifier
-        field_type: integer
         required: false
+        value_ref: nv_item_id
       name:
-        description: Item name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_item_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_item_url
       cost:
-        description: Price in Pokémon currency
-        field_type: integer
         required: false
+        value_ref: nv_item_cost
       fling_power:
-        description: Power when used with Fling
-        field_type: integer
         required: false
+        value_ref: nv_item_fling_power
     relations:
       fling_effect:
         description: Effect when used with Fling
@@ -470,19 +370,14 @@ entities:
     description: A category grouping for items
     fields:
       id:
-        description: Numeric category identifier
-        field_type: integer
         required: false
+        value_ref: nv_item_category_id
       name:
-        description: Category name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_item_category_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_item_category_url
     relations:
       pocket:
         description: Bag pocket this category belongs to
@@ -497,19 +392,14 @@ entities:
     description: A trait or property of items
     fields:
       id:
-        description: Numeric attribute identifier
-        field_type: integer
         required: false
+        value_ref: nv_item_attribute_id
       name:
-        description: Attribute name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_item_attribute_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_item_attribute_url
     relations:
       items:
         description: Items with this attribute
@@ -520,19 +410,14 @@ entities:
     description: Effect when an item is flung in battle
     fields:
       id:
-        description: Numeric fling effect identifier
-        field_type: integer
         required: false
+        value_ref: nv_item_fling_effect_id
       name:
-        description: Fling effect name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_item_fling_effect_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_item_fling_effect_url
     relations:
       items:
         description: Items with this fling effect
@@ -543,19 +428,14 @@ entities:
     description: A pocket in the player's bag
     fields:
       id:
-        description: Numeric pocket identifier
-        field_type: integer
         required: false
+        value_ref: nv_item_pocket_id
       name:
-        description: Pocket name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_item_pocket_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_item_pocket_url
     relations:
       categories:
         description: Item categories in this pocket
@@ -566,51 +446,36 @@ entities:
     description: A language for localized game text
     fields:
       id:
-        description: Numeric language identifier
-        field_type: integer
         required: false
+        value_ref: nv_language_id
       name:
-        description: Language name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_language_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_language_url
       official:
-        description: Whether this is an official game language
-        field_type: boolean
         required: false
+        value_ref: nv_language_official
       iso639:
-        description: ISO 639 language code
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_language_iso639
       iso3166:
-        description: ISO 3166 country code
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_language_iso3166
   Location:
     id_field: name
     description: A location in the Pokémon world
     fields:
       id:
-        description: Numeric location identifier
-        field_type: integer
         required: false
+        value_ref: nv_location_id
       name:
-        description: Location name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_location_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_location_url
     relations:
       region:
         description: Region this location belongs to
@@ -625,23 +490,17 @@ entities:
     description: A sub-area within a location
     fields:
       id:
-        description: Numeric area identifier
-        field_type: integer
         required: false
+        value_ref: nv_location_area_id
       name:
-        description: Area name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_location_area_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_location_area_url
       game_index:
-        description: Internal game index for this area
-        field_type: integer
         required: false
+        value_ref: nv_location_area_game_index
     relations:
       location:
         description: Parent location
@@ -652,14 +511,11 @@ entities:
     description: A TM or HM that teaches a move
     fields:
       id:
-        description: Numeric machine identifier
-        field_type: integer
         required: false
+        value_ref: nv_machine_id
       url:
-        description: API resource URL (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_machine_url
     relations:
       item:
         description: Item form of this machine
@@ -678,39 +534,29 @@ entities:
     description: An attack or technique usable in battle
     fields:
       id:
-        description: Numeric move identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_id
       name:
-        description: Move name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_url
       accuracy:
-        description: Move accuracy percentage
-        field_type: integer
         required: false
+        value_ref: nv_move_accuracy
       effect_chance:
-        description: Chance of secondary effect occurring
-        field_type: integer
         required: false
+        value_ref: nv_move_effect_chance
       pp:
-        description: Base power points
-        field_type: integer
         required: false
+        value_ref: nv_move_pp
       priority:
-        description: Move priority bracket
-        field_type: integer
         required: false
+        value_ref: nv_move_priority
       power:
-        description: Base power of the move
-        field_type: integer
         required: false
+        value_ref: nv_move_power
     relations:
       contest_type:
         description: Contest type this move belongs to
@@ -754,19 +600,14 @@ entities:
     description: A status condition caused by moves
     fields:
       id:
-        description: Numeric ailment identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_ailment_id
       name:
-        description: Ailment name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_ailment_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_ailment_url
     relations:
       moves:
         description: Moves that cause this ailment
@@ -777,37 +618,27 @@ entities:
     description: A battle style for move preferences
     fields:
       id:
-        description: Numeric battle style identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_battle_style_id
       name:
-        description: Battle style name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_battle_style_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_battle_style_url
   MoveCategory:
     id_field: name
     description: A meta-category grouping for moves
     fields:
       id:
-        description: Numeric category identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_category_id
       name:
-        description: Category name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_category_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_category_url
     relations:
       moves:
         description: Moves in this category
@@ -818,19 +649,14 @@ entities:
     description: Physical, special, or status classification
     fields:
       id:
-        description: Numeric damage class identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_damage_class_id
       name:
-        description: Damage class name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_damage_class_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_damage_class_url
     relations:
       moves:
         description: Moves with this damage class
@@ -841,19 +667,14 @@ entities:
     description: How a Pokémon can learn a move
     fields:
       id:
-        description: Numeric learn method identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_learn_method_id
       name:
-        description: Learn method name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_learn_method_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_learn_method_url
     relations:
       version_groups:
         description: Version groups using this learn method
@@ -864,19 +685,14 @@ entities:
     description: What a move can target in battle
     fields:
       id:
-        description: Numeric target identifier
-        field_type: integer
         required: false
+        value_ref: nv_move_target_id
       name:
-        description: Target name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_move_target_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_move_target_url
     relations:
       moves:
         description: Moves with this target type
@@ -887,19 +703,14 @@ entities:
     description: A nature affecting stat growth
     fields:
       id:
-        description: Numeric nature identifier
-        field_type: integer
         required: false
+        value_ref: nv_nature_id
       name:
-        description: Nature name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_nature_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_nature_url
     relations:
       decreased_stat:
         description: Stat decreased by this nature
@@ -926,19 +737,14 @@ entities:
     description: An area in Pal Park for migration
     fields:
       id:
-        description: Numeric Pal Park area identifier
-        field_type: integer
         required: false
+        value_ref: nv_pal_park_area_id
       name:
-        description: Area name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pal_park_area_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pal_park_area_url
     relations:
       pokemon_species:
         description: Species found in this area
@@ -949,23 +755,17 @@ entities:
     description: A regional Pokédex catalog
     fields:
       id:
-        description: Numeric Pokédex identifier
-        field_type: integer
         required: false
+        value_ref: nv_pokedex_id
       name:
-        description: Pokédex name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokedex_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokedex_url
       is_main_series:
-        description: Whether from the main game series
-        field_type: boolean
         required: false
+        value_ref: nv_pokedex_is_main_series
     relations:
       region:
         description: Region this Pokédex covers
@@ -976,39 +776,29 @@ entities:
     description: A Pokémon with base stats and forms
     fields:
       id:
-        description: National Pokédex number
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_id
       name:
-        description: Pokémon name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokemon_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_url
       base_experience:
-        description: Base experience yield when defeated
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_base_experience
       height:
-        description: Height in decimetres
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_height
       is_default:
-        description: Whether this is the default form
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_is_default
       order:
-        description: Display sort order
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_order
       weight:
-        description: Weight in hectograms
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_weight
     relations:
       species:
         description: Species this Pokémon belongs to
@@ -1058,19 +848,14 @@ entities:
     description: A color used to categorize Pokémon
     fields:
       id:
-        description: Numeric color identifier
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_color_id
       name:
-        description: Color name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokemon_color_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_color_url
     relations:
       pokemon_species:
         description: Species with this body color
@@ -1082,10 +867,8 @@ entities:
     id_from: location_area.url
     fields:
       pokemon_id:
-        description: Pokémon this encounter is for
-        field_type: entity_ref
-        target: Pokemon
         required: false
+        value_ref: nv_pokemon_encounter_pokemon_id
     relations:
       location_area:
         description: Area where this encounter occurs
@@ -1096,44 +879,32 @@ entities:
     description: A visual variant of a Pokémon
     fields:
       id:
-        description: Numeric form identifier
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_form_id
       name:
-        description: Form name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokemon_form_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_form_url
       order:
-        description: Global display order
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_form_order
       form_order:
-        description: Order among forms of same species
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_form_form_order
       is_default:
-        description: Whether this is the default form
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_form_is_default
       is_battle_only:
-        description: Whether form only appears in battle
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_form_is_battle_only
       is_mega:
-        description: Whether this is a Mega Evolution form
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_form_is_mega
       form_name:
-        description: Name of this specific form
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_form_form_name
     relations:
       pokemon:
         description: Base Pokémon for this form
@@ -1148,19 +919,14 @@ entities:
     description: A habitat where Pokémon live
     fields:
       id:
-        description: Numeric habitat identifier
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_habitat_id
       name:
-        description: Habitat name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokemon_habitat_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_habitat_url
     relations:
       pokemon_species:
         description: Species found in this habitat
@@ -1171,19 +937,14 @@ entities:
     description: A body shape classification for Pokémon
     fields:
       id:
-        description: Numeric shape identifier
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_shape_id
       name:
-        description: Shape name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokemon_shape_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_shape_url
     relations:
       pokemon_species:
         description: Species with this body shape
@@ -1194,59 +955,44 @@ entities:
     description: A Pokémon species with lore and breeding data
     fields:
       id:
-        description: National Pokédex species number
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_species_id
       name:
-        description: Species name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokemon_species_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokemon_species_url
       order:
-        description: Display sort order
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_species_order
       gender_rate:
-        description: Gender ratio (eighths female, -1=genderless)
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_species_gender_rate
       capture_rate:
-        description: Base catch rate (0-255)
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_species_capture_rate
       base_happiness:
-        description: Starting friendship value
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_species_base_happiness
       is_baby:
-        description: Whether this is a baby Pokémon
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_species_is_baby
       is_legendary:
-        description: Whether this is a legendary Pokémon
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_species_is_legendary
       is_mythical:
-        description: Whether this is a mythical Pokémon
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_species_is_mythical
       hatch_counter:
-        description: Egg cycles required to hatch
-        field_type: integer
         required: false
+        value_ref: nv_pokemon_species_hatch_counter
       has_gender_differences:
-        description: Whether males and females look different
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_species_has_gender_differences
       forms_switchable:
-        description: Whether forms can change in battle
-        field_type: boolean
         required: false
+        value_ref: nv_pokemon_species_forms_switchable
     relations:
       color:
         description: Body color of this species
@@ -1293,37 +1039,27 @@ entities:
     description: A stat used in Pokéathlon events
     fields:
       id:
-        description: Numeric Pokéathlon stat identifier
-        field_type: integer
         required: false
+        value_ref: nv_pokeathlon_stat_id
       name:
-        description: Stat name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_pokeathlon_stat_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_pokeathlon_stat_url
   Region:
     id_field: name
     description: A geographic region in the Pokémon world
     fields:
       id:
-        description: Numeric region identifier
-        field_type: integer
         required: false
+        value_ref: nv_region_id
       name:
-        description: Region name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_region_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_region_url
     relations:
       locations:
         description: Locations within this region
@@ -1346,27 +1082,20 @@ entities:
     description: A base stat (HP, Attack, etc.)
     fields:
       id:
-        description: Numeric stat identifier
-        field_type: integer
         required: false
+        value_ref: nv_stat_id
       name:
-        description: Stat name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_stat_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_stat_url
       game_index:
-        description: Internal game index for this stat
-        field_type: integer
         required: false
+        value_ref: nv_stat_game_index
       is_battle_only:
-        description: Whether stat only applies in battle
-        field_type: boolean
         required: false
+        value_ref: nv_stat_is_battle_only
     relations:
       move_damage_class:
         description: Damage class linked to this stat
@@ -1377,18 +1106,14 @@ entities:
     description: An effect in Super Contest shows
     fields:
       id:
-        description: Numeric super contest effect identifier
-        field_type: integer
         required: false
+        value_ref: nv_super_contest_effect_id
       url:
-        description: API resource URL (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_super_contest_effect_url
       appeal:
-        description: Appeal points in Super Contests
-        field_type: integer
         required: false
+        value_ref: nv_super_contest_effect_appeal
     relations:
       moves:
         description: Moves with this super contest effect
@@ -1399,19 +1124,14 @@ entities:
     description: An elemental type (Fire, Water, etc.)
     fields:
       id:
-        description: Numeric type identifier
-        field_type: integer
         required: false
+        value_ref: nv_type_id
       name:
-        description: Type name (unique key)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_type_name
       url:
-        description: API resource URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_type_url
     relations:
       generation:
         description: Generation this type was introduced
@@ -1445,19 +1165,14 @@ entities:
     description: A specific game version (e.g. Red, Blue)
     fields:
       id:
-        description: Numeric version identifier
-        field_type: integer
         required: false
+        value_ref: nv_version_id
       name:
-        description: Version name (unique key)
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_version_name
       url:
-        description: API resource URL
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_version_url
     relations:
       version_group:
         description: Version group this belongs to
@@ -1468,23 +1183,17 @@ entities:
     description: A set of related game versions
     fields:
       id:
-        description: Numeric version group identifier
-        field_type: integer
         required: false
+        value_ref: nv_version_group_id
       name:
-        description: Version group name (unique key)
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_version_group_name
       url:
-        description: API resource URL
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_version_group_url
       order:
-        description: Release order of this version group
-        field_type: integer
         required: false
+        value_ref: nv_version_group_order
     relations:
       generation:
         description: Generation this version group belongs to
@@ -1938,11 +1647,9 @@ capabilities:
     entity: PokemonEncounter
     parameters:
     - name: pokemon_id
-      type: entity_ref
-      target: Pokemon
+      value_ref: nv_pokemonencounter_query_pokemon_id
       required: true
       role: scope
-      description: Pokémon whose encounters to list.
   pokemon_query:
     description: List all Pokémon
     kind: query
@@ -2123,3 +1830,678 @@ capabilities:
     - id
     - url
     - order
+values:
+  nv_ability_id:
+    type: integer
+    description: Numeric ability identifier
+  nv_ability_name:
+    type: string
+    string_semantics: short
+    description: Ability name (unique key)
+  nv_ability_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_ability_is_main_series:
+    type: boolean
+    description: Whether this ability is from the main series
+  nv_berry_id:
+    type: integer
+    description: Numeric berry identifier
+  nv_berry_name:
+    type: string
+    string_semantics: short
+    description: Berry name (unique key)
+  nv_berry_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_berry_growth_time:
+    type: integer
+    description: Hours for one growth stage
+  nv_berry_max_harvest:
+    type: integer
+    description: Maximum number harvestable at once
+  nv_berry_natural_gift_power:
+    type: integer
+    description: Power of Natural Gift when held
+  nv_berry_size:
+    type: integer
+    description: Size of the berry in millimeters
+  nv_berry_smoothness:
+    type: integer
+    description: Smoothness value for Pokéblocks
+  nv_berry_soil_dryness:
+    type: integer
+    description: Rate at which soil dries with this berry
+  nv_berry_firmness_id:
+    type: integer
+    description: Numeric firmness identifier
+  nv_berry_firmness_name:
+    type: string
+    string_semantics: short
+    description: Firmness name (unique key)
+  nv_berry_firmness_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_berry_flavor_id:
+    type: integer
+    description: Numeric flavor identifier
+  nv_berry_flavor_name:
+    type: string
+    string_semantics: short
+    description: Flavor name (unique key)
+  nv_berry_flavor_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_characteristic_id:
+    type: integer
+    description: Numeric characteristic identifier
+  nv_characteristic_url:
+    type: string
+    string_semantics: short
+    description: API resource URL (unique key)
+  nv_characteristic_gene_modulo:
+    type: integer
+    description: Remainder when dividing highest IV by 5
+  nv_characteristic_possible_values_item:
+    type: string
+  nv_characteristic_possible_values:
+    type: array
+    items:
+      value_ref: nv_characteristic_possible_values_item
+    description: Possible IV values for this characteristic
+  nv_contest_type_id:
+    type: integer
+    description: Numeric contest type identifier
+  nv_contest_type_name:
+    type: string
+    string_semantics: short
+    description: Contest type name (unique key)
+  nv_contest_type_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_contest_effect_id:
+    type: integer
+    description: Numeric contest effect identifier
+  nv_contest_effect_url:
+    type: string
+    string_semantics: short
+    description: API resource URL (unique key)
+  nv_contest_effect_appeal:
+    type: integer
+    description: Appeal points gained in contest
+  nv_contest_effect_jam:
+    type: integer
+    description: Jam points caused to opponents
+  nv_egg_group_id:
+    type: integer
+    description: Numeric egg group identifier
+  nv_egg_group_name:
+    type: string
+    string_semantics: short
+    description: Egg group name (unique key)
+  nv_egg_group_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_encounter_method_id:
+    type: integer
+    description: Numeric encounter method identifier
+  nv_encounter_method_name:
+    type: string
+    string_semantics: short
+    description: Method name (unique key)
+  nv_encounter_method_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_encounter_method_order:
+    type: integer
+    description: Display sort order
+  nv_encounter_condition_id:
+    type: integer
+    description: Numeric condition identifier
+  nv_encounter_condition_name:
+    type: string
+    string_semantics: short
+    description: Condition name (unique key)
+  nv_encounter_condition_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_encounter_condition_value_id:
+    type: integer
+    description: Numeric condition value identifier
+  nv_encounter_condition_value_name:
+    type: string
+    string_semantics: short
+    description: Value name (unique key)
+  nv_encounter_condition_value_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_evolution_chain_id:
+    type: integer
+    description: Numeric evolution chain identifier
+  nv_evolution_chain_url:
+    type: string
+    string_semantics: short
+    description: API resource URL (unique key)
+  nv_evolution_trigger_id:
+    type: integer
+    description: Numeric trigger identifier
+  nv_evolution_trigger_name:
+    type: string
+    string_semantics: short
+    description: Trigger name (unique key)
+  nv_evolution_trigger_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_generation_id:
+    type: integer
+    description: Numeric generation identifier
+  nv_generation_name:
+    type: string
+    string_semantics: short
+    description: Generation name (unique key)
+  nv_generation_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_gender_id:
+    type: integer
+    description: Numeric gender identifier
+  nv_gender_name:
+    type: string
+    string_semantics: short
+    description: Gender name (unique key)
+  nv_gender_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_growth_rate_id:
+    type: integer
+    description: Numeric growth rate identifier
+  nv_growth_rate_name:
+    type: string
+    string_semantics: short
+    description: Growth rate name (unique key)
+  nv_growth_rate_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_growth_rate_formula:
+    type: string
+    string_semantics: short
+    description: Mathematical formula for leveling
+  nv_item_id:
+    type: integer
+    description: Numeric item identifier
+  nv_item_name:
+    type: string
+    string_semantics: short
+    description: Item name (unique key)
+  nv_item_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_item_cost:
+    type: integer
+    description: Price in Pokémon currency
+  nv_item_fling_power:
+    type: integer
+    description: Power when used with Fling
+  nv_item_category_id:
+    type: integer
+    description: Numeric category identifier
+  nv_item_category_name:
+    type: string
+    string_semantics: short
+    description: Category name (unique key)
+  nv_item_category_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_item_attribute_id:
+    type: integer
+    description: Numeric attribute identifier
+  nv_item_attribute_name:
+    type: string
+    string_semantics: short
+    description: Attribute name (unique key)
+  nv_item_attribute_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_item_fling_effect_id:
+    type: integer
+    description: Numeric fling effect identifier
+  nv_item_fling_effect_name:
+    type: string
+    string_semantics: short
+    description: Fling effect name (unique key)
+  nv_item_fling_effect_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_item_pocket_id:
+    type: integer
+    description: Numeric pocket identifier
+  nv_item_pocket_name:
+    type: string
+    string_semantics: short
+    description: Pocket name (unique key)
+  nv_item_pocket_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_language_id:
+    type: integer
+    description: Numeric language identifier
+  nv_language_name:
+    type: string
+    string_semantics: short
+    description: Language name (unique key)
+  nv_language_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_language_official:
+    type: boolean
+    description: Whether this is an official game language
+  nv_language_iso639:
+    type: string
+    string_semantics: short
+    description: ISO 639 language code
+  nv_language_iso3166:
+    type: string
+    string_semantics: short
+    description: ISO 3166 country code
+  nv_location_id:
+    type: integer
+    description: Numeric location identifier
+  nv_location_name:
+    type: string
+    string_semantics: short
+    description: Location name (unique key)
+  nv_location_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_location_area_id:
+    type: integer
+    description: Numeric area identifier
+  nv_location_area_name:
+    type: string
+    string_semantics: short
+    description: Area name (unique key)
+  nv_location_area_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_location_area_game_index:
+    type: integer
+    description: Internal game index for this area
+  nv_machine_id:
+    type: integer
+    description: Numeric machine identifier
+  nv_machine_url:
+    type: string
+    string_semantics: short
+    description: API resource URL (unique key)
+  nv_move_id:
+    type: integer
+    description: Numeric move identifier
+  nv_move_name:
+    type: string
+    string_semantics: short
+    description: Move name (unique key)
+  nv_move_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_move_accuracy:
+    type: integer
+    description: Move accuracy percentage
+  nv_move_effect_chance:
+    type: integer
+    description: Chance of secondary effect occurring
+  nv_move_pp:
+    type: integer
+    description: Base power points
+  nv_move_priority:
+    type: integer
+    description: Move priority bracket
+  nv_move_power:
+    type: integer
+    description: Base power of the move
+  nv_move_ailment_id:
+    type: integer
+    description: Numeric ailment identifier
+  nv_move_ailment_name:
+    type: string
+    string_semantics: short
+    description: Ailment name (unique key)
+  nv_move_ailment_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_move_battle_style_id:
+    type: integer
+    description: Numeric battle style identifier
+  nv_move_battle_style_name:
+    type: string
+    string_semantics: short
+    description: Battle style name (unique key)
+  nv_move_battle_style_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_move_category_id:
+    type: integer
+    description: Numeric category identifier
+  nv_move_category_name:
+    type: string
+    string_semantics: short
+    description: Category name (unique key)
+  nv_move_category_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_move_damage_class_id:
+    type: integer
+    description: Numeric damage class identifier
+  nv_move_damage_class_name:
+    type: string
+    string_semantics: short
+    description: Damage class name (unique key)
+  nv_move_damage_class_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_move_learn_method_id:
+    type: integer
+    description: Numeric learn method identifier
+  nv_move_learn_method_name:
+    type: string
+    string_semantics: short
+    description: Learn method name (unique key)
+  nv_move_learn_method_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_move_target_id:
+    type: integer
+    description: Numeric target identifier
+  nv_move_target_name:
+    type: string
+    string_semantics: short
+    description: Target name (unique key)
+  nv_move_target_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_nature_id:
+    type: integer
+    description: Numeric nature identifier
+  nv_nature_name:
+    type: string
+    string_semantics: short
+    description: Nature name (unique key)
+  nv_nature_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pal_park_area_id:
+    type: integer
+    description: Numeric Pal Park area identifier
+  nv_pal_park_area_name:
+    type: string
+    string_semantics: short
+    description: Area name (unique key)
+  nv_pal_park_area_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokedex_id:
+    type: integer
+    description: Numeric Pokédex identifier
+  nv_pokedex_name:
+    type: string
+    string_semantics: short
+    description: Pokédex name (unique key)
+  nv_pokedex_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokedex_is_main_series:
+    type: boolean
+    description: Whether from the main game series
+  nv_pokemon_id:
+    type: integer
+    description: National Pokédex number
+  nv_pokemon_name:
+    type: string
+    string_semantics: short
+    description: Pokémon name (unique key)
+  nv_pokemon_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokemon_base_experience:
+    type: integer
+    description: Base experience yield when defeated
+  nv_pokemon_height:
+    type: integer
+    description: Height in decimetres
+  nv_pokemon_is_default:
+    type: boolean
+    description: Whether this is the default form
+  nv_pokemon_order:
+    type: integer
+    description: Display sort order
+  nv_pokemon_weight:
+    type: integer
+    description: Weight in hectograms
+  nv_pokemon_color_id:
+    type: integer
+    description: Numeric color identifier
+  nv_pokemon_color_name:
+    type: string
+    string_semantics: short
+    description: Color name (unique key)
+  nv_pokemon_color_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokemon_encounter_pokemon_id:
+    type: entity_ref
+    target: Pokemon
+    description: Pokémon this encounter is for
+  nv_pokemon_form_id:
+    type: integer
+    description: Numeric form identifier
+  nv_pokemon_form_name:
+    type: string
+    string_semantics: short
+    description: Form name (unique key)
+  nv_pokemon_form_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokemon_form_order:
+    type: integer
+    description: Global display order
+  nv_pokemon_form_form_order:
+    type: integer
+    description: Order among forms of same species
+  nv_pokemon_form_is_default:
+    type: boolean
+    description: Whether this is the default form
+  nv_pokemon_form_is_battle_only:
+    type: boolean
+    description: Whether form only appears in battle
+  nv_pokemon_form_is_mega:
+    type: boolean
+    description: Whether this is a Mega Evolution form
+  nv_pokemon_form_form_name:
+    type: string
+    string_semantics: short
+    description: Name of this specific form
+  nv_pokemon_habitat_id:
+    type: integer
+    description: Numeric habitat identifier
+  nv_pokemon_habitat_name:
+    type: string
+    string_semantics: short
+    description: Habitat name (unique key)
+  nv_pokemon_habitat_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokemon_shape_id:
+    type: integer
+    description: Numeric shape identifier
+  nv_pokemon_shape_name:
+    type: string
+    string_semantics: short
+    description: Shape name (unique key)
+  nv_pokemon_shape_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokemon_species_id:
+    type: integer
+    description: National Pokédex species number
+  nv_pokemon_species_name:
+    type: string
+    string_semantics: short
+    description: Species name (unique key)
+  nv_pokemon_species_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_pokemon_species_order:
+    type: integer
+    description: Display sort order
+  nv_pokemon_species_gender_rate:
+    type: integer
+    description: Gender ratio (eighths female, -1=genderless)
+  nv_pokemon_species_capture_rate:
+    type: integer
+    description: Base catch rate (0-255)
+  nv_pokemon_species_base_happiness:
+    type: integer
+    description: Starting friendship value
+  nv_pokemon_species_is_baby:
+    type: boolean
+    description: Whether this is a baby Pokémon
+  nv_pokemon_species_is_legendary:
+    type: boolean
+    description: Whether this is a legendary Pokémon
+  nv_pokemon_species_is_mythical:
+    type: boolean
+    description: Whether this is a mythical Pokémon
+  nv_pokemon_species_hatch_counter:
+    type: integer
+    description: Egg cycles required to hatch
+  nv_pokemon_species_has_gender_differences:
+    type: boolean
+    description: Whether males and females look different
+  nv_pokemon_species_forms_switchable:
+    type: boolean
+    description: Whether forms can change in battle
+  nv_pokeathlon_stat_id:
+    type: integer
+    description: Numeric Pokéathlon stat identifier
+  nv_pokeathlon_stat_name:
+    type: string
+    string_semantics: short
+    description: Stat name (unique key)
+  nv_pokeathlon_stat_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_region_id:
+    type: integer
+    description: Numeric region identifier
+  nv_region_name:
+    type: string
+    string_semantics: short
+    description: Region name (unique key)
+  nv_region_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_stat_id:
+    type: integer
+    description: Numeric stat identifier
+  nv_stat_name:
+    type: string
+    string_semantics: short
+    description: Stat name (unique key)
+  nv_stat_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_stat_game_index:
+    type: integer
+    description: Internal game index for this stat
+  nv_stat_is_battle_only:
+    type: boolean
+    description: Whether stat only applies in battle
+  nv_super_contest_effect_id:
+    type: integer
+    description: Numeric super contest effect identifier
+  nv_super_contest_effect_url:
+    type: string
+    string_semantics: short
+    description: API resource URL (unique key)
+  nv_super_contest_effect_appeal:
+    type: integer
+    description: Appeal points in Super Contests
+  nv_type_id:
+    type: integer
+    description: Numeric type identifier
+  nv_type_name:
+    type: string
+    string_semantics: short
+    description: Type name (unique key)
+  nv_type_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_version_id:
+    type: integer
+    description: Numeric version identifier
+  nv_version_name:
+    type: string
+    string_semantics: short
+    description: Version name (unique key)
+  nv_version_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_version_group_id:
+    type: integer
+    description: Numeric version group identifier
+  nv_version_group_name:
+    type: string
+    string_semantics: short
+    description: Version group name (unique key)
+  nv_version_group_url:
+    type: string
+    string_semantics: short
+    description: API resource URL
+  nv_version_group_order:
+    type: integer
+    description: Release order of this version group
+  nv_pokemonencounter_query_pokemon_id:
+    type: entity_ref
+    target: Pokemon
+    description: Pokémon whose encounters to list.

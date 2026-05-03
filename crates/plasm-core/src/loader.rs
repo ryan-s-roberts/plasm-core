@@ -6,6 +6,7 @@
 //! For CML template parsing after load: `plasm_compile::transport=trace`.
 
 use crate::identity::{CapabilityName, EntityFieldName, EntityName, RelationName};
+use crate::schema::{FieldValueKind, NamedValueSchema, ValueDomainKey};
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
     AuthScheme, CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
@@ -71,6 +72,9 @@ fn is_regular_schema_file(meta: &std::fs::Metadata) -> bool {
 /// Domain model file (domain.yaml)
 #[derive(Debug, Deserialize)]
 pub struct DomainFile {
+    /// Reusable value domains (`value_ref` targets); catalog-local.
+    #[serde(default)]
+    pub values: IndexMap<String, DomainNamedValue>,
     pub entities: IndexMap<String, DomainEntity>,
     pub capabilities: IndexMap<String, DomainCapability>,
     /// Monotonic distribution version for this catalog entry (`0` when omitted).
@@ -128,6 +132,25 @@ fn default_domain_projection_examples() -> bool {
     true
 }
 
+/// `values:` entry — same typing keys as a field, without per-field response metadata.
+#[derive(Debug, Deserialize)]
+pub struct DomainNamedValue {
+    #[serde(default)]
+    pub description: String,
+    #[serde(rename = "type")]
+    pub value_type: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub allowed_values: Option<Vec<String>>,
+    #[serde(default)]
+    pub value_format: Option<ValueWireFormat>,
+    #[serde(default)]
+    pub items: Option<DomainItems>,
+    #[serde(default)]
+    pub string_semantics: Option<StringSemantics>,
+}
+
 fn deserialize_optional_id_from<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -172,27 +195,15 @@ where
 
 #[derive(Debug, Deserialize)]
 pub struct DomainField {
+    /// Catalog-local key into `values:` — **only** way to declare wire shape for this field.
+    pub value_ref: String,
     #[serde(default)]
     pub description: String,
-    pub field_type: String,
     /// Wire path for response decoding (`owner.login` or `["owner","login"]`).
     #[serde(default, deserialize_with = "deserialize_optional_wire_path")]
     pub path: Option<Vec<String>>,
     #[serde(default)]
     pub required: bool,
-    #[serde(default)]
-    pub allowed_values: Option<Vec<String>>,
-    /// Target entity name when `field_type` is `entity_ref`.
-    #[serde(default)]
-    pub target: Option<String>,
-    /// Wire format for `date` / `datetime` fields (`rfc3339`, `unix_ms`, `unix_sec`, `iso8601_date`).
-    #[serde(default)]
-    pub value_format: Option<ValueWireFormat>,
-    /// Required when `field_type` is `array` — element typing (`items:` in YAML).
-    #[serde(default)]
-    pub items: Option<DomainItems>,
-    #[serde(default)]
-    pub string_semantics: Option<StringSemantics>,
     #[serde(default)]
     pub agent_presentation: Option<AgentPresentation>,
     /// Optional MIME for attachment-like fields; copied to [`FieldSchema::mime_type_hint`].
@@ -252,43 +263,24 @@ pub struct DomainCapability {
 #[derive(Debug, Deserialize)]
 pub struct DomainParameter {
     pub name: String,
-    #[serde(rename = "type")]
-    pub param_type: String,
+    /// Catalog-local key into `values:` — **only** way to declare wire shape for this parameter.
+    pub value_ref: String,
     #[serde(default)]
     pub required: bool,
-    #[serde(default)]
-    pub allowed_values: Option<Vec<String>>,
-    /// Target entity name when `type` is `entity_ref`.
-    #[serde(default)]
-    pub target: Option<String>,
     /// Semantic role of this parameter. One of:
     /// `filter` (default), `search`, `sort`, `sort_direction`, `response_control`, `scope`.
     #[serde(default)]
     pub role: Option<String>,
-    /// Wire format for `date` / `datetime` parameters.
-    #[serde(default)]
-    pub value_format: Option<ValueWireFormat>,
-    /// Required when `type` is `array`.
-    #[serde(default)]
-    pub items: Option<DomainItems>,
     /// Human-readable hint for prompts; DOMAIN gloss uses `type · description`, else `type · name`.
     #[serde(default)]
     pub description: String,
-    #[serde(default)]
-    pub string_semantics: Option<crate::StringSemantics>,
 }
 
 /// YAML `items:` block for `array` fields and parameters.
 #[derive(Debug, Deserialize)]
 pub struct DomainItems {
-    #[serde(rename = "type")]
-    pub item_type: String,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub allowed_values: Option<Vec<String>>,
-    #[serde(default)]
-    pub value_format: Option<ValueWireFormat>,
+    /// Element shape lives under `values:` (same as `value_ref` on fields).
+    pub value_ref: String,
 }
 
 /// Load a CGS from split domain.yaml + mappings.yaml files.
@@ -434,58 +426,159 @@ impl SchemaSource for PathSchemaSource {
     }
 }
 
+fn compile_domain_named_values(
+    domain_values: &IndexMap<String, DomainNamedValue>,
+) -> Result<IndexMap<String, NamedValueSchema>, String> {
+    let mut out = IndexMap::new();
+    for (name, dv) in domain_values.iter() {
+        let ctx = format!("values['{name}']");
+        let schema = compile_one_named_value(dv, &ctx, &out)?;
+        out.insert(name.clone(), schema);
+    }
+    Ok(out)
+}
+
+fn compile_one_named_value(
+    d: &DomainNamedValue,
+    ctx: &str,
+    prior: &IndexMap<String, NamedValueSchema>,
+) -> Result<NamedValueSchema, String> {
+    let vt = d.value_type.trim();
+    if vt.is_empty() {
+        return Err(format!("{ctx}: missing `type`"));
+    }
+    let field_type = parse_domain_field_type(vt, &d.target, ctx)?;
+    if matches!(field_type, FieldType::MultiSelect)
+        && d.allowed_values.as_ref().is_none_or(|v| v.is_empty())
+    {
+        return Err(format!(
+            "{ctx}: type 'multi_select' requires non-empty allowed_values"
+        ));
+    }
+    let array_items = if matches!(field_type, FieldType::Array) {
+        let Some(ref it) = d.items else {
+            return Err(format!(
+                "{ctx}: type 'array' requires `items:` describing element types"
+            ));
+        };
+        Some(parse_domain_array_items(
+            it,
+            &format!("{ctx}, items"),
+            Some(prior),
+        )?)
+    } else {
+        if d.items.is_some() {
+            return Err(format!(
+                "{ctx}: 'items:' is only valid when type is 'array'"
+            ));
+        }
+        None
+    };
+    let (field_type, string_semantics) = normalize_blob_field_type(field_type, d.string_semantics);
+    Ok(NamedValueSchema {
+        description: d.description.clone(),
+        field_type,
+        value_format: d.value_format,
+        allowed_values: d.allowed_values.clone(),
+        string_semantics,
+        array_items,
+    })
+}
+
+fn field_schema_from_domain_field(
+    fname: &str,
+    entity_name: &str,
+    f: &DomainField,
+    values: &IndexMap<String, NamedValueSchema>,
+) -> Result<FieldSchema, String> {
+    let ctx = format!("entity '{entity_name}', field '{fname}'");
+    let vr = f.value_ref.trim();
+    if vr.is_empty() {
+        return Err(format!(
+            "{ctx}: `value_ref` is required — declare the wire shape under top-level `values:`"
+        ));
+    }
+    let nv = values
+        .get(vr)
+        .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
+    let (field_type, string_semantics) =
+        normalize_blob_field_type(nv.field_type.clone(), nv.string_semantics);
+    let description = if f.description.trim().is_empty() {
+        nv.description.clone()
+    } else {
+        f.description.clone()
+    };
+    let vdk = ValueDomainKey::new(vr.to_string()).map_err(|e| format!("{ctx}: {e}"))?;
+    Ok(FieldSchema {
+        name: EntityFieldName::from(fname),
+        kind: FieldValueKind::Registry(vdk),
+        description,
+        field_type,
+        value_format: nv.value_format,
+        allowed_values: nv.allowed_values.clone(),
+        required: f.required,
+        array_items: nv.array_items.clone(),
+        string_semantics,
+        agent_presentation: f.agent_presentation,
+        mime_type_hint: f.mime_type_hint.clone(),
+        attachment_media: f.attachment_media,
+        wire_path: f.path.clone(),
+        derive: f.derive.clone(),
+    })
+}
+
+fn input_field_schema_from_domain_parameter(
+    cap_name: &str,
+    p: &DomainParameter,
+    values: &IndexMap<String, NamedValueSchema>,
+) -> Result<InputFieldSchema, String> {
+    let ctx = format!("capability '{cap_name}', parameter '{}'", p.name);
+    let vr = p.value_ref.trim();
+    if vr.is_empty() {
+        return Err(format!(
+            "{ctx}: `value_ref` is required — declare the wire shape under top-level `values:`"
+        ));
+    }
+    let nv = values
+        .get(vr)
+        .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
+    let (field_type, string_semantics) =
+        normalize_blob_field_type(nv.field_type.clone(), nv.string_semantics);
+    let description = if p.description.trim().is_empty() {
+        let nd = nv.description.trim();
+        if nd.is_empty() {
+            None
+        } else {
+            Some(nv.description.clone())
+        }
+    } else {
+        Some(p.description.clone())
+    };
+    let role = p.role.as_deref().map(parse_parameter_role);
+    let vdk = ValueDomainKey::new(vr.to_string()).map_err(|e| format!("{ctx}: {e}"))?;
+    Ok(InputFieldSchema {
+        name: p.name.clone(),
+        kind: FieldValueKind::Registry(vdk),
+        field_type,
+        value_format: nv.value_format,
+        required: p.required,
+        allowed_values: nv.allowed_values.clone(),
+        array_items: nv.array_items.clone(),
+        string_semantics,
+        description,
+        default: None,
+        role,
+    })
+}
+
 fn input_fields_from_domain_parameters(
     cap_name: &str,
     params: &[DomainParameter],
+    values: &IndexMap<String, NamedValueSchema>,
 ) -> Result<Vec<InputFieldSchema>, String> {
     params
         .iter()
-        .map(|p| {
-            let ctx = format!("capability '{cap_name}', parameter '{}'", p.name);
-            let field_type = parse_domain_field_type(&p.param_type, &p.target, &ctx)?;
-            if matches!(field_type, FieldType::MultiSelect)
-                && p.allowed_values.as_ref().is_none_or(|v| v.is_empty())
-            {
-                return Err(format!(
-                    "{ctx}: type 'multi_select' requires non-empty allowed_values"
-                ));
-            }
-            let array_items = if matches!(field_type, FieldType::Array) {
-                let Some(ref it) = p.items else {
-                    return Err(format!(
-                        "{ctx}: type 'array' requires 'items:' describing element types"
-                    ));
-                };
-                Some(parse_domain_array_items(it, &format!("{ctx}, items"))?)
-            } else {
-                if p.items.is_some() {
-                    return Err(format!(
-                        "{ctx}: 'items:' is only valid when type is 'array'"
-                    ));
-                }
-                None
-            };
-            let role = p.role.as_deref().map(parse_parameter_role);
-            let param_desc = p.description.trim();
-            let (field_type, string_semantics) =
-                normalize_blob_field_type(field_type, p.string_semantics);
-            Ok(InputFieldSchema {
-                name: p.name.clone(),
-                field_type,
-                value_format: p.value_format,
-                required: p.required,
-                allowed_values: p.allowed_values.clone(),
-                array_items,
-                string_semantics,
-                description: if param_desc.is_empty() {
-                    None
-                } else {
-                    Some(p.description.clone())
-                },
-                default: None,
-                role,
-            })
-        })
+        .map(|p| input_field_schema_from_domain_parameter(cap_name, p, values))
         .collect()
 }
 
@@ -498,9 +591,10 @@ fn merge_domain_capability_input_schema(
     cap_name: &str,
     parameters: Option<&Vec<DomainParameter>>,
     explicit: Option<&InputSchema>,
+    values: &IndexMap<String, NamedValueSchema>,
 ) -> Result<Option<InputSchema>, String> {
     let param_fields = parameters
-        .map(|ps| input_fields_from_domain_parameters(cap_name, ps))
+        .map(|ps| input_fields_from_domain_parameters(cap_name, ps, values))
         .transpose()?;
 
     Ok(match (param_fields, explicit) {
@@ -561,6 +655,7 @@ fn assemble_cgs(
     cgs.auth = domain.auth;
     cgs.oauth = domain.oauth;
     cgs.version = domain.version;
+    cgs.values = compile_domain_named_values(&domain.values)?;
 
     for (name, entity) in &domain.entities {
         validate_compound_entity_identity(name, entity)?;
@@ -568,49 +663,7 @@ fn assemble_cgs(
         let fields: Vec<FieldSchema> = entity
             .fields
             .iter()
-            .map(|(fname, f)| {
-                let ctx = format!("entity '{}', field '{}'", name, fname);
-                let field_type = parse_domain_field_type(&f.field_type, &f.target, &ctx)?;
-                if matches!(field_type, FieldType::MultiSelect)
-                    && f.allowed_values.as_ref().is_none_or(|v| v.is_empty())
-                {
-                    return Err(format!(
-                        "{ctx}: field_type 'multi_select' requires non-empty allowed_values"
-                    ));
-                }
-                let array_items = if matches!(field_type, FieldType::Array) {
-                    let Some(ref it) = f.items else {
-                        return Err(format!(
-                            "{ctx}: field_type 'array' requires 'items:' describing element types"
-                        ));
-                    };
-                    Some(parse_domain_array_items(it, &format!("{ctx}, items"))?)
-                } else {
-                    if f.items.is_some() {
-                        return Err(format!(
-                            "{ctx}: 'items:' is only valid when field_type is 'array'"
-                        ));
-                    }
-                    None
-                };
-                let (field_type, string_semantics) =
-                    normalize_blob_field_type(field_type, f.string_semantics);
-                Ok(FieldSchema {
-                    name: EntityFieldName::from(fname.as_str()),
-                    description: f.description.clone(),
-                    field_type,
-                    value_format: f.value_format,
-                    allowed_values: f.allowed_values.clone(),
-                    required: f.required,
-                    array_items,
-                    string_semantics,
-                    agent_presentation: f.agent_presentation,
-                    mime_type_hint: f.mime_type_hint.clone(),
-                    attachment_media: f.attachment_media,
-                    wire_path: f.path.clone(),
-                    derive: f.derive.clone(),
-                })
-            })
+            .map(|(fname, f)| field_schema_from_domain_field(fname, name, f, &cgs.values))
             .collect::<Result<Vec<_>, String>>()?;
 
         let relations: Vec<RelationSchema> = entity
@@ -682,6 +735,7 @@ fn assemble_cgs(
             cap_name,
             cap.parameters.as_ref(),
             cap.input_schema.as_ref(),
+            &cgs.values,
         )?;
 
         let capability = CapabilitySchema {
@@ -753,20 +807,22 @@ fn validate_compound_entity_identity(
     ))
 }
 
-fn parse_field_type(s: &str) -> FieldType {
-    match s {
-        "uuid" => FieldType::Uuid,
-        "string" => FieldType::String,
-        "blob" => FieldType::Blob,
-        "number" | "float" => FieldType::Number,
-        "integer" | "int" => FieldType::Integer,
-        "boolean" | "bool" => FieldType::Boolean,
-        "select" | "enum" => FieldType::Select,
-        "multi_select" => FieldType::MultiSelect,
-        "date" | "datetime" => FieldType::Date,
-        "array" => FieldType::Array,
-        "json" => FieldType::Json,
-        _ => FieldType::String,
+fn parse_field_type_strict(s: &str, ctx: &str) -> Result<FieldType, String> {
+    let t = s.trim();
+    match t {
+        "uuid" => Ok(FieldType::Uuid),
+        "string" => Ok(FieldType::String),
+        "blob" => Ok(FieldType::Blob),
+        "number" | "float" => Ok(FieldType::Number),
+        "integer" | "int" => Ok(FieldType::Integer),
+        "boolean" | "bool" => Ok(FieldType::Boolean),
+        "select" | "enum" => Ok(FieldType::Select),
+        "multi_select" => Ok(FieldType::MultiSelect),
+        "date" | "datetime" => Ok(FieldType::Date),
+        "array" => Ok(FieldType::Array),
+        "json" => Ok(FieldType::Json),
+        "" => Err(format!("{ctx}: empty field type")),
+        _ => Err(format!("{ctx}: unknown field type {t:?}")),
     }
 }
 
@@ -817,43 +873,33 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
 fn parse_domain_array_items(
     items: &DomainItems,
     context: &str,
+    named_values: Option<&IndexMap<String, NamedValueSchema>>,
 ) -> Result<ArrayItemsSchema, String> {
-    let trimmed = items.item_type.trim();
-    if trimmed == "array" || trimmed == "multi_select" {
+    let name = items.value_ref.trim();
+    if name.is_empty() {
         return Err(format!(
-            "{context}: items.type cannot be 'array' or 'multi_select'"
+            "{context}: `items.value_ref` is required (element shape lives under `values:`)"
         ));
     }
-    let field_type = parse_domain_field_type(trimmed, &items.target, context)?;
-    if matches!(field_type, FieldType::Select) {
-        if items.allowed_values.as_ref().is_none_or(|v| v.is_empty()) {
-            return Err(format!(
-                "{context}: items.type 'select' requires non-empty allowed_values"
-            ));
-        }
-    } else if items.allowed_values.is_some() {
+    let Some(map) = named_values else {
         return Err(format!(
-            "{context}: allowed_values on items is only valid when items.type is select"
+            "{context}: array `items` require top-level `values:` in domain.yaml"
+        ));
+    };
+    let nv = map
+        .get(name)
+        .ok_or_else(|| format!("{context}: unknown `items.value_ref` '{name}'"))?;
+    if matches!(nv.field_type, FieldType::Array) {
+        return Err(format!(
+            "{context}: `items.value_ref` '{name}' must not reference an array-typed value domain"
         ));
     }
-    if matches!(field_type, FieldType::Date) {
-        match &items.value_format {
-            Some(ValueWireFormat::Temporal(_)) => {}
-            None => {
-                return Err(format!(
-                    "{context}: items date/datetime requires value_format on items"
-                ));
-            }
-        }
-    } else if items.value_format.is_some() {
-        return Err(format!(
-            "{context}: value_format on items is only valid for date/datetime item types"
-        ));
-    }
+    let vdk = ValueDomainKey::new(name.to_string()).map_err(|e| format!("{context}: {e}"))?;
     Ok(ArrayItemsSchema {
-        field_type,
-        value_format: items.value_format,
-        allowed_values: items.allowed_values.clone(),
+        kind: FieldValueKind::Registry(vdk),
+        field_type: nv.field_type.clone(),
+        value_format: nv.value_format,
+        allowed_values: nv.allowed_values.clone(),
     })
 }
 
@@ -877,7 +923,7 @@ fn parse_domain_field_type(
             target: EntityName::from(t.to_string()),
         })
     } else {
-        Ok(parse_field_type(field_type))
+        parse_field_type_strict(field_type, context)
     }
 }
 
@@ -928,12 +974,18 @@ mod tests {
 
     #[test]
     fn parse_field_type_uuid() {
-        assert_eq!(parse_field_type("uuid"), FieldType::Uuid);
+        assert_eq!(
+            parse_field_type_strict("uuid", "ctx").unwrap(),
+            FieldType::Uuid
+        );
     }
 
     #[test]
     fn parse_field_type_blob() {
-        assert_eq!(parse_field_type("blob"), FieldType::Blob);
+        assert_eq!(
+            parse_field_type_strict("blob", "ctx").unwrap(),
+            FieldType::Blob
+        );
     }
 
     #[test]
@@ -1180,28 +1232,36 @@ mod tests {
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id_str:
+    type: string
+    string_semantics: short
+  nv_x_bad:
+    type: array
 entities:
   E:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id_str
         required: true
-        string_semantics: short
 capabilities:
   q:
     kind: query
     entity: E
     parameters:
       - name: x
-        type: array
+        value_ref: nv_x_bad
         required: false
 "#,
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(err.contains("requires 'items:'"), "unexpected error: {err}");
+        assert!(
+            err.contains("requires") && err.contains("items"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1210,16 +1270,21 @@ capabilities:
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_body:
+    type: string
 entities:
   Widget:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
       body:
-        field_type: string
+        value_ref: nv_body
         required: false
 capabilities:
   q:
@@ -1242,16 +1307,21 @@ capabilities:
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_tags_bad:
+    type: array
 entities:
   E:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
       tags:
-        field_type: array
+        value_ref: nv_tags_bad
         required: false
 capabilities: {}
 "#,
@@ -1259,7 +1329,10 @@ capabilities: {}
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "{}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(err.contains("requires 'items:'"), "unexpected error: {err}");
+        assert!(
+            err.contains("requires") && err.contains("items"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1268,22 +1341,27 @@ capabilities: {}
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_ms_bad:
+    type: multi_select
+    allowed_values: []
 entities:
   E:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
 capabilities:
   q:
     kind: query
     entity: E
     parameters:
       - name: s
-        type: multi_select
-        allowed_values: []
+        value_ref: nv_ms_bad
         required: false
 "#,
         )
@@ -1302,16 +1380,22 @@ capabilities:
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id_bad:
+    type: string
+    string_semantics: short
+    items:
+      value_ref: nv_inner
+  nv_inner:
+    type: string
+    string_semantics: short
 entities:
   E:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id_bad
         required: true
-        string_semantics: short
-        items:
-          type: string
 capabilities: {}
 "#,
         )
@@ -1319,7 +1403,7 @@ capabilities: {}
         std::fs::write(dir.path().join("mappings.yaml"), "{}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("only valid when field_type is 'array'"),
+            err.contains("only valid when type is 'array'") || err.contains("items"),
             "unexpected error: {err}"
         );
     }
@@ -1330,24 +1414,32 @@ capabilities: {}
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_x_elem:
+    type: string
+    string_semantics: short
+  nv_x:
+    type: array
+    items:
+      value_ref: nv_x_elem
 entities:
   E:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
 capabilities:
   q:
     kind: query
     entity: E
     parameters:
       - name: x
-        type: array
+        value_ref: nv_x
         required: false
-        items:
-          type: string
 "#,
         )
         .unwrap();
@@ -1361,29 +1453,37 @@ capabilities:
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_filter_q:
+    type: string
+    string_semantics: short
+  nv_body_extra:
+    type: integer
 entities:
   Widget:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
 capabilities:
   q:
     kind: query
     entity: Widget
     parameters:
       - name: filter_q
-        type: string
+        value_ref: nv_filter_q
         required: true
-        string_semantics: short
     input_schema:
       input_type:
         type: object
         additional_fields: false
         fields:
           - name: body_extra
+            value_ref: nv_body_extra
             field_type: integer
             required: false
 "#,
@@ -1411,29 +1511,37 @@ capabilities:
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_overlap_str:
+    type: string
+    string_semantics: short
+  nv_overlap_int:
+    type: integer
 entities:
   Widget:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
 capabilities:
   q:
     kind: query
     entity: Widget
     parameters:
       - name: overlap
-        type: string
+        value_ref: nv_overlap_str
         required: true
-        string_semantics: short
     input_schema:
       input_type:
         type: object
         additional_fields: true
         fields:
           - name: overlap
+            value_ref: nv_overlap_int
             field_type: integer
             required: false
 "#,
@@ -1453,14 +1561,17 @@ capabilities:
         std::fs::write(
             dir.path().join("domain.yaml"),
             r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
 entities:
   E:
     id_field: id
     fields:
       id:
-        field_type: string
+        value_ref: nv_id
         required: true
-        string_semantics: short
 capabilities:
   do_thing:
     description: "Does something"

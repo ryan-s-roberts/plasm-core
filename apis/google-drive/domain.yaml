@@ -1,10 +1,5 @@
 version: 2
-
 http_backend: https://www.googleapis.com/drive/v3
-
-# Semantic CGS for Google Drive API v3 — authored for agent workflows (search, open, share,
-# revisions, shared drives). Not an RPC-for-RPC mirror of every resource; extend iteratively.
-
 entities:
   File:
     id_field: id
@@ -12,104 +7,83 @@ entities:
     primary_read: files_get
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_file_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_name
       mimeType:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_mime_type
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_kind
       size:
-        field_type: string
         required: false
-        description: Size in bytes as returned by the API (string on wire).
-        string_semantics: short
+        value_ref: nv_file_size
       parents:
-        field_type: array
         required: false
-        items:
-          type: string
+        value_ref: nv_file_parents
       spaces:
-        field_type: array
         required: false
-        items:
-          type: string
+        value_ref: nv_file_spaces
       driveId:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_drive_id
       teamDriveId:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_team_drive_id
       webViewLink:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_web_view_link
       webContentLink:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_web_content_link
       iconLink:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_icon_link
       createdTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_created_time
       modifiedTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_modified_time
       trashed:
-        field_type: boolean
         required: false
+        value_ref: nv_file_trashed
       starred:
-        field_type: boolean
         required: false
+        value_ref: nv_file_starred
       shared:
-        field_type: boolean
         required: false
+        value_ref: nv_file_shared
       ownedByMe:
-        field_type: boolean
         required: false
+        value_ref: nv_file_owned_by_me
       fileExtension:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_file_extension
       fullFileExtension:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_full_file_extension
       md5Checksum:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_file_md5_checksum
       shortcutDetails:
-        field_type: json
         required: false
-        description: Shortcut target metadata when this file is a shortcut.
+        value_ref: nv_file_shortcut_details
       capabilities:
-        field_type: json
         required: false
+        value_ref: nv_file_capabilities
       owners:
-        field_type: json
         required: false
+        value_ref: nv_file_owners
       lastModifyingUser:
-        field_type: json
         required: false
+        value_ref: nv_file_last_modifying_user
       labelInfo:
-        field_type: json
         required: false
+        value_ref: nv_file_label_info
     relations:
       permissions:
         target: DrivePermission
@@ -136,244 +110,202 @@ entities:
           capability: revisions_list
           bindings:
             fileId: id
-
   About:
     id_field: kind
     description: Per-user Drive capabilities, quotas, and import or export format metadata.
     fields:
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_about_kind
       user:
-        field_type: json
         required: false
+        value_ref: nv_about_user
       storageQuota:
-        field_type: json
         required: false
+        value_ref: nv_about_storage_quota
       importFormats:
-        field_type: json
         required: false
+        value_ref: nv_about_import_formats
       exportFormats:
-        field_type: json
         required: false
+        value_ref: nv_about_export_formats
       maxImportSizes:
-        field_type: json
         required: false
+        value_ref: nv_about_max_import_sizes
       maxUploadSize:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_about_max_upload_size
       appInstalled:
-        field_type: boolean
         required: false
+        value_ref: nv_about_app_installed
       canCreateDrives:
-        field_type: boolean
         required: false
+        value_ref: nv_about_can_create_drives
       canCreateTeamDrives:
-        field_type: boolean
         required: false
+        value_ref: nv_about_can_create_team_drives
       folderColorPalette:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_about_folder_color_palette
       driveThemes:
-        field_type: json
         required: false
+        value_ref: nv_about_drive_themes
       teamDriveThemes:
-        field_type: json
         required: false
+        value_ref: nv_about_team_drive_themes
     relations: {}
-
   StartPageToken:
     id_field: startPageToken
     description: Starting token for the changes feed.
     fields:
       startPageToken:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_start_page_token_start_page_token
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_start_page_token_kind
     relations: {}
-
   DriveChange:
     id_field: id
     description: A single change record in the changes.list feed.
     fields:
       id:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_change_id
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_change_kind
       fileId:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_change_file_id
       removed:
-        field_type: boolean
         required: false
+        value_ref: nv_drive_change_removed
       file:
-        field_type: json
         required: false
+        value_ref: nv_drive_change_file
     relations: {}
-
   SharedDrive:
     id_field: id
     description: A shared drive (top-level Drive teamwork container).
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_shared_drive_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_shared_drive_name
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_shared_drive_kind
       colorRgb:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_shared_drive_color_rgb
       capabilities:
-        field_type: json
         required: false
+        value_ref: nv_shared_drive_capabilities
       hidden:
-        field_type: boolean
         required: false
+        value_ref: nv_shared_drive_hidden
       createdTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_shared_drive_created_time
       restrictions:
-        field_type: json
         required: false
+        value_ref: nv_shared_drive_restrictions
     relations: {}
-
   TeamDrive:
     id_field: id
     description: Legacy team drive resource — prefer SharedDrive for new integrations when possible.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_team_drive_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_team_drive_name
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_team_drive_kind
       capabilities:
-        field_type: json
         required: false
+        value_ref: nv_team_drive_capabilities
     relations: {}
-
   DrivePermission:
     id_field: id
     key_vars:
-      - fileId
-      - id
+    - fileId
+    - id
     description: A permission row on a file (user, group, domain, or link).
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_drive_permission_id
       fileId:
-        field_type: entity_ref
-        target: File
         required: true
+        value_ref: nv_drive_permission_file_id
       type:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_type
       role:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_role
       emailAddress:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_email_address
       domain:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_domain
       displayName:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_display_name
       photoLink:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_photo_link
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_permission_kind
     relations: {}
-
   DriveComment:
     id_field: id
     key_vars:
-      - fileId
-      - id
+    - fileId
+    - id
     description: A top-level comment on a file.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_drive_comment_id
       fileId:
-        field_type: entity_ref
-        target: File
         required: true
+        value_ref: nv_drive_comment_file_id
       content:
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_drive_comment_content
       htmlContent:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_comment_html_content
       createdTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_comment_created_time
       modifiedTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_comment_modified_time
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_comment_kind
       resolved:
-        field_type: boolean
         required: false
+        value_ref: nv_drive_comment_resolved
       deleted:
-        field_type: boolean
         required: false
+        value_ref: nv_drive_comment_deleted
       anchor:
-        field_type: string
         required: false
-        description: Document anchor JSON string (patchable on update).
-        string_semantics: short
+        value_ref: nv_drive_comment_anchor
       quotedFileContent:
-        field_type: json
         required: false
-        description: Quoted region wrapper for the comment (patchable on update).
+        value_ref: nv_drive_comment_quoted_file_content
     relations:
       replies:
         target: DriveReply
@@ -384,747 +316,622 @@ entities:
           bindings:
             fileId: fileId
             commentId: id
-
   ChannelStop:
     id_field: id
     description: Acknowledgement for stopping a push notification channel (no stable resource id on the wire).
     domain_projection_examples: false
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_channel_stop_id
     relations: {}
-
   DriveReply:
     id_field: id
     key_vars:
-      - fileId
-      - commentId
-      - id
+    - fileId
+    - commentId
+    - id
     description: A reply under a comment thread.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_drive_reply_id
       fileId:
-        field_type: entity_ref
-        target: File
         required: true
+        value_ref: nv_drive_reply_file_id
       commentId:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_drive_reply_comment_id
       content:
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_drive_reply_content
       htmlContent:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_reply_html_content
       createdTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_reply_created_time
       modifiedTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_reply_modified_time
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_reply_kind
       deleted:
-        field_type: boolean
         required: false
+        value_ref: nv_drive_reply_deleted
       action:
-        field_type: string
         required: false
-        description: Reply action on the parent comment (e.g. resolve, reopen); patchable on update.
-        string_semantics: short
+        value_ref: nv_drive_reply_action
     relations: {}
-
   DriveRevision:
     id_field: id
     key_vars:
-      - fileId
-      - id
+    - fileId
+    - id
     description: A binary or Google Workspace revision of a file.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_drive_revision_id
       fileId:
-        field_type: entity_ref
-        target: File
         required: true
+        value_ref: nv_drive_revision_file_id
       mimeType:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_revision_mime_type
       modifiedTime:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_revision_modified_time
       size:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_revision_size
       keepForever:
-        field_type: boolean
         required: false
+        value_ref: nv_drive_revision_keep_forever
       originalFilename:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_revision_original_filename
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_revision_kind
     relations: {}
-
   DriveOperation:
     id_field: name
     description: Long-running Drive operation (for example initiated by files.download).
     fields:
       name:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_drive_operation_name
       done:
-        field_type: boolean
         required: false
+        value_ref: nv_drive_operation_done
       kind:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_drive_operation_kind
       error:
-        field_type: json
         required: false
+        value_ref: nv_drive_operation_error
       response:
-        field_type: json
         required: false
+        value_ref: nv_drive_operation_response
       metadata:
-        field_type: json
         required: false
+        value_ref: nv_drive_operation_metadata
     relations: {}
-
 capabilities:
   about_get:
     kind: singleton
     entity: About
     description: Return storage and capability metadata for the authenticated user.
-
   files_list:
     kind: query
     entity: File
     description: List or search files — combine q, corpora, and drive scoping as needed.
     parameters:
-      - name: q
-        type: string
-        required: false
-        role: search
-        string_semantics: short
-      - name: corpora
-        type: string
-        required: false
-        string_semantics: short
-      - name: driveId
-        type: string
-        required: false
-        string_semantics: short
-      - name: spaces
-        type: string
-        required: false
-        string_semantics: short
-      - name: orderBy
-        type: string
-        required: false
-        role: sort
-        string_semantics: short
-      - name: includeItemsFromAllDrives
-        type: boolean
-        required: false
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: includeLabels
-        type: string
-        required: false
-        string_semantics: short
-      - name: includePermissionsForView
-        type: string
-        required: false
-        string_semantics: short
-
+    - name: q
+      value_ref: nv_files_list_q
+      required: false
+      role: search
+    - name: corpora
+      value_ref: nv_files_list_corpora
+      required: false
+    - name: driveId
+      value_ref: nv_files_list_drive_id
+      required: false
+    - name: spaces
+      value_ref: nv_files_list_spaces
+      required: false
+    - name: orderBy
+      value_ref: nv_files_list_order_by
+      required: false
+      role: sort
+    - name: includeItemsFromAllDrives
+      value_ref: nv_files_list_include_items_from_all_drives
+      required: false
+    - name: supportsAllDrives
+      value_ref: nv_files_list_supports_all_drives
+      required: false
+    - name: includeLabels
+      value_ref: nv_files_list_include_labels
+      required: false
+    - name: includePermissionsForView
+      value_ref: nv_files_list_include_permissions_for_view
+      required: false
   files_get:
     kind: get
     entity: File
     description: Fetch one file by id including metadata the token can see.
-
   files_create:
     kind: create
     entity: File
     description: Create a file or folder — supply metadata in the JSON input body as the API expects.
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: File resource body for POST /files (name, mimeType, parents, etc.).
-
+    - name: input
+      value_ref: nv_files_create_input
+      required: false
   files_update:
     kind: update
     entity: File
     description: Patch file metadata or placement (addParents, removeParents via query flags).
     parameters:
-      - name: addParents
-        type: string
-        required: false
-        string_semantics: short
-      - name: removeParents
-        type: string
-        required: false
-        string_semantics: short
-      - name: enforceSingleParent
-        type: boolean
-        required: false
-      - name: keepRevisionForever
-        type: boolean
-        required: false
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-      - name: input
-        type: json
-        required: false
-        description: Partial File resource for PATCH body.
-
+    - name: addParents
+      value_ref: nv_files_update_add_parents
+      required: false
+    - name: removeParents
+      value_ref: nv_files_update_remove_parents
+      required: false
+    - name: enforceSingleParent
+      value_ref: nv_files_update_enforce_single_parent
+      required: false
+    - name: keepRevisionForever
+      value_ref: nv_files_update_keep_revision_forever
+      required: false
+    - name: supportsAllDrives
+      value_ref: nv_files_update_supports_all_drives
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_files_update_use_domain_admin_access
+      required: false
+    - name: input
+      value_ref: nv_files_update_input
+      required: false
   files_delete:
     kind: delete
     entity: File
     description: Permanently delete a file when permitted.
     parameters:
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-
+    - name: supportsAllDrives
+      value_ref: nv_files_delete_supports_all_drives
+      required: false
   files_copy:
     kind: action
     entity: File
     description: Copy an existing file to a new file entry.
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: Copy request body (destination parents, title, etc.).
+    - name: input
+      value_ref: nv_files_copy_input
+      required: false
     provides:
-      - id
-      - name
-      - mimeType
-      - kind
-
+    - id
+    - name
+    - mimeType
+    - kind
   files_export:
     kind: action
     entity: File
     description: Export a Google Workspace file to a downloadable MIME type (binary response).
     parameters:
-      - name: mimeType
-        type: string
-        required: true
-        string_semantics: short
+    - name: mimeType
+      value_ref: nv_files_export_mime_type
+      required: true
     output:
       type: side_effect
       description: Returns exported bytes for the requested MIME type.
-
   files_emptyTrash:
     kind: action
     entity: File
     output:
       type: side_effect
       description: Permanently deletes all files in the user trash.
-
   files_download:
     kind: action
     entity: DriveOperation
     description: Start a long-running download of file bytes (returns an Operation).
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-        role: scope
-      - name: mimeType
-        type: string
-        required: false
-        string_semantics: short
-      - name: revisionId
-        type: string
-        required: false
-        string_semantics: short
+    - name: fileId
+      value_ref: nv_files_download_file_id
+      required: true
+      role: scope
+    - name: mimeType
+      value_ref: nv_files_download_mime_type
+      required: false
+    - name: revisionId
+      value_ref: nv_files_download_revision_id
+      required: false
     provides:
-      - name
-      - done
-      - kind
-      - response
-      - error
-
+    - name
+    - done
+    - kind
+    - response
+    - error
   permissions_list:
     kind: query
     entity: DrivePermission
     description: List permissions on a file.
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: fileId
+      value_ref: nv_permissions_list_file_id
+      required: true
+    - name: supportsAllDrives
+      value_ref: nv_permissions_list_supports_all_drives
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_permissions_list_use_domain_admin_access
+      required: false
   permissions_get:
     kind: get
     entity: DrivePermission
     description: Fetch one permission by id on a file.
     parameters:
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: supportsAllDrives
+      value_ref: nv_permissions_get_supports_all_drives
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_permissions_get_use_domain_admin_access
+      required: false
   permissions_create:
     kind: create
     entity: DrivePermission
     description: Create a permission (share the file).
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-        role: scope
-      - name: emailMessage
-        type: string
-        required: false
-        string_semantics: short
-      - name: sendNotificationEmail
-        type: boolean
-        required: false
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: transferOwnership
-        type: boolean
-        required: false
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-      - name: input
-        type: json
-        required: false
-        description: Permission resource body.
-
+    - name: fileId
+      value_ref: nv_permissions_create_file_id
+      required: true
+      role: scope
+    - name: emailMessage
+      value_ref: nv_permissions_create_email_message
+      required: false
+    - name: sendNotificationEmail
+      value_ref: nv_permissions_create_send_notification_email
+      required: false
+    - name: supportsAllDrives
+      value_ref: nv_permissions_create_supports_all_drives
+      required: false
+    - name: transferOwnership
+      value_ref: nv_permissions_create_transfer_ownership
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_permissions_create_use_domain_admin_access
+      required: false
+    - name: input
+      value_ref: nv_permissions_create_input
+      required: false
   permissions_update:
     kind: update
     entity: DrivePermission
     parameters:
-      - name: removeExpiration
-        type: boolean
-        required: false
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: transferOwnership
-        type: boolean
-        required: false
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-      - name: input
-        type: json
-        required: false
-        description: Permission patch body.
-
+    - name: removeExpiration
+      value_ref: nv_permissions_update_remove_expiration
+      required: false
+    - name: supportsAllDrives
+      value_ref: nv_permissions_update_supports_all_drives
+      required: false
+    - name: transferOwnership
+      value_ref: nv_permissions_update_transfer_ownership
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_permissions_update_use_domain_admin_access
+      required: false
+    - name: input
+      value_ref: nv_permissions_update_input
+      required: false
   permissions_delete:
     kind: delete
     entity: DrivePermission
     parameters:
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: supportsAllDrives
+      value_ref: nv_permissions_delete_supports_all_drives
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_permissions_delete_use_domain_admin_access
+      required: false
   comments_list:
     kind: query
     entity: DriveComment
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-      - name: includeDeleted
-        type: boolean
-        required: false
-      - name: pageSize
-        type: integer
-        required: false
-      - name: startModifiedTime
-        type: string
-        required: false
-        string_semantics: short
-
+    - name: fileId
+      value_ref: nv_comments_list_file_id
+      required: true
+    - name: includeDeleted
+      value_ref: nv_comments_list_include_deleted
+      required: false
+    - name: pageSize
+      value_ref: nv_comments_list_page_size
+      required: false
+    - name: startModifiedTime
+      value_ref: nv_comments_list_start_modified_time
+      required: false
   comments_get:
     kind: get
     entity: DriveComment
     parameters:
-      - name: includeDeleted
-        type: boolean
-        required: false
-
+    - name: includeDeleted
+      value_ref: nv_comments_get_include_deleted
+      required: false
   comments_create:
     kind: create
     entity: DriveComment
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-        role: scope
-      - name: input
-        type: json
-        required: false
-        description: Comment resource body.
-
+    - name: fileId
+      value_ref: nv_comments_create_file_id
+      required: true
+      role: scope
+    - name: input
+      value_ref: nv_comments_create_input
+      required: false
   comments_update:
     kind: update
     entity: DriveComment
-    description: Patch a comment. Preflight runs comments_get and merges parent_*; the wire body merges optional overrides with the parent row (content, anchor, quotedFileContent).
+    description: Patch a comment. Preflight runs comments_get and merges parent_*; the wire body merges optional overrides
+      with the parent row (content, anchor, quotedFileContent).
     invoke_preflight:
       hydrate_capability: comments_get
       env_prefix: parent
     parameters:
-      - name: content
-        type: string
-        required: false
-        description: New plain-text body (defaults to preflight parent content).
-        string_semantics: markdown
-      - name: anchor
-        type: string
-        required: false
-        description: Anchor JSON override (defaults to preflight parent anchor).
-        string_semantics: short
-      - name: quotedFileContent
-        type: json
-        required: false
-        description: Quoted region override (defaults to preflight parent quotedFileContent).
-
+    - name: content
+      value_ref: nv_comments_update_content
+      required: false
+    - name: anchor
+      value_ref: nv_comments_update_anchor
+      required: false
+    - name: quotedFileContent
+      value_ref: nv_comments_update_quoted_file_content
+      required: false
   comments_delete:
     kind: delete
     entity: DriveComment
-
   replies_list:
     kind: query
     entity: DriveReply
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-      - name: commentId
-        type: string
-        required: true
-        string_semantics: short
-      - name: includeDeleted
-        type: boolean
-        required: false
-      - name: pageSize
-        type: integer
-        required: false
-
+    - name: fileId
+      value_ref: nv_replies_list_file_id
+      required: true
+    - name: commentId
+      value_ref: nv_replies_list_comment_id
+      required: true
+    - name: includeDeleted
+      value_ref: nv_replies_list_include_deleted
+      required: false
+    - name: pageSize
+      value_ref: nv_replies_list_page_size
+      required: false
   replies_get:
     kind: get
     entity: DriveReply
     parameters:
-      - name: includeDeleted
-        type: boolean
-        required: false
-
+    - name: includeDeleted
+      value_ref: nv_replies_get_include_deleted
+      required: false
   replies_create:
     kind: create
     entity: DriveReply
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-        role: scope
-      - name: commentId
-        type: string
-        required: true
-        role: scope
-        string_semantics: short
-      - name: input
-        type: json
-        required: false
-        description: Reply resource body.
-
+    - name: fileId
+      value_ref: nv_replies_create_file_id
+      required: true
+      role: scope
+    - name: commentId
+      value_ref: nv_replies_create_comment_id
+      required: true
+      role: scope
+    - name: input
+      value_ref: nv_replies_create_input
+      required: false
   replies_update:
     kind: update
     entity: DriveReply
-    description: Patch a reply. Preflight runs replies_get and merges parent_*; the wire body merges optional overrides with the parent row (content, action).
+    description: Patch a reply. Preflight runs replies_get and merges parent_*; the wire body merges optional overrides with
+      the parent row (content, action).
     invoke_preflight:
       hydrate_capability: replies_get
       env_prefix: parent
     parameters:
-      - name: content
-        type: string
-        required: false
-        description: New plain-text body (defaults to preflight parent content).
-        string_semantics: markdown
-      - name: action
-        type: string
-        required: false
-        description: Optional resolve or reopen action (defaults to preflight parent action).
-        string_semantics: short
-
+    - name: content
+      value_ref: nv_replies_update_content
+      required: false
+    - name: action
+      value_ref: nv_replies_update_action
+      required: false
   replies_delete:
     kind: delete
     entity: DriveReply
-
   revisions_list:
     kind: query
     entity: DriveRevision
     parameters:
-      - name: fileId
-        type: entity_ref
-        target: File
-        required: true
-      - name: pageSize
-        type: integer
-        required: false
-
+    - name: fileId
+      value_ref: nv_revisions_list_file_id
+      required: true
+    - name: pageSize
+      value_ref: nv_revisions_list_page_size
+      required: false
   revisions_get:
     kind: get
     entity: DriveRevision
-
   revisions_update:
     kind: update
     entity: DriveRevision
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: Revision patch body.
-
+    - name: input
+      value_ref: nv_revisions_update_input
+      required: false
   revisions_delete:
     kind: delete
     entity: DriveRevision
-
   drives_list:
     kind: query
     entity: SharedDrive
     parameters:
-      - name: pageSize
-        type: integer
-        required: false
-      - name: q
-        type: string
-        required: false
-        string_semantics: short
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: pageSize
+      value_ref: nv_drives_list_page_size
+      required: false
+    - name: q
+      value_ref: nv_drives_list_q
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_drives_list_use_domain_admin_access
+      required: false
   drives_get:
     kind: get
     entity: SharedDrive
     parameters:
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: useDomainAdminAccess
+      value_ref: nv_drives_get_use_domain_admin_access
+      required: false
   drives_create:
     kind: create
     entity: SharedDrive
     parameters:
-      - name: requestId
-        type: string
-        required: true
-        string_semantics: short
-      - name: input
-        type: json
-        required: false
-        description: Drive resource body.
-
+    - name: requestId
+      value_ref: nv_drives_create_request_id
+      required: true
+    - name: input
+      value_ref: nv_drives_create_input
+      required: false
   drives_update:
     kind: update
     entity: SharedDrive
     parameters:
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-      - name: input
-        type: json
-        required: false
-        description: Drive patch body.
-
+    - name: useDomainAdminAccess
+      value_ref: nv_drives_update_use_domain_admin_access
+      required: false
+    - name: input
+      value_ref: nv_drives_update_input
+      required: false
   drives_delete:
     kind: delete
     entity: SharedDrive
     parameters:
-      - name: allowItemDeletion
-        type: boolean
-        required: false
-
+    - name: allowItemDeletion
+      value_ref: nv_drives_delete_allow_item_deletion
+      required: false
   drives_hide:
     kind: action
     entity: SharedDrive
     output:
       type: side_effect
       description: Hides a shared drive from the default list.
-
   drives_unhide:
     kind: action
     entity: SharedDrive
     output:
       type: side_effect
       description: Restores a hidden shared drive to the default list.
-
   changes_getStartPageToken:
     kind: singleton
     entity: StartPageToken
     parameters:
-      - name: driveId
-        type: string
-        required: false
-        string_semantics: short
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: teamDriveId
-        type: string
-        required: false
-        string_semantics: short
-
+    - name: driveId
+      value_ref: nv_changes_get_start_page_token_drive_id
+      required: false
+    - name: supportsAllDrives
+      value_ref: nv_changes_get_start_page_token_supports_all_drives
+      required: false
+    - name: teamDriveId
+      value_ref: nv_changes_get_start_page_token_team_drive_id
+      required: false
   changes_list:
     kind: query
     entity: DriveChange
     parameters:
-      - name: startPageToken
-        type: string
-        required: true
-        string_semantics: short
-      - name: driveId
-        type: string
-        required: false
-        string_semantics: short
-      - name: includeCorpusRemovals
-        type: boolean
-        required: false
-      - name: includeItemsFromAllDrives
-        type: boolean
-        required: false
-      - name: includePermissionsForView
-        type: string
-        required: false
-        string_semantics: short
-      - name: includeRemoved
-        type: boolean
-        required: false
-      - name: restrictToMyDrive
-        type: boolean
-        required: false
-      - name: spaces
-        type: string
-        required: false
-        string_semantics: short
-      - name: supportsAllDrives
-        type: boolean
-        required: false
-      - name: teamDriveId
-        type: string
-        required: false
-        string_semantics: short
-
+    - name: startPageToken
+      value_ref: nv_changes_list_start_page_token
+      required: true
+    - name: driveId
+      value_ref: nv_changes_list_drive_id
+      required: false
+    - name: includeCorpusRemovals
+      value_ref: nv_changes_list_include_corpus_removals
+      required: false
+    - name: includeItemsFromAllDrives
+      value_ref: nv_changes_list_include_items_from_all_drives
+      required: false
+    - name: includePermissionsForView
+      value_ref: nv_changes_list_include_permissions_for_view
+      required: false
+    - name: includeRemoved
+      value_ref: nv_changes_list_include_removed
+      required: false
+    - name: restrictToMyDrive
+      value_ref: nv_changes_list_restrict_to_my_drive
+      required: false
+    - name: spaces
+      value_ref: nv_changes_list_spaces
+      required: false
+    - name: supportsAllDrives
+      value_ref: nv_changes_list_supports_all_drives
+      required: false
+    - name: teamDriveId
+      value_ref: nv_changes_list_team_drive_id
+      required: false
   channels_stop:
     kind: action
     entity: ChannelStop
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: Channel resource with id and resourceId to stop.
+    - name: input
+      value_ref: nv_channels_stop_input
+      required: false
     output:
       type: side_effect
       description: Stops push notifications for the given channel id.
-
   operations_get:
     kind: get
     entity: DriveOperation
-
   teamdrives_list:
     kind: query
     entity: TeamDrive
     parameters:
-      - name: pageSize
-        type: integer
-        required: false
-      - name: q
-        type: string
-        required: false
-        string_semantics: short
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: pageSize
+      value_ref: nv_teamdrives_list_page_size
+      required: false
+    - name: q
+      value_ref: nv_teamdrives_list_q
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_teamdrives_list_use_domain_admin_access
+      required: false
   teamdrives_get:
     kind: get
     entity: TeamDrive
     parameters:
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-
+    - name: useDomainAdminAccess
+      value_ref: nv_teamdrives_get_use_domain_admin_access
+      required: false
   teamdrives_create:
     kind: create
     entity: TeamDrive
     parameters:
-      - name: requestId
-        type: string
-        required: true
-        string_semantics: short
-      - name: input
-        type: json
-        required: false
-        description: TeamDrive resource body.
-
+    - name: requestId
+      value_ref: nv_teamdrives_create_request_id
+      required: true
+    - name: input
+      value_ref: nv_teamdrives_create_input
+      required: false
   teamdrives_update:
     kind: update
     entity: TeamDrive
     parameters:
-      - name: useDomainAdminAccess
-        type: boolean
-        required: false
-      - name: input
-        type: json
-        required: false
-        description: TeamDrive patch body.
-
+    - name: useDomainAdminAccess
+      value_ref: nv_teamdrives_update_use_domain_admin_access
+      required: false
+    - name: input
+      value_ref: nv_teamdrives_update_input
+      required: false
   teamdrives_delete:
     kind: delete
     entity: TeamDrive
-
 oauth:
   provider: google
   scopes:
@@ -1150,196 +957,731 @@ oauth:
     drive_readonly:
       description: List and read Drive files and metadata.
       scopes:
-        - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/drive.readonly
     drive_full:
       description: Read and write Drive files including sharing and trash.
       scopes:
-        - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/drive
   requirements:
     capabilities:
       about_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.metadata.readonly
-          - https://www.googleapis.com/auth/drive.metadata
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.metadata.readonly
+        - https://www.googleapis.com/auth/drive.metadata
       files_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.metadata.readonly
-          - https://www.googleapis.com/auth/drive.metadata
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.metadata.readonly
+        - https://www.googleapis.com/auth/drive.metadata
       files_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.metadata.readonly
-          - https://www.googleapis.com/auth/drive.metadata
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.metadata.readonly
+        - https://www.googleapis.com/auth/drive.metadata
       files_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
       files_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
       files_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       files_copy:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
       files_export:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.file
       files_emptyTrash:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       files_download:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.file
       permissions_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       permissions_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       permissions_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       permissions_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       permissions_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       comments_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       comments_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       comments_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       comments_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       comments_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       replies_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       replies_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       replies_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       replies_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       replies_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       revisions_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       revisions_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       revisions_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       revisions_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_hide:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       drives_unhide:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       changes_getStartPageToken:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       changes_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       channels_stop:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.file
       operations_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.file
       teamdrives_list:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       teamdrives_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       teamdrives_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       teamdrives_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
       teamdrives_delete:
         any_of:
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive
     relations:
       File.permissions:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       File.comments:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       File.revisions:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
       DriveComment.replies:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
 auth:
   scheme: bearer_token
   env: GOOGLE_DRIVE_ACCESS_TOKEN
+values:
+  nv_file_id:
+    type: string
+    string_semantics: short
+  nv_file_name:
+    type: string
+    string_semantics: short
+  nv_file_mime_type:
+    type: string
+    string_semantics: short
+  nv_file_kind:
+    type: string
+    string_semantics: short
+  nv_file_size:
+    type: string
+    string_semantics: short
+    description: Size in bytes as returned by the API (string on wire).
+  nv_file_parents_item:
+    type: string
+  nv_file_parents:
+    type: array
+    items:
+      value_ref: nv_file_parents_item
+  nv_file_spaces_item:
+    type: string
+  nv_file_spaces:
+    type: array
+    items:
+      value_ref: nv_file_spaces_item
+  nv_file_drive_id:
+    type: string
+    string_semantics: short
+  nv_file_team_drive_id:
+    type: string
+    string_semantics: short
+  nv_file_web_view_link:
+    type: string
+    string_semantics: short
+  nv_file_web_content_link:
+    type: string
+    string_semantics: short
+  nv_file_icon_link:
+    type: string
+    string_semantics: short
+  nv_file_created_time:
+    type: string
+    string_semantics: short
+  nv_file_modified_time:
+    type: string
+    string_semantics: short
+  nv_file_trashed:
+    type: boolean
+  nv_file_starred:
+    type: boolean
+  nv_file_shared:
+    type: boolean
+  nv_file_owned_by_me:
+    type: boolean
+  nv_file_file_extension:
+    type: string
+    string_semantics: short
+  nv_file_full_file_extension:
+    type: string
+    string_semantics: short
+  nv_file_md5_checksum:
+    type: string
+    string_semantics: short
+  nv_file_shortcut_details:
+    type: json
+    description: Shortcut target metadata when this file is a shortcut.
+  nv_file_capabilities:
+    type: json
+  nv_file_owners:
+    type: json
+  nv_file_last_modifying_user:
+    type: json
+  nv_file_label_info:
+    type: json
+  nv_about_kind:
+    type: string
+    string_semantics: short
+  nv_about_user:
+    type: json
+  nv_about_storage_quota:
+    type: json
+  nv_about_import_formats:
+    type: json
+  nv_about_export_formats:
+    type: json
+  nv_about_max_import_sizes:
+    type: json
+  nv_about_max_upload_size:
+    type: string
+    string_semantics: short
+  nv_about_app_installed:
+    type: boolean
+  nv_about_can_create_drives:
+    type: boolean
+  nv_about_can_create_team_drives:
+    type: boolean
+  nv_about_folder_color_palette:
+    type: string
+    string_semantics: short
+  nv_about_drive_themes:
+    type: json
+  nv_about_team_drive_themes:
+    type: json
+  nv_start_page_token_start_page_token:
+    type: string
+    string_semantics: short
+  nv_start_page_token_kind:
+    type: string
+    string_semantics: short
+  nv_drive_change_id:
+    type: string
+    string_semantics: short
+  nv_drive_change_kind:
+    type: string
+    string_semantics: short
+  nv_drive_change_file_id:
+    type: string
+    string_semantics: short
+  nv_drive_change_removed:
+    type: boolean
+  nv_drive_change_file:
+    type: json
+  nv_shared_drive_id:
+    type: string
+    string_semantics: short
+  nv_shared_drive_name:
+    type: string
+    string_semantics: short
+  nv_shared_drive_kind:
+    type: string
+    string_semantics: short
+  nv_shared_drive_color_rgb:
+    type: string
+    string_semantics: short
+  nv_shared_drive_capabilities:
+    type: json
+  nv_shared_drive_hidden:
+    type: boolean
+  nv_shared_drive_created_time:
+    type: string
+    string_semantics: short
+  nv_shared_drive_restrictions:
+    type: json
+  nv_team_drive_id:
+    type: string
+    string_semantics: short
+  nv_team_drive_name:
+    type: string
+    string_semantics: short
+  nv_team_drive_kind:
+    type: string
+    string_semantics: short
+  nv_team_drive_capabilities:
+    type: json
+  nv_drive_permission_id:
+    type: string
+    string_semantics: short
+  nv_drive_permission_file_id:
+    type: entity_ref
+    target: File
+  nv_drive_permission_type:
+    type: string
+    string_semantics: short
+  nv_drive_permission_role:
+    type: string
+    string_semantics: short
+  nv_drive_permission_email_address:
+    type: string
+    string_semantics: short
+  nv_drive_permission_domain:
+    type: string
+    string_semantics: short
+  nv_drive_permission_display_name:
+    type: string
+    string_semantics: short
+  nv_drive_permission_photo_link:
+    type: string
+    string_semantics: short
+  nv_drive_permission_kind:
+    type: string
+    string_semantics: short
+  nv_drive_comment_id:
+    type: string
+    string_semantics: short
+  nv_drive_comment_file_id:
+    type: entity_ref
+    target: File
+  nv_drive_comment_content:
+    type: string
+    string_semantics: markdown
+  nv_drive_comment_html_content:
+    type: string
+    string_semantics: short
+  nv_drive_comment_created_time:
+    type: string
+    string_semantics: short
+  nv_drive_comment_modified_time:
+    type: string
+    string_semantics: short
+  nv_drive_comment_kind:
+    type: string
+    string_semantics: short
+  nv_drive_comment_resolved:
+    type: boolean
+  nv_drive_comment_deleted:
+    type: boolean
+  nv_drive_comment_anchor:
+    type: string
+    string_semantics: short
+    description: Document anchor JSON string (patchable on update).
+  nv_drive_comment_quoted_file_content:
+    type: json
+    description: Quoted region wrapper for the comment (patchable on update).
+  nv_channel_stop_id:
+    type: string
+    string_semantics: short
+  nv_drive_reply_id:
+    type: string
+    string_semantics: short
+  nv_drive_reply_file_id:
+    type: entity_ref
+    target: File
+  nv_drive_reply_comment_id:
+    type: string
+    string_semantics: short
+  nv_drive_reply_content:
+    type: string
+    string_semantics: markdown
+  nv_drive_reply_html_content:
+    type: string
+    string_semantics: short
+  nv_drive_reply_created_time:
+    type: string
+    string_semantics: short
+  nv_drive_reply_modified_time:
+    type: string
+    string_semantics: short
+  nv_drive_reply_kind:
+    type: string
+    string_semantics: short
+  nv_drive_reply_deleted:
+    type: boolean
+  nv_drive_reply_action:
+    type: string
+    string_semantics: short
+    description: Reply action on the parent comment (e.g. resolve, reopen); patchable on update.
+  nv_drive_revision_id:
+    type: string
+    string_semantics: short
+  nv_drive_revision_file_id:
+    type: entity_ref
+    target: File
+  nv_drive_revision_mime_type:
+    type: string
+    string_semantics: short
+  nv_drive_revision_modified_time:
+    type: string
+    string_semantics: short
+  nv_drive_revision_size:
+    type: string
+    string_semantics: short
+  nv_drive_revision_keep_forever:
+    type: boolean
+  nv_drive_revision_original_filename:
+    type: string
+    string_semantics: short
+  nv_drive_revision_kind:
+    type: string
+    string_semantics: short
+  nv_drive_operation_name:
+    type: string
+    string_semantics: short
+  nv_drive_operation_done:
+    type: boolean
+  nv_drive_operation_kind:
+    type: string
+    string_semantics: short
+  nv_drive_operation_error:
+    type: json
+  nv_drive_operation_response:
+    type: json
+  nv_drive_operation_metadata:
+    type: json
+  nv_files_list_q:
+    type: string
+    string_semantics: short
+  nv_files_list_corpora:
+    type: string
+    string_semantics: short
+  nv_files_list_drive_id:
+    type: string
+    string_semantics: short
+  nv_files_list_spaces:
+    type: string
+    string_semantics: short
+  nv_files_list_order_by:
+    type: string
+    string_semantics: short
+  nv_files_list_include_items_from_all_drives:
+    type: boolean
+  nv_files_list_supports_all_drives:
+    type: boolean
+  nv_files_list_include_labels:
+    type: string
+    string_semantics: short
+  nv_files_list_include_permissions_for_view:
+    type: string
+    string_semantics: short
+  nv_files_create_input:
+    type: json
+    description: File resource body for POST /files (name, mimeType, parents, etc.).
+  nv_files_update_add_parents:
+    type: string
+    string_semantics: short
+  nv_files_update_remove_parents:
+    type: string
+    string_semantics: short
+  nv_files_update_enforce_single_parent:
+    type: boolean
+  nv_files_update_keep_revision_forever:
+    type: boolean
+  nv_files_update_supports_all_drives:
+    type: boolean
+  nv_files_update_use_domain_admin_access:
+    type: boolean
+  nv_files_update_input:
+    type: json
+    description: Partial File resource for PATCH body.
+  nv_files_delete_supports_all_drives:
+    type: boolean
+  nv_files_copy_input:
+    type: json
+    description: Copy request body (destination parents, title, etc.).
+  nv_files_export_mime_type:
+    type: string
+    string_semantics: short
+  nv_files_download_file_id:
+    type: entity_ref
+    target: File
+  nv_files_download_mime_type:
+    type: string
+    string_semantics: short
+  nv_files_download_revision_id:
+    type: string
+    string_semantics: short
+  nv_permissions_list_file_id:
+    type: entity_ref
+    target: File
+  nv_permissions_list_supports_all_drives:
+    type: boolean
+  nv_permissions_list_use_domain_admin_access:
+    type: boolean
+  nv_permissions_get_supports_all_drives:
+    type: boolean
+  nv_permissions_get_use_domain_admin_access:
+    type: boolean
+  nv_permissions_create_file_id:
+    type: entity_ref
+    target: File
+  nv_permissions_create_email_message:
+    type: string
+    string_semantics: short
+  nv_permissions_create_send_notification_email:
+    type: boolean
+  nv_permissions_create_supports_all_drives:
+    type: boolean
+  nv_permissions_create_transfer_ownership:
+    type: boolean
+  nv_permissions_create_use_domain_admin_access:
+    type: boolean
+  nv_permissions_create_input:
+    type: json
+    description: Permission resource body.
+  nv_permissions_update_remove_expiration:
+    type: boolean
+  nv_permissions_update_supports_all_drives:
+    type: boolean
+  nv_permissions_update_transfer_ownership:
+    type: boolean
+  nv_permissions_update_use_domain_admin_access:
+    type: boolean
+  nv_permissions_update_input:
+    type: json
+    description: Permission patch body.
+  nv_permissions_delete_supports_all_drives:
+    type: boolean
+  nv_permissions_delete_use_domain_admin_access:
+    type: boolean
+  nv_comments_list_file_id:
+    type: entity_ref
+    target: File
+  nv_comments_list_include_deleted:
+    type: boolean
+  nv_comments_list_page_size:
+    type: integer
+  nv_comments_list_start_modified_time:
+    type: string
+    string_semantics: short
+  nv_comments_get_include_deleted:
+    type: boolean
+  nv_comments_create_file_id:
+    type: entity_ref
+    target: File
+  nv_comments_create_input:
+    type: json
+    description: Comment resource body.
+  nv_comments_update_content:
+    type: string
+    string_semantics: markdown
+    description: New plain-text body (defaults to preflight parent content).
+  nv_comments_update_anchor:
+    type: string
+    string_semantics: short
+    description: Anchor JSON override (defaults to preflight parent anchor).
+  nv_comments_update_quoted_file_content:
+    type: json
+    description: Quoted region override (defaults to preflight parent quotedFileContent).
+  nv_replies_list_file_id:
+    type: entity_ref
+    target: File
+  nv_replies_list_comment_id:
+    type: string
+    string_semantics: short
+  nv_replies_list_include_deleted:
+    type: boolean
+  nv_replies_list_page_size:
+    type: integer
+  nv_replies_get_include_deleted:
+    type: boolean
+  nv_replies_create_file_id:
+    type: entity_ref
+    target: File
+  nv_replies_create_comment_id:
+    type: string
+    string_semantics: short
+  nv_replies_create_input:
+    type: json
+    description: Reply resource body.
+  nv_replies_update_content:
+    type: string
+    string_semantics: markdown
+    description: New plain-text body (defaults to preflight parent content).
+  nv_replies_update_action:
+    type: string
+    string_semantics: short
+    description: Optional resolve or reopen action (defaults to preflight parent action).
+  nv_revisions_list_file_id:
+    type: entity_ref
+    target: File
+  nv_revisions_list_page_size:
+    type: integer
+  nv_revisions_update_input:
+    type: json
+    description: Revision patch body.
+  nv_drives_list_page_size:
+    type: integer
+  nv_drives_list_q:
+    type: string
+    string_semantics: short
+  nv_drives_list_use_domain_admin_access:
+    type: boolean
+  nv_drives_get_use_domain_admin_access:
+    type: boolean
+  nv_drives_create_request_id:
+    type: string
+    string_semantics: short
+  nv_drives_create_input:
+    type: json
+    description: Drive resource body.
+  nv_drives_update_use_domain_admin_access:
+    type: boolean
+  nv_drives_update_input:
+    type: json
+    description: Drive patch body.
+  nv_drives_delete_allow_item_deletion:
+    type: boolean
+  nv_changes_get_start_page_token_drive_id:
+    type: string
+    string_semantics: short
+  nv_changes_get_start_page_token_supports_all_drives:
+    type: boolean
+  nv_changes_get_start_page_token_team_drive_id:
+    type: string
+    string_semantics: short
+  nv_changes_list_start_page_token:
+    type: string
+    string_semantics: short
+  nv_changes_list_drive_id:
+    type: string
+    string_semantics: short
+  nv_changes_list_include_corpus_removals:
+    type: boolean
+  nv_changes_list_include_items_from_all_drives:
+    type: boolean
+  nv_changes_list_include_permissions_for_view:
+    type: string
+    string_semantics: short
+  nv_changes_list_include_removed:
+    type: boolean
+  nv_changes_list_restrict_to_my_drive:
+    type: boolean
+  nv_changes_list_spaces:
+    type: string
+    string_semantics: short
+  nv_changes_list_supports_all_drives:
+    type: boolean
+  nv_changes_list_team_drive_id:
+    type: string
+    string_semantics: short
+  nv_channels_stop_input:
+    type: json
+    description: Channel resource with id and resourceId to stop.
+  nv_teamdrives_list_page_size:
+    type: integer
+  nv_teamdrives_list_q:
+    type: string
+    string_semantics: short
+  nv_teamdrives_list_use_domain_admin_access:
+    type: boolean
+  nv_teamdrives_get_use_domain_admin_access:
+    type: boolean
+  nv_teamdrives_create_request_id:
+    type: string
+    string_semantics: short
+  nv_teamdrives_create_input:
+    type: json
+    description: TeamDrive resource body.
+  nv_teamdrives_update_use_domain_admin_access:
+    type: boolean
+  nv_teamdrives_update_input:
+    type: json
+    description: TeamDrive patch body.

@@ -1,60 +1,63 @@
 version: 1
-
 http_backend: https://graph.microsoft.com
-
 entities:
   Team:
     id_field: id
-    description: >-
-      A collaboration team in Microsoft Teams: a shared space for channels, apps,
-      and members in the signed-in user’s organization.
+    description: 'A collaboration team in Microsoft Teams: a shared space for channels, apps, and members in the signed-in
+      user’s organization.'
     fields:
       id:
-        description: Stable opaque identifier for this team in the tenant directory.
-        field_type: uuid
         required: true
+        value_ref: nv_team_id
       displayName:
-        description: Human-facing label shown in the Teams client.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_team_display_name
       description:
-        description: Longer narrative summary of the team’s purpose when one exists.
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_team_description
       visibility:
-        description: >-
-          Who may discover or join the team (private, public, or hidden membership)
-          when the directory exposes this classification.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_team_visibility
       webUrl:
-        description: Client URL that opens this team in Microsoft Teams when available.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_team_web_url
       isArchived:
-        description: Whether the team is frozen for most member activity.
-        field_type: boolean
         required: false
+        value_ref: nv_team_is_archived
     relations: {}
-
 capabilities:
   team_query:
-    description: >-
-      Teams the signed-in user has joined (ordered by the service; not a global
-      directory search).
+    description: Teams the signed-in user has joined (ordered by the service; not a global directory search).
     kind: query
     entity: Team
   team_get:
-    description: >-
-      Full team record for a known team identifier, including archive state when
-      the service returns it.
+    description: Full team record for a known team identifier, including archive state when the service returns it.
     kind: get
     entity: Team
-
 auth:
   scheme: bearer_token
   env: MICROSOFT_GRAPH_ACCESS_TOKEN
+values:
+  nv_team_id:
+    type: uuid
+    description: Stable opaque identifier for this team in the tenant directory.
+  nv_team_display_name:
+    type: string
+    string_semantics: short
+    description: Human-facing label shown in the Teams client.
+  nv_team_description:
+    type: string
+    string_semantics: markdown
+    description: Longer narrative summary of the team’s purpose when one exists.
+  nv_team_visibility:
+    type: string
+    string_semantics: short
+    description: Who may discover or join the team (private, public, or hidden membership) when the directory exposes this
+      classification.
+  nv_team_web_url:
+    type: string
+    string_semantics: short
+    description: Client URL that opens this team in Microsoft Teams when available.
+  nv_team_is_archived:
+    type: boolean
+    description: Whether the team is frozen for most member activity.

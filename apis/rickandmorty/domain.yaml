@@ -1,66 +1,39 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://rickandmortyapi.com
-
 entities:
   Character:
     id_field: id
     description: A character from the show (Rick, Morty, Beth, etc.).
     fields:
       id:
-        description: Unique integer identifier for the character.
-        field_type: integer
         required: true
+        value_ref: nv_character_id
       name:
-        description: Character's full name.
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_character_name
       status:
-        description: 'Life status of the character: Alive, Dead, or unknown.'
-        field_type: select
         required: false
-        allowed_values:
-        - Alive
-        - Dead
-        - unknown
+        value_ref: nv_character_status
       species:
-        description: Species of the character (e.g. Human, Alien).
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_character_species
       type:
-        description: Sub-species or special type descriptor if any.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_character_type
       gender:
-        description: Gender identity of the character.
-        field_type: select
         required: false
-        allowed_values:
-        - Female
-        - Male
-        - Genderless
-        - unknown
+        value_ref: nv_character_gender
       image:
-        description: URL to the character's portrait image.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_character_image
       url:
-        description: API endpoint URL for this character record.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_character_url
       created:
-        description: ISO date when this record was first created.
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_character_created
     relations:
       origin:
         description: The location where the character was born or originated.
@@ -75,34 +48,23 @@ entities:
     description: A planet, dimension, or place (Earth, Citadel of Ricks, etc.).
     fields:
       id:
-        description: Unique integer identifier for the location.
-        field_type: integer
         required: true
+        value_ref: nv_location_id
       name:
-        description: Name of the location (e.g. Earth, Citadel of Ricks).
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_location_name
       type:
-        description: Type of place (e.g. Planet, Space station, Microverse).
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_location_type
       dimension:
-        description: Dimension the location exists in.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_location_dimension
       url:
-        description: API endpoint URL for this location record.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_location_url
       created:
-        description: ISO date when this record was first created.
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_location_created
     relations:
       residents:
         description: Characters currently residing at this location.
@@ -113,34 +75,23 @@ entities:
     description: A TV episode identified by a code like S01E01.
     fields:
       id:
-        description: Unique integer identifier for the episode.
-        field_type: integer
         required: true
+        value_ref: nv_episode_id
       name:
-        description: Episode title.
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_episode_name
       air_date:
-        description: Original broadcast date of the episode.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_episode_air_date
       episode:
-        description: Episode code (e.g. S01E01) indicating season and number.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_episode_episode
       url:
-        description: API endpoint URL for this episode record.
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_episode_url
       created:
-        description: ISO date when this record was first created.
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_episode_created
     relations:
       characters:
         description: Characters appearing in this episode.
@@ -153,36 +104,24 @@ capabilities:
     entity: Character
     parameters:
     - name: name
-      type: string
+      value_ref: nv_character_query_name
       required: false
       role: filter
-      string_semantics: short
     - name: status
-      type: select
+      value_ref: nv_character_query_status
       required: false
-      allowed_values:
-      - Alive
-      - Dead
-      - unknown
       role: filter
     - name: species
-      type: string
+      value_ref: nv_character_query_species
       required: false
       role: filter
-      string_semantics: short
     - name: type
-      type: string
+      value_ref: nv_character_query_type
       required: false
       role: filter
-      string_semantics: short
     - name: gender
-      type: select
+      value_ref: nv_character_query_gender
       required: false
-      allowed_values:
-      - Female
-      - Male
-      - Genderless
-      - unknown
       role: filter
   character_get:
     description: Retrieve a single character by ID.
@@ -204,20 +143,17 @@ capabilities:
     entity: Location
     parameters:
     - name: name
-      type: string
+      value_ref: nv_location_query_name
       required: false
       role: filter
-      string_semantics: short
     - name: type
-      type: string
+      value_ref: nv_location_query_type
       required: false
       role: filter
-      string_semantics: short
     - name: dimension
-      type: string
+      value_ref: nv_location_query_dimension
       required: false
       role: filter
-      string_semantics: short
   location_get:
     description: Retrieve a single location by ID.
     kind: get
@@ -235,15 +171,13 @@ capabilities:
     entity: Episode
     parameters:
     - name: name
-      type: string
+      value_ref: nv_episode_query_name
       required: false
       role: filter
-      string_semantics: short
     - name: episode
-      type: string
+      value_ref: nv_episode_query_episode
       required: false
       role: filter
-      string_semantics: short
   episode_get:
     description: Retrieve a single episode by ID.
     kind: get
@@ -255,3 +189,129 @@ capabilities:
     - episode
     - url
     - created
+values:
+  nv_character_id:
+    type: integer
+    description: Unique integer identifier for the character.
+  nv_character_name:
+    type: string
+    string_semantics: short
+    description: Character's full name.
+  nv_character_status:
+    type: select
+    allowed_values:
+    - Alive
+    - Dead
+    - unknown
+    description: 'Life status of the character: Alive, Dead, or unknown.'
+  nv_character_species:
+    type: string
+    string_semantics: short
+    description: Species of the character (e.g. Human, Alien).
+  nv_character_type:
+    type: string
+    string_semantics: short
+    description: Sub-species or special type descriptor if any.
+  nv_character_gender:
+    type: select
+    allowed_values:
+    - Female
+    - Male
+    - Genderless
+    - unknown
+    description: Gender identity of the character.
+  nv_character_image:
+    type: string
+    string_semantics: short
+    description: URL to the character's portrait image.
+  nv_character_url:
+    type: string
+    string_semantics: short
+    description: API endpoint URL for this character record.
+  nv_character_created:
+    type: date
+    value_format: rfc3339
+    description: ISO date when this record was first created.
+  nv_location_id:
+    type: integer
+    description: Unique integer identifier for the location.
+  nv_location_name:
+    type: string
+    string_semantics: short
+    description: Name of the location (e.g. Earth, Citadel of Ricks).
+  nv_location_type:
+    type: string
+    string_semantics: short
+    description: Type of place (e.g. Planet, Space station, Microverse).
+  nv_location_dimension:
+    type: string
+    string_semantics: short
+    description: Dimension the location exists in.
+  nv_location_url:
+    type: string
+    string_semantics: short
+    description: API endpoint URL for this location record.
+  nv_location_created:
+    type: date
+    value_format: rfc3339
+    description: ISO date when this record was first created.
+  nv_episode_id:
+    type: integer
+    description: Unique integer identifier for the episode.
+  nv_episode_name:
+    type: string
+    string_semantics: short
+    description: Episode title.
+  nv_episode_air_date:
+    type: string
+    string_semantics: short
+    description: Original broadcast date of the episode.
+  nv_episode_episode:
+    type: string
+    string_semantics: short
+    description: Episode code (e.g. S01E01) indicating season and number.
+  nv_episode_url:
+    type: string
+    string_semantics: short
+    description: API endpoint URL for this episode record.
+  nv_episode_created:
+    type: date
+    value_format: rfc3339
+    description: ISO date when this record was first created.
+  nv_character_query_name:
+    type: string
+    string_semantics: short
+  nv_character_query_status:
+    type: select
+    allowed_values:
+    - Alive
+    - Dead
+    - unknown
+  nv_character_query_species:
+    type: string
+    string_semantics: short
+  nv_character_query_type:
+    type: string
+    string_semantics: short
+  nv_character_query_gender:
+    type: select
+    allowed_values:
+    - Female
+    - Male
+    - Genderless
+    - unknown
+  nv_location_query_name:
+    type: string
+    string_semantics: short
+  nv_location_query_type:
+    type: string
+    string_semantics: short
+  nv_location_query_dimension:
+    type: string
+    string_semantics: short
+  nv_episode_query_name:
+    type: string
+    string_semantics: short
+  nv_episode_query_episode:
+    type: string
+    string_semantics: short

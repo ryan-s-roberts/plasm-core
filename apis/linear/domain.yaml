@@ -1,63 +1,50 @@
 version: 3
-
 http_backend: https://api.linear.app
-
 entities:
   Team:
     id_field: id
     description: A Linear team (workspace grouping).
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_team_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_team_name
       key:
-        field_type: string
         required: false
-        description: Short key (e.g. ENG).
-        string_semantics: short
+        value_ref: nv_team_key
     relations: {}
   Project:
     id_field: id
     description: A Linear project within a team.
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_project_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_project_name
       slugId:
-        field_type: string
         required: false
-        description: Stable slug for the project within its team.
-        string_semantics: short
+        value_ref: nv_project_slug_id
     relations: {}
   Cycle:
     id_field: id
     description: A time-boxed iteration on a team (sprint / cycle window).
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_cycle_id
       number:
-        field_type: number
         required: false
-        description: Cycle index within the team (Linear exposes as a number).
+        value_ref: nv_cycle_number
       startsAt:
-        field_type: string
         required: false
-        description: Cycle start (ISO-8601 timestamp from the API).
-        string_semantics: short
+        value_ref: nv_cycle_starts_at
       endsAt:
-        field_type: string
         required: false
-        description: Cycle end (ISO-8601 timestamp from the API).
-        string_semantics: short
+        value_ref: nv_cycle_ends_at
     relations:
       team:
         target: Team
@@ -68,68 +55,59 @@ entities:
     description: A Linear user.
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_user_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_name
       displayName:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_display_name
       email:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_email
     relations: {}
   WorkflowState:
     id_field: id
     description: A workflow column/state for a team (backlog, in progress, done, …).
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_workflow_state_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_workflow_state_name
       type:
-        field_type: string
         required: false
-        description: State category (e.g. started, completed).
-        string_semantics: short
+        value_ref: nv_workflow_state_type
       position:
-        field_type: number
         required: false
+        value_ref: nv_workflow_state_position
     relations: {}
   Label:
     id_field: id
     description: An issue label.
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_label_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_label_name
       color:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_label_color
     relations: {}
   Comment:
     id_field: id
     description: A comment on an issue.
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_comment_id
       body:
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_comment_body
     relations:
       issue:
         target: Issue
@@ -140,21 +118,17 @@ entities:
     description: A Linear issue (task, bug, or feature).
     fields:
       id:
-        field_type: uuid
         required: true
+        value_ref: nv_issue_id
       identifier:
-        field_type: string
         required: false
-        description: Human-visible key (e.g. ENG-42).
-        string_semantics: short
+        value_ref: nv_issue_identifier
       title:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_issue_title
       description:
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_issue_description
     relations:
       team:
         target: Team
@@ -215,11 +189,9 @@ capabilities:
     description: List issues for a specific team.
     parameters:
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_issue_by_team_query_team
       required: true
       role: scope
-      description: Team whose issues to list.
     provides:
     - id
     - identifier
@@ -295,11 +267,9 @@ capabilities:
     description: List workflow columns for a team—column title, category (e.g. backlog, in progress, done), and sort order.
     parameters:
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_workflow_state_query_team
       required: true
       role: scope
-      description: Team whose columns to list.
     provides:
     - id
     - name
@@ -320,11 +290,9 @@ capabilities:
     description: List iteration cycles for a team (ordered by the API).
     parameters:
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_cycle_query_team
       required: true
       role: scope
-      description: Team whose cycles to list.
     provides:
     - id
     - number
@@ -384,40 +352,29 @@ capabilities:
     - cycle
     parameters:
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_issue_create_team
       required: true
-      description: Team that owns the new issue.
     - name: title
-      type: string
+      value_ref: nv_issue_create_title
       required: true
-      string_semantics: short
     - name: description
-      type: string
+      value_ref: nv_issue_create_description
       required: false
-      string_semantics: markdown
     - name: project
-      type: entity_ref
-      target: Project
+      value_ref: nv_issue_create_project
       required: false
     - name: assignee
-      type: entity_ref
-      target: User
+      value_ref: nv_issue_create_assignee
       required: false
     - name: state
-      type: entity_ref
-      target: WorkflowState
+      value_ref: nv_issue_create_state
       required: false
     - name: parent
-      type: entity_ref
-      target: Issue
+      value_ref: nv_issue_create_parent
       required: false
-      description: Parent issue when creating a sub-issue.
     - name: cycle
-      type: entity_ref
-      target: Cycle
+      value_ref: nv_issue_create_cycle
       required: false
-      description: Iteration cycle to place the new issue in.
   issue_update:
     kind: update
     entity: Issue
@@ -431,35 +388,26 @@ capabilities:
     - cycle
     parameters:
     - name: title
-      type: string
+      value_ref: nv_issue_update_title
       required: false
-      string_semantics: short
     - name: description
-      type: string
+      value_ref: nv_issue_update_description
       required: false
-      string_semantics: markdown
     - name: project
-      type: entity_ref
-      target: Project
+      value_ref: nv_issue_update_project
       required: false
     - name: assignee
-      type: entity_ref
-      target: User
+      value_ref: nv_issue_update_assignee
       required: false
     - name: state
-      type: entity_ref
-      target: WorkflowState
+      value_ref: nv_issue_update_state
       required: false
     - name: parent
-      type: entity_ref
-      target: Issue
+      value_ref: nv_issue_update_parent
       required: false
-      description: Issue to nest this under; omit to leave the parent link unchanged.
     - name: cycle
-      type: entity_ref
-      target: Cycle
+      value_ref: nv_issue_update_cycle
       required: false
-      description: Iteration cycle to assign; omit to leave the cycle unchanged.
   issue_delete:
     kind: delete
     entity: Issue
@@ -473,14 +421,11 @@ capabilities:
     - body
     parameters:
     - name: issue
-      type: entity_ref
-      target: Issue
+      value_ref: nv_comment_create_issue
       required: true
-      description: Issue to attach the comment to.
     - name: body
-      type: string
+      value_ref: nv_comment_create_body
       required: true
-      string_semantics: markdown
   label_create:
     kind: create
     entity: Label
@@ -491,23 +436,17 @@ capabilities:
     - color
     parameters:
     - name: name
-      type: string
+      value_ref: nv_label_create_name
       required: true
-      string_semantics: short
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_label_create_team
       required: false
-      description: Team to scope the label to; omit for workspace label.
     - name: color
-      type: string
+      value_ref: nv_label_create_color
       required: false
-      description: Hex swatch color for the label.
-      string_semantics: short
     - name: description
-      type: string
+      value_ref: nv_label_create_description
       required: false
-      string_semantics: markdown
   label_update:
     kind: update
     entity: Label
@@ -518,17 +457,14 @@ capabilities:
     - color
     parameters:
     - name: name
-      type: string
+      value_ref: nv_label_update_name
       required: false
-      string_semantics: short
     - name: color
-      type: string
+      value_ref: nv_label_update_color
       required: false
-      string_semantics: short
     - name: description
-      type: string
+      value_ref: nv_label_update_description
       required: false
-      string_semantics: markdown
   project_create:
     kind: create
     entity: Project
@@ -539,18 +475,14 @@ capabilities:
     - slugId
     parameters:
     - name: name
-      type: string
+      value_ref: nv_project_create_name
       required: true
-      string_semantics: short
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_project_create_team
       required: true
-      description: Primary team that owns the new project.
     - name: description
-      type: string
+      value_ref: nv_project_create_description
       required: false
-      string_semantics: markdown
   workflow_state_create:
     kind: create
     entity: WorkflowState
@@ -561,31 +493,23 @@ capabilities:
     - type
     parameters:
     - name: name
-      type: string
+      value_ref: nv_workflow_state_create_name
       required: true
-      string_semantics: short
     - name: team
-      type: entity_ref
-      target: Team
+      value_ref: nv_workflow_state_create_team
       required: true
     - name: state_type
-      type: string
+      value_ref: nv_workflow_state_create_state_type
       required: true
-      description: One of triage, backlog, unstarted, started, completed, canceled, duplicate.
-      string_semantics: short
     - name: color
-      type: string
+      value_ref: nv_workflow_state_create_color
       required: true
-      description: Column header hex color on the board.
-      string_semantics: short
     - name: description
-      type: string
+      value_ref: nv_workflow_state_create_description
       required: false
-      string_semantics: markdown
     - name: position
-      type: number
+      value_ref: nv_workflow_state_create_position
       required: false
-      description: Column order within the workflow.
   issue_add_label:
     kind: update
     entity: Issue
@@ -595,8 +519,7 @@ capabilities:
     - identifier
     parameters:
     - name: label
-      type: entity_ref
-      target: Label
+      value_ref: nv_issue_add_label_label
       required: true
   issue_remove_label:
     kind: update
@@ -607,8 +530,7 @@ capabilities:
     - identifier
     parameters:
     - name: label
-      type: entity_ref
-      target: Label
+      value_ref: nv_issue_remove_label_label
       required: true
 oauth:
   provider: linear
@@ -634,16 +556,19 @@ oauth:
       docs_url: https://linear.app/developers/oauth-2-0-authentication
   default_scope_sets:
     plasm_linear_readonly_core:
-      description: Read-heavy automation — query and load issues, teams, projects, users, labels, comments, workflow states, and cycles.
+      description: Read-heavy automation — query and load issues, teams, projects, users, labels, comments, workflow states,
+        and cycles.
       scopes:
       - read
     plasm_linear_contributor_core:
-      description: Issue and workspace edits — create and update issues and comments, manage labels, projects, and workflow columns (full write surface in this CGS).
+      description: Issue and workspace edits — create and update issues and comments, manage labels, projects, and workflow
+        columns (full write surface in this CGS).
       scopes:
       - read
       - write
     plasm_linear_create_focus:
-      description: Narrow grant — create issues and comments without broader write access (no issue updates, labels, projects, or workflow structure changes).
+      description: Narrow grant — create issues and comments without broader write access (no issue updates, labels, projects,
+        or workflow structure changes).
       scopes:
       - read
       - issues:create
@@ -768,3 +693,210 @@ auth:
   scheme: api_key_header
   header: Authorization
   env: LINEAR_API_TOKEN
+values:
+  nv_team_id:
+    type: uuid
+  nv_team_name:
+    type: string
+    string_semantics: short
+  nv_team_key:
+    type: string
+    string_semantics: short
+    description: Short key (e.g. ENG).
+  nv_project_id:
+    type: uuid
+  nv_project_name:
+    type: string
+    string_semantics: short
+  nv_project_slug_id:
+    type: string
+    string_semantics: short
+    description: Stable slug for the project within its team.
+  nv_cycle_id:
+    type: uuid
+  nv_cycle_number:
+    type: number
+    description: Cycle index within the team (Linear exposes as a number).
+  nv_cycle_starts_at:
+    type: string
+    string_semantics: short
+    description: Cycle start (ISO-8601 timestamp from the API).
+  nv_cycle_ends_at:
+    type: string
+    string_semantics: short
+    description: Cycle end (ISO-8601 timestamp from the API).
+  nv_user_id:
+    type: uuid
+  nv_user_name:
+    type: string
+    string_semantics: short
+  nv_user_display_name:
+    type: string
+    string_semantics: short
+  nv_user_email:
+    type: string
+    string_semantics: short
+  nv_workflow_state_id:
+    type: uuid
+  nv_workflow_state_name:
+    type: string
+    string_semantics: short
+  nv_workflow_state_type:
+    type: string
+    string_semantics: short
+    description: State category (e.g. started, completed).
+  nv_workflow_state_position:
+    type: number
+  nv_label_id:
+    type: uuid
+  nv_label_name:
+    type: string
+    string_semantics: short
+  nv_label_color:
+    type: string
+    string_semantics: short
+  nv_comment_id:
+    type: uuid
+  nv_comment_body:
+    type: string
+    string_semantics: markdown
+  nv_issue_id:
+    type: uuid
+  nv_issue_identifier:
+    type: string
+    string_semantics: short
+    description: Human-visible key (e.g. ENG-42).
+  nv_issue_title:
+    type: string
+    string_semantics: short
+  nv_issue_description:
+    type: string
+    string_semantics: markdown
+  nv_issue_by_team_query_team:
+    type: entity_ref
+    target: Team
+    description: Team whose issues to list.
+  nv_workflow_state_query_team:
+    type: entity_ref
+    target: Team
+    description: Team whose columns to list.
+  nv_cycle_query_team:
+    type: entity_ref
+    target: Team
+    description: Team whose cycles to list.
+  nv_issue_create_team:
+    type: entity_ref
+    target: Team
+    description: Team that owns the new issue.
+  nv_issue_create_title:
+    type: string
+    string_semantics: short
+  nv_issue_create_description:
+    type: string
+    string_semantics: markdown
+  nv_issue_create_project:
+    type: entity_ref
+    target: Project
+  nv_issue_create_assignee:
+    type: entity_ref
+    target: User
+  nv_issue_create_state:
+    type: entity_ref
+    target: WorkflowState
+  nv_issue_create_parent:
+    type: entity_ref
+    target: Issue
+    description: Parent issue when creating a sub-issue.
+  nv_issue_create_cycle:
+    type: entity_ref
+    target: Cycle
+    description: Iteration cycle to place the new issue in.
+  nv_issue_update_title:
+    type: string
+    string_semantics: short
+  nv_issue_update_description:
+    type: string
+    string_semantics: markdown
+  nv_issue_update_project:
+    type: entity_ref
+    target: Project
+  nv_issue_update_assignee:
+    type: entity_ref
+    target: User
+  nv_issue_update_state:
+    type: entity_ref
+    target: WorkflowState
+  nv_issue_update_parent:
+    type: entity_ref
+    target: Issue
+    description: Issue to nest this under; omit to leave the parent link unchanged.
+  nv_issue_update_cycle:
+    type: entity_ref
+    target: Cycle
+    description: Iteration cycle to assign; omit to leave the cycle unchanged.
+  nv_comment_create_issue:
+    type: entity_ref
+    target: Issue
+    description: Issue to attach the comment to.
+  nv_comment_create_body:
+    type: string
+    string_semantics: markdown
+  nv_label_create_name:
+    type: string
+    string_semantics: short
+  nv_label_create_team:
+    type: entity_ref
+    target: Team
+    description: Team to scope the label to; omit for workspace label.
+  nv_label_create_color:
+    type: string
+    string_semantics: short
+    description: Hex swatch color for the label.
+  nv_label_create_description:
+    type: string
+    string_semantics: markdown
+  nv_label_update_name:
+    type: string
+    string_semantics: short
+  nv_label_update_color:
+    type: string
+    string_semantics: short
+  nv_label_update_description:
+    type: string
+    string_semantics: markdown
+  nv_project_create_name:
+    type: string
+    string_semantics: short
+  nv_project_create_team:
+    type: entity_ref
+    target: Team
+    description: Primary team that owns the new project.
+  nv_project_create_description:
+    type: string
+    string_semantics: markdown
+  nv_workflow_state_create_name:
+    type: string
+    string_semantics: short
+  nv_workflow_state_create_team:
+    type: entity_ref
+    target: Team
+  nv_workflow_state_create_state_type:
+    type: string
+    string_semantics: short
+    description: One of triage, backlog, unstarted, started, completed, canceled, duplicate.
+  nv_workflow_state_create_color:
+    type: string
+    string_semantics: short
+    description: Column header hex color on the board.
+  nv_workflow_state_create_description:
+    type: string
+    string_semantics: markdown
+  nv_workflow_state_create_position:
+    type: number
+    description: Column order within the workflow.
+  nv_issue_add_label_label:
+    type: entity_ref
+    target: Label
+  nv_issue_remove_label_label:
+    type: entity_ref
+    target: Label

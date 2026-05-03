@@ -26,8 +26,8 @@ Do not mechanically convert an OpenAPI spec into one capability per endpoint. Co
 ## Default Commands
 
 ```bash
-cargo run -p plasm-cli -- schema validate apis/<api>/domain.yaml
-cargo run -p plasm-cli -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
 cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/<api> --help
 cargo run -p plasm-eval -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml
 ```

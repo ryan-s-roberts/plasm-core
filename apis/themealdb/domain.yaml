@@ -1,45 +1,30 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://www.themealdb.com
-
 entities:
   Meal:
     id_field: idMeal
     description: A recipe in the meal database; idMeal is the numeric string ID
     fields:
       idMeal:
-        description: Unique numeric string identifier for the meal
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_meal_id_meal
       strMeal:
-        description: The recipe or dish name
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_meal_str_meal
       strCategory:
-        description: Cuisine category (e.g. Chicken, Seafood, Dessert)
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_meal_str_category
       strArea:
-        description: Country of origin (e.g. British, Italian, Japanese)
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_meal_str_area
       strMealThumb:
-        description: URL of the meal thumbnail image
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_meal_str_meal_thumb
       strTags:
-        description: Comma-separated tags for the meal
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_meal_str_tags
 capabilities:
   meal_search:
     description: Search meals by name using the s parameter
@@ -47,30 +32,26 @@ capabilities:
     entity: Meal
     parameters:
     - name: s
-      type: string
+      value_ref: nv_meal_search_s
       required: true
       role: search
-      string_semantics: short
   meal_filter:
     description: Filter meals by category, area, or ingredient
     kind: query
     entity: Meal
     parameters:
     - name: c
-      type: string
+      value_ref: nv_meal_filter_c
       required: false
       role: filter
-      string_semantics: short
     - name: a
-      type: string
+      value_ref: nv_meal_filter_a
       required: false
       role: filter
-      string_semantics: short
     - name: i
-      type: string
+      value_ref: nv_meal_filter_i
       required: false
       role: filter
-      string_semantics: short
   meal_get:
     description: Retrieve full meal detail including ingredients by ID
     kind: get
@@ -82,3 +63,40 @@ capabilities:
     - strArea
     - strMealThumb
     - strTags
+values:
+  nv_meal_id_meal:
+    type: string
+    string_semantics: short
+    description: Unique numeric string identifier for the meal
+  nv_meal_str_meal:
+    type: string
+    string_semantics: short
+    description: The recipe or dish name
+  nv_meal_str_category:
+    type: string
+    string_semantics: short
+    description: Cuisine category (e.g. Chicken, Seafood, Dessert)
+  nv_meal_str_area:
+    type: string
+    string_semantics: short
+    description: Country of origin (e.g. British, Italian, Japanese)
+  nv_meal_str_meal_thumb:
+    type: string
+    string_semantics: short
+    description: URL of the meal thumbnail image
+  nv_meal_str_tags:
+    type: string
+    string_semantics: short
+    description: Comma-separated tags for the meal
+  nv_meal_search_s:
+    type: string
+    string_semantics: short
+  nv_meal_filter_c:
+    type: string
+    string_semantics: short
+  nv_meal_filter_a:
+    type: string
+    string_semantics: short
+  nv_meal_filter_i:
+    type: string
+    string_semantics: short

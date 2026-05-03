@@ -1,11 +1,5 @@
 version: 1
-
 http_backend: https://docs.googleapis.com
-
-# Google Docs API v1 — semantic CGS. A native Google Doc’s document id matches the Drive file id
-# for the same document; federate with google-drive when agents need both file metadata and
-# structured document edits.
-
 entities:
   Document:
     id_field: documentId
@@ -13,102 +7,89 @@ entities:
     primary_read: documents_get
     fields:
       documentId:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_document_document_id
       title:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_document_title
       revisionId:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_document_revision_id
       body:
-        field_type: json
         required: false
-        description: Structured body content (StructuralElement list under body.content when present).
+        value_ref: nv_document_body
       headers:
-        field_type: json
         required: false
+        value_ref: nv_document_headers
       footers:
-        field_type: json
         required: false
+        value_ref: nv_document_footers
       footnotes:
-        field_type: json
         required: false
+        value_ref: nv_document_footnotes
       inlineObjects:
-        field_type: json
         required: false
+        value_ref: nv_document_inline_objects
       positionedObjects:
-        field_type: json
         required: false
+        value_ref: nv_document_positioned_objects
       lists:
-        field_type: json
         required: false
+        value_ref: nv_document_lists
       namedRanges:
-        field_type: json
         required: false
+        value_ref: nv_document_named_ranges
       documentStyle:
-        field_type: json
         required: false
+        value_ref: nv_document_document_style
       namedStyles:
-        field_type: json
         required: false
+        value_ref: nv_document_named_styles
       suggestionsViewMode:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_document_suggestions_view_mode
       tabs:
-        field_type: json
         required: false
+        value_ref: nv_document_tabs
       replies:
-        field_type: json
         required: false
-        description: Response replies from batchUpdate (write results and id mappings).
+        value_ref: nv_document_replies
       writeControl:
-        field_type: json
         required: false
+        value_ref: nv_document_write_control
     relations: {}
-
 capabilities:
   documents_get:
     kind: get
     entity: Document
     description: Fetch the full document resource (optionally controlling tab content and suggestions view).
     parameters:
-      - name: includeTabsContent
-        type: boolean
-        required: false
-      - name: suggestionsViewMode
-        type: string
-        required: false
-        string_semantics: short
-
+    - name: includeTabsContent
+      value_ref: nv_documents_get_include_tabs_content
+      required: false
+    - name: suggestionsViewMode
+      value_ref: nv_documents_get_suggestions_view_mode
+      required: false
   documents_create:
     kind: create
     entity: Document
     description: Create a blank document or supply an initial title and body via the JSON input.
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: Document resource body for POST /documents.
-
+    - name: input
+      value_ref: nv_documents_create_input
+      required: false
   documents_batchUpdate:
     kind: action
     entity: Document
     description: Apply one or more structured updates (BatchUpdateDocumentRequest) to a document.
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: BatchUpdateDocumentRequest JSON (requests array and write control fields).
+    - name: input
+      value_ref: nv_documents_batch_update_input
+      required: false
     provides:
-      - documentId
-      - replies
-      - writeControl
-
+    - documentId
+    - replies
+    - writeControl
 oauth:
   provider: google
   scopes:
@@ -131,31 +112,82 @@ oauth:
     docs_readonly:
       description: Read documents only.
       scopes:
-        - https://www.googleapis.com/auth/documents.readonly
+      - https://www.googleapis.com/auth/documents.readonly
     docs_edit:
       description: Create and edit Docs (typical editor grant).
       scopes:
-        - https://www.googleapis.com/auth/documents
+      - https://www.googleapis.com/auth/documents
   requirements:
     capabilities:
       documents_get:
         any_of:
-          - https://www.googleapis.com/auth/documents
-          - https://www.googleapis.com/auth/documents.readonly
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/documents
+        - https://www.googleapis.com/auth/documents.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/drive.file
       documents_create:
         any_of:
-          - https://www.googleapis.com/auth/documents
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/documents
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
       documents_batchUpdate:
         any_of:
-          - https://www.googleapis.com/auth/documents
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/drive
-
+        - https://www.googleapis.com/auth/documents
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive
 auth:
   scheme: bearer_token
   env: GOOGLE_DOCS_ACCESS_TOKEN
+values:
+  nv_document_document_id:
+    type: string
+    string_semantics: short
+  nv_document_title:
+    type: string
+    string_semantics: short
+  nv_document_revision_id:
+    type: string
+    string_semantics: short
+  nv_document_body:
+    type: json
+    description: Structured body content (StructuralElement list under body.content when present).
+  nv_document_headers:
+    type: json
+  nv_document_footers:
+    type: json
+  nv_document_footnotes:
+    type: json
+  nv_document_inline_objects:
+    type: json
+  nv_document_positioned_objects:
+    type: json
+  nv_document_lists:
+    type: json
+  nv_document_named_ranges:
+    type: json
+  nv_document_document_style:
+    type: json
+  nv_document_named_styles:
+    type: json
+  nv_document_suggestions_view_mode:
+    type: string
+    string_semantics: short
+  nv_document_tabs:
+    type: json
+  nv_document_replies:
+    type: json
+    description: Response replies from batchUpdate (write results and id mappings).
+  nv_document_write_control:
+    type: json
+  nv_documents_get_include_tabs_content:
+    type: boolean
+  nv_documents_get_suggestions_view_mode:
+    type: string
+    string_semantics: short
+  nv_documents_create_input:
+    type: json
+    description: Document resource body for POST /documents.
+  nv_documents_batch_update_input:
+    type: json
+    description: BatchUpdateDocumentRequest JSON (requests array and write control fields).

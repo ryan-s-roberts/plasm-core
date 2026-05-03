@@ -98,6 +98,92 @@ fn domain_projection_examples_is_default(v: &bool) -> bool {
     *v
 }
 
+fn index_map_is_empty_named_values(m: &IndexMap<String, NamedValueSchema>) -> bool {
+    m.is_empty()
+}
+
+/// Catalog-local key into [`CGS::values`] (`value_ref` in `domain.yaml`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ValueDomainKey(String);
+
+impl ValueDomainKey {
+    pub fn new(raw: impl Into<String>) -> Result<Self, String> {
+        let s = raw.into();
+        let t = s.trim();
+        if t.is_empty() {
+            return Err("value domain key cannot be empty".to_string());
+        }
+        Ok(Self(t.to_string()))
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for ValueDomainKey {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl From<ValueDomainKey> for String {
+    fn from(k: ValueDomainKey) -> Self {
+        k.0
+    }
+}
+
+/// How a field / parameter / array element obtains its **wire shape** (see [`CGS::values`]).
+///
+/// Authoring and interchange require every typed slot to name a registry entry; there is no
+/// inline `field_type` / `allowed_values` at use sites in `domain.yaml`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FieldValueKind {
+    /// Shape is defined exclusively under [`CGS::values`][`ValueDomainKey`].
+    Registry(ValueDomainKey),
+}
+
+impl Serialize for FieldValueKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            FieldValueKind::Registry(k) => k.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FieldValueKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let k = ValueDomainKey::deserialize(deserializer)?;
+        Ok(FieldValueKind::Registry(k))
+    }
+}
+
+impl FieldValueKind {
+    #[inline]
+    pub fn registry_key(&self) -> &ValueDomainKey {
+        match self {
+            FieldValueKind::Registry(k) => k,
+        }
+    }
+}
+
+/// Registry-backed slots ([`FieldValueKind::Registry`]) share a single canonical wire definition in [`CGS::values`].
+/// Prefer [`CGS::named_value_for_slot`] when reasoning about wire shape; duplicate `field_type` / `allowed_values`
+/// on [`FieldSchema`] / [`InputFieldSchema`] exist for serde/interchange and are checked by [`CGS::validate`].
+pub trait ValueDomainSlot {
+    fn value_domain_key(&self) -> &ValueDomainKey;
+}
+
 /// Convention for string-typed id_field values.
 ///
 /// Populated during CGS authoring (ideally by the extraction LLM).
@@ -174,6 +260,9 @@ pub enum AgentPresentation {
 /// Element type for [`FieldType::Array`] (domain `items:` / CGS interchange).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArrayItemsSchema {
+    /// Element shape is resolved from [`CGS::values`] (`items.value_ref` in `domain.yaml`).
+    #[serde(rename = "value_ref")]
+    pub kind: FieldValueKind,
     #[serde(with = "serde_yaml::with::singleton_map")]
     pub field_type: FieldType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,10 +271,39 @@ pub struct ArrayItemsSchema {
     pub allowed_values: Option<Vec<String>>,
 }
 
+/// Catalog-local reusable **value domain** (`values:` in `domain.yaml`).
+///
+/// Internal registry identity is the map key; this struct holds the resolved scalar/array-element
+/// shape shared by `value_ref` use sites on entity fields and capability parameters.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NamedValueSchema {
+    /// What this value space represents (authoring / tooling; not agent DOMAIN vocabulary).
+    #[serde(default)]
+    pub description: String,
+    #[serde(with = "serde_yaml::with::singleton_map")]
+    pub field_type: FieldType,
+    /// Required when [`Self::field_type`] is [`FieldType::Date`]: wire shape for predicates / inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_format: Option<ValueWireFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_values: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub string_semantics: Option<StringSemantics>,
+    /// When [`Self::field_type`] is [`FieldType::Array`], element typing for the named array domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub array_items: Option<ArrayItemsSchema>,
+}
+
 /// Definition of a single field within a resource.
+///
+/// `field_type`, `allowed_values`, and related keys mirror [`CGS::values`][`NamedValueSchema`] for interchange;
+/// use [`CGS::named_value_for_slot`] for the canonical row when enforcing agreement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSchema {
     pub name: EntityFieldName,
+    /// Wire shape is defined under [`CGS::values`]; YAML key is `value_ref`.
+    #[serde(rename = "value_ref")]
+    pub kind: FieldValueKind,
     /// What this field represents.
     #[serde(default)]
     pub description: String,
@@ -692,6 +810,9 @@ pub enum InputType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputFieldSchema {
     pub name: String,
+    /// Wire shape is defined under [`CGS::values`]; YAML key is `value_ref`.
+    #[serde(rename = "value_ref")]
+    pub kind: FieldValueKind,
     #[serde(with = "serde_yaml::with::singleton_map")]
     pub field_type: FieldType,
     /// Required when `field_type` is [`FieldType::Date`]: wire shape for **input** (query params /
@@ -726,6 +847,27 @@ fn is_default_role(r: &Option<ParameterRole>) -> bool {
 impl InputFieldSchema {
     pub fn effective_string_semantics(&self) -> StringSemantics {
         self.string_semantics.unwrap_or(StringSemantics::Short)
+    }
+}
+
+impl ValueDomainSlot for FieldSchema {
+    #[inline]
+    fn value_domain_key(&self) -> &ValueDomainKey {
+        self.kind.registry_key()
+    }
+}
+
+impl ValueDomainSlot for InputFieldSchema {
+    #[inline]
+    fn value_domain_key(&self) -> &ValueDomainKey {
+        self.kind.registry_key()
+    }
+}
+
+impl ValueDomainSlot for ArrayItemsSchema {
+    #[inline]
+    fn value_domain_key(&self) -> &ValueDomainKey {
+        self.kind.registry_key()
     }
 }
 
@@ -1112,6 +1254,9 @@ pub const DEFAULT_HTTP_BACKEND: &str = "http://localhost:1080";
 pub struct CGS {
     pub entities: IndexMap<EntityName, EntityDef>,
     pub capabilities: IndexMap<CapabilityName, CapabilitySchema>,
+    /// Reusable value domains (`values:`), catalog-local (not merged across federation).
+    #[serde(default, skip_serializing_if = "index_map_is_empty_named_values")]
+    pub values: IndexMap<String, NamedValueSchema>,
     /// Default HTTP(S) origin for CML execution against this catalog (required in interchange).
     pub http_backend: String,
     /// Optional authentication scheme for all requests made against this schema.
@@ -1147,6 +1292,7 @@ impl Clone for CGS {
         Self {
             entities: self.entities.clone(),
             capabilities: self.capabilities.clone(),
+            values: self.values.clone(),
             http_backend: self.http_backend.clone(),
             auth: self.auth.clone(),
             oauth: self.oauth.clone(),
@@ -1162,6 +1308,7 @@ impl PartialEq for CGS {
     fn eq(&self, other: &Self) -> bool {
         self.entities == other.entities
             && self.capabilities == other.capabilities
+            && self.values == other.values
             && self.http_backend == other.http_backend
             && self.auth == other.auth
             && self.oauth == other.oauth
@@ -1289,6 +1436,7 @@ impl CGS {
         Self {
             entities: IndexMap::new(),
             capabilities: IndexMap::new(),
+            values: IndexMap::new(),
             http_backend: DEFAULT_HTTP_BACKEND.to_string(),
             auth: None,
             oauth: None,
@@ -1297,6 +1445,23 @@ impl CGS {
             capability_index: new_capability_index_lock(),
             capability_names_by_domain: new_capability_names_by_domain_lock(),
         }
+    }
+
+    /// Canonical [`NamedValueSchema`] row for a registry-backed slot (`FieldSchema`, [`InputFieldSchema`], [`ArrayItemsSchema`]).
+    ///
+    /// Duplicate `field_type` / `allowed_values` on those structs are a serde/cache mirror; this lookup is the single
+    /// registry source of truth (mirrors are enforced by [`Self::validate`]).
+    pub fn named_value_for_slot(
+        &self,
+        slot: &impl ValueDomainSlot,
+    ) -> Result<&NamedValueSchema, SchemaError> {
+        let k = slot.value_domain_key();
+        self.values
+            .get(k.as_str())
+            .ok_or_else(|| SchemaError::UnknownValueDomain {
+                key: k.as_str().to_string(),
+                context: "named_value_for_slot".to_string(),
+            })
     }
 
     /// Capability names registered on each domain entity, in schema declaration order.
@@ -1686,6 +1851,8 @@ impl CGS {
 
         self.validate_expression_aliases()?;
         self.validate_temporal_value_formats()?;
+        self.validate_closed_value_domain_refs()?;
+        self.validate_registry_denormalization()?;
         self.validate_pipeline_segment_disjointness()?;
 
         // At most one parameterless (no required params at all) query/search per entity.
@@ -1900,6 +2067,235 @@ impl CGS {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Every field / object-input slot / array element names a [`CGS::values`] entry (`value_ref`).
+    fn validate_closed_value_domain_refs(&self) -> Result<(), SchemaError> {
+        fn check_array_items(
+            cgs: &CGS,
+            items: &ArrayItemsSchema,
+            ctx: &str,
+        ) -> Result<(), SchemaError> {
+            let k = items.kind.registry_key();
+            if !cgs.values.contains_key(k.as_str()) {
+                return Err(SchemaError::UnknownValueDomain {
+                    key: k.as_str().to_string(),
+                    context: ctx.to_string(),
+                });
+            }
+            Ok(())
+        }
+
+        for (entity_name, ent) in &self.entities {
+            for (field_name, f) in &ent.fields {
+                let k = f.kind.registry_key();
+                if !self.values.contains_key(k.as_str()) {
+                    return Err(SchemaError::UnknownValueDomain {
+                        key: k.as_str().to_string(),
+                        context: format!("entity '{entity_name}' field '{field_name}'"),
+                    });
+                }
+                if let Some(ref ai) = f.array_items {
+                    check_array_items(
+                        self,
+                        ai,
+                        &format!("entity '{entity_name}' field '{field_name}'"),
+                    )?;
+                }
+            }
+        }
+
+        for (cap_name, cap) in &self.capabilities {
+            if let Some(ref is) = cap.input_schema {
+                if let InputType::Object { fields, .. } = &is.input_type {
+                    for p in fields {
+                        let k = p.kind.registry_key();
+                        if !self.values.contains_key(k.as_str()) {
+                            return Err(SchemaError::UnknownValueDomain {
+                                key: k.as_str().to_string(),
+                                context: format!(
+                                    "capability '{}' parameter '{}'",
+                                    cap_name, p.name
+                                ),
+                            });
+                        }
+                        if let Some(ref ai) = p.array_items {
+                            check_array_items(
+                                self,
+                                ai,
+                                &format!("capability '{cap_name}' parameter '{}' items", p.name),
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (vk, nv) in &self.values {
+            if let Some(ref ai) = nv.array_items {
+                check_array_items(self, ai, &format!("values['{vk}']"))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Ensures denormalized `field_type` / `allowed_values` / … on entity fields and capability inputs
+    /// match the canonical [`NamedValueSchema`] in [`Self::values`] (catches hand-edited interchange drift).
+    fn validate_registry_denormalization(&self) -> Result<(), SchemaError> {
+        fn array_items_agree_with_values(
+            cgs: &CGS,
+            items: &ArrayItemsSchema,
+            ctx: &str,
+        ) -> Result<(), SchemaError> {
+            let key = items.value_domain_key().as_str();
+            let nv = cgs
+                .values
+                .get(key)
+                .ok_or_else(|| SchemaError::UnknownValueDomain {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                })?;
+            if items.field_type != nv.field_type {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: format!(
+                        "array items field_type {:?} vs values {:?}",
+                        items.field_type, nv.field_type
+                    ),
+                });
+            }
+            if items.value_format != nv.value_format {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: "array items value_format vs values mismatch".to_string(),
+                });
+            }
+            if items.allowed_values != nv.allowed_values {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: "array items allowed_values vs values mismatch".to_string(),
+                });
+            }
+            Ok(())
+        }
+
+        fn slot_agrees_with_values(
+            cgs: &CGS,
+            key: &str,
+            ctx: &str,
+            nv: &NamedValueSchema,
+            field_type: &FieldType,
+            value_format: &Option<ValueWireFormat>,
+            allowed_values: &Option<Vec<String>>,
+            string_semantics: Option<StringSemantics>,
+            array_items: &Option<ArrayItemsSchema>,
+        ) -> Result<(), SchemaError> {
+            if field_type != &nv.field_type {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: format!(
+                        "field_type {:?} on slot vs {:?} in values",
+                        field_type, nv.field_type
+                    ),
+                });
+            }
+            if value_format != &nv.value_format {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: "value_format vs values mismatch".to_string(),
+                });
+            }
+            if allowed_values != &nv.allowed_values {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: "allowed_values vs values mismatch".to_string(),
+                });
+            }
+            if string_semantics != nv.string_semantics {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: "string_semantics vs values mismatch".to_string(),
+                });
+            }
+            if nv.array_items.is_some() != array_items.is_some() {
+                return Err(SchemaError::RegistryDenormalizationMismatch {
+                    key: key.to_string(),
+                    context: ctx.to_string(),
+                    detail: "array_items presence on slot vs values mismatch".to_string(),
+                });
+            }
+            if let Some(a) = array_items {
+                array_items_agree_with_values(cgs, a, ctx)?;
+            }
+            Ok(())
+        }
+
+        for (entity_name, ent) in &self.entities {
+            for (field_name, f) in &ent.fields {
+                let key = f.kind.registry_key().as_str();
+                let nv = self
+                    .values
+                    .get(key)
+                    .ok_or_else(|| SchemaError::UnknownValueDomain {
+                        key: key.to_string(),
+                        context: format!("entity '{entity_name}' field '{field_name}'"),
+                    })?;
+                slot_agrees_with_values(
+                    self,
+                    key,
+                    &format!("entity '{entity_name}' field '{field_name}'"),
+                    nv,
+                    &f.field_type,
+                    &f.value_format,
+                    &f.allowed_values,
+                    f.string_semantics,
+                    &f.array_items,
+                )?;
+            }
+        }
+
+        for (cap_name, cap) in &self.capabilities {
+            if let Some(ref is) = cap.input_schema {
+                if let InputType::Object { fields, .. } = &is.input_type {
+                    for p in fields {
+                        let key = p.kind.registry_key().as_str();
+                        let nv = self.values.get(key).ok_or_else(|| {
+                            SchemaError::UnknownValueDomain {
+                                key: key.to_string(),
+                                context: format!("capability '{cap_name}' parameter '{}'", p.name),
+                            }
+                        })?;
+                        slot_agrees_with_values(
+                            self,
+                            key,
+                            &format!("capability '{cap_name}' parameter '{}'", p.name),
+                            nv,
+                            &p.field_type,
+                            &p.value_format,
+                            &p.allowed_values,
+                            p.string_semantics,
+                            &p.array_items,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        for (vk, nv) in &self.values {
+            if let Some(ref ai) = nv.array_items {
+                array_items_agree_with_values(self, ai, &format!("values['{vk}'].array_items"))?;
+            }
+        }
+
         Ok(())
     }
 
@@ -2595,6 +2991,69 @@ impl CapabilitySchema {
 impl Default for CGS {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Build entity fields / capability parameters from [`CGS::values`] so wire shape is not duplicated by hand.
+#[cfg(test)]
+pub mod registry_test_util {
+    use super::{
+        FieldSchema, FieldValueKind, InputFieldSchema, NamedValueSchema, ValueDomainKey, CGS,
+    };
+    use crate::identity::EntityFieldName;
+
+    fn nv_or_panic<'a>(cgs: &'a CGS, key: &str) -> &'a NamedValueSchema {
+        cgs.values
+            .get(key)
+            .unwrap_or_else(|| panic!("registry_test_util: missing values[{key}]"))
+    }
+
+    pub fn entity_field_from_values(
+        cgs: &CGS,
+        values_key: &str,
+        wire_name: &str,
+        required: bool,
+        description: impl Into<String>,
+    ) -> FieldSchema {
+        let nv = nv_or_panic(cgs, values_key);
+        FieldSchema {
+            name: EntityFieldName::from(wire_name.to_string()),
+            kind: FieldValueKind::Registry(ValueDomainKey::new(values_key).expect("values key")),
+            description: description.into(),
+            field_type: nv.field_type.clone(),
+            value_format: nv.value_format.clone(),
+            allowed_values: nv.allowed_values.clone(),
+            required,
+            array_items: nv.array_items.clone(),
+            string_semantics: nv.string_semantics,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+        }
+    }
+
+    pub fn object_input_field_from_values(
+        cgs: &CGS,
+        values_key: &str,
+        param_name: &str,
+        required: bool,
+    ) -> InputFieldSchema {
+        let nv = nv_or_panic(cgs, values_key);
+        InputFieldSchema {
+            name: param_name.to_string(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new(values_key).expect("values key")),
+            field_type: nv.field_type.clone(),
+            value_format: nv.value_format.clone(),
+            required,
+            allowed_values: nv.allowed_values.clone(),
+            array_items: nv.array_items.clone(),
+            string_semantics: nv.string_semantics,
+            description: None,
+            default: None,
+            role: None,
+        }
     }
 }
 

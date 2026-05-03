@@ -215,13 +215,60 @@ pub fn strip_cross_entity_comparisons(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::registry_test_util;
     use crate::{
-        CapabilityMapping, CapabilitySchema, FieldSchema, InputFieldSchema, InputSchema, InputType,
-        InputValidation, ResourceSchema,
+        CapabilityMapping, CapabilitySchema, InputSchema, InputType, InputValidation,
+        NamedValueSchema, ResourceSchema,
     };
 
     fn petstore_cgs() -> CGS {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fx_int".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Integer,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "fx_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "fx_pet_status".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "fx_ref_pet".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: "Pet".into(),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
 
         cgs.add_resource(ResourceSchema {
             name: "Pet".into(),
@@ -230,51 +277,15 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "name".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "status".into(),
-                    description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "fx_int", "id", true, ""),
+                registry_test_util::entity_field_from_values(&cgs, "fx_str", "name", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "fx_pet_status",
+                    "status",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -293,53 +304,9 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "petId".into(),
-                    description: String::new(),
-                    field_type: FieldType::EntityRef {
-                        target: "Pet".into(),
-                    },
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "quantity".into(),
-                    description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "fx_int", "id", true, ""),
+                registry_test_util::entity_field_from_values(&cgs, "fx_ref_pet", "petId", true, ""),
+                registry_test_util::entity_field_from_values(&cgs, "fx_int", "quantity", false, ""),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -361,18 +328,12 @@ mod tests {
             },
             input_schema: Some(InputSchema {
                 input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
-                        name: "status".into(),
-                        field_type: FieldType::Select,
-                        value_format: None,
-                        required: false,
-                        allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-                        array_items: None,
-                        string_semantics: None,
-                        description: None,
-                        default: None,
-                        role: None,
-                }],
+                    fields: vec![registry_test_util::object_input_field_from_values(
+                        &cgs,
+                        "fx_pet_status",
+                        "status",
+                        false,
+                    )],
                     additional_fields: true,
                 },
                 validation: InputValidation::default(),
@@ -395,18 +356,12 @@ mod tests {
             },
             input_schema: Some(InputSchema {
                 input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
-                        name: "petId".into(),
-                        field_type: FieldType::EntityRef { target: "Pet".into() },
-                        value_format: None,
-                        required: false,
-                        allowed_values: None,
-                        array_items: None,
-                        string_semantics: None,
-                        description: None,
-                        default: None,
-                        role: None,
-                }],
+                    fields: vec![registry_test_util::object_input_field_from_values(
+                        &cgs,
+                        "fx_ref_pet",
+                        "petId",
+                        false,
+                    )],
                     additional_fields: true,
                 },
                 validation: InputValidation::default(),

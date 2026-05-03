@@ -1,65 +1,40 @@
 version: 1
-
 http_backend: http://www.omdbapi.com
-
 entities:
   Movie:
     id_field: imdbID
     description: A movie, series, or episode from the OMDb database
     fields:
       imdbID:
-        description: IMDb identifier (e.g. tt1285016)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_movie_imdb_id
       Title:
-        description: Official title of the movie or series
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_movie_title
       Year:
-        description: Release year or year range for series
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_movie_year
       Type:
-        description: 'Media type: movie, series, or episode'
-        field_type: select
         required: false
-        allowed_values:
-        - movie
-        - series
-        - episode
+        value_ref: nv_movie_type
       Rated:
-        description: Content rating (e.g. PG-13, R)
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_movie_rated
       Genre:
-        description: Comma-separated list of genres
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_movie_genre
       Director:
-        description: Name of the director(s)
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_movie_director
       Plot:
-        description: Short or full plot summary
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_movie_plot
       imdbRating:
-        description: Average user rating on IMDb (0-10)
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_movie_imdb_rating
       Poster:
-        description: URL of the movie poster image
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_movie_poster
 capabilities:
   movie_get:
     description: Fetch full movie details by IMDb ID
@@ -82,22 +57,16 @@ capabilities:
     entity: Movie
     parameters:
     - name: s
-      type: string
+      value_ref: nv_movie_search_s
       required: true
       role: search
-      string_semantics: short
     - name: y
-      type: string
+      value_ref: nv_movie_search_y
       required: false
       role: filter
-      string_semantics: short
     - name: type
-      type: select
+      value_ref: nv_movie_search_type
       required: false
-      allowed_values:
-      - movie
-      - series
-      - episode
       role: filter
   movie_get_by_title:
     description: Look up a single movie by exact title match
@@ -105,23 +74,85 @@ capabilities:
     entity: Movie
     parameters:
     - name: t
-      type: string
+      value_ref: nv_movie_get_by_title_t
       required: true
       role: search
-      string_semantics: short
     - name: y
-      type: string
+      value_ref: nv_movie_get_by_title_y
       required: false
       role: filter
-      string_semantics: short
     - name: plot
-      type: select
+      value_ref: nv_movie_get_by_title_plot
       required: false
-      allowed_values:
-      - short
-      - full
       role: response_control
 auth:
   scheme: api_key_query
   param: apikey
   env: OMDB_API_KEY
+values:
+  nv_movie_imdb_id:
+    type: string
+    string_semantics: short
+    description: IMDb identifier (e.g. tt1285016)
+  nv_movie_title:
+    type: string
+    string_semantics: short
+    description: Official title of the movie or series
+  nv_movie_year:
+    type: string
+    string_semantics: short
+    description: Release year or year range for series
+  nv_movie_type:
+    type: select
+    allowed_values:
+    - movie
+    - series
+    - episode
+    description: 'Media type: movie, series, or episode'
+  nv_movie_rated:
+    type: string
+    string_semantics: short
+    description: Content rating (e.g. PG-13, R)
+  nv_movie_genre:
+    type: string
+    string_semantics: short
+    description: Comma-separated list of genres
+  nv_movie_director:
+    type: string
+    string_semantics: short
+    description: Name of the director(s)
+  nv_movie_plot:
+    type: string
+    string_semantics: markdown
+    description: Short or full plot summary
+  nv_movie_imdb_rating:
+    type: string
+    string_semantics: short
+    description: Average user rating on IMDb (0-10)
+  nv_movie_poster:
+    type: string
+    string_semantics: short
+    description: URL of the movie poster image
+  nv_movie_search_s:
+    type: string
+    string_semantics: short
+  nv_movie_search_y:
+    type: string
+    string_semantics: short
+  nv_movie_search_type:
+    type: select
+    allowed_values:
+    - movie
+    - series
+    - episode
+  nv_movie_get_by_title_t:
+    type: string
+    string_semantics: short
+  nv_movie_get_by_title_y:
+    type: string
+    string_semantics: short
+  nv_movie_get_by_title_plot:
+    type: select
+    allowed_values:
+    - short
+    - full

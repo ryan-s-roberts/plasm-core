@@ -1,35 +1,38 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: http://127.0.0.1:9
-
 entities:
   Note:
     id_field: id
     description: Synthesized note (kitchen-sink e2e; stub HTTP).
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_note_id
       title:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_note_title
     relations: {}
-
 capabilities:
   note_create:
     description: Create a note (POST, body JSON).
     kind: create
     entity: Note
     parameters:
-      - name: title
-        type: string
-        required: true
-        string_semantics: short
+    - name: title
+      value_ref: nv_note_create_title
+      required: true
     provides:
-      - id
-      - title
+    - id
+    - title
+values:
+  nv_note_id:
+    type: string
+    string_semantics: short
+  nv_note_title:
+    type: string
+    string_semantics: short
+  nv_note_create_title:
+    type: string
+    string_semantics: short

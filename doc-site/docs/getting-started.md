@@ -9,10 +9,10 @@
 ## Step 1 — Validate a catalog
 
 ```bash
-cargo run -p plasm-cli -- schema validate apis/dnd5e/domain.yaml
+cargo run -p plasm-cli --bin plasm -- schema validate apis/dnd5e
 ```
 
-**Verify:** Exit code `0` and no validation errors. Swap `dnd5e` for another catalog under `apis/<name>/` when exploring.
+**Verify:** Exit code `0` and no validation errors. The argument is the **catalog directory** (`apis/<name>/`), not `domain.yaml` alone—both `domain.yaml` and `mappings.yaml` must load together. Swap `dnd5e` for another catalog when exploring. Split catalogs use **`values:`** + **`value_ref`** on fields and parameters—see [Authoring reference — Value domains](authoring/reference.md#value-domains-values-and-value_ref).
 
 ---
 

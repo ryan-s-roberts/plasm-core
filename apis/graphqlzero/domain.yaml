@@ -1,40 +1,30 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://graphqlzero.almansi.network
-
 entities:
   User:
     id_field: id
     description: A user account (GraphQLZero / JSONPlaceholder).
     fields:
       id:
-        field_type: string
         required: true
-        description: User identifier.
-        string_semantics: short
+        value_ref: nv_user_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_name
       username:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_username
       email:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_email
       phone:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_phone
       website:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_website
     relations:
       posts:
         target: Post
@@ -53,18 +43,14 @@ entities:
     description: A blog post.
     fields:
       id:
-        field_type: string
         required: true
-        description: Post identifier.
-        string_semantics: short
+        value_ref: nv_post_id
       title:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_post_title
       body:
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_post_body
     relations:
       user:
         target: User
@@ -79,21 +65,17 @@ entities:
     description: A comment on a post.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_comment_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comment_name
       email:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comment_email
       body:
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_comment_body
     relations:
       post:
         target: Post
@@ -104,16 +86,14 @@ entities:
     description: A todo item for a user.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_todo_id
       title:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_todo_title
       completed:
-        field_type: boolean
         required: false
+        value_ref: nv_todo_completed
     relations:
       user:
         target: User
@@ -124,13 +104,11 @@ entities:
     description: A photo album owned by a user.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_album_id
       title:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_album_title
     relations:
       user:
         target: User
@@ -145,21 +123,17 @@ entities:
     description: A photo in an album.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_photo_id
       title:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_photo_title
       url:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_photo_url
       thumbnailUrl:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_photo_thumbnail_url
     relations:
       album:
         target: Album
@@ -278,13 +252,11 @@ capabilities:
     - body
     parameters:
     - name: title
-      type: string
+      value_ref: nv_post_create_title
       required: true
-      string_semantics: short
     - name: body
-      type: string
+      value_ref: nv_post_create_body
       required: true
-      string_semantics: markdown
   post_update:
     kind: update
     entity: Post
@@ -295,14 +267,92 @@ capabilities:
     - body
     parameters:
     - name: title
-      type: string
+      value_ref: nv_post_update_title
       required: false
-      string_semantics: short
     - name: body
-      type: string
+      value_ref: nv_post_update_body
       required: false
-      string_semantics: markdown
   post_delete:
     kind: delete
     entity: Post
     description: Delete a post by id (shared demo dataset).
+values:
+  nv_user_id:
+    type: string
+    string_semantics: short
+    description: User identifier.
+  nv_user_name:
+    type: string
+    string_semantics: short
+  nv_user_username:
+    type: string
+    string_semantics: short
+  nv_user_email:
+    type: string
+    string_semantics: short
+  nv_user_phone:
+    type: string
+    string_semantics: short
+  nv_user_website:
+    type: string
+    string_semantics: short
+  nv_post_id:
+    type: string
+    string_semantics: short
+    description: Post identifier.
+  nv_post_title:
+    type: string
+    string_semantics: short
+  nv_post_body:
+    type: string
+    string_semantics: markdown
+  nv_comment_id:
+    type: string
+    string_semantics: short
+  nv_comment_name:
+    type: string
+    string_semantics: short
+  nv_comment_email:
+    type: string
+    string_semantics: short
+  nv_comment_body:
+    type: string
+    string_semantics: markdown
+  nv_todo_id:
+    type: string
+    string_semantics: short
+  nv_todo_title:
+    type: string
+    string_semantics: short
+  nv_todo_completed:
+    type: boolean
+  nv_album_id:
+    type: string
+    string_semantics: short
+  nv_album_title:
+    type: string
+    string_semantics: short
+  nv_photo_id:
+    type: string
+    string_semantics: short
+  nv_photo_title:
+    type: string
+    string_semantics: short
+  nv_photo_url:
+    type: string
+    string_semantics: short
+  nv_photo_thumbnail_url:
+    type: string
+    string_semantics: short
+  nv_post_create_title:
+    type: string
+    string_semantics: short
+  nv_post_create_body:
+    type: string
+    string_semantics: markdown
+  nv_post_update_title:
+    type: string
+    string_semantics: short
+  nv_post_update_body:
+    type: string
+    string_semantics: markdown

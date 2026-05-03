@@ -20,7 +20,7 @@ Repository: **[plasm-core](https://github.com/ryan-s-roberts/plasm-core)**.
 
 ## How the pieces stack (one minute)
 
-1. **Graph (CGS)** — Entities, fields, relations, capabilities: *what the domain is*.
+1. **Graph (CGS)** — Entities, fields, relations, capabilities: *what the domain is* (split catalogs: field/param **`value_ref`** into **`values:`** semantic slots).
 2. **Mappings (CML)** — Per-capability templates: *how calls hit the wire*.
 3. **Runtime** — Executes capabilities, caches rows, handles paging and effects.
 4. **Plasm language** — Path expressions and programs agents emit against a live **DOMAIN** table (`e#` / `m#` / `p#`).

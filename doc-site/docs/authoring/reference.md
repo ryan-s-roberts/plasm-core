@@ -2,7 +2,7 @@
 
 ## Authoring vs determinism
 
-**Writing `domain.yaml` is not a deterministic process.** OpenAPI (and friends) do not uniquely define a CGS: entity boundaries, capability grouping, relations, parameter roles, and `abstract` embed-only types are **semantic choices**. Tools may assist (e.g. an LLM reading the spec), but there is no canonical auto-generator in-repo and no guarantee that two valid domain models for the same API are equivalent.
+**Writing `domain.yaml` is not a deterministic process.** OpenAPI (and friends) do not uniquely define a CGS: entity boundaries, capability grouping, relations, parameter roles, `abstract` embed-only types, and **which `values:` keys exist** (including whether unrelated fields share one `value_ref` vs split into distinct slots) are **semantic choices**. Tools may assist (e.g. an LLM reading the spec), but there is no canonical auto-generator in-repo and no guarantee that two valid domain models for the same API are equivalent.
 
 **After** the YAML is written, **validation and compilation** are deterministic: schema checks, CML parse/compile, and runtime request shaping are mechanical consequences of what you authored.
 
@@ -14,7 +14,8 @@
 | **`output.type: none`** | Removed — actions need **`provides:`** and/or **`output: { type: side_effect, description: … }`**. |
 | **CGS as `.json`** | **Not loaded** — `load_schema` rejects JSON paths; use a directory with **`domain.yaml` + `mappings.yaml`**, a combined authoring **`.yaml`**, or **`.cgs.yaml`** interchange. |
 | **`apis/<api>/eval/coverage.yaml` `exclude:`** | **Not implemented** — only **`required_extra`** exists in `plasm-eval` coverage overrides. |
-| **`string` + `string_semantics: blob`** | **Legacy** — the loader normalizes this to **`field_type: blob`** and clears blob string semantics. Prefer authoring **`field_type: blob`** directly. |
+| **`string` + `string_semantics: blob`** | **Legacy** — the loader normalizes this to **`blob`** in the resolved CGS and clears blob string semantics. Prefer a **`values:`** row with **`type: blob`**. |
+| **Inline `field_type:` / `type:` on entity `fields:` or on `parameters:` rows** | **Removed from split `domain.yaml` authoring** — wire shapes live only under top-level **`values:`**; slots use **`value_ref:`**. Exception: **`input_schema.input_type.fields`** remain full **`InputFieldSchema`** rows (**`value_ref` + `field_type`** mirrors); they must agree with **`values[value_ref]`** (see [Value domains](#value-domains-values-and-value_ref)). |
 
 ## How CGS, CML, and runtime fit together
 
@@ -37,26 +38,55 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 - Increment `version` whenever domain semantics change (entities, fields, relations, capability signatures, parameter typing/roles, auth contract, output/provides behavior).
 - Keep version unchanged only for non-semantic text edits (comments/prose) that do not affect runtime behavior, prompts, compile/decode, or dispatch.
 
+### Value domains (`values:`) and `value_ref`
+
+Split **`domain.yaml`** declares a catalog-local registry of **named semantic slots** under top-level **`values:`** (stable keys, usually `snake_case`). Each row carries the **wire** `type:` and gloss-related keys—the same vocabulary as the former inline `field_type` / param `type`—but the **key** is a semantic identity for this catalog, not “dedupe by primitive wire shape alone”:
+
+- **`type:`** — `string`, `integer`, `number`, `boolean`, `select`, `multi_select`, `date`, `array`, `entity_ref`, **`blob`**, `uuid`.
+- Type-specific keys on the **value row**: `target` (`entity_ref`), `allowed_values` (`select` / `multi_select`; multi_select must be non-empty), `value_format` (`date`), `string_semantics` (`string`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
+
+**Entity `fields:`** and **`capabilities.*.parameters:`** list entries declare **only** how that slot uses a shape:
+
+- **`value_ref: <key>`** — required; must exist in **`values:`**.
+- **`required`**, **`description`**, **`path`**, **`derive`** — on fields (and parameter-specific keys: **`role`**, **`description`** on parameters).
+- Presentation / attachment hints (**`agent_presentation`**, **`mime_type_hint`**, **`attachment_media`**) live on the **field slot** when they apply (not duplicated on every reuse of the same value key).
+
+**Semantic slots (authoring judgement):** A **`values:`** key is not “the type `string`” or “the type `integer`” in the abstract—it is a **catalog-local semantic identity**: what DOMAIN gloss, `string_semantics`, `description`, and validation **say** that value *means* in this API. Two different columns can share the same on-wire JSON type (`string`, RFC3339 `date`, …) yet must remain **different keys** when their **meaning** differs (e.g. `owner` vs `repo` vs `html_url`). **Sharing** one key across multiple `value_ref` sites is the same class of decision as **relation cardinality** or **whether two endpoints are one capability**: there is **no** deterministic rule from the wire alone—authors choose when two sites are intentionally **the same domain value space** (one enum, one id space, one taxonomy, aligned gloss). Prefer **distinct keys per field/param by default**; merge only when that identity story is obvious and descriptions stay compatible.
+
+**Sharing `values` keys:** Only point multiple slots at the **same** `values` key when they are intentionally the same domain concept (e.g. one shared enum, or the same `entity_ref` target meaning the same id space) **and** gloss text is compatible. **Never** merge unrelated strings, integers, or dates solely because the wire type matches — use distinct keys per slot (`nv_<entity>_<field>`, `nv_<capability>_<param>`) so `description` / `string_semantics` stay truthful.
+
+**`input_schema` (create / update / action body):** YAML uses full **`InputFieldSchema`** interchange: each object field has **`name`**, **`value_ref`**, **`field_type:`** (singleton map), plus mirrors (`value_format`, `allowed_values`, `array_items`, `string_semantics`, …). Those mirrors must match **`CGS::values[value_ref]`** — `CGS::validate` / registry denormalization rejects drift. Prefer defining the shape once under **`values:`** and copying the mirrored keys from that row.
+
+Combined **`.cgs.yaml`** interchange may still show denormalized **`field_type`** on entity fields for serde round-trips; **authoring** new split domains should use **`values:` + `value_ref`**.
+
+**`description` on `values:` rows:** Optional prose for tooling and DOMAIN gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot’s `description` is empty, [`field_schema_from_domain_field`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/loader.rs) uses the named value’s description as [`FieldSchema.description`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
+
 ### Entities
 
 An entity is a typed domain object with a primary key, fields, and relations.
 
 ```yaml
+values:
+  <value_key>:
+    type: <scalar type>       # same vocabulary as Field Types below
+    target: <EntityName>      # when type is entity_ref
+    allowed_values: [...]     # select / multi_select (multi_select: non-empty)
+    value_format: <scalar or { temporal: ... }>   # required when type is date
+    string_semantics: <...>   # on string rows — prompts / summaries
+    items:
+      value_ref: <element_value_key>   # when type is array
+
 entities:
   <EntityName>:               # PascalCase
     id_field: <field_name>    # logical primary key for refs / CLI; must exist in fields unless id_from is set
     id_from: <path>           # optional — when list/detail JSON rows have no top-level id, take identity from nested keys
     fields:
       <field_name>:
-        field_type: <type>    # see Field Types below
+        value_ref: <value_key>
         required: <bool>      # default false
-        value_format: <scalar or { temporal: ... }>  # required when field_type is date (see ValueWireFormat)
-        target: <EntityName>  # required when field_type is entity_ref
-        allowed_values:       # required for select/multi_select (multi_select must be non-empty)
-          - value1
-          - value2
-        items:                 # required when field_type is array — element typing (see Array element typing below)
-          type: string
+        path: ...             # optional wire path (see below)
+        derive: ...           # optional
+        description: "..."  # optional
     relations:
       <relation_name>:
         target: <EntityName>  # must be a defined entity
@@ -80,7 +110,7 @@ entities:
 
 ### `path` and `derive` (wire response shaping)
 
-By default, each field is read from a **top-level JSON key** matching the field name on the decoded row. Override the location with **`path`** in `domain.yaml` (loads as [`FieldSchema.wire_path`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs)): either a dotted string (`owner.login`) or a YAML list of object keys (`[payload, headers]`).
+By default, each field is read from a **top-level JSON key** matching the field name on the decoded row. Override the location with **`path`** on the **field slot** (next to **`value_ref`**) in `domain.yaml` (loads as [`FieldSchema.wire_path`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs)): either a dotted string (`owner.login`) or a YAML list of object keys (`[payload, headers]`).
 
 **`derive`** runs on the extracted JSON value **before** optional scalar [`Transform`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-compile/src/decoder.rs) steps. Rules ([`FieldDeriveRule`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs), `type` tag, `snake_case`):
 
@@ -94,11 +124,13 @@ By default, each field is read from a **top-level JSON key** matching the field 
 
 **Other `apis/*` adopters:** prefer `name_value_array_lookup` wherever a vendor exposes metadata as an array of small records (tags, headers, key/value rows). This repository’s **Gmail** CGS uses it for message headers; AWS/GCP-style tag arrays are a natural next candidate when those surfaces are modeled.
 
-**CML HTTP `body` (beyond `object` / `var`):** the CML expression enum includes vendor-specific builders. Example: **`gmail_rfc5322_send_body`** evaluates to the JSON body for Gmail `users.messages.send` (`raw` plus optional `threadId`) from CML env keys `from`, `to`, `subject`, `plainBody`, and optional `threadId`, `inReplyTo`, `references` — see [`apis/gmail/mappings.yaml`](https://github.com/ryan-s-roberts/plasm-core/blob/main/apis/gmail/mappings.yaml) `message_send_simple` and [`gmail_send_body.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/gmail_send_body.rs). **`gmail_rfc5322_reply_send_body`** is the same wire shape but derives defaults from preflight **`parent_*`** keys (see **`invoke_preflight`** on [`CapabilitySchema`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs) and Gmail **`message_reply`**).
+**CML HTTP `body` (beyond `object` / `var`):** the CML expression enum includes vendor-specific builders. Example: **`gmail_rfc5322_send_body`** evaluates to the JSON body for Gmail `users.messages.send` (`raw` plus optional `threadId`) from CML env keys `from`, `to`, `subject`, `plainBody`, and optional `threadId`, `inReplyTo`, `references` — see [`apis/gmail/mappings.yaml`](https://github.com/ryan-s-roberts/plasm-core/blob/main/apis/gmail/mappings.yaml) `message_send_simple` and [`plasm-oss/crates/plasm-cml/src/gmail_send_body.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/gmail_send_body.rs). **`gmail_rfc5322_reply_send_body`** is the same wire shape but derives defaults from preflight **`parent_*`** keys (see **`invoke_preflight`** on [`CapabilitySchema`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs) and Gmail **`message_reply`**).
 
 **`description` on entities and capabilities:** Optional but recommended when it helps agents and humans. Write **short domain prose**—what the thing *is* or what the operation *means* to a user or integrator. Do **not** paste HTTP methods, URL paths, OpenAPI operation ids, bare **`http://` / `https://` links**, or “maps to …” wiring notes; those belong in **`mappings.yaml`** (comments may name products and hosts in words, not pasted URIs) or external API docs. The same rule applies to **`output.description`** for `side_effect` actions: state the **domain effect** (e.g. “message moves to Trash”), not the transport shape (“PATCH, empty body”, “returns 204”). **Exception:** `auth.token_url` and similar **machine** OAuth/OpenID fields may contain a provider token URL string—those are runtime wiring, not human DOMAIN copy.
 
 ### Field Types
+
+In **split `domain.yaml`**, the **`type:`** column below is the keyword you put on a **`values:`** row. Entity fields and capability parameters **resolve** that type via **`value_ref`**. Runtime **`FieldType`** / operator tables are unchanged.
 
 | Type | YAML value | CLI parser | Operators | Description |
 |------|-----------|------------|-----------|-------------|
@@ -114,20 +146,20 @@ By default, each field is read from a **top-level JSON key** matching the field 
 | EntityRef | `entity_ref` | string | `=`, `!=`, `exists` | Foreign key to another entity. Requires `target: EntityName`. ID values may be string or number at runtime. |
 | **Blob** | **`blob`** | string (opaque / base64 / attachment-shaped JSON) | `=`, `!=`, `exists` | **Opaque binary or base64-heavy payloads** (file bytes, RFC822 `raw`, attachment `contentBytes`, GitHub Contents `content`, …). **Do not** use `string_semantics` on blob fields (omit the key). Legacy `string` + `string_semantics: blob` loads as blob. |
 
-### Blob / binary (`field_type: blob`)
+### Blob / binary (`values:` row `type: blob`)
 
-Use **`blob`** when the wire value is **not** human prose (base64/base64url, opaque octets, or the reserved attachment object), including:
+Use a **`values:`** entry with **`type: blob`** when the wire value is **not** human prose (base64/base64url, opaque octets, or the reserved attachment object), including:
 
 - **Entity fields** populated from APIs that return base64 attachment bodies, binary-safe strings, or a JSON object with reserved **`__plasm_attachment`** metadata (`uri`, `mime_type` / `media_type`, optional `bytes_base64`).
 - **Capability parameters** with the same shape (e.g. Gmail `raw`, GitHub Contents **`content`** as base64 in JSON).
 
-**Do not** use **`blob`** for HTML/markdown message bodies meant to be read as text (keep **`string`** with **`string_semantics: markdown`** or **`document`** as appropriate).
+**Do not** use **`blob`** for HTML/markdown message bodies meant to be read as text (keep **`type: string`** on the value row with **`string_semantics: markdown`** or **`document`** as appropriate).
 
-**Authoring knobs (entity `fields:` only):**
+**Authoring knobs (entity field slots — alongside `value_ref`):**
 
-| Key | Applies to | Notes |
-|-----|------------|--------|
-| **`mime_type_hint`** | `string` or **`blob`** | Hint for host **tabular** summaries when the cell is reference-only or split (see below). Example: `application/octet-stream`, `message/rfc822` (describe in `description` if you cannot set a single hint). |
+| Key | Applies when resolved type is | Notes |
+|-----|------------------------------|--------|
+| **`mime_type_hint`** | `string` or **`blob`** | Hint for MCP/HTTP **tabular** summaries when the cell is reference-only or split (see below). Example: `application/octet-stream`, `message/rfc822` (describe in `description` if you cannot set a single hint). |
 | **`attachment_media`** | **`blob` only** | Optional coarse class: `generic`, `image`, `audio`, `video`, `document` — for prompts/tooling; wire shape unchanged. |
 | **`agent_presentation`** | `string` or **`blob`** | Optional override; **`blob`** defaults to **reference-only** summaries (same as non-short strings) when unset. |
 
@@ -139,59 +171,81 @@ unless the body looks like HTML/XML (error path preserved). Design decoders / `p
 
 **Fixtures (interchange CGS):** see **`fixtures/schemas/test_schema.cgs.yaml`** — entity **`BlobAsset`** declares two blob fields: **`payload`** (`attachment_media: generic`, octet-stream hint) and **`icon_png`** (`attachment_media: image`, PNG hint), plus a minimal **`blob_asset_get`** capability so the catalog validates. **`fixtures/schemas/capability_with_input.cgs.yaml`** includes an optional **`artifact`** `blob` field on **`update_account`** input for interchange coverage.
 
-### Array element typing (`items:`)
+### Array element typing (`items:` under `values:`)
 
-Every **`field_type: array`** on an entity field and every capability parameter with **`type: array`** must include a nested **`items:`** map. It uses the same type vocabulary as top-level fields, keyed as **`type:`** (not `field_type`).
+Every **`values:`** row with **`type: array`** must include **`items: { value_ref: <key> }`** where `<key>` names another **`values:`** row for the element shape. Array slots (entity fields or parameters) only **`value_ref:`** the array row.
 
 ```yaml
-# Entity field
-photoUrls:
-  field_type: array
-  required: true
-  items:
+values:
+  url_string:
     type: string
-
-# Capability parameter
-- name: labelIds
-  type: array
-  required: false
-  items:
+    string_semantics: short
+  photo_urls:
+    type: array
+    items:
+      value_ref: url_string
+  label_id_string:
     type: string
-
-# Element is entity_ref
-- name: assignee_ids
-  type: array
-  required: false
-  items:
+    string_semantics: short
+  label_ids:
+    type: array
+    items:
+      value_ref: label_id_string
+  user_ref:
     type: entity_ref
     target: User
-
-# Element is select (allowed_values on items, non-empty)
-- name: flags
-  type: array
-  required: false
-  items:
+  assignee_ids:
+    type: array
+    items:
+      value_ref: user_ref
+  flag_enum:
     type: select
     allowed_values: [a, b]
-
-# Element is date — put value_format on items, not on the outer array field
-- name: dates
-  type: array
-  required: false
-  items:
+  flags_arr:
+    type: array
+    items:
+      value_ref: flag_enum
+  instant_rfc3339:
     type: date
     value_format: rfc3339
+  dates_arr:
+    type: array
+    items:
+      value_ref: instant_rfc3339
+
+entities:
+  Pet:
+    fields:
+      photoUrls:
+        value_ref: photo_urls
+        required: true
+
+capabilities:
+  message_modify_labels:
+    parameters:
+      - name: labelIds
+        value_ref: label_ids
+        required: false
+      - name: assignee_ids
+        value_ref: assignee_ids
+        required: false
+      - name: flags
+        value_ref: flags_arr
+        required: false
+      - name: dates
+        value_ref: dates_arr
+        required: false
 ```
 
-**Loader constraints:** `items.type` must not be `array` or `multi_select`. For `items.type: select`, **`allowed_values`** on `items` is required and must be non-empty. For `items.type: date`, **`value_format`** must be set on **`items`**. Do not attach `allowed_values` to `items` unless `items.type` is `select`.
+**Loader constraints:** the element **`values:`** row must not be **`type: array`** or **`multi_select`**. For element **`type: select`**, **`allowed_values`** on that row is required and non-empty. For element **`type: date`**, **`value_format`** belongs on the **element** value row. Do not put `allowed_values` on the array row unless you intend a different shape (arrays of enums use an element `select` row as above).
 
-**`multi_select`:** `allowed_values` is **required** and must be **non-empty** on the field or parameter itself (not inside `items:`).
+**`multi_select`:** on the **`values:`** row itself, **`allowed_values`** is **required** and must be **non-empty** (this is not the same as `array` of `select`).
 
 ### CLI Flag Generation
 
-**Query subcommands**: flags are generated from the capability's `parameters:` — one flag per declared parameter, typed by the parameter’s **`type:`** (same vocabulary as entity **`field_type:`**). No parameters declared = no filter flags (just pagination controls from the CML `pagination` block). Entity fields do **not** generate query flags.
+**Query subcommands**: flags are generated from the capability's `parameters:` — one flag per declared parameter, typed by the resolved shape from **`value_ref`** (same vocabulary as entity fields). No parameters declared = no filter flags (just pagination controls from the CML `pagination` block). Entity fields do **not** generate query flags.
 
-| Parameter `type` | Flag generated | Parser |
+| Resolved `values[].type` | Flag generated | Parser |
 |------------------------|----------------|--------|
 | `string` / `uuid` / `date` / `entity_ref` / **`blob`** | `--param` | string |
 | `integer` | `--param` | `i64` |
@@ -218,7 +272,7 @@ Beyond query filter flags, `entity_ref` fields drive three additional CLI featur
 - FK navigation: `petId` → subcommand `pet-id` (camelCase → kebab-case)
 - Reverse traversal: target entity `Order` → subcommand `orders` (pluralized lowercase)
 
-**Authoring for reverse traversal:** Ensure the query capability parameter uses `type: entity_ref` with `target` matching the field's target. The CGS validator checks that `entity_ref` targets align between entity fields and capability parameters.
+**Authoring for reverse traversal:** Ensure the query capability parameter’s **`value_ref`** points at a **`values:`** row with **`type: entity_ref`** whose **`target`** matches the entity field’s **`entity_ref`** target. The CGS validator checks alignment between those slots.
 
 ### Capabilities
 
@@ -231,17 +285,13 @@ capabilities:
     entity: <EntityName>      # must be a defined entity
     parameters:               # optional, for capabilities with typed params
       - name: <param>
-        type: <field_type>
-        description: <string> # optional; short human meaning for agents and DOMAIN gloss (see below)
-        target: <EntityName>  # required when type is entity_ref
+        value_ref: <value_key>
         required: <bool>
-        allowed_values: [...]  # for select / multi_select (multi_select: non-empty)
-        items:                  # required when type is array — element typing (see Array element typing)
-          type: <element_type>
+        description: <string> # optional; short human meaning for agents and DOMAIN gloss (see below)
         role: <role>          # optional semantic role — see Parameter Roles below
 ```
 
-Capability parameters use the same `field_type` vocabulary as entity fields (including `entity_ref` + `target`).
+Wire shape for each parameter is **`values[value_ref]`** — same scalar vocabulary as entity field value rows (`type`, `target`, `allowed_values`, `items`, `value_format`, `string_semantics`, …).
 
 **`description` on capability parameters:** Optional. When the prompt uses a **symbolic** `PromptRenderMode` (**compact** or **tsv**, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval` — not a legacy `symbol_tuning: true` flag), each parameter gets a `p#` gloss line in DOMAIN (compact: line before first use; tsv: folded into the teaching table). The gloss shows the parameter type and, after a middle dot (`·`), either this **`description`** (trimmed, possibly truncated) or, if omitted, the **wire `name`** from YAML. Use the same style as entity field descriptions: short domain prose, not HTTP or mapping trivia.
 
@@ -271,14 +321,22 @@ CML does not change: variables (e.g. `team_id`) are still bound from the compile
 Example (two-sided pattern):
 
 ```yaml
+values:
+  scalar_i64:
+    type: integer
+  pet_entity_ref:
+    type: entity_ref
+    target: Pet
+
 entities:
   Order:
     id_field: id
     fields:
-      id: { field_type: integer, required: true }
+      id:
+        value_ref: scalar_i64
+        required: true
       petId:
-        field_type: entity_ref
-        target: Pet
+        value_ref: pet_entity_ref
         required: false
 
 capabilities:
@@ -287,8 +345,7 @@ capabilities:
     entity: Order
     parameters:
       - name: petId
-        type: entity_ref
-        target: Pet
+        value_ref: pet_entity_ref
         required: true
 ```
 
@@ -352,15 +409,19 @@ An entity can have multiple `kind: query` (or `kind: search`) capabilities. The 
 When a capability has a parameter with `required: true`, the CLI enforces it:
 
 ```yaml
+values:
+  pet_status:
+    type: select
+    allowed_values: [available, pending, sold]
+
 capabilities:
   pet_findByStatus:
     kind: query
     entity: Pet
     parameters:
       - name: status
-        type: select
+        value_ref: pet_status
         required: true      # CLI will reject if --status not provided
-        allowed_values: [available, pending, sold]
 ```
 
 CLI behavior:
@@ -381,6 +442,11 @@ Relations create navigation subcommands. The **target entity's query capability 
 
 ```yaml
 # In domain.yaml:
+values:
+  tag_name:
+    type: string
+    string_semantics: short
+
 entities:
   Pet:
     relations:
@@ -390,7 +456,7 @@ entities:
   Tag:
     fields:
       name:
-        field_type: string
+        value_ref: tag_name
 ```
 
 CLI behavior:
@@ -455,13 +521,37 @@ Page~"Agentium".blocks
 When multiple API endpoints return disjoint field subsets of the same logical resource (same `id`, different fields), model them as **one entity** with `required: false` on projection-only fields. Declare `provides:` on each capability to enable auto-resolution.
 
 ```yaml
+values:
+  nv_page_url:
+    type: string
+    string_semantics: short
+  nv_page_created_time:
+    type: date
+    value_format: rfc3339
+  nv_page_in_trash:
+    type: boolean
+  nv_page_markdown:
+    type: string
+    string_semantics: markdown
+  nv_page_truncated:
+    type: boolean
+
 entities:
   Page:
+    id_field: id
     fields:
-      url: { field_type: string }              # from page_get
+      url:
+        value_ref: nv_page_url
+      created_time:
+        value_ref: nv_page_created_time
+      in_trash:
+        value_ref: nv_page_in_trash
       markdown:
-        field_type: string
-        required: false                         # from page_get_markdown; auto-resolved on demand
+        value_ref: nv_page_markdown
+        required: false
+      truncated:
+        value_ref: nv_page_truncated
+        required: false
 
 capabilities:
   page_get:
@@ -470,9 +560,9 @@ capabilities:
     provides: [id, url, public_url, created_time, last_edited_time, in_trash, archived]
 
   page_get_markdown:
-    kind: action                               # enriches same Page entity with content
+    kind: action
     entity: Page
-    provides: [id, markdown, truncated]        # declares the content projection
+    provides: [id, markdown, truncated]
 ```
 
 **`provides:`** declares which entity fields a capability populates in its response. The runtime builds a reverse index (`field → capability`) and uses it to auto-invoke the correct capability when a projected field is absent from cache.
@@ -529,7 +619,7 @@ Pagination is **transparent in the domain model**: `domain.yaml` still uses `kin
 
 When a mapping includes `pagination`, `plasm-agent` adds **built-in** CLI flags (not from entity fields). **`--limit`** and **`--all`** are always present; starting-position flags are derived from the **`pagination.params`** map (counter / fixed / `from_response` keys and `location`) so **`--help`** only lists what applies to that capability.
 
-**LLM / MCP execute:** paginated queries return **one upstream page** by default. When more pages exist, the host mints an opaque session handle (`pg1`, `pg2`, …) and surfaces **`has_more`** plus a compact **`page(pgN)`** follow-up (and `_meta.plasm.paging` when MCP meta is enabled). Models continue with **`page(pgN)`** or **`page(pgN, limit=50)`**; transport-specific param names stay out of the prompt.
+**LLM / HTTP MCP execute:** paginated queries return **one upstream page** by default. When more pages exist, the host mints an opaque session handle (`pg1`, `pg2`, …) and surfaces **`has_more`** plus a compact **`page(pgN)`** follow-up (and `_meta.plasm.paging` when MCP meta is enabled). Models continue with **`page(pgN)`** or **`page(pgN, limit=50)`**; transport-specific param names stay out of the prompt.
 
 | Flag | Effect (CLI) |
 |------|--------------|

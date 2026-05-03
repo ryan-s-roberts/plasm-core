@@ -1,52 +1,37 @@
 version: 1
-
 http_backend: https://api.rawg.io
-
 entities:
   Game:
     id_field: id
     description: A video game entry in the RAWG database
     fields:
       id:
-        description: Unique RAWG game identifier
-        field_type: integer
         required: true
+        value_ref: nv_game_id
       name:
-        description: Game title
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_game_name
       slug:
-        description: URL-friendly game identifier
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_game_slug
       released:
-        description: Game release date (RAWG returns YYYY-MM-DD or null)
-        field_type: date
-        value_format: iso8601_date
         required: false
+        value_ref: nv_game_released
       rating:
-        description: Average user rating
-        field_type: number
         required: false
+        value_ref: nv_game_rating
       metacritic:
-        description: Metacritic aggregated score
-        field_type: integer
         required: false
+        value_ref: nv_game_metacritic
       playtime:
-        description: Average playtime in hours
-        field_type: integer
         required: false
+        value_ref: nv_game_playtime
       tba:
-        description: Whether the release date is to be announced
-        field_type: boolean
         required: false
+        value_ref: nv_game_tba
       background_image:
-        description: URL of the game's background image
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_game_background_image
 capabilities:
   game_query:
     description: Search and filter the RAWG games catalog
@@ -54,50 +39,41 @@ capabilities:
     entity: Game
     parameters:
     - name: search
-      type: string
+      value_ref: nv_game_query_search
       required: false
       role: search
-      string_semantics: short
     - name: genres
-      type: string
+      value_ref: nv_game_query_genres
       required: false
       role: filter
-      string_semantics: short
     - name: platforms
-      type: string
+      value_ref: nv_game_query_platforms
       required: false
       role: filter
-      string_semantics: short
     - name: developers
-      type: string
+      value_ref: nv_game_query_developers
       required: false
       role: filter
-      string_semantics: short
     - name: publishers
-      type: string
+      value_ref: nv_game_query_publishers
       required: false
       role: filter
-      string_semantics: short
     - name: tags
-      type: string
+      value_ref: nv_game_query_tags
       required: false
       role: filter
-      string_semantics: short
     - name: dates
-      type: string
+      value_ref: nv_game_query_dates
       required: false
       role: filter
-      string_semantics: short
     - name: metacritic
-      type: string
+      value_ref: nv_game_query_metacritic
       required: false
       role: filter
-      string_semantics: short
     - name: ordering
-      type: string
+      value_ref: nv_game_query_ordering
       required: false
       role: sort
-      string_semantics: short
   game_get:
     description: Retrieve full details for a single game
     kind: get
@@ -116,3 +92,62 @@ auth:
   scheme: api_key_query
   param: key
   env: RAWG_API_KEY
+values:
+  nv_game_id:
+    type: integer
+    description: Unique RAWG game identifier
+  nv_game_name:
+    type: string
+    string_semantics: short
+    description: Game title
+  nv_game_slug:
+    type: string
+    string_semantics: short
+    description: URL-friendly game identifier
+  nv_game_released:
+    type: date
+    value_format: iso8601_date
+    description: Game release date (RAWG returns YYYY-MM-DD or null)
+  nv_game_rating:
+    type: number
+    description: Average user rating
+  nv_game_metacritic:
+    type: integer
+    description: Metacritic aggregated score
+  nv_game_playtime:
+    type: integer
+    description: Average playtime in hours
+  nv_game_tba:
+    type: boolean
+    description: Whether the release date is to be announced
+  nv_game_background_image:
+    type: string
+    string_semantics: short
+    description: URL of the game's background image
+  nv_game_query_search:
+    type: string
+    string_semantics: short
+  nv_game_query_genres:
+    type: string
+    string_semantics: short
+  nv_game_query_platforms:
+    type: string
+    string_semantics: short
+  nv_game_query_developers:
+    type: string
+    string_semantics: short
+  nv_game_query_publishers:
+    type: string
+    string_semantics: short
+  nv_game_query_tags:
+    type: string
+    string_semantics: short
+  nv_game_query_dates:
+    type: string
+    string_semantics: short
+  nv_game_query_metacritic:
+    type: string
+    string_semantics: short
+  nv_game_query_ordering:
+    type: string
+    string_semantics: short

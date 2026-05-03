@@ -961,13 +961,13 @@ fn parse_field_gloss_rows(
         let allowed_values = if is_enumish {
             legend_tail.clone()
         } else {
-            meta.and_then(|m| m.allowed_values.as_ref())
+            meta.and_then(|m| m.allowed_values())
                 .filter(|vals| !vals.is_empty())
-                .map(|vals| vals.join(", "))
+                .map(|vals: &Vec<String>| vals.join(", "))
                 .unwrap_or_default()
         };
         let mut description = meta
-            .map(|m| m.description.trim().to_string())
+            .map(|m| m.description().trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_default();
         // DOMAIN gloss is `type · …` (wire name or CGS prose). CGS `description` may be empty; keep
@@ -3073,8 +3073,7 @@ fn skip_redundant_terminal_relation_sym_gloss(
     sym: &str,
     meta: &crate::symbol_tuning::IdentMetadata,
 ) -> bool {
-    let relation_like = matches!(meta.role, crate::symbol_tuning::IdentRole::Relation { .. })
-        || matches!(meta.field_type, FieldType::EntityRef { .. });
+    let relation_like = matches!(meta, crate::symbol_tuning::IdentMetadata::Relation { .. });
     if !relation_like {
         return false;
     }
@@ -3117,30 +3116,18 @@ fn emit_field_def_lines_before_example(
                 defined.insert(sym.clone(), m.clone());
                 true
             }
-            (Some(m), Some(prev))
-                if prev.field_type != m.field_type
-                    || prev.string_semantics != m.string_semantics
-                    || prev.array_items != m.array_items
-                    || prev.allowed_values != m.allowed_values
-                    || prev.role != m.role
-                    || prev.description.trim() != m.description.trim() =>
-            {
+            (Some(m), Some(prev)) if prev != m => {
                 defined.insert(sym.clone(), m.clone());
                 true
             }
             (None, None) => {
                 defined.insert(
                     sym.clone(),
-                    IdentMetadata {
+                    crate::symbol_tuning::IdentMetadata::SyntheticUnknown {
                         catalog_entry_id: cid.clone(),
-                        field_type: FieldType::String,
-                        string_semantics: None,
-                        array_items: None,
-                        allowed_values: None,
-                        role: crate::symbol_tuning::IdentRole::EntityField,
+                        entity: en.clone(),
                         wire_name: field_name.to_string(),
                         description: field_name.to_string(),
-                        entity: en.clone(),
                     },
                 );
                 true
@@ -3154,8 +3141,11 @@ fn emit_field_def_lines_before_example(
                     continue;
                 }
                 if matches!(
-                    m.role,
-                    crate::symbol_tuning::IdentRole::CapabilityParam { .. }
+                    m,
+                    crate::symbol_tuning::IdentMetadata::RegistryBacked {
+                        role: crate::symbol_tuning::IdentRegistryRole::CapabilityParam { .. },
+                        ..
+                    }
                 ) {
                     if let Some(sup) =
                         crate::symbol_tuning::args_line_suppressible_capability_syms(line)
@@ -3432,7 +3422,8 @@ mod tests {
     use crate::loader::load_schema_dir;
     use crate::prompt_pipeline::PromptPipelineConfig;
     use crate::schema::{
-        CapabilityMapping, CapabilitySchema, FieldSchema, RelationSchema, ResourceSchema,
+        CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind, NamedValueSchema,
+        RelationSchema, ResourceSchema, ValueDomainKey,
     };
     use crate::symbol_tuning::{
         entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
@@ -3475,24 +3466,16 @@ mod tests {
 
     #[test]
     fn redundant_relation_sym_gloss_skipped_for_terminal_chain_line() {
-        use crate::symbol_tuning::{IdentMetadata, IdentRole};
+        use crate::symbol_tuning::IdentMetadata;
         use crate::EntityName;
         let user = EntityName::from("User".to_string());
         let issue = EntityName::from("Issue".to_string());
-        let rel_meta = IdentMetadata {
+        let rel_meta = IdentMetadata::Relation {
             catalog_entry_id: String::new(),
-            field_type: FieldType::EntityRef {
-                target: user.clone(),
-            },
-            string_semantics: None,
-            array_items: None,
-            allowed_values: None,
-            role: IdentRole::Relation {
-                target: user.clone(),
-            },
+            entity: issue.clone(),
             wire_name: "reporter".into(),
             description: String::new(),
-            entity: issue.clone(),
+            target: user.clone(),
         };
         assert!(skip_redundant_terminal_relation_sym_gloss(
             "e5(p64=$, p80=$, p59=$).p101  ;;  => e18",
@@ -3504,16 +3487,11 @@ mod tests {
             "p101",
             &rel_meta
         ));
-        let title_meta = IdentMetadata {
+        let title_meta = IdentMetadata::SyntheticUnknown {
             catalog_entry_id: String::new(),
-            field_type: FieldType::String,
-            string_semantics: None,
-            array_items: None,
-            allowed_values: None,
-            role: IdentRole::EntityField,
+            entity: issue,
             wire_name: "title".into(),
             description: String::new(),
-            entity: issue,
         };
         assert!(!skip_redundant_terminal_relation_sym_gloss(
             "e5(p64=$, p80=$, p59=$)[p96]  ;;  => [p96]",
@@ -4350,8 +4328,20 @@ mod tests {
     /// Book —(shelf)—> Shelf; two query caps; one navigation edge from Book.
     fn prompt_stats_fixture_cgs() -> CGS {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fixture_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         let id_field = FieldSchema {
             name: "id".into(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("fixture_str").expect("key")),
             description: String::new(),
             field_type: FieldType::String,
             value_format: None,
@@ -4476,6 +4466,7 @@ mod tests {
     fn string_id_field(description: &str) -> FieldSchema {
         FieldSchema {
             name: "id".into(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("fixture_str").expect("key")),
             description: description.to_string(),
             field_type: FieldType::String,
             value_format: None,
@@ -4495,6 +4486,17 @@ mod tests {
     /// [`emit_field_def_lines_before_example`] identity tests.
     fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fixture_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         for (name, desc) in [("Anvil", id_desc_a), ("Beryl", id_desc_b)] {
             cgs.add_resource(ResourceSchema {
                 name: name.into(),

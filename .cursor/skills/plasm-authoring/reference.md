@@ -4,7 +4,7 @@ This is the compact OSS reference for authoring Plasm API catalogs. The compiler
 
 ## Authoring vs Determinism
 
-Writing `domain.yaml` is a semantic design task. Specs describe RPCs; CGS describes a domain graph. Two reasonable models can differ on entity boundaries, relation shape, capability grouping, and which operations belong in the prompt-facing surface.
+Writing `domain.yaml` is a semantic design task. Specs describe RPCs; CGS describes a domain graph. Two reasonable models can differ on entity boundaries, relation shape, capability grouping, which operations belong in the prompt-facing surface, and **which `values:` keys exist** (including whether fields share one `value_ref` vs use distinct slots).
 
 After YAML is authored, validation and compilation are deterministic:
 
@@ -40,13 +40,14 @@ apis/<api>/
 - Pagination parameters live in `mappings.yaml`, not `domain.yaml`.
 - `kind: action` declares `provides:` or `output.type: side_effect`.
 - CGS descriptions use domain prose, not REST paths or status codes.
+- **Split catalogs:** top-level **`values:`** holds wire types and gloss; entity **`fields:`** and capability **`parameters:`** use **`value_ref:`** only (no inline `field_type` on fields). Each `values` key is a **semantic slot**, not dedupe-by-wire-type; sharing one key across sites is an authoring judgement—default to **distinct keys** unless the domain intentionally reuses one value space.
 
 ## Field and Parameter Types
 
 Use strong types where possible:
 
 ```text
-string       short / markdown / document / identifier via string_semantics
+string       short / markdown / document / html / json_text via string_semantics
 integer
 number
 boolean
@@ -162,16 +163,18 @@ This means one Plasm expression may produce multiple HTTP calls while still retu
 
 ## Validation and Testing
 
+Use the **catalog directory** `apis/<api>/` for `schema validate` so **`domain.yaml` and `mappings.yaml` load together**. Validating only `domain.yaml` can produce false errors.
+
 Schema/compiler validation:
 
 ```bash
-cargo run -p plasm-cli -- schema validate apis/<api>/domain.yaml
+cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
 ```
 
 Mapping validation against a spec-backed mock:
 
 ```bash
-cargo run -p plasm-cli -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
 ```
 
 Generated CLI sanity:

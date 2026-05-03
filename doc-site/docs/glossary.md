@@ -2,7 +2,7 @@
 
 | Term | Meaning |
 |------|---------|
-| **CGS** | Capability Graph Schema — `domain.yaml` semantic model. |
+| **CGS** | Capability Graph Schema — `domain.yaml` semantic model (entities, relations, capabilities; split catalogs register typed slots under **`values:`** and bind fields/parameters with **`value_ref`**). |
 | **CML** | Capability Mapping Language — `mappings.yaml` wire templates. |
 | **DOMAIN** | Symbol-tuned teaching text (`e#` / `m#` / `p#`) for agents. |
 | **registry `entry_id`** | Identifier for one packed catalog / plugin entry in multi-entry mode. |

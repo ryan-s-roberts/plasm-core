@@ -1,31 +1,25 @@
 version: 1
-
 http_backend: https://api.cloudflare.com/client/v4
-
 entities:
   Zone:
     id_field: id
     description: A Cloudflare zone (site) the account can manage.
     fields:
       id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_zone_id
       name:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_zone_name
       status:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_zone_status
       paused:
-        field_type: boolean
         required: false
+        value_ref: nv_zone_paused
       type:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_zone_type
     relations:
       rulesets:
         target: Ruleset
@@ -43,7 +37,6 @@ entities:
           capability: waf_package_query
           bindings:
             zone_id: id
-
   Ruleset:
     id_field: id
     key_vars:
@@ -52,71 +45,33 @@ entities:
     description: A ruleset attached to a zone (metadata list, or full payload including rules when fetched by id).
     fields:
       zone_id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_ruleset_zone_id
       ruleset_id:
-        field_type: string
-        string_semantics: short
         required: true
         path: id
+        value_ref: nv_ruleset_ruleset_id
       id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_ruleset_id
       name:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_ruleset_name
       description:
-        field_type: string
-        string_semantics: markdown
         required: false
+        value_ref: nv_ruleset_description
       kind:
-        field_type: select
-        allowed_values:
-        - managed
-        - custom
-        - root
-        - zone
         required: false
+        value_ref: nv_ruleset_kind
       phase:
-        field_type: select
-        allowed_values:
-        - ddos_l4
-        - ddos_l7
-        - http_config_settings
-        - http_custom_errors
-        - http_log_custom_fields
-        - http_ratelimit
-        - http_request_cache_settings
-        - http_request_dynamic_redirect
-        - http_request_firewall_custom
-        - http_request_firewall_managed
-        - http_request_late_transform
-        - http_request_origin
-        - http_request_redirect
-        - http_request_sanitize
-        - http_request_sbfm
-        - http_request_transform
-        - http_response_cache_settings
-        - http_response_compression
-        - http_response_firewall_managed
-        - http_response_headers_transform
-        - magic_transit
-        - magic_transit_ids_managed
-        - magic_transit_managed
-        - magic_transit_ratelimit
         required: false
+        value_ref: nv_ruleset_phase
       version:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_ruleset_version
       last_updated:
-        field_type: date
-        value_format: rfc3339
         required: false
-
+        value_ref: nv_ruleset_last_updated
   RulesetEntrypoint:
     id_field: id
     key_vars:
@@ -125,94 +80,32 @@ entities:
     description: Managed entrypoint ruleset for one execution phase on a zone (DDoS L7, managed WAF, rate limits, etc.).
     fields:
       zone_id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_ruleset_entrypoint_zone_id
       ruleset_phase:
-        field_type: select
-        allowed_values:
-        - ddos_l4
-        - ddos_l7
-        - http_config_settings
-        - http_custom_errors
-        - http_log_custom_fields
-        - http_ratelimit
-        - http_request_cache_settings
-        - http_request_dynamic_redirect
-        - http_request_firewall_custom
-        - http_request_firewall_managed
-        - http_request_late_transform
-        - http_request_origin
-        - http_request_redirect
-        - http_request_sanitize
-        - http_request_sbfm
-        - http_request_transform
-        - http_response_cache_settings
-        - http_response_compression
-        - http_response_firewall_managed
-        - http_response_headers_transform
-        - magic_transit
-        - magic_transit_ids_managed
-        - magic_transit_managed
-        - magic_transit_ratelimit
         required: true
+        value_ref: nv_ruleset_entrypoint_ruleset_phase
       id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_ruleset_entrypoint_id
       name:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_ruleset_entrypoint_name
       description:
-        field_type: string
-        string_semantics: markdown
         required: false
+        value_ref: nv_ruleset_entrypoint_description
       kind:
-        field_type: select
-        allowed_values:
-        - managed
-        - custom
-        - root
-        - zone
         required: false
+        value_ref: nv_ruleset_entrypoint_kind
       phase:
-        field_type: select
-        allowed_values:
-        - ddos_l4
-        - ddos_l7
-        - http_config_settings
-        - http_custom_errors
-        - http_log_custom_fields
-        - http_ratelimit
-        - http_request_cache_settings
-        - http_request_dynamic_redirect
-        - http_request_firewall_custom
-        - http_request_firewall_managed
-        - http_request_late_transform
-        - http_request_origin
-        - http_request_redirect
-        - http_request_sanitize
-        - http_request_sbfm
-        - http_request_transform
-        - http_response_cache_settings
-        - http_response_compression
-        - http_response_firewall_managed
-        - http_response_headers_transform
-        - magic_transit
-        - magic_transit_ids_managed
-        - magic_transit_managed
-        - magic_transit_ratelimit
         required: false
+        value_ref: nv_ruleset_entrypoint_phase
       version:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_ruleset_entrypoint_version
       last_updated:
-        field_type: date
-        value_format: rfc3339
         required: false
-
+        value_ref: nv_ruleset_entrypoint_last_updated
   WafPackage:
     id_field: id
     key_vars:
@@ -220,26 +113,20 @@ entities:
     description: A WAF package offered for a zone (OWASP Core Ruleset, Cloudflare managed rules, etc.).
     fields:
       zone_id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_waf_package_zone_id
       id:
-        field_type: string
-        string_semantics: short
         required: true
+        value_ref: nv_waf_package_id
       name:
-        field_type: string
-        string_semantics: short
         required: false
+        value_ref: nv_waf_package_name
       description:
-        field_type: string
-        string_semantics: markdown
         required: false
+        value_ref: nv_waf_package_description
       detection_mode:
-        field_type: string
-        string_semantics: short
         required: false
-
+        value_ref: nv_waf_package_detection_mode
 capabilities:
   zone_query:
     kind: query
@@ -247,39 +134,29 @@ capabilities:
     description: List zones visible to the token, optionally filtered by account or name.
     parameters:
     - name: account_id
-      type: string
+      value_ref: nv_zone_query_account_id
       required: false
       role: filter
-      description: Filter to zones owned by this account id (maps to account.id query parameter).
-      string_semantics: short
     - name: name
-      type: string
+      value_ref: nv_zone_query_name
       required: false
       role: filter
-      description: Exact zone name match.
-      string_semantics: short
     - name: status
-      type: string
+      value_ref: nv_zone_query_status
       required: false
       role: filter
-      description: Zone status filter (e.g. active, pending, initializing).
-      string_semantics: short
     - name: type
-      type: string
+      value_ref: nv_zone_query_type
       required: false
       role: filter
-      description: Zone type filter (full, partial, etc.).
-      string_semantics: short
     - name: page
-      type: integer
+      value_ref: nv_zone_query_page
       required: false
       role: response_control
-      description: Page number for list pagination (Cloudflare v4).
     - name: per_page
-      type: integer
+      value_ref: nv_zone_query_per_page
       required: false
       role: response_control
-      description: Page size (max per Cloudflare docs).
   zone_get:
     kind: get
     entity: Zone
@@ -296,16 +173,13 @@ capabilities:
     description: List rulesets on a zone (summary rows without full rules per Cloudflare list semantics).
     parameters:
     - name: zone_id
-      type: string
+      value_ref: nv_ruleset_query_zone_id
       required: true
       role: scope
-      description: Zone identifier.
-      string_semantics: short
     - name: per_page
-      type: integer
+      value_ref: nv_ruleset_query_per_page
       required: false
       role: response_control
-      description: Page size for cursor pagination.
   ruleset_get:
     kind: get
     entity: Ruleset
@@ -336,46 +210,20 @@ capabilities:
   ruleset_entrypoint_update:
     kind: action
     entity: RulesetEntrypoint
-    description: Replace the zone entrypoint ruleset for a phase. Pass input as a JSON object (name, kind, phase, rules, etc.) per Cloudflare Rulesets API.
+    description: Replace the zone entrypoint ruleset for a phase. Pass input as a JSON object (name, kind, phase, rules, etc.)
+      per Cloudflare Rulesets API.
     parameters:
     - name: zone_id
-      type: string
+      value_ref: nv_ruleset_entrypoint_update_zone_id
       required: true
       role: scope
-      string_semantics: short
     - name: ruleset_phase
-      type: select
+      value_ref: nv_ruleset_entrypoint_update_ruleset_phase
       required: true
       role: scope
-      allowed_values:
-      - ddos_l4
-      - ddos_l7
-      - http_config_settings
-      - http_custom_errors
-      - http_log_custom_fields
-      - http_ratelimit
-      - http_request_cache_settings
-      - http_request_dynamic_redirect
-      - http_request_firewall_custom
-      - http_request_firewall_managed
-      - http_request_late_transform
-      - http_request_origin
-      - http_request_redirect
-      - http_request_sanitize
-      - http_request_sbfm
-      - http_request_transform
-      - http_response_cache_settings
-      - http_response_compression
-      - http_response_firewall_managed
-      - http_response_headers_transform
-      - magic_transit
-      - magic_transit_ids_managed
-      - magic_transit_managed
-      - magic_transit_ratelimit
     - name: input
-      type: json
+      value_ref: nv_ruleset_entrypoint_update_input
       required: true
-      description: Request body JSON for PUT entrypoint (ruleset shape including rules array).
     output:
       type: side_effect
       description: Updates the phase entrypoint ruleset in Cloudflare (WAF sensitivity, custom rules, etc.).
@@ -385,19 +233,250 @@ capabilities:
     description: List WAF packages available for a zone.
     parameters:
     - name: zone_id
-      type: string
+      value_ref: nv_waf_package_query_zone_id
       required: true
       role: scope
-      string_semantics: short
     - name: page
-      type: integer
+      value_ref: nv_waf_package_query_page
       required: false
       role: response_control
     - name: per_page
-      type: integer
+      value_ref: nv_waf_package_query_per_page
       required: false
       role: response_control
-
 auth:
   scheme: bearer_token
   env: CLOUDFLARE_API_TOKEN
+values:
+  nv_zone_id:
+    type: string
+    string_semantics: short
+  nv_zone_name:
+    type: string
+    string_semantics: short
+  nv_zone_status:
+    type: string
+    string_semantics: short
+  nv_zone_paused:
+    type: boolean
+  nv_zone_type:
+    type: string
+    string_semantics: short
+  nv_ruleset_zone_id:
+    type: string
+    string_semantics: short
+  nv_ruleset_ruleset_id:
+    type: string
+    string_semantics: short
+  nv_ruleset_id:
+    type: string
+    string_semantics: short
+  nv_ruleset_name:
+    type: string
+    string_semantics: short
+  nv_ruleset_description:
+    type: string
+    string_semantics: markdown
+  nv_ruleset_kind:
+    type: select
+    allowed_values:
+    - managed
+    - custom
+    - root
+    - zone
+  nv_ruleset_phase:
+    type: select
+    allowed_values:
+    - ddos_l4
+    - ddos_l7
+    - http_config_settings
+    - http_custom_errors
+    - http_log_custom_fields
+    - http_ratelimit
+    - http_request_cache_settings
+    - http_request_dynamic_redirect
+    - http_request_firewall_custom
+    - http_request_firewall_managed
+    - http_request_late_transform
+    - http_request_origin
+    - http_request_redirect
+    - http_request_sanitize
+    - http_request_sbfm
+    - http_request_transform
+    - http_response_cache_settings
+    - http_response_compression
+    - http_response_firewall_managed
+    - http_response_headers_transform
+    - magic_transit
+    - magic_transit_ids_managed
+    - magic_transit_managed
+    - magic_transit_ratelimit
+  nv_ruleset_version:
+    type: string
+    string_semantics: short
+  nv_ruleset_last_updated:
+    type: date
+    value_format: rfc3339
+  nv_ruleset_entrypoint_zone_id:
+    type: string
+    string_semantics: short
+  nv_ruleset_entrypoint_ruleset_phase:
+    type: select
+    allowed_values:
+    - ddos_l4
+    - ddos_l7
+    - http_config_settings
+    - http_custom_errors
+    - http_log_custom_fields
+    - http_ratelimit
+    - http_request_cache_settings
+    - http_request_dynamic_redirect
+    - http_request_firewall_custom
+    - http_request_firewall_managed
+    - http_request_late_transform
+    - http_request_origin
+    - http_request_redirect
+    - http_request_sanitize
+    - http_request_sbfm
+    - http_request_transform
+    - http_response_cache_settings
+    - http_response_compression
+    - http_response_firewall_managed
+    - http_response_headers_transform
+    - magic_transit
+    - magic_transit_ids_managed
+    - magic_transit_managed
+    - magic_transit_ratelimit
+  nv_ruleset_entrypoint_id:
+    type: string
+    string_semantics: short
+  nv_ruleset_entrypoint_name:
+    type: string
+    string_semantics: short
+  nv_ruleset_entrypoint_description:
+    type: string
+    string_semantics: markdown
+  nv_ruleset_entrypoint_kind:
+    type: select
+    allowed_values:
+    - managed
+    - custom
+    - root
+    - zone
+  nv_ruleset_entrypoint_phase:
+    type: select
+    allowed_values:
+    - ddos_l4
+    - ddos_l7
+    - http_config_settings
+    - http_custom_errors
+    - http_log_custom_fields
+    - http_ratelimit
+    - http_request_cache_settings
+    - http_request_dynamic_redirect
+    - http_request_firewall_custom
+    - http_request_firewall_managed
+    - http_request_late_transform
+    - http_request_origin
+    - http_request_redirect
+    - http_request_sanitize
+    - http_request_sbfm
+    - http_request_transform
+    - http_response_cache_settings
+    - http_response_compression
+    - http_response_firewall_managed
+    - http_response_headers_transform
+    - magic_transit
+    - magic_transit_ids_managed
+    - magic_transit_managed
+    - magic_transit_ratelimit
+  nv_ruleset_entrypoint_version:
+    type: string
+    string_semantics: short
+  nv_ruleset_entrypoint_last_updated:
+    type: date
+    value_format: rfc3339
+  nv_waf_package_zone_id:
+    type: string
+    string_semantics: short
+  nv_waf_package_id:
+    type: string
+    string_semantics: short
+  nv_waf_package_name:
+    type: string
+    string_semantics: short
+  nv_waf_package_description:
+    type: string
+    string_semantics: markdown
+  nv_waf_package_detection_mode:
+    type: string
+    string_semantics: short
+  nv_zone_query_account_id:
+    type: string
+    string_semantics: short
+    description: Filter to zones owned by this account id (maps to account.id query parameter).
+  nv_zone_query_name:
+    type: string
+    string_semantics: short
+    description: Exact zone name match.
+  nv_zone_query_status:
+    type: string
+    string_semantics: short
+    description: Zone status filter (e.g. active, pending, initializing).
+  nv_zone_query_type:
+    type: string
+    string_semantics: short
+    description: Zone type filter (full, partial, etc.).
+  nv_zone_query_page:
+    type: integer
+    description: Page number for list pagination (Cloudflare v4).
+  nv_zone_query_per_page:
+    type: integer
+    description: Page size (max per Cloudflare docs).
+  nv_ruleset_query_zone_id:
+    type: string
+    string_semantics: short
+    description: Zone identifier.
+  nv_ruleset_query_per_page:
+    type: integer
+    description: Page size for cursor pagination.
+  nv_ruleset_entrypoint_update_zone_id:
+    type: string
+    string_semantics: short
+  nv_ruleset_entrypoint_update_ruleset_phase:
+    type: select
+    allowed_values:
+    - ddos_l4
+    - ddos_l7
+    - http_config_settings
+    - http_custom_errors
+    - http_log_custom_fields
+    - http_ratelimit
+    - http_request_cache_settings
+    - http_request_dynamic_redirect
+    - http_request_firewall_custom
+    - http_request_firewall_managed
+    - http_request_late_transform
+    - http_request_origin
+    - http_request_redirect
+    - http_request_sanitize
+    - http_request_sbfm
+    - http_request_transform
+    - http_response_cache_settings
+    - http_response_compression
+    - http_response_firewall_managed
+    - http_response_headers_transform
+    - magic_transit
+    - magic_transit_ids_managed
+    - magic_transit_managed
+    - magic_transit_ratelimit
+  nv_ruleset_entrypoint_update_input:
+    type: json
+    description: Request body JSON for PUT entrypoint (ruleset shape including rules array).
+  nv_waf_package_query_zone_id:
+    type: string
+    string_semantics: short
+  nv_waf_package_query_page:
+    type: integer
+  nv_waf_package_query_per_page:
+    type: integer

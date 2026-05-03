@@ -1,52 +1,34 @@
 version: 1
-
 http_backend: https://api.nytimes.com
-
 entities:
   Article:
     id_field: web_url
     description: A New York Times article from the archive
     fields:
       web_url:
-        description: Canonical URL of the article on nytimes.com
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_article_web_url
       headline:
-        description: Primary headline text of the article
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_article_headline
       abstract:
-        description: Short summary paragraph of the article
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_article_abstract
       pub_date:
-        description: 'Publication date (Article Search API: YYYY-MM-DD)'
-        field_type: date
-        value_format: iso8601_date
         required: false
+        value_ref: nv_article_pub_date
       source:
-        description: Originating publication source name
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_article_source
       section_name:
-        description: Editorial section the article belongs to
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_article_section_name
       news_desk:
-        description: Newsroom desk that produced the article
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_article_news_desk
       document_type:
-        description: Type of document (article, blog post, etc.)
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_article_document_type
 capabilities:
   article_search:
     description: Full-text search across NYT article archive
@@ -54,39 +36,84 @@ capabilities:
     entity: Article
     parameters:
     - name: q
-      type: string
+      value_ref: nv_article_search_q
       required: false
       role: search
-      string_semantics: short
     - name: fq
-      type: string
+      value_ref: nv_article_search_fq
       required: false
       role: filter
-      string_semantics: short
     - name: begin_date
-      type: string
+      value_ref: nv_article_search_begin_date
       required: false
       role: filter
-      string_semantics: short
     - name: end_date
-      type: string
+      value_ref: nv_article_search_end_date
       required: false
       role: filter
-      string_semantics: short
     - name: sort
-      type: select
+      value_ref: nv_article_search_sort
       required: false
-      allowed_values:
-      - relevance
-      - newest
-      - oldest
       role: sort
     - name: fl
-      type: string
+      value_ref: nv_article_search_fl
       required: false
       role: response_control
-      string_semantics: short
 auth:
   scheme: api_key_query
   param: api-key
   env: NYTIMES_API_KEY
+values:
+  nv_article_web_url:
+    type: string
+    string_semantics: short
+    description: Canonical URL of the article on nytimes.com
+  nv_article_headline:
+    type: string
+    string_semantics: markdown
+    description: Primary headline text of the article
+  nv_article_abstract:
+    type: string
+    string_semantics: markdown
+    description: Short summary paragraph of the article
+  nv_article_pub_date:
+    type: date
+    value_format: iso8601_date
+    description: 'Publication date (Article Search API: YYYY-MM-DD)'
+  nv_article_source:
+    type: string
+    string_semantics: short
+    description: Originating publication source name
+  nv_article_section_name:
+    type: string
+    string_semantics: short
+    description: Editorial section the article belongs to
+  nv_article_news_desk:
+    type: string
+    string_semantics: short
+    description: Newsroom desk that produced the article
+  nv_article_document_type:
+    type: string
+    string_semantics: short
+    description: Type of document (article, blog post, etc.)
+  nv_article_search_q:
+    type: string
+    string_semantics: short
+  nv_article_search_fq:
+    type: string
+    string_semantics: short
+  nv_article_search_begin_date:
+    type: string
+    string_semantics: short
+  nv_article_search_end_date:
+    type: string
+    string_semantics: short
+  nv_article_search_sort:
+    type: select
+    allowed_values:
+    - relevance
+    - newest
+    - oldest
+  nv_article_search_fl:
+    type: string
+    string_semantics: short

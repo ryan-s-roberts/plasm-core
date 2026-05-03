@@ -1,10 +1,7 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://api.open-meteo.com
-
 entities:
   Forecast:
     id_field: id
@@ -13,22 +10,17 @@ entities:
     description: Weather forecast data for a geographic location
     fields:
       latitude:
-        description: Decimal latitude of the forecast location
-        field_type: number
         required: true
+        value_ref: nv_forecast_latitude
       longitude:
-        description: Decimal longitude of the forecast location
-        field_type: number
         required: true
+        value_ref: nv_forecast_longitude
       timezone:
-        description: IANA timezone name for the location
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_forecast_timezone
       elevation:
-        description: Terrain elevation in metres
-        field_type: number
         required: false
+        value_ref: nv_forecast_elevation
 capabilities:
   weather_forecast:
     description: Fetch weather forecast for a lat/lon coordinate
@@ -36,39 +28,67 @@ capabilities:
     entity: Forecast
     parameters:
     - name: latitude
-      type: number
+      value_ref: nv_weather_forecast_latitude
       required: true
       role: filter
     - name: longitude
-      type: number
+      value_ref: nv_weather_forecast_longitude
       required: true
       role: filter
     - name: current_weather
-      type: boolean
+      value_ref: nv_weather_forecast_current_weather
       required: false
       role: response_control
     - name: temperature_unit
-      type: select
+      value_ref: nv_weather_forecast_temperature_unit
       required: false
-      allowed_values:
-      - celsius
-      - fahrenheit
       role: response_control
     - name: wind_speed_unit
-      type: select
+      value_ref: nv_weather_forecast_wind_speed_unit
       required: false
-      allowed_values:
-      - kmh
-      - ms
-      - mph
-      - kn
       role: response_control
     - name: timezone
-      type: string
+      value_ref: nv_weather_forecast_timezone
       required: false
       role: response_control
-      string_semantics: short
     - name: past_days
-      type: integer
+      value_ref: nv_weather_forecast_past_days
       required: false
       role: filter
+values:
+  nv_forecast_latitude:
+    type: number
+    description: Decimal latitude of the forecast location
+  nv_forecast_longitude:
+    type: number
+    description: Decimal longitude of the forecast location
+  nv_forecast_timezone:
+    type: string
+    string_semantics: short
+    description: IANA timezone name for the location
+  nv_forecast_elevation:
+    type: number
+    description: Terrain elevation in metres
+  nv_weather_forecast_latitude:
+    type: number
+  nv_weather_forecast_longitude:
+    type: number
+  nv_weather_forecast_current_weather:
+    type: boolean
+  nv_weather_forecast_temperature_unit:
+    type: select
+    allowed_values:
+    - celsius
+    - fahrenheit
+  nv_weather_forecast_wind_speed_unit:
+    type: select
+    allowed_values:
+    - kmh
+    - ms
+    - mph
+    - kn
+  nv_weather_forecast_timezone:
+    type: string
+    string_semantics: short
+  nv_weather_forecast_past_days:
+    type: integer

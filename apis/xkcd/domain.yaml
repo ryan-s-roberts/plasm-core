@@ -1,69 +1,45 @@
 auth:
   scheme: none
-
 version: 1
-
 http_backend: https://xkcd.com
-
 entities:
   Comic:
     id_field: num
     description: An XKCD webcomic strip
     fields:
       num:
-        description: Sequential comic number used as its ID
-        field_type: integer
         required: true
+        value_ref: nv_comic_num
       title:
-        description: Published title of the comic
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_comic_title
       safe_title:
-        description: URL-safe version of the title
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_comic_safe_title
       alt:
-        description: Hover-text (alt text) displayed on mouseover
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_comic_alt
       img:
-        description: Direct URL to the comic image file
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comic_img
       transcript:
-        description: Text transcript of the comic content
-        field_type: string
         required: false
-        string_semantics: markdown
+        value_ref: nv_comic_transcript
       year:
-        description: Year the comic was published
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comic_year
       month:
-        description: Month the comic was published
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comic_month
       day:
-        description: Day of the month the comic was published
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comic_day
       news:
-        description: Associated news or blog text, if any
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comic_news
       link:
-        description: External link related to the comic
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comic_link
 capabilities:
   comic_get:
     description: Retrieve a single XKCD comic by its number
@@ -81,3 +57,47 @@ capabilities:
     - day
     - news
     - link
+values:
+  nv_comic_num:
+    type: integer
+    description: Sequential comic number used as its ID
+  nv_comic_title:
+    type: string
+    string_semantics: short
+    description: Published title of the comic
+  nv_comic_safe_title:
+    type: string
+    string_semantics: markdown
+    description: URL-safe version of the title
+  nv_comic_alt:
+    type: string
+    string_semantics: markdown
+    description: Hover-text (alt text) displayed on mouseover
+  nv_comic_img:
+    type: string
+    string_semantics: short
+    description: Direct URL to the comic image file
+  nv_comic_transcript:
+    type: string
+    string_semantics: markdown
+    description: Text transcript of the comic content
+  nv_comic_year:
+    type: string
+    string_semantics: short
+    description: Year the comic was published
+  nv_comic_month:
+    type: string
+    string_semantics: short
+    description: Month the comic was published
+  nv_comic_day:
+    type: string
+    string_semantics: short
+    description: Day of the month the comic was published
+  nv_comic_news:
+    type: string
+    string_semantics: short
+    description: Associated news or blog text, if any
+  nv_comic_link:
+    type: string
+    string_semantics: short
+    description: External link related to the comic

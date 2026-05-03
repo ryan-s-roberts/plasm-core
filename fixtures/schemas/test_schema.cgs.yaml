@@ -1,5 +1,34 @@
 ---
 http_backend: http://localhost:1080
+values:
+  v_str_id:
+    description: ""
+    field_type: string
+    string_semantics: short
+  v_str_name:
+    description: ""
+    field_type: string
+    string_semantics: short
+  v_number:
+    description: ""
+    field_type: number
+  v_select_region:
+    description: ""
+    field_type: select
+    allowed_values:
+    - EMEA
+    - APAC
+    - AMER
+  v_select_role:
+    description: ""
+    field_type: select
+    allowed_values:
+    - Manager
+    - Employee
+    - Contractor
+  v_blob:
+    description: ""
+    field_type: blob
 entities:
   Account:
     name: Account
@@ -7,21 +36,27 @@ entities:
     fields:
       id:
         name: id
+        value_ref: v_str_id
         field_type: string
+        string_semantics: short
         allowed_values: 
         required: true
       name:
         name: name
+        value_ref: v_str_name
         field_type: string
+        string_semantics: short
         allowed_values: 
         required: true
       revenue:
         name: revenue
+        value_ref: v_number
         field_type: number
         allowed_values: 
         required: false
       region:
         name: region
+        value_ref: v_select_region
         field_type: select
         allowed_values:
         - EMEA
@@ -40,16 +75,21 @@ entities:
     fields:
       id:
         name: id
+        value_ref: v_str_id
         field_type: string
+        string_semantics: short
         allowed_values: 
         required: true
       name:
         name: name
+        value_ref: v_str_name
         field_type: string
+        string_semantics: short
         allowed_values: 
         required: true
       role:
         name: role
+        value_ref: v_select_role
         field_type: select
         allowed_values:
         - Manager
@@ -64,11 +104,14 @@ entities:
     fields:
       id:
         name: id
+        value_ref: v_str_id
         field_type: string
+        string_semantics: short
         allowed_values: 
         required: true
       payload:
         name: payload
+        value_ref: v_blob
         field_type: blob
         allowed_values: 
         required: false
@@ -76,6 +119,7 @@ entities:
         attachment_media: generic
       icon_png:
         name: icon_png
+        value_ref: v_blob
         field_type: blob
         allowed_values: 
         required: false

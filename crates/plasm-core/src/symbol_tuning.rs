@@ -24,7 +24,7 @@ use crate::identity::CapabilityName;
 use crate::identity::EntityName;
 use crate::schema::{
     capability_method_label_kebab, ArrayItemsSchema, CapabilitySchema, InputFieldSchema, InputType,
-    ParameterRole, StringSemantics, CGS,
+    ParameterRole, StringSemantics, ValueDomainKey, CGS,
 };
 use crate::CapabilityKind;
 use crate::FieldType;
@@ -67,24 +67,45 @@ pub enum IdentRole {
     CapabilityParam { capability: CapabilityName },
 }
 
-/// Typed metadata for one identifier on one entity. Replaces the stringly-typed
-/// `build_ident_gloss_map` + `build_ident_type_map` pipeline.
+/// Registry-backed slot role (entity field vs capability parameter). Relations use [`IdentMetadata::Relation`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdentRegistryRole {
+    EntityField,
+    CapabilityParam { capability: CapabilityName },
+}
+
+/// Typed metadata for one DOMAIN / symbol slot — **discriminated** so relations and CGS-backed
+/// fields do not share optional `values:` keys (`RegistryBacked` always carries [`ValueDomainKey`]).
 #[derive(Debug, Clone, PartialEq)]
-pub struct IdentMetadata {
-    /// Registry catalog row (`entry_id`) owning this slot — distinguishes federated graphs that reuse entity names.
-    pub catalog_entry_id: String,
-    pub field_type: FieldType,
-    /// When [`FieldType::String`], optional [`StringSemantics`] for DOMAIN `p#` type gloss.
-    pub string_semantics: Option<StringSemantics>,
-    /// Element typing when [`FieldType::Array`] (from CGS `items:`); drives `array[…]` gloss.
-    pub array_items: Option<ArrayItemsSchema>,
-    /// When [`FieldType::Select`] / [`FieldType::MultiSelect`], CGS `allowed_values` for DOMAIN gloss.
-    pub allowed_values: Option<Vec<String>>,
-    pub role: IdentRole,
-    /// CGS field / parameter / relation name (DOMAIN gloss fallback when `description` is empty).
-    pub wire_name: String,
-    pub description: String,
-    pub entity: EntityName,
+pub enum IdentMetadata {
+    /// Entity field or capability parameter: denormalized wire typing from [`CGS::values`].
+    RegistryBacked {
+        catalog_entry_id: String,
+        entity: EntityName,
+        role: IdentRegistryRole,
+        value_registry_key: ValueDomainKey,
+        field_type: FieldType,
+        string_semantics: Option<StringSemantics>,
+        array_items: Option<ArrayItemsSchema>,
+        allowed_values: Option<Vec<String>>,
+        wire_name: String,
+        description: String,
+    },
+    /// Declared relation — not a `values:` row; terminal edge typing is entity-ref only.
+    Relation {
+        catalog_entry_id: String,
+        entity: EntityName,
+        wire_name: String,
+        description: String,
+        target: EntityName,
+    },
+    /// Heading-line / lookup miss placeholder (wire name only; no CGS row).
+    SyntheticUnknown {
+        catalog_entry_id: String,
+        entity: EntityName,
+        wire_name: String,
+        description: String,
+    },
 }
 
 /// Key for [`IdentMetadata`] maps: `(registry entry_id, CGS entity, wire name)`.
@@ -281,30 +302,88 @@ pub(crate) fn collect_ident_names(cgs: &CGS, full_entities: &[&str]) -> BTreeSet
 /// description. Same-shaped slots on **different** entities or catalogs receive **distinct** opaque
 /// `p#` tokens; allocation remains append-only within a session.
 pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
-    let role_tag = match &meta.role {
-        IdentRole::EntityField => "ef".to_string(),
-        IdentRole::Relation { target } => format!("rel:{}", target.as_str()),
-        IdentRole::CapabilityParam { capability } => {
-            format!("cap:{}|{}", meta.entity.as_str(), capability.as_str(),)
+    let (role_tag, ft, sem, ai, av, vr, catalog_entry_id, entity, wire_name, desc) = match meta {
+        IdentMetadata::RegistryBacked {
+            catalog_entry_id,
+            entity,
+            role,
+            value_registry_key,
+            field_type,
+            string_semantics,
+            array_items,
+            allowed_values,
+            wire_name,
+            description,
+        } => {
+            let role_tag = match role {
+                IdentRegistryRole::EntityField => "ef".to_string(),
+                IdentRegistryRole::CapabilityParam { capability } => {
+                    format!("cap:{}|{}", entity.as_str(), capability.as_str())
+                }
+            };
+            let ft = serde_json::to_string(field_type).unwrap_or_else(|_| "\"?\"".to_string());
+            let sem =
+                serde_json::to_string(string_semantics).unwrap_or_else(|_| "null".to_string());
+            let ai = serde_json::to_string(array_items).unwrap_or_else(|_| "null".to_string());
+            let av = serde_json::to_string(allowed_values).unwrap_or_else(|_| "null".to_string());
+            let vr = value_registry_key.as_str();
+            (
+                role_tag,
+                ft,
+                sem,
+                ai,
+                av,
+                vr,
+                catalog_entry_id.as_str(),
+                entity.as_str(),
+                wire_name.as_str(),
+                description.trim(),
+            )
         }
+        IdentMetadata::Relation {
+            catalog_entry_id,
+            entity,
+            wire_name,
+            description,
+            target,
+        } => {
+            let role_tag = format!("rel:{}", target.as_str());
+            let ft = serde_json::to_string(&FieldType::EntityRef {
+                target: target.clone(),
+            })
+            .unwrap_or_else(|_| "\"?\"".to_string());
+            (
+                role_tag,
+                ft,
+                "null".to_string(),
+                "null".to_string(),
+                "null".to_string(),
+                "",
+                catalog_entry_id.as_str(),
+                entity.as_str(),
+                wire_name.as_str(),
+                description.trim(),
+            )
+        }
+        IdentMetadata::SyntheticUnknown {
+            catalog_entry_id,
+            entity,
+            wire_name,
+            description,
+        } => (
+            "ef".to_string(),
+            serde_json::to_string(&FieldType::String).unwrap_or_else(|_| "\"?\"".to_string()),
+            "null".to_string(),
+            "null".to_string(),
+            "null".to_string(),
+            "",
+            catalog_entry_id.as_str(),
+            entity.as_str(),
+            wire_name.as_str(),
+            description.trim(),
+        ),
     };
-    let ft = serde_json::to_string(&meta.field_type).unwrap_or_else(|_| "\"?\"".to_string());
-    let sem = serde_json::to_string(&meta.string_semantics).unwrap_or_else(|_| "null".to_string());
-    let ai = serde_json::to_string(&meta.array_items).unwrap_or_else(|_| "null".to_string());
-    let av = serde_json::to_string(&meta.allowed_values).unwrap_or_else(|_| "null".to_string());
-    let desc = meta.description.trim();
-    format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        meta.catalog_entry_id.as_str(),
-        meta.entity.as_str(),
-        role_tag,
-        meta.wire_name.as_str(),
-        ft,
-        sem,
-        ai,
-        av,
-        desc,
-    )
+    format!("{catalog_entry_id}|{entity}|{role_tag}|{wire_name}|{ft}|{sem}|{ai}|{av}|{vr}|{desc}",)
 }
 
 /// Stable key for one concrete slot occurrence (entity field, relation, or capability param).
@@ -312,26 +391,51 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
 /// rebuild exact `(entity, slot)` bindings even when several occurrences intentionally share one
 /// opaque `p#`.
 fn slot_occurrence_key(meta: &IdentMetadata) -> String {
-    match &meta.role {
-        IdentRole::EntityField => format!(
-            "ef|{}|{}|{}",
-            meta.catalog_entry_id.as_str(),
-            meta.entity.as_str(),
-            meta.wire_name
-        ),
-        IdentRole::Relation { target } => format!(
+    match meta {
+        IdentMetadata::RegistryBacked {
+            catalog_entry_id,
+            entity,
+            role,
+            wire_name,
+            ..
+        } => match role {
+            IdentRegistryRole::EntityField => format!(
+                "ef|{}|{}|{}",
+                catalog_entry_id.as_str(),
+                entity.as_str(),
+                wire_name
+            ),
+            IdentRegistryRole::CapabilityParam { capability } => format!(
+                "cap|{}|{}|{}|{}",
+                catalog_entry_id.as_str(),
+                entity.as_str(),
+                capability.as_str(),
+                wire_name
+            ),
+        },
+        IdentMetadata::Relation {
+            catalog_entry_id,
+            entity,
+            wire_name,
+            target,
+            ..
+        } => format!(
             "rel|{}|{}|{}|{}",
-            meta.catalog_entry_id.as_str(),
-            meta.entity.as_str(),
-            meta.wire_name,
+            catalog_entry_id.as_str(),
+            entity.as_str(),
+            wire_name,
             target.as_str()
         ),
-        IdentRole::CapabilityParam { capability } => format!(
-            "cap|{}|{}|{}|{}",
-            meta.catalog_entry_id.as_str(),
-            meta.entity.as_str(),
-            capability.as_str(),
-            meta.wire_name
+        IdentMetadata::SyntheticUnknown {
+            catalog_entry_id,
+            entity,
+            wire_name,
+            ..
+        } => format!(
+            "ef|{}|{}|{}",
+            catalog_entry_id.as_str(),
+            entity.as_str(),
+            wire_name
         ),
     }
 }
@@ -352,33 +456,26 @@ fn collect_slot_metas(
         };
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
-            out.push(IdentMetadata {
+            out.push(IdentMetadata::RegistryBacked {
                 catalog_entry_id: cid.clone(),
+                entity: en.clone(),
+                role: IdentRegistryRole::EntityField,
+                value_registry_key: f.kind.registry_key().clone(),
                 field_type: f.field_type.clone(),
                 string_semantics: f.string_semantics,
                 array_items: f.array_items.clone(),
                 allowed_values: f.allowed_values.clone(),
-                role: IdentRole::EntityField,
                 wire_name: fname.as_str().to_string(),
                 description: f.description.clone(),
-                entity: en.clone(),
             });
         }
         for (rname, r) in &ent.relations {
-            out.push(IdentMetadata {
+            out.push(IdentMetadata::Relation {
                 catalog_entry_id: cid.clone(),
-                field_type: FieldType::EntityRef {
-                    target: r.target_resource.clone(),
-                },
-                string_semantics: None,
-                array_items: None,
-                allowed_values: None,
-                role: IdentRole::Relation {
-                    target: r.target_resource.clone(),
-                },
+                entity: en.clone(),
                 wire_name: rname.as_str().to_string(),
                 description: r.description.clone(),
-                entity: en.clone(),
+                target: r.target_resource.clone(),
             });
         }
     }
@@ -398,18 +495,19 @@ fn collect_slot_metas(
             };
             let en = cap.domain.clone();
             for f in fields {
-                out.push(IdentMetadata {
+                out.push(IdentMetadata::RegistryBacked {
                     catalog_entry_id: cid.clone(),
+                    entity: en.clone(),
+                    role: IdentRegistryRole::CapabilityParam {
+                        capability: cap.name.clone(),
+                    },
+                    value_registry_key: f.kind.registry_key().clone(),
                     field_type: f.field_type.clone(),
                     string_semantics: f.string_semantics,
                     array_items: f.array_items.clone(),
                     allowed_values: f.allowed_values.clone(),
-                    role: IdentRole::CapabilityParam {
-                        capability: cap.name.clone(),
-                    },
                     wire_name: f.name.clone(),
                     description: f.description.clone().unwrap_or_default(),
-                    entity: en.clone(),
                 });
             }
         }
@@ -434,34 +532,27 @@ pub(crate) fn build_ident_metadata(
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
             out.entry((cid.clone(), en.clone(), fname.as_str().to_string()))
-                .or_insert_with(|| IdentMetadata {
+                .or_insert_with(|| IdentMetadata::RegistryBacked {
                     catalog_entry_id: cid.clone(),
+                    entity: en.clone(),
+                    role: IdentRegistryRole::EntityField,
+                    value_registry_key: f.kind.registry_key().clone(),
                     field_type: f.field_type.clone(),
                     string_semantics: f.string_semantics,
                     array_items: f.array_items.clone(),
                     allowed_values: f.allowed_values.clone(),
-                    role: IdentRole::EntityField,
                     wire_name: fname.as_str().to_string(),
                     description: f.description.clone(),
-                    entity: en.clone(),
                 });
         }
         for (rname, r) in &ent.relations {
             out.entry((cid.clone(), en.clone(), rname.as_str().to_string()))
-                .or_insert_with(|| IdentMetadata {
+                .or_insert_with(|| IdentMetadata::Relation {
                     catalog_entry_id: cid.clone(),
-                    field_type: FieldType::EntityRef {
-                        target: r.target_resource.clone(),
-                    },
-                    string_semantics: None,
-                    array_items: None,
-                    allowed_values: None,
-                    role: IdentRole::Relation {
-                        target: r.target_resource.clone(),
-                    },
+                    entity: en.clone(),
                     wire_name: rname.as_str().to_string(),
                     description: r.description.clone(),
-                    entity: en.clone(),
+                    target: r.target_resource.clone(),
                 });
         }
     }
@@ -482,18 +573,19 @@ pub(crate) fn build_ident_metadata(
             let en = cap.domain.clone();
             for f in fields {
                 out.entry((cid.clone(), en.clone(), f.name.clone()))
-                    .or_insert_with(|| IdentMetadata {
+                    .or_insert_with(|| IdentMetadata::RegistryBacked {
                         catalog_entry_id: cid.clone(),
+                        entity: en.clone(),
+                        role: IdentRegistryRole::CapabilityParam {
+                            capability: cap.name.clone(),
+                        },
+                        value_registry_key: f.kind.registry_key().clone(),
                         field_type: f.field_type.clone(),
                         string_semantics: f.string_semantics,
                         array_items: f.array_items.clone(),
                         allowed_values: f.allowed_values.clone(),
-                        role: IdentRole::CapabilityParam {
-                            capability: cap.name.clone(),
-                        },
                         wire_name: f.name.clone(),
                         description: f.description.clone().unwrap_or_default(),
-                        entity: en.clone(),
                     });
             }
         }
@@ -502,45 +594,134 @@ pub(crate) fn build_ident_metadata(
 }
 
 impl IdentMetadata {
+    /// Same three-way dispatch as legacy [`IdentRole`] for fingerprint maps and symbol tables.
+    #[inline]
+    pub fn allocation_ident_role(&self) -> IdentRole {
+        match self {
+            IdentMetadata::RegistryBacked { role, .. } => match role {
+                IdentRegistryRole::EntityField => IdentRole::EntityField,
+                IdentRegistryRole::CapabilityParam { capability } => IdentRole::CapabilityParam {
+                    capability: capability.clone(),
+                },
+            },
+            IdentMetadata::Relation { target, .. } => IdentRole::Relation {
+                target: target.clone(),
+            },
+            IdentMetadata::SyntheticUnknown { .. } => IdentRole::EntityField,
+        }
+    }
+
+    #[inline]
+    pub fn catalog_entry_id(&self) -> &str {
+        match self {
+            IdentMetadata::RegistryBacked {
+                catalog_entry_id, ..
+            }
+            | IdentMetadata::Relation {
+                catalog_entry_id, ..
+            }
+            | IdentMetadata::SyntheticUnknown {
+                catalog_entry_id, ..
+            } => catalog_entry_id.as_str(),
+        }
+    }
+
+    #[inline]
+    pub fn entity(&self) -> &EntityName {
+        match self {
+            IdentMetadata::RegistryBacked { entity, .. }
+            | IdentMetadata::Relation { entity, .. }
+            | IdentMetadata::SyntheticUnknown { entity, .. } => entity,
+        }
+    }
+
+    #[inline]
+    pub fn wire_name(&self) -> &str {
+        match self {
+            IdentMetadata::RegistryBacked { wire_name, .. }
+            | IdentMetadata::Relation { wire_name, .. }
+            | IdentMetadata::SyntheticUnknown { wire_name, .. } => wire_name.as_str(),
+        }
+    }
+
+    fn description_trimmed(&self) -> &str {
+        match self {
+            IdentMetadata::RegistryBacked { description, .. }
+            | IdentMetadata::Relation { description, .. }
+            | IdentMetadata::SyntheticUnknown { description, .. } => description.trim(),
+        }
+    }
+
+    #[inline]
+    pub fn description(&self) -> &str {
+        match self {
+            IdentMetadata::RegistryBacked { description, .. }
+            | IdentMetadata::Relation { description, .. }
+            | IdentMetadata::SyntheticUnknown { description, .. } => description.as_str(),
+        }
+    }
+
+    #[inline]
+    pub fn allowed_values(&self) -> Option<&Vec<String>> {
+        match self {
+            IdentMetadata::RegistryBacked { allowed_values, .. } => allowed_values.as_ref(),
+            IdentMetadata::Relation { .. } | IdentMetadata::SyntheticUnknown { .. } => None,
+        }
+    }
+
     /// Render the gloss line content (after `p#  ;;  `). The `map` is used to resolve
     /// entity-ref targets to their `e#` symbol when symbol tuning is active.
     pub fn render_gloss(&self, map: Option<&SymbolMap>) -> String {
-        let type_label = match &self.role {
-            IdentRole::Relation { target } => {
-                let hint = match map {
+        match self {
+            IdentMetadata::Relation {
+                target,
+                wire_name: _,
+                description,
+                ..
+            } => {
+                let type_label = match map {
                     Some(m) => format!("=> {}", m.entity_sym(target.as_str())),
                     None => format!("=> {}", target),
                 };
-                hint
-            }
-            _ => array_or_scalar_gloss_label(
-                &self.field_type,
-                &self.array_items,
-                self.string_semantics,
-                map,
-            ),
-        };
-        // Select / multiselect: show enum values (wire names alone are not actionable).
-        if matches!(self.field_type, FieldType::Select | FieldType::MultiSelect) {
-            if let Some(ref av) = self.allowed_values {
-                if !av.is_empty() {
-                    let joined = av.join(", ");
-                    let vals = truncate_desc(&joined, 240);
-                    return format!("{type_label} · {vals}");
-                }
-            }
-        }
-        let desc = self.description.trim();
-        if desc.is_empty() {
-            match &self.role {
-                IdentRole::Relation { target } => {
+                let desc = description.trim();
+                if desc.is_empty() {
                     format!("{type_label} \u{00b7} {}", target)
+                } else {
+                    let truncated = truncate_desc(desc, 100);
+                    format!("{type_label} \u{00b7} {truncated}")
                 }
-                _ => format!("{type_label} \u{00b7} {}", self.wire_name),
             }
-        } else {
-            let truncated = truncate_desc(desc, 100);
-            format!("{type_label} \u{00b7} {truncated}")
+            IdentMetadata::SyntheticUnknown { wire_name, .. } => {
+                let type_label = array_or_scalar_gloss_label(&FieldType::String, &None, None, map);
+                format!("{type_label} \u{00b7} {}", wire_name)
+            }
+            IdentMetadata::RegistryBacked {
+                field_type,
+                array_items,
+                string_semantics,
+                allowed_values,
+                wire_name,
+                ..
+            } => {
+                let type_label =
+                    array_or_scalar_gloss_label(field_type, array_items, *string_semantics, map);
+                if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
+                    if let Some(ref av) = allowed_values {
+                        if !av.is_empty() {
+                            let joined = av.join(", ");
+                            let vals = truncate_desc(&joined, 240);
+                            return format!("{type_label} · {vals}");
+                        }
+                    }
+                }
+                let desc = self.description_trimmed();
+                if desc.is_empty() {
+                    format!("{type_label} \u{00b7} {}", wire_name)
+                } else {
+                    let truncated = truncate_desc(desc, 100);
+                    format!("{type_label} \u{00b7} {truncated}")
+                }
+            }
         }
     }
 }
@@ -566,8 +747,8 @@ pub(crate) fn build_compact_arg_slot_gloss(
     map: &SymbolMap,
 ) -> CompactArgSlotGloss {
     let ro = if required { "req" } else { "opt" };
-    match &meta.field_type {
-        FieldType::EntityRef { target } => {
+    match meta {
+        IdentMetadata::Relation { target, .. } => {
             let es = map.entity_sym(target.as_str());
             let t = format!("ref:{}", es);
             CompactArgSlotGloss {
@@ -576,63 +757,89 @@ pub(crate) fn build_compact_arg_slot_gloss(
                 required,
             }
         }
-        FieldType::Select | FieldType::MultiSelect => {
-            if let Some(ref av) = meta.allowed_values {
-                if !av.is_empty() {
-                    let joined = av.join(",");
-                    if joined.chars().count() <= MAX_INLINE_ARGS_SELECT_ENUM {
-                        let br = match &meta.field_type {
-                            FieldType::Select => format!("sel[{}]", joined),
-                            _ => format!("msel[{}]", joined),
-                        };
-                        return CompactArgSlotGloss {
-                            text: format!("{sym} {wire} {br} {ro}"),
-                            allows_suppress_standalone_gloss: true,
-                            required,
-                        };
-                    }
-                }
-            }
-            let t = if matches!(&meta.field_type, FieldType::Select) {
-                "select+"
-            } else {
-                "multiselect+"
-            };
-            CompactArgSlotGloss {
-                text: format!("{sym} {wire} {t} {ro}"),
-                allows_suppress_standalone_gloss: false,
-                required,
-            }
-        }
-        FieldType::Array => {
-            if let Some(ref items) = meta.array_items {
-                let inner = array_element_gloss_label(items, Some(map));
-                CompactArgSlotGloss {
-                    text: format!("{sym} {wire} array[{inner}] {ro}"),
-                    allows_suppress_standalone_gloss: true,
-                    required,
-                }
-            } else {
-                CompactArgSlotGloss {
-                    text: format!("{sym} {wire} array+ {ro}"),
-                    allows_suppress_standalone_gloss: false,
-                    required,
-                }
-            }
-        }
-        _ => {
-            let t = array_or_scalar_gloss_label(
-                &meta.field_type,
-                &meta.array_items,
-                meta.string_semantics,
-                Some(map),
-            );
+        IdentMetadata::SyntheticUnknown { .. } => {
+            let t = array_or_scalar_gloss_label(&FieldType::String, &None, None, Some(map));
             CompactArgSlotGloss {
                 text: format!("{sym} {wire} {t} {ro}"),
                 allows_suppress_standalone_gloss: true,
                 required,
             }
         }
+        IdentMetadata::RegistryBacked {
+            field_type,
+            array_items,
+            string_semantics,
+            allowed_values,
+            ..
+        } => match field_type {
+            FieldType::EntityRef { target } => {
+                let es = map.entity_sym(target.as_str());
+                let t = format!("ref:{}", es);
+                CompactArgSlotGloss {
+                    text: format!("{sym} {wire} {t} {ro}"),
+                    allows_suppress_standalone_gloss: true,
+                    required,
+                }
+            }
+            FieldType::Select | FieldType::MultiSelect => {
+                if let Some(ref av) = allowed_values {
+                    if !av.is_empty() {
+                        let joined = av.join(",");
+                        if joined.chars().count() <= MAX_INLINE_ARGS_SELECT_ENUM {
+                            let br = if matches!(field_type, FieldType::Select) {
+                                format!("sel[{joined}]")
+                            } else {
+                                format!("msel[{joined}]")
+                            };
+                            return CompactArgSlotGloss {
+                                text: format!("{sym} {wire} {br} {ro}"),
+                                allows_suppress_standalone_gloss: true,
+                                required,
+                            };
+                        }
+                    }
+                }
+                let t = if matches!(field_type, FieldType::Select) {
+                    "select+"
+                } else {
+                    "multiselect+"
+                };
+                CompactArgSlotGloss {
+                    text: format!("{sym} {wire} {t} {ro}"),
+                    allows_suppress_standalone_gloss: false,
+                    required,
+                }
+            }
+            FieldType::Array => {
+                if let Some(ref items) = array_items {
+                    let inner = array_element_gloss_label(items, Some(map));
+                    CompactArgSlotGloss {
+                        text: format!("{sym} {wire} array[{inner}] {ro}"),
+                        allows_suppress_standalone_gloss: true,
+                        required,
+                    }
+                } else {
+                    CompactArgSlotGloss {
+                        text: format!("{sym} {wire} array+ {ro}"),
+                        allows_suppress_standalone_gloss: false,
+                        required,
+                    }
+                }
+            }
+            _ => {
+                let t = array_or_scalar_gloss_label(
+                    field_type,
+                    array_items,
+                    *string_semantics,
+                    Some(map),
+                );
+                CompactArgSlotGloss {
+                    text: format!("{sym} {wire} {t} {ro}"),
+                    allows_suppress_standalone_gloss: true,
+                    required,
+                }
+            }
+        },
     }
 }
 
@@ -1878,17 +2085,17 @@ impl DomainExposureSession {
                 continue;
             };
             self.sym_to_ident
-                .insert(sym.clone(), meta.wire_name.clone());
+                .insert(sym.clone(), meta.wire_name().to_string());
             self.ident_to_sym
-                .entry(meta.wire_name.clone())
+                .entry(meta.wire_name().to_string())
                 .or_insert_with(|| sym.clone());
-            match &meta.role {
+            match meta.allocation_ident_role() {
                 IdentRole::EntityField => {
                     self.entity_field_to_sym.insert(
                         (
-                            meta.catalog_entry_id.clone(),
-                            meta.entity.as_str().to_string(),
-                            meta.wire_name.clone(),
+                            meta.catalog_entry_id().to_string(),
+                            meta.entity().as_str().to_string(),
+                            meta.wire_name().to_string(),
                         ),
                         sym.clone(),
                     );
@@ -1896,9 +2103,9 @@ impl DomainExposureSession {
                 IdentRole::Relation { .. } => {
                     self.relation_to_sym.insert(
                         (
-                            meta.catalog_entry_id.clone(),
-                            meta.entity.as_str().to_string(),
-                            meta.wire_name.clone(),
+                            meta.catalog_entry_id().to_string(),
+                            meta.entity().as_str().to_string(),
+                            meta.wire_name().to_string(),
                         ),
                         sym.clone(),
                     );
@@ -1906,10 +2113,10 @@ impl DomainExposureSession {
                 IdentRole::CapabilityParam { capability } => {
                     self.cap_param_to_sym.insert(
                         (
-                            meta.catalog_entry_id.clone(),
-                            meta.entity.as_str().to_string(),
+                            meta.catalog_entry_id().to_string(),
+                            meta.entity().as_str().to_string(),
                             capability.as_str().to_string(),
-                            meta.wire_name.clone(),
+                            meta.wire_name().to_string(),
                         ),
                         sym.clone(),
                     );
@@ -1921,13 +2128,13 @@ impl DomainExposureSession {
             let Some(sym) = self.slot_fingerprint_to_sym.get(&fp) else {
                 continue;
             };
-            match &meta.role {
+            match meta.allocation_ident_role() {
                 IdentRole::EntityField => {
                     self.entity_field_to_sym.insert(
                         (
-                            meta.catalog_entry_id.clone(),
-                            meta.entity.as_str().to_string(),
-                            meta.wire_name.clone(),
+                            meta.catalog_entry_id().to_string(),
+                            meta.entity().as_str().to_string(),
+                            meta.wire_name().to_string(),
                         ),
                         sym.clone(),
                     );
@@ -1935,9 +2142,9 @@ impl DomainExposureSession {
                 IdentRole::Relation { .. } => {
                     self.relation_to_sym.insert(
                         (
-                            meta.catalog_entry_id.clone(),
-                            meta.entity.as_str().to_string(),
-                            meta.wire_name.clone(),
+                            meta.catalog_entry_id().to_string(),
+                            meta.entity().as_str().to_string(),
+                            meta.wire_name().to_string(),
                         ),
                         sym.clone(),
                     );
@@ -1945,10 +2152,10 @@ impl DomainExposureSession {
                 IdentRole::CapabilityParam { capability } => {
                     self.cap_param_to_sym.insert(
                         (
-                            meta.catalog_entry_id.clone(),
-                            meta.entity.as_str().to_string(),
+                            meta.catalog_entry_id().to_string(),
+                            meta.entity().as_str().to_string(),
                             capability.as_str().to_string(),
-                            meta.wire_name.clone(),
+                            meta.wire_name().to_string(),
                         ),
                         sym.clone(),
                     );
@@ -2051,13 +2258,13 @@ impl DomainExposureSession {
         let set: HashSet<&str> = full_entities.iter().copied().collect();
         let mut out = HashMap::new();
         for meta in self.slot_occurrence_meta.values() {
-            if !set.contains(meta.entity.as_str()) {
+            if !set.contains(meta.entity().as_str()) {
                 continue;
             }
             let k = (
-                meta.catalog_entry_id.clone(),
-                meta.entity.clone(),
-                meta.wire_name.clone(),
+                meta.catalog_entry_id().to_string(),
+                meta.entity().clone(),
+                meta.wire_name().to_string(),
             );
             out.entry(k).or_insert_with(|| meta.clone());
         }
@@ -2337,29 +2544,37 @@ pub fn expand_expr_for_parse(
 mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
+    use crate::schema::{FieldValueKind, ValueDomainKey};
 
     #[test]
     fn slot_allocation_fingerprint_splits_same_wire_different_field_types() {
         let en = EntityName::from("N".to_string());
-        let meta = |ft: FieldType| IdentMetadata {
+        let meta = |entity: EntityName, ft: FieldType, vr: &str| IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
+            entity,
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new(vr).expect("key"),
             field_type: ft,
             string_semantics: None,
             array_items: None,
             allowed_values: None,
-            role: IdentRole::EntityField,
             wire_name: "id".into(),
             description: "same desc".into(),
-            entity: en.clone(),
         };
         assert_ne!(
-            slot_allocation_fingerprint(&meta(FieldType::Integer)),
-            slot_allocation_fingerprint(&meta(FieldType::String)),
+            slot_allocation_fingerprint(&meta(en.clone(), FieldType::Integer, "fp_slot_int")),
+            slot_allocation_fingerprint(&meta(en.clone(), FieldType::String, "fp_slot_str")),
         );
-        let mut a = meta(FieldType::Integer);
-        a.entity = EntityName::from("Alpha".to_string());
-        let mut b = meta(FieldType::Integer);
-        b.entity = EntityName::from("Beta".to_string());
+        let a = meta(
+            EntityName::from("Alpha".to_string()),
+            FieldType::Integer,
+            "fp_slot_alpha",
+        );
+        let b = meta(
+            EntityName::from("Beta".to_string()),
+            FieldType::Integer,
+            "fp_slot_beta",
+        );
         assert_ne!(
             slot_allocation_fingerprint(&a),
             slot_allocation_fingerprint(&b),
@@ -2575,65 +2790,76 @@ mod tests {
 
     #[test]
     fn render_gloss_capability_param_uses_wire_name_without_description() {
-        let m = IdentMetadata {
+        let m = IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
+            entity: EntityName::from("Order".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: CapabilityName::from("test_cap".to_string()),
+            },
+            value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
             field_type: FieldType::String,
             string_semantics: None,
             array_items: None,
             allowed_values: None,
-            role: IdentRole::CapabilityParam {
-                capability: CapabilityName::from("test_cap".to_string()),
-            },
             wire_name: "payment_method_id".to_string(),
             description: String::new(),
-            entity: EntityName::from("Order".to_string()),
         };
         assert_eq!(m.render_gloss(None), "str · payment_method_id");
     }
 
     #[test]
     fn render_gloss_capability_param_uses_description_when_set() {
-        let m = IdentMetadata {
+        let m = IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
+            entity: EntityName::from("Order".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: CapabilityName::from("test_cap".to_string()),
+            },
+            value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
             field_type: FieldType::String,
             string_semantics: None,
             array_items: None,
             allowed_values: None,
-            role: IdentRole::CapabilityParam {
-                capability: CapabilityName::from("test_cap".to_string()),
-            },
             wire_name: "payment_method_id".to_string(),
             description: "Payment method".to_string(),
-            entity: EntityName::from("Order".to_string()),
         };
         assert_eq!(m.render_gloss(None), "str · Payment method");
     }
 
     #[test]
     fn render_gloss_string_semantics_markdown_replaces_str_label() {
-        let m = IdentMetadata {
+        let m = IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
+            entity: EntityName::from("Issue".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: CapabilityName::from("test_cap".to_string()),
+            },
+            value_registry_key: ValueDomainKey::new("fixture_issue_body_md").expect("key"),
             field_type: FieldType::String,
             string_semantics: Some(StringSemantics::Markdown),
             array_items: None,
             allowed_values: None,
-            role: IdentRole::CapabilityParam {
-                capability: CapabilityName::from("test_cap".to_string()),
-            },
             wire_name: "body".to_string(),
             description: String::new(),
-            entity: EntityName::from("Issue".to_string()),
         };
         assert_eq!(m.render_gloss(None), "markdown · body");
     }
 
     #[test]
     fn render_gloss_array_param_shows_element_type() {
-        let m = IdentMetadata {
+        let m = IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
+            entity: EntityName::from("Order".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: CapabilityName::from("exchange_delivered_order_items".to_string()),
+            },
+            value_registry_key: ValueDomainKey::new("fixture_order_item_ids").expect("key"),
             field_type: FieldType::Array,
             string_semantics: None,
             array_items: Some(ArrayItemsSchema {
+                kind: FieldValueKind::Registry(
+                    ValueDomainKey::new("fixture_variant_ref").expect("key"),
+                ),
                 field_type: FieldType::EntityRef {
                     target: EntityName::from("Variant".to_string()),
                 },
@@ -2641,20 +2867,19 @@ mod tests {
                 allowed_values: None,
             }),
             allowed_values: None,
-            role: IdentRole::CapabilityParam {
-                capability: CapabilityName::from("exchange_delivered_order_items".to_string()),
-            },
             wire_name: "item_ids".to_string(),
             description: String::new(),
-            entity: EntityName::from("Order".to_string()),
         };
         assert_eq!(m.render_gloss(None), "array[ref:Variant] · item_ids");
     }
 
     #[test]
     fn render_gloss_select_shows_allowed_values_not_wire_name() {
-        let m = IdentMetadata {
+        let m = IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
+            entity: EntityName::from("Issue".to_string()),
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new("issue_state_reason").expect("key"),
             field_type: FieldType::Select,
             string_semantics: None,
             array_items: None,
@@ -2664,14 +2889,50 @@ mod tests {
                 "not_planned".to_string(),
                 "duplicate".to_string(),
             ]),
-            role: IdentRole::EntityField,
             wire_name: "state_reason".to_string(),
             description: String::new(),
-            entity: EntityName::from("Issue".to_string()),
         };
         assert_eq!(
             m.render_gloss(None),
             "select · completed, reopened, not_planned, duplicate"
+        );
+    }
+
+    /// Two `p#` slots may share one `values:` key; each still earns a full select gloss (no cross-`p#` peer line).
+    #[test]
+    fn render_gloss_select_full_for_each_slot_sharing_value_registry_key() {
+        let av = Some(vec!["a".to_string(), "b".to_string()]);
+        let gloss_a = IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: EntityName::from("E".to_string()),
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new("shared_status").expect("key"),
+            field_type: FieldType::Select,
+            string_semantics: None,
+            array_items: None,
+            allowed_values: av.clone(),
+            wire_name: "status_a".into(),
+            description: String::new(),
+        }
+        .render_gloss(None);
+        let gloss_b = IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: EntityName::from("E".to_string()),
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new("shared_status").expect("key"),
+            field_type: FieldType::Select,
+            string_semantics: None,
+            array_items: None,
+            allowed_values: av,
+            wire_name: "status_b".into(),
+            description: String::new(),
+        }
+        .render_gloss(None);
+        assert_eq!(gloss_a, "select · a, b");
+        assert_eq!(gloss_b, "select · a, b");
+        assert!(
+            !gloss_a.contains("same values as"),
+            "peer-gloss path must stay removed"
         );
     }
 
@@ -2685,13 +2946,27 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let meta = build_ident_metadata(&cgs, &full);
         assert!(
-            meta.values()
-                .any(|m| matches!(m.field_type, crate::FieldType::Date)),
+            meta.values().any(|m| {
+                matches!(
+                    m,
+                    IdentMetadata::RegistryBacked {
+                        field_type: crate::FieldType::Date,
+                        ..
+                    }
+                )
+            }),
             "expected Date field type in metadata"
         );
         assert!(
-            meta.values()
-                .any(|m| matches!(m.field_type, crate::FieldType::Boolean)),
+            meta.values().any(|m| {
+                matches!(
+                    m,
+                    IdentMetadata::RegistryBacked {
+                        field_type: crate::FieldType::Boolean,
+                        ..
+                    }
+                )
+            }),
             "expected Boolean field type in metadata"
         );
     }

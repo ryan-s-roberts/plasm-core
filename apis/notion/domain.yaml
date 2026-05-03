@@ -1,53 +1,40 @@
 http_backend: https://api.notion.com
-
 entities:
   Page:
     id_field: id
-    description: 'A Notion page object. Covers both standalone document pages and database rows/records (Notion uses the same type for both; parent.type distinguishes them).
+    description: 'A Notion page object. Covers both standalone document pages and database rows/records (Notion uses the same
+      type for both; parent.type distinguishes them).
 
       '
     fields:
       id:
-        field_type: string
         required: true
-        description: UUIDv4 page identifier
-        string_semantics: short
+        value_ref: nv_page_id
       url:
-        field_type: string
         required: false
-        description: Canonical Notion URL for this page
-        string_semantics: short
+        value_ref: nv_page_url
       public_url:
-        field_type: string
         required: false
-        description: Public web URL if the page is published, otherwise null
-        string_semantics: short
+        value_ref: nv_page_public_url
       created_time:
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_page_created_time
       last_edited_time:
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_page_last_edited_time
       in_trash:
-        field_type: boolean
         required: false
-        description: True if this page has been trashed
+        value_ref: nv_page_in_trash
       archived:
-        field_type: boolean
         required: false
-        description: Deprecated alias for in_trash
+        value_ref: nv_page_archived
       markdown:
-        field_type: string
-        string_semantics: markdown
         agent_presentation: reference_only
         required: false
-        description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
+        value_ref: nv_page_markdown
       truncated:
-        field_type: boolean
         required: false
-        description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
+        value_ref: nv_page_truncated
     relations:
       created_by:
         target: User
@@ -68,32 +55,26 @@ entities:
     description: A Notion database — a container with a property schema whose rows are Pages.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_database_id
       url:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_database_url
       public_url:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_database_public_url
       created_time:
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_database_created_time
       last_edited_time:
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_database_last_edited_time
       in_trash:
-        field_type: boolean
         required: false
+        value_ref: nv_database_in_trash
       is_inline:
-        field_type: boolean
         required: false
-        description: True if the database is displayed inline in its parent page
+        value_ref: nv_database_is_inline
     relations:
       created_by:
         target: User
@@ -114,48 +95,36 @@ entities:
     description: A Notion workspace member (person) or integration (bot).
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_user_id
       name:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_name
       type:
-        field_type: select
         required: false
-        allowed_values:
-        - person
-        - bot
+        value_ref: nv_user_type
       avatar_url:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_user_avatar_url
       email:
-        field_type: string
         required: false
-        description: Only available when integration has user email capabilities
-        string_semantics: short
+        value_ref: nv_user_email
   Comment:
     id_field: id
     description: A comment on a Notion page or block, belonging to a discussion thread.
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_comment_id
       discussion_id:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_comment_discussion_id
       created_time:
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_comment_created_time
       last_edited_time:
-        field_type: date
-        value_format: rfc3339
         required: false
+        value_ref: nv_comment_last_edited_time
     relations:
       created_by:
         target: User
@@ -189,7 +158,9 @@ capabilities:
       type: side_effect
       description: 'Move a page to trash (in_trash: true). Use page_update to restore.'
   page_get_markdown:
-    description: 'Retrieve full page content as Enhanced Markdown in a single call. Populates the Page entity''s markdown and truncated fields via additive merge — the page''s structural metadata (url, timestamps, etc.) is preserved. Requires read content capability on the integration.
+    description: 'Retrieve full page content as Enhanced Markdown in a single call. Populates the Page entity''s markdown
+      and truncated fields via additive merge — the page''s structural metadata (url, timestamps, etc.) is preserved. Requires
+      read content capability on the integration.
 
       '
     kind: action
@@ -199,12 +170,16 @@ capabilities:
     - markdown
     - truncated
   page_update_markdown:
-    description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated fields with the updated content. Requires update content capability on the integration.\n"
+    description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace\
+      \ (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated\
+      \ fields with the updated content. Requires update content capability on the integration.\n"
     kind: action
     entity: Page
     output:
       type: side_effect
-      description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated fields with the updated content. Requires update content capability on the integration."
+      description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace\
+        \ (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated\
+        \ fields with the updated content. Requires update content capability on the integration."
   database_get:
     description: Retrieve a database object including its property schema.
     kind: get
@@ -223,16 +198,13 @@ capabilities:
     entity: Page
     parameters:
     - name: database_id
-      type: string
+      value_ref: nv_database_query_database_id
       required: true
       role: scope
-      description: ID of the database to query
-      string_semantics: short
     - name: page_size
-      type: integer
+      value_ref: nv_database_query_page_size
       required: false
       role: response_control
-      description: Number of results per page (max 100)
   user_get:
     description: Retrieve a Notion user by their ID.
     kind: get
@@ -253,13 +225,11 @@ capabilities:
     entity: Comment
     parameters:
     - name: block_id
-      type: string
+      value_ref: nv_comment_query_block_id
       required: true
       role: scope
-      description: ID of the page whose comments to retrieve
-      string_semantics: short
     - name: page_size
-      type: integer
+      value_ref: nv_comment_query_page_size
       required: false
       role: response_control
   comment_create:
@@ -280,20 +250,15 @@ capabilities:
     - archived
     parameters:
     - name: query
-      type: string
+      value_ref: nv_page_search_query
       required: false
       role: search
-      description: Title text to search for. Omit to retrieve all accessible pages.
-      string_semantics: short
     - name: sort_direction
-      type: select
+      value_ref: nv_page_search_sort_direction
       required: false
       role: sort_direction
-      allowed_values:
-      - ascending
-      - descending
     - name: page_size
-      type: integer
+      value_ref: nv_page_search_page_size
       required: false
       role: response_control
   database_search:
@@ -310,24 +275,135 @@ capabilities:
     - is_inline
     parameters:
     - name: query
-      type: string
+      value_ref: nv_database_search_query
       required: false
       role: search
-      description: Title text to search for. Omit to retrieve all accessible databases.
-      string_semantics: short
     - name: sort_direction
-      type: select
+      value_ref: nv_database_search_sort_direction
       required: false
       role: sort_direction
-      allowed_values:
-      - ascending
-      - descending
     - name: page_size
-      type: integer
+      value_ref: nv_database_search_page_size
       required: false
       role: response_control
 version: 1
-
 auth:
   scheme: bearer_token
   env: NOTION_API_TOKEN
+values:
+  nv_page_id:
+    type: string
+    string_semantics: short
+    description: UUIDv4 page identifier
+  nv_page_url:
+    type: string
+    string_semantics: short
+    description: Canonical Notion URL for this page
+  nv_page_public_url:
+    type: string
+    string_semantics: short
+    description: Public web URL if the page is published, otherwise null
+  nv_page_created_time:
+    type: date
+    value_format: rfc3339
+  nv_page_last_edited_time:
+    type: date
+    value_format: rfc3339
+  nv_page_in_trash:
+    type: boolean
+    description: True if this page has been trashed
+  nv_page_archived:
+    type: boolean
+    description: Deprecated alias for in_trash
+  nv_page_markdown:
+    type: string
+    string_semantics: markdown
+    description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
+  nv_page_truncated:
+    type: boolean
+    description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
+  nv_database_id:
+    type: string
+    string_semantics: short
+  nv_database_url:
+    type: string
+    string_semantics: short
+  nv_database_public_url:
+    type: string
+    string_semantics: short
+  nv_database_created_time:
+    type: date
+    value_format: rfc3339
+  nv_database_last_edited_time:
+    type: date
+    value_format: rfc3339
+  nv_database_in_trash:
+    type: boolean
+  nv_database_is_inline:
+    type: boolean
+    description: True if the database is displayed inline in its parent page
+  nv_user_id:
+    type: string
+    string_semantics: short
+  nv_user_name:
+    type: string
+    string_semantics: short
+  nv_user_type:
+    type: select
+    allowed_values:
+    - person
+    - bot
+  nv_user_avatar_url:
+    type: string
+    string_semantics: short
+  nv_user_email:
+    type: string
+    string_semantics: short
+    description: Only available when integration has user email capabilities
+  nv_comment_id:
+    type: string
+    string_semantics: short
+  nv_comment_discussion_id:
+    type: string
+    string_semantics: short
+  nv_comment_created_time:
+    type: date
+    value_format: rfc3339
+  nv_comment_last_edited_time:
+    type: date
+    value_format: rfc3339
+  nv_database_query_database_id:
+    type: string
+    string_semantics: short
+    description: ID of the database to query
+  nv_database_query_page_size:
+    type: integer
+    description: Number of results per page (max 100)
+  nv_comment_query_block_id:
+    type: string
+    string_semantics: short
+    description: ID of the page whose comments to retrieve
+  nv_comment_query_page_size:
+    type: integer
+  nv_page_search_query:
+    type: string
+    string_semantics: short
+    description: Title text to search for. Omit to retrieve all accessible pages.
+  nv_page_search_sort_direction:
+    type: select
+    allowed_values:
+    - ascending
+    - descending
+  nv_page_search_page_size:
+    type: integer
+  nv_database_search_query:
+    type: string
+    string_semantics: short
+    description: Title text to search for. Omit to retrieve all accessible databases.
+  nv_database_search_sort_direction:
+    type: select
+    allowed_values:
+    - ascending
+    - descending
+  nv_database_search_page_size:
+    type: integer

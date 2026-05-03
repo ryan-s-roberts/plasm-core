@@ -1,25 +1,18 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://pokeapi.co
-
 entities:
   Berry:
     id_field: name
     description: A berry item (kitchen e2e — filter, paging, get).
     fields:
       name:
-        description: Unique berry name used as its identifier
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_berry_name
       url:
-        description: API endpoint URL for full berry details
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_berry_url
 capabilities:
   berry_query:
     description: List berries with offset/limit pagination
@@ -30,5 +23,14 @@ capabilities:
     kind: get
     entity: Berry
     provides:
-      - name
-      - url
+    - name
+    - url
+values:
+  nv_berry_name:
+    type: string
+    string_semantics: short
+    description: Unique berry name used as its identifier
+  nv_berry_url:
+    type: string
+    string_semantics: short
+    description: API endpoint URL for full berry details

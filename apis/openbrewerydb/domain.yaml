@@ -1,85 +1,48 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://api.openbrewerydb.org
-
 entities:
   Brewery:
     id_field: id
     description: A beer brewing establishment
     fields:
       id:
-        description: Unique UUID string identifier
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_brewery_id
       name:
-        description: Brewery name
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_brewery_name
       brewery_type:
-        description: Classification (micro, nano, regional, brewpub, large, etc.)
-        field_type: select
         required: false
-        allowed_values:
-        - micro
-        - nano
-        - regional
-        - brewpub
-        - large
-        - planning
-        - bar
-        - contract
-        - proprietor
-        - closed
+        value_ref: nv_brewery_brewery_type
       address_1:
-        description: Street address
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_address_1
       city:
-        description: City name
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_city
       state:
-        description: US state or international equivalent
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_state
       postal_code:
-        description: ZIP or postal code
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_postal_code
       country:
-        description: Country name
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_country
       longitude:
-        description: Geographic longitude coordinate as string
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_longitude
       latitude:
-        description: Geographic latitude coordinate as string
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_latitude
       phone:
-        description: Contact phone number
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_phone
       website_url:
-        description: Official website URL
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_brewery_website_url
 capabilities:
   brewery_query:
     description: List breweries with optional field filters and sort
@@ -87,65 +50,46 @@ capabilities:
     entity: Brewery
     parameters:
     - name: by_city
-      type: string
+      value_ref: nv_brewery_query_by_city
       required: false
       role: filter
-      string_semantics: short
     - name: by_state
-      type: string
+      value_ref: nv_brewery_query_by_state
       required: false
       role: filter
-      string_semantics: short
     - name: by_postal
-      type: string
+      value_ref: nv_brewery_query_by_postal
       required: false
       role: filter
-      string_semantics: short
     - name: by_country
-      type: string
+      value_ref: nv_brewery_query_by_country
       required: false
       role: filter
-      string_semantics: short
     - name: by_type
-      type: select
+      value_ref: nv_brewery_query_by_type
       required: false
-      allowed_values:
-      - micro
-      - nano
-      - regional
-      - brewpub
-      - large
-      - planning
-      - bar
-      - contract
-      - proprietor
-      - closed
       role: filter
     - name: by_name
-      type: string
+      value_ref: nv_brewery_query_by_name
       required: false
       role: filter
-      string_semantics: short
     - name: by_ids
-      type: string
+      value_ref: nv_brewery_query_by_ids
       required: false
       role: filter
-      string_semantics: short
     - name: sort
-      type: string
+      value_ref: nv_brewery_query_sort
       required: false
       role: sort
-      string_semantics: short
   brewery_search:
     description: Free-text search across brewery name and location fields
     kind: search
     entity: Brewery
     parameters:
     - name: query
-      type: string
+      value_ref: nv_brewery_search_query
       required: true
       role: search
-      string_semantics: short
   brewery_get:
     description: Retrieve a single brewery by its UUID
     kind: get
@@ -169,19 +113,119 @@ capabilities:
     entity: Brewery
     parameters:
     - name: query
-      type: string
+      value_ref: nv_brewery_autocomplete_query
       required: true
       role: search
-      string_semantics: short
   brewery_random:
     description: Return N random breweries; size controls count
     kind: action
     entity: Brewery
     parameters:
     - name: size
-      type: integer
+      value_ref: nv_brewery_random_size
       required: false
       role: response_control
     output:
       type: side_effect
       description: Return N random breweries; size controls count
+values:
+  nv_brewery_id:
+    type: string
+    string_semantics: short
+    description: Unique UUID string identifier
+  nv_brewery_name:
+    type: string
+    string_semantics: short
+    description: Brewery name
+  nv_brewery_brewery_type:
+    type: select
+    allowed_values:
+    - micro
+    - nano
+    - regional
+    - brewpub
+    - large
+    - planning
+    - bar
+    - contract
+    - proprietor
+    - closed
+    description: Classification (micro, nano, regional, brewpub, large, etc.)
+  nv_brewery_address_1:
+    type: string
+    string_semantics: short
+    description: Street address
+  nv_brewery_city:
+    type: string
+    string_semantics: short
+    description: City name
+  nv_brewery_state:
+    type: string
+    string_semantics: short
+    description: US state or international equivalent
+  nv_brewery_postal_code:
+    type: string
+    string_semantics: short
+    description: ZIP or postal code
+  nv_brewery_country:
+    type: string
+    string_semantics: short
+    description: Country name
+  nv_brewery_longitude:
+    type: string
+    string_semantics: short
+    description: Geographic longitude coordinate as string
+  nv_brewery_latitude:
+    type: string
+    string_semantics: short
+    description: Geographic latitude coordinate as string
+  nv_brewery_phone:
+    type: string
+    string_semantics: short
+    description: Contact phone number
+  nv_brewery_website_url:
+    type: string
+    string_semantics: short
+    description: Official website URL
+  nv_brewery_query_by_city:
+    type: string
+    string_semantics: short
+  nv_brewery_query_by_state:
+    type: string
+    string_semantics: short
+  nv_brewery_query_by_postal:
+    type: string
+    string_semantics: short
+  nv_brewery_query_by_country:
+    type: string
+    string_semantics: short
+  nv_brewery_query_by_type:
+    type: select
+    allowed_values:
+    - micro
+    - nano
+    - regional
+    - brewpub
+    - large
+    - planning
+    - bar
+    - contract
+    - proprietor
+    - closed
+  nv_brewery_query_by_name:
+    type: string
+    string_semantics: short
+  nv_brewery_query_by_ids:
+    type: string
+    string_semantics: short
+  nv_brewery_query_sort:
+    type: string
+    string_semantics: short
+  nv_brewery_search_query:
+    type: string
+    string_semantics: short
+  nv_brewery_autocomplete_query:
+    type: string
+    string_semantics: short
+  nv_brewery_random_size:
+    type: integer

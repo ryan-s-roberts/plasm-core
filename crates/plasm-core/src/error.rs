@@ -203,6 +203,36 @@ pub enum SchemaError {
     MultiSelectFieldMissingAllowedValues { entity: String, field: String },
 
     #[error(
+        "Entity '{entity}' field '{field}': `select` / `multi_select` must use `value_ref` to a `values:` entry (inline closed sets are not allowed)"
+    )]
+    ClosedFieldRequiresValueDomain { entity: String, field: String },
+
+    #[error(
+        "Capability '{capability}' parameter '{param}': `select` / `multi_select` must use `value_ref` to a `values:` entry (inline closed sets are not allowed)"
+    )]
+    ClosedParamRequiresValueDomain { capability: String, param: String },
+
+    #[error("Unknown `value_ref` / value domain key '{key}' ({context})")]
+    UnknownValueDomain { key: String, context: String },
+
+    #[error("{context}: denormalized wire fields disagree with `values['{key}']` — {detail}")]
+    RegistryDenormalizationMismatch {
+        key: String,
+        context: String,
+        detail: String,
+    },
+
+    #[error(
+        "Entity '{entity}' field '{field}': `value_ref` is only valid for `select` / `multi_select` fields"
+    )]
+    ValueDomainOnNonClosedField { entity: String, field: String },
+
+    #[error(
+        "Capability '{capability}' parameter '{param}': `value_ref` is only valid for `select` / `multi_select` parameters"
+    )]
+    ValueDomainOnNonClosedParam { capability: String, param: String },
+
+    #[error(
         "Capability '{capability}' parameter '{param}': type `multi_select` requires non-empty `allowed_values`"
     )]
     MultiSelectParamMissingAllowedValues { capability: String, param: String },

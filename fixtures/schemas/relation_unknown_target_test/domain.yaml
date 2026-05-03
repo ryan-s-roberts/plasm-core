@@ -1,25 +1,20 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: http://example.test
-
 entities:
   Widget:
     id_field: id
     description: Minimal widget for loader relation-target validation
     fields:
       id:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_widget_id
     relations:
       peer:
         description: Broken relation — target entity is not defined
         target: MissingEntity
         cardinality: one
-
 capabilities:
   widget_get:
     description: Fetch widget
@@ -27,3 +22,7 @@ capabilities:
     entity: Widget
     provides:
     - id
+values:
+  nv_widget_id:
+    type: string
+    string_semantics: short

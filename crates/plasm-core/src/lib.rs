@@ -171,11 +171,12 @@ pub use schema::{
     AgentPresentation, ArrayItemsSchema, AttachmentMediaKind, AuthScheme, CapabilityKind,
     CapabilityManifest, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
     CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, EntityDef, FieldDeriveRule,
-    FieldSchema, IdFormat, InputFieldSchema, InputSchema, InputType, InputValidation,
-    InvokePreflight, JsonPathSegment, OauthDefaultScopeSet, OauthExtension, OauthRequirements,
-    OauthScopeEntry, OutputSchema, OutputType, ParameterRole, RelationMaterialization,
-    RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics,
-    ValidationOp, ValidationPredicate, CGS, DEFAULT_HTTP_BACKEND,
+    FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputSchema, InputType,
+    InputValidation, InvokePreflight, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
+    OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
+    RelationMaterialization, RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy,
+    ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate, ValueDomainKey,
+    ValueDomainSlot, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;

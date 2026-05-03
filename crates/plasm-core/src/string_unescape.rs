@@ -116,7 +116,7 @@ pub fn normalize_structured_string_inputs(value: Value, input_type: &InputType) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{InputFieldSchema, StringSemantics};
+    use crate::schema::{FieldValueKind, InputFieldSchema, StringSemantics, ValueDomainKey};
 
     #[test]
     fn unescape_basic_escapes() {
@@ -135,6 +135,7 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("unescape_p2_md").expect("key")),
                 field_type: FieldType::String,
                 value_format: None,
                 required: false,
@@ -169,6 +170,9 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
+                kind: FieldValueKind::Registry(
+                    ValueDomainKey::new("unescape_p2_short").expect("key"),
+                ),
                 field_type: FieldType::String,
                 value_format: None,
                 required: false,

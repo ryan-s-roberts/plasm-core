@@ -1,4 +1,7 @@
-use plasm_core::{FieldSchema, FieldType, ResourceSchema, CGS};
+use indexmap::IndexMap;
+use plasm_core::{
+    FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
+};
 use plasm_mock::{start_server, MockResource, MockStore};
 
 #[tokio::main]
@@ -6,8 +9,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 STEP 8: Mock Server Integration Demo");
     println!("Starting mock server with test data...\n");
 
-    // Create schema
+    // Create schema — every field `kind` references `CGS::values` (no inline wire shapes at use sites).
     let mut cgs = CGS::new();
+    cgs.values = IndexMap::from_iter([
+        (
+            "demo_id".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        ),
+        (
+            "demo_name".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        ),
+        (
+            "demo_revenue".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        ),
+        (
+            "demo_region".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec![
+                    "EMEA".to_string(),
+                    "APAC".to_string(),
+                    "AMER".to_string(),
+                ]),
+                string_semantics: None,
+                array_items: None,
+            },
+        ),
+    ]);
+
     let account = ResourceSchema {
         name: "Account".into(),
         description: String::new(),
@@ -17,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         fields: vec![
             FieldSchema {
                 name: "id".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("demo_id")?),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -32,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             FieldSchema {
                 name: "name".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("demo_name")?),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -47,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             FieldSchema {
                 name: "revenue".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("demo_revenue")?),
                 description: String::new(),
                 field_type: FieldType::Number,
                 value_format: None,
@@ -62,6 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             FieldSchema {
                 name: "region".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("demo_region")?),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -89,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         primary_read: None,
     };
     cgs.add_resource(account)?;
+    cgs.validate()?;
 
     // Create mock store with test data
     let mut store = MockStore::new(cgs);

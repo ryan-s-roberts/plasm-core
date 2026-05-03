@@ -1,59 +1,41 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: http://127.0.0.1:8545
-
 entities:
   Balance:
     id_field: account
     description: ERC-20 balance for an account address
     fields:
       account:
-        description: Account address queried via balanceOf
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_balance_account
       balance:
-        description: Token balance as a decimal string
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_balance_balance
     relations: {}
   Transfer:
     id_field: event_id
     description: ERC-20 Transfer event
     fields:
       event_id:
-        description: Stable per-log identity (<tx_hash>:<log_index>)
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_transfer_event_id
       tx_hash:
-        description: Transaction hash that emitted the log
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_transfer_tx_hash
       log_index:
-        description: Log index within the block
-        field_type: integer
         required: true
+        value_ref: nv_transfer_log_index
       from:
-        description: Sender address
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_transfer_from
       to:
-        description: Recipient address
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_transfer_to
       value:
-        description: Transferred amount as a decimal string
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_transfer_value
     relations: {}
 capabilities:
   balance_get:
@@ -67,3 +49,35 @@ capabilities:
     description: Query ERC-20 Transfer logs over a block range
     kind: query
     entity: Transfer
+values:
+  nv_balance_account:
+    type: string
+    string_semantics: short
+    description: Account address queried via balanceOf
+  nv_balance_balance:
+    type: string
+    string_semantics: short
+    description: Token balance as a decimal string
+  nv_transfer_event_id:
+    type: string
+    string_semantics: short
+    description: Stable per-log identity (<tx_hash>:<log_index>)
+  nv_transfer_tx_hash:
+    type: string
+    string_semantics: short
+    description: Transaction hash that emitted the log
+  nv_transfer_log_index:
+    type: integer
+    description: Log index within the block
+  nv_transfer_from:
+    type: string
+    string_semantics: short
+    description: Sender address
+  nv_transfer_to:
+    type: string
+    string_semantics: short
+    description: Recipient address
+  nv_transfer_value:
+    type: string
+    string_semantics: short
+    description: Transferred amount as a decimal string

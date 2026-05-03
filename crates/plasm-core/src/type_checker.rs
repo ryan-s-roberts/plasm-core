@@ -1259,15 +1259,68 @@ fn validate_cross_field_rule(
 mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
+    use crate::schema::{registry_test_util, FieldValueKind, NamedValueSchema, ValueDomainKey};
     use crate::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality, ChainExpr, EntityDef,
-        EntityFieldName, Expr, FieldSchema, GetExpr, Predicate, QueryExpr, RelationSchema,
-        ResourceSchema,
+        EntityFieldName, Expr, FieldSchema, GetExpr, InputFieldSchema, Predicate, QueryExpr,
+        RelationSchema, ResourceSchema,
     };
     use indexmap::IndexMap;
 
+    fn seed_account_contact_schema(cgs: &mut CGS) {
+        cgs.values.insert(
+            "tc_fx_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_fx_num".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_fx_region_account".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec![
+                    "EMEA".to_string(),
+                    "APAC".to_string(),
+                    "AMER".to_string(),
+                ]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_fx_role_contact".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
+
     fn create_test_schema() -> CGS {
         let mut cgs = CGS::new();
+        seed_account_contact_schema(&mut cgs);
 
         let account = ResourceSchema {
             name: "Account".into(),
@@ -1276,70 +1329,22 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "name".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "revenue".into(),
-                    description: String::new(),
-                    field_type: FieldType::Number,
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "region".into(),
-                    description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec![
-                        "EMEA".to_string(),
-                        "APAC".to_string(),
-                        "AMER".to_string(),
-                    ]),
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "id", true, ""),
+                registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "name", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_fx_num",
+                    "revenue",
+                    false,
+                    "",
+                ),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_fx_region_account",
+                    "region",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![RelationSchema {
                 name: "contacts".into(),
@@ -1363,51 +1368,15 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "name".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "role".into(),
-                    description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "id", true, ""),
+                registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "name", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_fx_role_contact",
+                    "role",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -1424,8 +1393,47 @@ mod tests {
         cgs
     }
 
+    fn seed_chain_order_pet_schema(cgs: &mut CGS) {
+        cgs.values.insert(
+            "tc_chain_int".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Integer,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_chain_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_chain_pet_ref".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: "Pet".into(),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
+
     fn create_chain_test_schema() -> CGS {
         let mut cgs = CGS::new();
+        seed_chain_order_pet_schema(&mut cgs);
 
         cgs.add_resource(ResourceSchema {
             name: "Order".into(),
@@ -1434,53 +1442,21 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "petId".into(),
-                    description: String::new(),
-                    field_type: FieldType::EntityRef {
-                        target: "Pet".into(),
-                    },
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "quantity".into(),
-                    description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "tc_chain_int", "id", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_chain_pet_ref",
+                    "petId",
+                    true,
+                    "",
+                ),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_chain_int",
+                    "quantity",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -1499,36 +1475,14 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::Integer,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "name".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "tc_chain_int", "id", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_chain_str",
+                    "name",
+                    true,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -1667,6 +1621,28 @@ mod tests {
     #[test]
     fn test_chain_rejects_missing_get_capability() {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tc_ab_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_ab_ref_b".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef { target: "B".into() },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         cgs.add_resource(ResourceSchema {
             name: "A".into(),
             description: String::new(),
@@ -1674,36 +1650,14 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "b_id".into(),
-                    description: String::new(),
-                    field_type: FieldType::EntityRef { target: "B".into() },
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                registry_test_util::entity_field_from_values(&cgs, "tc_ab_str", "id", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_ab_ref_b",
+                    "b_id",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -1720,21 +1674,13 @@ mod tests {
             id_field: "id".into(),
             id_format: None,
             id_from: None,
-            fields: vec![FieldSchema {
-                name: "id".into(),
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                required: true,
-                array_items: None,
-                string_semantics: None,
-                agent_presentation: None,
-                mime_type_hint: None,
-                attachment_media: None,
-                wire_path: None,
-                derive: None,
-            }],
+            fields: vec![registry_test_util::entity_field_from_values(
+                &cgs,
+                "tc_ab_str",
+                "id",
+                true,
+                "",
+            )],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -1790,6 +1736,7 @@ mod tests {
             EntityFieldName::from("owner"),
             FieldSchema {
                 name: "owner".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("tc_ph_owner").expect("key")),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -1821,6 +1768,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "owner".to_string(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_ph_owner_cap").expect("key")),
             field_type: FieldType::String,
             value_format: None,
             required: true,
@@ -1847,6 +1795,9 @@ mod tests {
             EntityFieldName::from("state"),
             FieldSchema {
                 name: "state".into(),
+                kind: FieldValueKind::Registry(
+                    ValueDomainKey::new("tc_qs_state_ent").expect("key"),
+                ),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -1878,6 +1829,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "state".to_string(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_qs_state_cap").expect("key")),
             field_type: FieldType::Select,
             value_format: None,
             required: false,
@@ -1916,6 +1868,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "includeSpamTrash".to_string(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_bool").expect("key")),
             field_type: FieldType::Boolean,
             value_format: None,
             required: false,
@@ -1958,6 +1911,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "q".to_string(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_q_str").expect("key")),
             field_type: FieldType::String,
             value_format: None,
             required: false,
@@ -1998,6 +1952,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "limit".to_string(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_limit_int").expect("key")),
             field_type: FieldType::Integer,
             value_format: None,
             required: false,
@@ -2020,20 +1975,32 @@ mod tests {
     #[test]
     fn entity_ref_predicate_accepts_row_when_target_identity_scalars_present() {
         let mut cgs = CGS::new();
-        let minimal_string_field = |name: &str| FieldSchema {
-            name: name.into(),
-            description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
-            required: true,
-            array_items: None,
-            string_semantics: None,
-            agent_presentation: None,
-            mime_type_hint: None,
-            attachment_media: None,
-            wire_path: None,
-            derive: None,
+        cgs.values.insert(
+            "tc_visit_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_visit_pet_ref".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: "Pet".into(),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        let str_id = |c: &CGS, name: &str| {
+            registry_test_util::entity_field_from_values(c, "tc_visit_str", name, true, "")
         };
         cgs.add_resource(ResourceSchema {
             name: "Pet".into(),
@@ -2041,7 +2008,7 @@ mod tests {
             id_field: "id".into(),
             id_format: None,
             id_from: None,
-            fields: vec![minimal_string_field("id")],
+            fields: vec![str_id(&cgs, "id")],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -2059,24 +2026,14 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                minimal_string_field("id"),
-                FieldSchema {
-                    name: "pet_ref".into(),
-                    description: String::new(),
-                    field_type: FieldType::EntityRef {
-                        target: "Pet".into(),
-                    },
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                str_id(&cgs, "id"),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_visit_pet_ref",
+                    "pet_ref",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -2104,20 +2061,32 @@ mod tests {
     #[test]
     fn entity_ref_predicate_error_hints_identity_slots() {
         let mut cgs = CGS::new();
-        let minimal_string_field = |name: &str| FieldSchema {
-            name: name.into(),
-            description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
-            required: true,
-            array_items: None,
-            string_semantics: None,
-            agent_presentation: None,
-            mime_type_hint: None,
-            attachment_media: None,
-            wire_path: None,
-            derive: None,
+        cgs.values.insert(
+            "tc_visit_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_visit_pet_ref".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: "Pet".into(),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        let str_id = |c: &CGS, name: &str| {
+            registry_test_util::entity_field_from_values(c, "tc_visit_str", name, true, "")
         };
         cgs.add_resource(ResourceSchema {
             name: "Pet".into(),
@@ -2125,7 +2094,7 @@ mod tests {
             id_field: "id".into(),
             id_format: None,
             id_from: None,
-            fields: vec![minimal_string_field("id")],
+            fields: vec![str_id(&cgs, "id")],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -2143,24 +2112,14 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                minimal_string_field("id"),
-                FieldSchema {
-                    name: "pet_ref".into(),
-                    description: String::new(),
-                    field_type: FieldType::EntityRef {
-                        target: "Pet".into(),
-                    },
-                    value_format: None,
-                    allowed_values: None,
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                str_id(&cgs, "id"),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_visit_pet_ref",
+                    "pet_ref",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],

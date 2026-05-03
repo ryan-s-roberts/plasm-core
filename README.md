@@ -578,8 +578,8 @@ read spec/docs -> design entity graph -> author domain.yaml -> author mappings.y
 The compiler validates the authored model and transport templates:
 
 ```bash
-cargo run -p plasm-cli -- schema validate apis/<api>/domain.yaml
-cargo run -p plasm-cli -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
 ```
 
 Hermit gives you a local mock server from the same OpenAPI spec, so the generated CLI can be exercised before live credentials or write endpoints are involved:

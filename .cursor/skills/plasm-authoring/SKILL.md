@@ -19,7 +19,7 @@ Runtime semantics are derived from those files. Pagination comes from CML `pagin
 - Do not build scripts, generators, or bulk templates that emit canonical `domain.yaml` / `mappings.yaml` from a spec as if the mapping were deterministic.
 - Do not mirror every RPC operation mechanically. Compress the API into entities, relations, projections, and capabilities that are useful for agents.
 - Keep HTTP details out of CGS descriptions. Put paths, methods, status codes, and wire notes in `mappings.yaml` comments or external docs.
-- Prefer typed fields and parameters: `select`, `date` with `value_format`, `entity_ref`, `array.items`, `blob`, and explicit `string_semantics`.
+- Prefer typed fields and parameters: `select`, `date` with `value_format`, `entity_ref`, `array.items`, `blob`, and explicit `string_semantics`. In split `domain.yaml`, declare shapes under **`values:`** and use **`value_ref`** on fields/parameters; keys are **semantic slots** (sharing vs splitting is judgement, not wire-type dedupe).
 - Every semantic catalog change increments top-level `version`.
 - `kind: action` must declare either non-empty `provides:` or `output: { type: side_effect, description: "..." }`.
 
@@ -56,8 +56,8 @@ Give the agent a small scope and a spec path or docs URL. Ask it to proceed in p
 Use these as the default validation rites:
 
 ```bash
-cargo run -p plasm-cli -- schema validate apis/<api>/domain.yaml
-cargo run -p plasm-cli -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
 cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/<api> --help
 cargo run -p plasm-eval -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml
 ```

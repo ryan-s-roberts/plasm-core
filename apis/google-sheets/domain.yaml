@@ -1,36 +1,30 @@
 version: 1
-
 http_backend: https://sheets.googleapis.com
-
 entities:
   Spreadsheet:
     id_field: spreadsheetId
-    description: A Google Sheets spreadsheet file (workbook). The Sheets v4 API does not list spreadsheets; obtain spreadsheet IDs via Drive or shared links.
+    description: A Google Sheets spreadsheet file (workbook). The Sheets v4 API does not list spreadsheets; obtain spreadsheet
+      IDs via Drive or shared links.
     primary_read: spreadsheet_get
     fields:
       spreadsheetId:
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_spreadsheet_spreadsheet_id
       spreadsheetUrl:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_spreadsheet_spreadsheet_url
       title:
-        field_type: string
         required: false
         path: properties.title
-        string_semantics: short
+        value_ref: nv_spreadsheet_title
       locale:
-        field_type: string
         required: false
         path: properties.locale
-        string_semantics: short
+        value_ref: nv_spreadsheet_locale
       timeZone:
-        field_type: string
         required: false
         path: properties.timeZone
-        string_semantics: short
+        value_ref: nv_spreadsheet_time_zone
     relations:
       sheets:
         description: Worksheet tabs defined in this spreadsheet (embedded on spreadsheet_get).
@@ -39,181 +33,138 @@ entities:
         materialize:
           kind: from_parent_get
           path:
-            - key: sheets
-            - wildcard: true
-
+          - key: sheets
+          - wildcard: true
   Sheet:
     abstract: true
     id_field: sheetId
     key_vars:
-      - spreadsheetId
-      - sheetId
-    description: A single worksheet tab within a spreadsheet. Metadata is usually read via spreadsheet_get; there is no standalone sheet GET in v4.
+    - spreadsheetId
+    - sheetId
+    description: A single worksheet tab within a spreadsheet. Metadata is usually read via spreadsheet_get; there is no standalone
+      sheet GET in v4.
     fields:
       spreadsheetId:
-        field_type: entity_ref
-        target: Spreadsheet
         required: true
+        value_ref: nv_sheet_spreadsheet_id
       sheetId:
-        field_type: integer
         required: true
         path: properties.sheetId
+        value_ref: nv_sheet_sheet_id
       title:
-        field_type: string
         required: false
         path: properties.title
-        string_semantics: short
+        value_ref: nv_sheet_title
       index:
-        field_type: integer
         required: false
         path: properties.index
+        value_ref: nv_sheet_index
       sheetType:
-        field_type: select
         required: false
         path: properties.sheetType
-        allowed_values:
-          - GRID
-          - OBJECT
-          - DATA_SOURCE
+        value_ref: nv_sheet_sheet_type
       hidden:
-        field_type: boolean
         required: false
         path: properties.hidden
+        value_ref: nv_sheet_hidden
     relations:
       spreadsheet:
         target: Spreadsheet
         cardinality: one
-
   ValueRange:
     id_field: range
     key_vars:
-      - spreadsheetId
-      - range
+    - spreadsheetId
+    - range
     description: Cell values for a spreadsheet range (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
     primary_read: value_range_get
     fields:
       spreadsheetId:
-        field_type: entity_ref
-        target: Spreadsheet
         required: true
+        value_ref: nv_value_range_spreadsheet_id
       range:
-        field_type: string
         required: true
-        string_semantics: short
-        description: Range identifier (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
+        value_ref: nv_value_range_range
       majorDimension:
-        field_type: select
         required: false
-        allowed_values:
-          - DIMENSION_UNSPECIFIED
-          - ROWS
-          - COLUMNS
+        value_ref: nv_value_range_major_dimension
       values:
-        field_type: json
         required: false
-        description: Rows of cell values as returned by the API (heterogeneous JSON matrix).
+        value_ref: nv_value_range_values
     relations: {}
-
   DeveloperMetadata:
     id_field: metadataId
     key_vars:
-      - spreadsheetId
-      - metadataId
+    - spreadsheetId
+    - metadataId
     description: Developer-managed metadata attached to a spreadsheet or grid location.
     fields:
       spreadsheetId:
-        field_type: entity_ref
-        target: Spreadsheet
         required: true
+        value_ref: nv_developer_metadata_spreadsheet_id
       metadataId:
-        field_type: integer
         required: true
+        value_ref: nv_developer_metadata_metadata_id
       metadataKey:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_developer_metadata_metadata_key
       metadataValue:
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_developer_metadata_metadata_value
       visibility:
-        field_type: select
         required: false
-        allowed_values:
-          - DEVELOPER_METADATA_VISIBILITY_UNSPECIFIED
-          - DOCUMENT
-          - PROJECT
+        value_ref: nv_developer_metadata_visibility
     relations: {}
-
 capabilities:
   spreadsheet_get:
     kind: get
     entity: Spreadsheet
     description: Load spreadsheet metadata and structure. Grid data is omitted unless requested via query parameters.
     provides:
-      - spreadsheetId
-      - spreadsheetUrl
-      - title
-      - locale
-      - timeZone
+    - spreadsheetId
+    - spreadsheetUrl
+    - title
+    - locale
+    - timeZone
     parameters:
-      - name: ranges
-        type: array
-        required: false
-        items:
-          type: string
-        description: Optional A1 ranges that scope the returned spreadsheet data (for example `Sheet1!A1:C10`).
-      - name: includeGridData
-        type: boolean
-        required: false
-      - name: excludeTablesInBandedRanges
-        type: boolean
-        required: false
-
+    - name: ranges
+      value_ref: nv_spreadsheet_get_ranges
+      required: false
+    - name: includeGridData
+      value_ref: nv_spreadsheet_get_include_grid_data
+      required: false
+    - name: excludeTablesInBandedRanges
+      value_ref: nv_spreadsheet_get_exclude_tables_in_banded_ranges
+      required: false
   spreadsheet_create:
     kind: create
     entity: Spreadsheet
-    description: Create a new spreadsheet. Optional title, locale, time zone, initial sheets; maps to Spreadsheet.properties and sheets on the wire.
+    description: Create a new spreadsheet. Optional title, locale, time zone, initial sheets; maps to Spreadsheet.properties
+      and sheets on the wire.
     parameters:
-      - name: title
-        type: string
-        required: false
-        string_semantics: short
-        description: Spreadsheet title (SpreadsheetProperties.title).
-      - name: locale
-        type: string
-        required: false
-        string_semantics: short
-        description: BCP 47 locale (SpreadsheetProperties.locale).
-      - name: timeZone
-        type: string
-        required: false
-        string_semantics: short
-        description: IANA time zone (SpreadsheetProperties.timeZone).
-      - name: sheets
-        type: array
-        required: false
-        description: Optional initial sheet definitions (Sheets API `sheets` array); each element is a Sheet-shaped resource (e.g. `properties` for tab metadata).
-        items:
-          type: entity_ref
-          target: Sheet
-
+    - name: title
+      value_ref: nv_spreadsheet_create_title
+      required: false
+    - name: locale
+      value_ref: nv_spreadsheet_create_locale
+      required: false
+    - name: timeZone
+      value_ref: nv_spreadsheet_create_time_zone
+      required: false
+    - name: sheets
+      value_ref: nv_spreadsheet_create_sheets
+      required: false
   spreadsheet_batch_update:
     kind: action
     entity: Spreadsheet
     description: Apply structured updates (add sheet, update cells, charts, etc.) via BatchUpdateSpreadsheetRequest JSON body.
     parameters:
-      - name: input
-        type: json
-        required: false
-        description: >-
-          POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest).
-          Omitted in DOMAIN only for parse ergonomics; live calls must send a JSON object including
-          a requests array (for example batch-update(input={requests=[]}) or a fuller payload).
+    - name: input
+      value_ref: nv_spreadsheet_batch_update_input
+      required: false
     output:
       type: side_effect
       description: Applies the batch update requests to the spreadsheet when the API call succeeds.
-
   spreadsheet_get_by_data_filter:
     kind: action
     entity: Spreadsheet
@@ -221,90 +172,58 @@ capabilities:
     output:
       type: side_effect
       description: Returns the spreadsheet projection selected by the posted data filters.
-
   sheet_copy_to:
     kind: action
     entity: Sheet
     description: Copy this sheet to another spreadsheet.
     parameters:
-      - name: destinationSpreadsheetId
-        type: string
-        required: true
-        string_semantics: short
-        description: Destination spreadsheet ID to receive the copied sheet.
+    - name: destinationSpreadsheetId
+      value_ref: nv_sheet_copy_to_destination_spreadsheet_id
+      required: true
     output:
       type: side_effect
       description: Creates a copy of the sheet in the destination spreadsheet when the API call succeeds.
-
   value_range_get:
     kind: get
     entity: ValueRange
     description: Read cell values for a single range in A1 or R1C1 notation (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
     provides:
-      - range
-      - majorDimension
+    - range
+    - majorDimension
     parameters:
-      - name: majorDimension
-        type: select
-        allowed_values:
-          - DIMENSION_UNSPECIFIED
-          - ROWS
-          - COLUMNS
-        required: false
-      - name: valueRenderOption
-        type: select
-        allowed_values:
-          - FORMATTED_VALUE
-          - UNFORMATTED_VALUE
-          - FORMULA
-        required: false
-      - name: dateTimeRenderOption
-        type: select
-        allowed_values:
-          - SERIAL_NUMBER
-          - FORMATTED_STRING
-        required: false
-
+    - name: majorDimension
+      value_ref: nv_value_range_get_major_dimension
+      required: false
+    - name: valueRenderOption
+      value_ref: nv_value_range_get_value_render_option
+      required: false
+    - name: dateTimeRenderOption
+      value_ref: nv_value_range_get_date_time_render_option
+      required: false
   spreadsheet_values_batch_get:
     kind: action
     entity: Spreadsheet
     description: Read values from multiple ranges.
     parameters:
-      - name: ranges
-        type: array
-        required: true
-        items:
-          type: string
-        description: One or more ranges in A1 or R1C1 notation (for example `Sheet1!A1:C10`, `R1C1:R10C3`).
-      - name: majorDimension
-        type: select
-        allowed_values:
-          - DIMENSION_UNSPECIFIED
-          - ROWS
-          - COLUMNS
-        required: false
-      - name: valueRenderOption
-        type: select
-        allowed_values:
-          - FORMATTED_VALUE
-          - UNFORMATTED_VALUE
-          - FORMULA
-        required: false
-      - name: dateTimeRenderOption
-        type: select
-        allowed_values:
-          - SERIAL_NUMBER
-          - FORMATTED_STRING
-        required: false
+    - name: ranges
+      value_ref: nv_spreadsheet_values_batch_get_ranges
+      required: true
+    - name: majorDimension
+      value_ref: nv_spreadsheet_values_batch_get_major_dimension
+      required: false
+    - name: valueRenderOption
+      value_ref: nv_spreadsheet_values_batch_get_value_render_option
+      required: false
+    - name: dateTimeRenderOption
+      value_ref: nv_spreadsheet_values_batch_get_date_time_render_option
+      required: false
     output:
       type: side_effect
       description: Returns value data for each requested range.
-
   value_range_update:
     kind: update
     entity: ValueRange
     description: Replace values in a range.
-
   spreadsheet_values_batch_update:
     kind: action
     entity: Spreadsheet
@@ -312,50 +231,32 @@ capabilities:
     output:
       type: side_effect
       description: Writes all supplied value ranges when the API call succeeds.
-
   value_range_append:
     kind: action
     entity: Spreadsheet
     description: Append rows after the logical table found within the specified range.
     parameters:
-      - name: range
-        type: string
-        required: true
-        string_semantics: short
-        description: A1 range used to locate the logical table for appending (for example `Sheet1!A1:C10`).
-      - name: valueInputOption
-        type: select
-        allowed_values:
-          - INPUT_VALUE_OPTION_UNSPECIFIED
-          - RAW
-          - USER_ENTERED
-        required: true
-      - name: insertDataOption
-        type: select
-        allowed_values:
-          - OVERWRITE
-          - INSERT_ROWS
-        required: false
-      - name: includeValuesInResponse
-        type: boolean
-        required: false
-      - name: responseValueRenderOption
-        type: select
-        allowed_values:
-          - FORMATTED_VALUE
-          - UNFORMATTED_VALUE
-          - FORMULA
-        required: false
-      - name: responseDateTimeRenderOption
-        type: select
-        allowed_values:
-          - SERIAL_NUMBER
-          - FORMATTED_STRING
-        required: false
+    - name: range
+      value_ref: nv_value_range_append_range
+      required: true
+    - name: valueInputOption
+      value_ref: nv_value_range_append_value_input_option
+      required: true
+    - name: insertDataOption
+      value_ref: nv_value_range_append_insert_data_option
+      required: false
+    - name: includeValuesInResponse
+      value_ref: nv_value_range_append_include_values_in_response
+      required: false
+    - name: responseValueRenderOption
+      value_ref: nv_value_range_append_response_value_render_option
+      required: false
+    - name: responseDateTimeRenderOption
+      value_ref: nv_value_range_append_response_date_time_render_option
+      required: false
     output:
       type: side_effect
       description: Appends values after the detected table when the API call succeeds.
-
   value_range_clear:
     kind: action
     entity: ValueRange
@@ -363,7 +264,6 @@ capabilities:
     output:
       type: side_effect
       description: Clears values in the range when the API call succeeds.
-
   spreadsheet_values_batch_clear:
     kind: action
     entity: Spreadsheet
@@ -371,7 +271,6 @@ capabilities:
     output:
       type: side_effect
       description: Clears all listed ranges when the API call succeeds.
-
   spreadsheet_values_batch_get_by_data_filter:
     kind: action
     entity: Spreadsheet
@@ -379,7 +278,6 @@ capabilities:
     output:
       type: side_effect
       description: Returns values for ranges matching the posted data filters.
-
   spreadsheet_values_batch_update_by_data_filter:
     kind: action
     entity: Spreadsheet
@@ -387,7 +285,6 @@ capabilities:
     output:
       type: side_effect
       description: Updates values for the matching ranges when the API call succeeds.
-
   spreadsheet_values_batch_clear_by_data_filter:
     kind: action
     entity: Spreadsheet
@@ -395,17 +292,15 @@ capabilities:
     output:
       type: side_effect
       description: Clears values for the matching ranges when the API call succeeds.
-
   developer_metadata_get:
     kind: get
     entity: DeveloperMetadata
     description: Fetch a single developer metadata entry by ID.
     provides:
-      - metadataId
-      - metadataKey
-      - metadataValue
-      - visibility
-
+    - metadataId
+    - metadataKey
+    - metadataValue
+    - visibility
   developer_metadata_search:
     kind: action
     entity: Spreadsheet
@@ -413,7 +308,6 @@ capabilities:
     output:
       type: side_effect
       description: Returns developer metadata entries matching the search request.
-
 oauth:
   provider: google
   scopes:
@@ -437,115 +331,291 @@ oauth:
     readonly_sheets:
       description: Read-only Sheets plus Drive read for spreadsheets.get-style tokens.
       scopes:
-        - https://www.googleapis.com/auth/spreadsheets.readonly
-        - https://www.googleapis.com/auth/drive.readonly
+      - https://www.googleapis.com/auth/spreadsheets.readonly
+      - https://www.googleapis.com/auth/drive.readonly
     edit_sheets:
       description: Typical edit bundle for create update and values writes (sensitive scopes).
       scopes:
-        - https://www.googleapis.com/auth/spreadsheets
-        - https://www.googleapis.com/auth/drive.file
+      - https://www.googleapis.com/auth/spreadsheets
+      - https://www.googleapis.com/auth/drive.file
   requirements:
     capabilities:
       spreadsheet_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/spreadsheets
-          - https://www.googleapis.com/auth/spreadsheets.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/spreadsheets.readonly
       spreadsheet_create:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_batch_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_get_by_data_filter:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       sheet_copy_to:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       value_range_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/spreadsheets
-          - https://www.googleapis.com/auth/spreadsheets.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/spreadsheets.readonly
       spreadsheet_values_batch_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/spreadsheets
-          - https://www.googleapis.com/auth/spreadsheets.readonly
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/spreadsheets.readonly
       value_range_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_values_batch_update:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       value_range_append:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       value_range_clear:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_values_batch_clear:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_values_batch_get_by_data_filter:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_values_batch_update_by_data_filter:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       spreadsheet_values_batch_clear_by_data_filter:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       developer_metadata_get:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
       developer_metadata_search:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/spreadsheets
     relations:
       Spreadsheet.sheets:
         any_of:
-          - https://www.googleapis.com/auth/drive
-          - https://www.googleapis.com/auth/drive.file
-          - https://www.googleapis.com/auth/drive.readonly
-          - https://www.googleapis.com/auth/spreadsheets
-          - https://www.googleapis.com/auth/spreadsheets.readonly
-
+        - https://www.googleapis.com/auth/drive
+        - https://www.googleapis.com/auth/drive.file
+        - https://www.googleapis.com/auth/drive.readonly
+        - https://www.googleapis.com/auth/spreadsheets
+        - https://www.googleapis.com/auth/spreadsheets.readonly
 auth:
   scheme: bearer_token
   env: GOOGLE_SHEETS_ACCESS_TOKEN
+values:
+  nv_spreadsheet_spreadsheet_id:
+    type: string
+    string_semantics: short
+  nv_spreadsheet_spreadsheet_url:
+    type: string
+    string_semantics: short
+  nv_spreadsheet_title:
+    type: string
+    string_semantics: short
+  nv_spreadsheet_locale:
+    type: string
+    string_semantics: short
+  nv_spreadsheet_time_zone:
+    type: string
+    string_semantics: short
+  nv_sheet_spreadsheet_id:
+    type: entity_ref
+    target: Spreadsheet
+  nv_sheet_sheet_id:
+    type: integer
+  nv_sheet_title:
+    type: string
+    string_semantics: short
+  nv_sheet_index:
+    type: integer
+  nv_sheet_sheet_type:
+    type: select
+    allowed_values:
+    - GRID
+    - OBJECT
+    - DATA_SOURCE
+  nv_sheet_hidden:
+    type: boolean
+  nv_value_range_spreadsheet_id:
+    type: entity_ref
+    target: Spreadsheet
+  nv_value_range_range:
+    type: string
+    string_semantics: short
+    description: Range identifier (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
+  nv_value_range_major_dimension:
+    type: select
+    allowed_values:
+    - DIMENSION_UNSPECIFIED
+    - ROWS
+    - COLUMNS
+  nv_value_range_values:
+    type: json
+    description: Rows of cell values as returned by the API (heterogeneous JSON matrix).
+  nv_developer_metadata_spreadsheet_id:
+    type: entity_ref
+    target: Spreadsheet
+  nv_developer_metadata_metadata_id:
+    type: integer
+  nv_developer_metadata_metadata_key:
+    type: string
+    string_semantics: short
+  nv_developer_metadata_metadata_value:
+    type: string
+    string_semantics: short
+  nv_developer_metadata_visibility:
+    type: select
+    allowed_values:
+    - DEVELOPER_METADATA_VISIBILITY_UNSPECIFIED
+    - DOCUMENT
+    - PROJECT
+  nv_spreadsheet_get_ranges_item:
+    type: string
+  nv_spreadsheet_get_ranges:
+    type: array
+    items:
+      value_ref: nv_spreadsheet_get_ranges_item
+    description: Optional A1 ranges that scope the returned spreadsheet data (for example `Sheet1!A1:C10`).
+  nv_spreadsheet_get_include_grid_data:
+    type: boolean
+  nv_spreadsheet_get_exclude_tables_in_banded_ranges:
+    type: boolean
+  nv_spreadsheet_create_title:
+    type: string
+    string_semantics: short
+    description: Spreadsheet title (SpreadsheetProperties.title).
+  nv_spreadsheet_create_locale:
+    type: string
+    string_semantics: short
+    description: BCP 47 locale (SpreadsheetProperties.locale).
+  nv_spreadsheet_create_time_zone:
+    type: string
+    string_semantics: short
+    description: IANA time zone (SpreadsheetProperties.timeZone).
+  nv_spreadsheet_create_sheets_item:
+    type: entity_ref
+    target: Sheet
+  nv_spreadsheet_create_sheets:
+    type: array
+    items:
+      value_ref: nv_spreadsheet_create_sheets_item
+    description: Optional initial sheet definitions (Sheets API `sheets` array); each element is a Sheet-shaped resource (e.g.
+      `properties` for tab metadata).
+  nv_spreadsheet_batch_update_input:
+    type: json
+    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest). Omitted in DOMAIN
+      only for parse ergonomics; live calls must send a JSON object including a requests array (for example batch-update(input={requests=[]})
+      or a fuller payload).
+  nv_sheet_copy_to_destination_spreadsheet_id:
+    type: string
+    string_semantics: short
+    description: Destination spreadsheet ID to receive the copied sheet.
+  nv_value_range_get_major_dimension:
+    type: select
+    allowed_values:
+    - DIMENSION_UNSPECIFIED
+    - ROWS
+    - COLUMNS
+  nv_value_range_get_value_render_option:
+    type: select
+    allowed_values:
+    - FORMATTED_VALUE
+    - UNFORMATTED_VALUE
+    - FORMULA
+  nv_value_range_get_date_time_render_option:
+    type: select
+    allowed_values:
+    - SERIAL_NUMBER
+    - FORMATTED_STRING
+  nv_spreadsheet_values_batch_get_ranges_item:
+    type: string
+  nv_spreadsheet_values_batch_get_ranges:
+    type: array
+    items:
+      value_ref: nv_spreadsheet_values_batch_get_ranges_item
+    description: One or more ranges in A1 or R1C1 notation (for example `Sheet1!A1:C10`, `R1C1:R10C3`).
+  nv_spreadsheet_values_batch_get_major_dimension:
+    type: select
+    allowed_values:
+    - DIMENSION_UNSPECIFIED
+    - ROWS
+    - COLUMNS
+  nv_spreadsheet_values_batch_get_value_render_option:
+    type: select
+    allowed_values:
+    - FORMATTED_VALUE
+    - UNFORMATTED_VALUE
+    - FORMULA
+  nv_spreadsheet_values_batch_get_date_time_render_option:
+    type: select
+    allowed_values:
+    - SERIAL_NUMBER
+    - FORMATTED_STRING
+  nv_value_range_append_range:
+    type: string
+    string_semantics: short
+    description: A1 range used to locate the logical table for appending (for example `Sheet1!A1:C10`).
+  nv_value_range_append_value_input_option:
+    type: select
+    allowed_values:
+    - INPUT_VALUE_OPTION_UNSPECIFIED
+    - RAW
+    - USER_ENTERED
+  nv_value_range_append_insert_data_option:
+    type: select
+    allowed_values:
+    - OVERWRITE
+    - INSERT_ROWS
+  nv_value_range_append_include_values_in_response:
+    type: boolean
+  nv_value_range_append_response_value_render_option:
+    type: select
+    allowed_values:
+    - FORMATTED_VALUE
+    - UNFORMATTED_VALUE
+    - FORMULA
+  nv_value_range_append_response_date_time_render_option:
+    type: select
+    allowed_values:
+    - SERIAL_NUMBER
+    - FORMATTED_STRING

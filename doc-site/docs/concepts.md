@@ -24,6 +24,7 @@ The **CGS** describes:
 
 - **Entities** — Nouns in the domain (`Issue`, `Repository`, …).
 - **Fields & relations** — Data on those entities and links between them.
+- **Value domains** — In split `domain.yaml`, top-level **`values:`** holds **semantic slots** (wire `type` plus gloss); entity fields and capability parameters use **`value_ref`** into those rows. Splitting vs sharing keys is an authoring judgement (like entity boundaries), not something you infer from wire type alone.
 - **Capabilities** — Observable actions or queries the runtime can perform (`get_issue`, `list_issues`, …), with typed inputs and outputs.
 
 Think of CGS as *the contract the agent reasons about*. It is authored as YAML (`domain.yaml`) and loaded into the runtime.

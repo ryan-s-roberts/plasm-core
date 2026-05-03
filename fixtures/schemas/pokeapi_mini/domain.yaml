@@ -1,27 +1,29 @@
 version: 1
-
 auth:
   scheme: none
-
 http_backend: https://pokeapi.co
-
 entities:
   Berry:
     id_field: name
     description: A berry item from the PokéAPI game data
     fields:
       name:
-        description: Unique berry name used as its identifier
-        field_type: string
         required: true
-        string_semantics: short
+        value_ref: nv_berry_name
       url:
-        description: API endpoint URL for full berry details
-        field_type: string
         required: false
-        string_semantics: short
+        value_ref: nv_berry_url
 capabilities:
   berry_query:
     description: List berries with offset/limit pagination
     kind: query
     entity: Berry
+values:
+  nv_berry_name:
+    type: string
+    string_semantics: short
+    description: Unique berry name used as its identifier
+  nv_berry_url:
+    type: string
+    string_semantics: short
+    description: API endpoint URL for full berry details

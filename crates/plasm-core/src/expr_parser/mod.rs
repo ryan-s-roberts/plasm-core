@@ -2066,11 +2066,27 @@ mod tests {
     //! — cite the matrix row id on semantic parallels (e.g. `lang_query_all`).
     use super::*;
     use crate::schema::capability_method_label_kebab;
+    use crate::schema::registry_test_util;
+    use crate::schema::NamedValueSchema;
     use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
     use crate::{
         loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
-        EntityKey, FieldSchema, FieldType, RelationSchema, ResourceSchema, CGS,
+        EntityKey, FieldType, RelationSchema, ResourceSchema, CGS,
     };
+
+    fn seed_fx_str(cgs: &mut CGS) {
+        cgs.values.insert(
+            "fx_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+    }
 
     fn petstore_cgs() -> CGS {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
@@ -3036,27 +3052,16 @@ mod tests {
     /// In-memory CGS only — no `apis/` fixture on disk required.
     fn empty_get_parens_fixture_cgs() -> CGS {
         let mut cgs = CGS::new();
+        seed_fx_str(&mut cgs);
         cgs.add_resource(ResourceSchema {
             name: "Widget".into(),
             description: String::new(),
             id_field: "id".into(),
             id_format: None,
             id_from: None,
-            fields: vec![FieldSchema {
-                name: "id".into(),
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                required: true,
-                array_items: None,
-                string_semantics: None,
-                agent_presentation: None,
-                mime_type_hint: None,
-                attachment_media: None,
-                wire_path: None,
-                derive: None,
-            }],
+            fields: vec![registry_test_util::entity_field_from_values(
+                &cgs, "fx_str", "id", true, "",
+            )],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -3101,34 +3106,38 @@ mod tests {
         }
     }
 
-    fn str_field(name: &str) -> FieldSchema {
-        FieldSchema {
-            name: name.into(),
-            description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
-            required: true,
-            array_items: None,
-            string_semantics: None,
-            agent_presentation: None,
-            mime_type_hint: None,
-            attachment_media: None,
-            wire_path: None,
-            derive: None,
-        }
+    fn str_field(cgs: &CGS, name: &str) -> crate::schema::FieldSchema {
+        registry_test_util::entity_field_from_values(cgs, "fx_str", name, true, "")
     }
 
     /// `Book.library` is an `EntityRef` to compound-key `Library` — exercises nested `Library(...)` in `{…}`.
     fn book_library_entity_ref_fixture_cgs() -> CGS {
         let mut cgs = CGS::new();
+        seed_fx_str(&mut cgs);
+        cgs.values.insert(
+            "fx_ref_library".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: "Library".into(),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         cgs.add_resource(ResourceSchema {
             name: "Library".into(),
             description: String::new(),
             id_field: "id".into(),
             id_format: None,
             id_from: None,
-            fields: vec![str_field("id"), str_field("region"), str_field("code")],
+            fields: vec![
+                str_field(&cgs, "id"),
+                str_field(&cgs, "region"),
+                str_field(&cgs, "code"),
+            ],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -3145,24 +3154,14 @@ mod tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                str_field("id"),
-                FieldSchema {
-                    name: "library".into(),
-                    description: String::new(),
-                    field_type: FieldType::EntityRef {
-                        target: "Library".into(),
-                    },
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                str_field(&cgs, "id"),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "fx_ref_library",
+                    "library",
+                    true,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],
@@ -3336,7 +3335,8 @@ mod tests {
 
     fn compound_get_fixture_cgs() -> CGS {
         let mut cgs = CGS::new();
-        let f = |n: &str| str_field(n);
+        seed_fx_str(&mut cgs);
+        let f = |n: &str| registry_test_util::entity_field_from_values(&cgs, "fx_str", n, true, "");
         cgs.add_resource(ResourceSchema {
             name: "Ticket".into(),
             description: String::new(),
@@ -3415,7 +3415,11 @@ mod tests {
             id_field: "id".into(),
             id_format: None,
             id_from: None,
-            fields: vec![str_field("id"), str_field("region"), str_field("code")],
+            fields: vec![
+                str_field(&cgs, "id"),
+                str_field(&cgs, "region"),
+                str_field(&cgs, "code"),
+            ],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -3474,21 +3478,8 @@ mod tests {
 
     fn many_rel_unmaterialized_cgs() -> CGS {
         let mut cgs = CGS::new();
-        let id_field = FieldSchema {
-            name: "id".into(),
-            description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
-            required: true,
-            array_items: None,
-            string_semantics: None,
-            agent_presentation: None,
-            mime_type_hint: None,
-            attachment_media: None,
-            wire_path: None,
-            derive: None,
-        };
+        seed_fx_str(&mut cgs);
+        let id_field = registry_test_util::entity_field_from_values(&cgs, "fx_str", "id", true, "");
         cgs.add_resource(ResourceSchema {
             name: "Parent".into(),
             description: String::new(),

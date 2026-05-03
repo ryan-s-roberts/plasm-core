@@ -233,6 +233,7 @@ fn field_input_schema_to_input_type(f: &InputFieldSchema) -> Result<InputType, (
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::{FieldValueKind, ValueDomainKey};
     use crate::FieldType;
 
     #[test]
@@ -240,6 +241,9 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "title".into(),
+                kind: FieldValueKind::Registry(
+                    ValueDomainKey::new("typed_invoke_title").expect("key"),
+                ),
                 field_type: FieldType::String,
                 value_format: None,
                 required: true,

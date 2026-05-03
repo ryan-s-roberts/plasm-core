@@ -57,6 +57,28 @@ mod property_tests {
     fn test_type_checking_stability() {
         // Create a known schema and predicate
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fx_str".into(),
+            crate::schema::NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "fx_region".into(),
+            crate::schema::NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["EMEA".to_string(), "APAC".to_string()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
         let account = ResourceSchema {
             name: "Account".into(),
             description: String::new(),
@@ -64,36 +86,16 @@ mod property_tests {
             id_format: None,
             id_from: None,
             fields: vec![
-                FieldSchema {
-                    name: "id".into(),
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    required: true,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
-                FieldSchema {
-                    name: "region".into(),
-                    description: String::new(),
-                    field_type: FieldType::Select,
-                    value_format: None,
-                    allowed_values: Some(vec!["EMEA".to_string(), "APAC".to_string()]),
-                    required: false,
-                    array_items: None,
-                    string_semantics: None,
-                    agent_presentation: None,
-                    mime_type_hint: None,
-                    attachment_media: None,
-                    wire_path: None,
-                    derive: None,
-                },
+                crate::schema::registry_test_util::entity_field_from_values(
+                    &cgs, "fx_str", "id", true, "",
+                ),
+                crate::schema::registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "fx_region",
+                    "region",
+                    false,
+                    "",
+                ),
             ],
             relations: vec![],
             expression_aliases: vec![],

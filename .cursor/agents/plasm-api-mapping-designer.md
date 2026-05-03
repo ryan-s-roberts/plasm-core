@@ -60,8 +60,8 @@ Rules:
 Run the relevant compiler and transport checks:
 
 ```bash
-cargo run -p plasm-cli -- schema validate apis/<api>/domain.yaml
-cargo run -p plasm-cli -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
 ```
 
 When a public OpenAPI spec is available, use Hermit before touching live credentials:
