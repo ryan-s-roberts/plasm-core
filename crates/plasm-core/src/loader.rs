@@ -501,8 +501,6 @@ fn field_schema_from_domain_field(
     let nv = values
         .get(vr)
         .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
-    let (field_type, string_semantics) =
-        normalize_blob_field_type(nv.field_type.clone(), nv.string_semantics);
     let description = if f.description.trim().is_empty() {
         nv.description.clone()
     } else {
@@ -513,12 +511,7 @@ fn field_schema_from_domain_field(
         name: EntityFieldName::from(fname),
         kind: FieldValueKind::Registry(vdk),
         description,
-        field_type,
-        value_format: nv.value_format,
-        allowed_values: nv.allowed_values.clone(),
         required: f.required,
-        array_items: nv.array_items.clone(),
-        string_semantics,
         agent_presentation: f.agent_presentation,
         mime_type_hint: f.mime_type_hint.clone(),
         attachment_media: f.attachment_media,
@@ -542,8 +535,6 @@ fn input_field_schema_from_domain_parameter(
     let nv = values
         .get(vr)
         .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
-    let (field_type, string_semantics) =
-        normalize_blob_field_type(nv.field_type.clone(), nv.string_semantics);
     let description = if p.description.trim().is_empty() {
         let nd = nv.description.trim();
         if nd.is_empty() {
@@ -559,12 +550,7 @@ fn input_field_schema_from_domain_parameter(
     Ok(InputFieldSchema {
         name: p.name.clone(),
         kind: FieldValueKind::Registry(vdk),
-        field_type,
-        value_format: nv.value_format,
         required: p.required,
-        allowed_values: nv.allowed_values.clone(),
-        array_items: nv.array_items.clone(),
-        string_semantics,
         description,
         default: None,
         role,
@@ -855,7 +841,10 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
             if !matches!(param.role, Some(ParameterRole::Scope)) {
                 continue;
             }
-            if !matches!(param.field_type, FieldType::EntityRef { .. }) {
+            let Ok(nv) = cgs.named_value_for_slot(param) else {
+                continue;
+            };
+            if !matches!(nv.field_type, FieldType::EntityRef { .. }) {
                 continue;
             }
             if vars.contains(&param.name) {
@@ -1034,7 +1023,10 @@ mod tests {
         assert!(!cgs.entities.is_empty());
         let blob = cgs.get_entity("BlobAsset").expect("BlobAsset entity");
         let payload = blob.fields.get("payload").expect("payload field");
-        assert!(matches!(payload.field_type, crate::FieldType::Blob));
+        let payload_nv = cgs
+            .named_value_for_slot(payload)
+            .expect("payload value_ref");
+        assert!(matches!(payload_nv.field_type, crate::FieldType::Blob));
         assert_eq!(
             payload.mime_type_hint.as_deref(),
             Some("application/octet-stream")

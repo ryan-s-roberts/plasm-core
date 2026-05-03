@@ -362,10 +362,46 @@ impl MockResource {
 mod tests {
     use super::*;
     use plasm_compile::BackendOp;
-    use plasm_core::{Cardinality, FieldSchema, FieldType, RelationSchema, ResourceSchema};
+    use plasm_core::{
+        Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, RelationSchema,
+        ResourceSchema, StringSemantics, ValueDomainKey,
+    };
 
     fn create_test_schema() -> CGS {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "mock_nv_str_id".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "mock_nv_str_name".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "mock_nv_number".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
 
         let account = ResourceSchema {
             name: "Account".into(),
@@ -376,13 +412,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_nv_str_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -391,13 +425,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_nv_str_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -406,13 +438,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "revenue".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_nv_number").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::Number,
-                    value_format: None,
-                    allowed_values: None,
                     required: false,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -444,13 +474,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_nv_str_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -459,13 +487,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_nv_str_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,

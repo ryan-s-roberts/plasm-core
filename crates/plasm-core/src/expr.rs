@@ -462,7 +462,7 @@ pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
             if let Some(cap) = cgs.get_capability(&create.capability) {
                 if let Some(schema) = &cap.input_schema {
                     let lifted =
-                        InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type);
+                        InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs);
                     create.input = lifted;
                 }
             }
@@ -471,7 +471,8 @@ pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
             if let Some(cap) = cgs.get_capability(&invoke.capability) {
                 if let Some(schema) = &cap.input_schema {
                     if let Some(inp) = &invoke.input {
-                        let lifted = InvokeInputPayload::lift(&inp.to_value(), &schema.input_type);
+                        let lifted =
+                            InvokeInputPayload::lift(&inp.to_value(), &schema.input_type, cgs);
                         invoke.input = Some(lifted);
                     }
                 }

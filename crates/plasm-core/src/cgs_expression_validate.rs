@@ -37,16 +37,19 @@ fn validate_every_entity_has_capability(cgs: &CGS) -> Result<(), SchemaError> {
     Ok(())
 }
 
-fn scope_param_encodable(f: &InputFieldSchema) -> bool {
-    match &f.field_type {
+fn scope_param_encodable(cgs: &CGS, f: &InputFieldSchema) -> bool {
+    let Ok(nv) = cgs.named_value_for_slot(f) else {
+        return false;
+    };
+    match &nv.field_type {
         FieldType::EntityRef { .. } => true,
         FieldType::String | FieldType::Uuid => true,
         FieldType::Integer | FieldType::Number => true,
         FieldType::Boolean => true,
         FieldType::Select | FieldType::MultiSelect => {
-            f.allowed_values.as_ref().is_some_and(|v| !v.is_empty())
+            nv.allowed_values.as_ref().is_some_and(|v| !v.is_empty())
         }
-        FieldType::Date => matches!(f.value_format, Some(ValueWireFormat::Temporal(_))),
+        FieldType::Date => matches!(nv.value_format, Some(ValueWireFormat::Temporal(_))),
         FieldType::Json | FieldType::Array | FieldType::Blob => false,
     }
 }
@@ -66,7 +69,7 @@ fn validate_query_search_scope_params_encodable(cgs: &CGS) -> Result<(), SchemaE
             if f.role != Some(ParameterRole::Scope) {
                 continue;
             }
-            if !scope_param_encodable(f) {
+            if !scope_param_encodable(cgs, f) {
                 return Err(SchemaError::ScopeParameterNotEncodable {
                     capability: cap_name.to_string(),
                     parameter: f.name.clone(),

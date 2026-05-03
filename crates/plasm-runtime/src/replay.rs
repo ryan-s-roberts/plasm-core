@@ -608,19 +608,30 @@ mod tests {
     /// [`InvokeInputPayload::lift`] then [`InvokeInputPayload::to_value`] must match raw wire JSON for fingerprint stability.
     #[test]
     fn invoke_input_payload_lift_preserves_http_fingerprint() {
-        use plasm_core::schema::{InputFieldSchema, InputType};
+        use plasm_core::schema::{
+            FieldValueKind, InputFieldSchema, InputType, NamedValueSchema, StringSemantics,
+            ValueDomainKey, CGS,
+        };
         use plasm_core::typed_invoke::InvokeInputPayload;
         use plasm_core::FieldType;
 
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "replay_title".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "title".into(),
-                field_type: FieldType::String,
-                value_format: None,
+                kind: FieldValueKind::Registry(ValueDomainKey::new("replay_title").expect("key")),
                 required: true,
-                allowed_values: None,
-                array_items: None,
-                string_semantics: None,
                 description: None,
                 default: None,
                 role: None,
@@ -634,7 +645,7 @@ mod tests {
             m
         });
 
-        let lifted = InvokeInputPayload::lift(&body, &input_type);
+        let lifted = InvokeInputPayload::lift(&body, &input_type, &cgs);
 
         let mk = |body: Option<Value>| {
             CompiledOperation::Http(CompiledRequest {

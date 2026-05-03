@@ -1862,7 +1862,7 @@ impl ExecutionEngine {
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
         let payload = if let Some(schema) = &capability.input_schema {
-            InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type)
+            InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
         } else {
             create.input.clone()
         };
@@ -1871,6 +1871,7 @@ impl ExecutionEngine {
             Some(schema) => plasm_core::normalize_structured_string_inputs(
                 payload.to_value(),
                 &schema.input_type,
+                cgs,
             ),
             None => payload.to_value(),
         };
@@ -2042,7 +2043,7 @@ impl ExecutionEngine {
             None => None,
             Some(input) => {
                 let payload = if let Some(schema) = &capability.input_schema {
-                    InvokeInputPayload::lift(&input.to_value(), &schema.input_type)
+                    InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
                 } else {
                     input.clone()
                 };
@@ -2050,6 +2051,7 @@ impl ExecutionEngine {
                     Some(schema) => plasm_core::normalize_structured_string_inputs(
                         payload.to_value(),
                         &schema.input_type,
+                        cgs,
                     ),
                     None => payload.to_value(),
                 })
@@ -2197,13 +2199,21 @@ impl ExecutionEngine {
         let target_entity_name: String = if let Some(field_schema) =
             source_entity.fields.get(chain.selector.as_str())
         {
-            match &field_schema.field_type {
+            let nv = cgs.named_value_for_slot(field_schema).map_err(|e| {
+                RuntimeError::ConfigurationError {
+                    message: format!(
+                        "Field '{}.{}': invalid value_ref — {}",
+                        source_entity_name, chain.selector, e
+                    ),
+                }
+            })?;
+            match &nv.field_type {
                 FieldType::EntityRef { target } => target.to_string(),
                 _ => {
                     return Err(RuntimeError::ConfigurationError {
                         message: format!(
                             "Field '{}.{}' is {:?}, not EntityRef",
-                            source_entity_name, chain.selector, field_schema.field_type
+                            source_entity_name, chain.selector, nv.field_type
                         ),
                     });
                 }
@@ -4575,12 +4585,35 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use plasm_core::{
-        CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType, GetExpr,
-        Ref, ResourceSchema,
+        CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
+        FieldValueKind, GetExpr, NamedValueSchema, Ref, ResourceSchema, StringSemantics,
+        ValueDomainKey,
     };
 
     fn create_test_cgs() -> CGS {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "exec_test_id".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "exec_test_name".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
 
         // Add Account entity
         let account = ResourceSchema {
@@ -4592,13 +4625,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("exec_test_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -4607,13 +4638,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("exec_test_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,

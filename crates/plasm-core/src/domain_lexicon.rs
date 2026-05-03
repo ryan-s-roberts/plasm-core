@@ -133,10 +133,15 @@ impl DomainLexicon {
 
             // Entity fields
             for (fname, field) in &ent.fields {
+                let field_type = cgs
+                    .named_value_for_slot(field)
+                    .expect("domain lexicon: entity field value_ref")
+                    .field_type
+                    .clone();
                 let entry = LexEntry::EntityField {
                     entity: ename_s.clone(),
                     field: fname.as_str().to_string(),
-                    field_type: field.field_type.clone(),
+                    field_type,
                 };
                 for token in tokens(fname) {
                     lex.insert(token, entry.clone());
@@ -161,11 +166,16 @@ impl DomainLexicon {
 
             for f in fields {
                 let is_scope = matches!(f.role, Some(ParameterRole::Scope));
+                let field_type = cgs
+                    .named_value_for_slot(f)
+                    .expect("domain lexicon: cap param value_ref")
+                    .field_type
+                    .clone();
                 let entry = LexEntry::CapParam {
                     entity: cap.domain.to_string(),
                     cap: cap.name.to_string(),
                     param: f.name.clone(),
-                    field_type: f.field_type.clone(),
+                    field_type,
                     required: f.required,
                     is_scope,
                 };

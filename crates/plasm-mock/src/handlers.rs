@@ -206,11 +206,27 @@ mod tests {
         http::{Method, Request},
         Router,
     };
-    use plasm_core::{FieldSchema, FieldType, ResourceSchema};
+    use plasm_core::{
+        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
+        ValueDomainKey,
+    };
     use tower::ServiceExt;
 
     async fn create_test_app() -> (Router, SharedStore) {
         let mut schema = plasm_core::CGS::new();
+        for k in ["mock_h_str_id", "mock_h_str_name"] {
+            schema.values.insert(
+                k.into(),
+                NamedValueSchema {
+                    description: String::new(),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                    string_semantics: Some(StringSemantics::Short),
+                    array_items: None,
+                },
+            );
+        }
         let account = ResourceSchema {
             name: "Account".into(),
             description: String::new(),
@@ -220,13 +236,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "id".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_h_str_id").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -235,13 +249,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "name".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("mock_h_str_name").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,

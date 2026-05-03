@@ -883,10 +883,11 @@ impl<'a> Parser<'a> {
         let ec = self.cgs_for_entity_required(entity_name);
         if let Some(ent) = ec.get_entity(entity_name) {
             if let Some(fs) = ent.fields.get(field) {
+                let nv = ec.named_value_for_slot(fs).ok()?;
                 return Some((
-                    fs.field_type.clone(),
-                    fs.value_format,
-                    fs.array_items.clone(),
+                    nv.field_type.clone(),
+                    nv.value_format,
+                    nv.array_items.clone(),
                 ));
             }
         }
@@ -895,10 +896,11 @@ impl<'a> Parser<'a> {
                 if let Some(is) = cap.input_schema.as_ref() {
                     if let InputType::Object { fields, .. } = &is.input_type {
                         if let Some(f) = fields.iter().find(|f| f.name == field) {
+                            let nv = ec.named_value_for_slot(f).ok()?;
                             return Some((
-                                f.field_type.clone(),
-                                f.value_format,
-                                f.array_items.clone(),
+                                nv.field_type.clone(),
+                                nv.value_format,
+                                nv.array_items.clone(),
                             ));
                         }
                     }
@@ -1101,16 +1103,18 @@ impl<'a> Parser<'a> {
         let InputType::Object { fields, .. } = &is.input_type else {
             return Ok(());
         };
+        let ec = self.cgs_for_entity_required(cap.domain.as_str());
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
                 let old = std::mem::replace(v, Value::Null);
-                *v = coerce_value_for_field_type(
-                    &f.field_type,
-                    f.value_format,
-                    f.array_items.as_ref(),
-                    old,
-                )
-                .map_err(|m| self.err(ParseErrorKind::InvalidTemporalValue { message: m }))?;
+                let nv = ec.named_value_for_slot(f).map_err(|_| {
+                    self.err(ParseErrorKind::Other {
+                        message: format!("internal: unknown value_ref for parameter `{}`", f.name),
+                    })
+                })?;
+                let array_ref = nv.array_items.as_ref();
+                *v = coerce_value_for_field_type(&nv.field_type, nv.value_format, array_ref, old)
+                    .map_err(|m| self.err(ParseErrorKind::InvalidTemporalValue { message: m }))?;
             }
         }
         Ok(())
@@ -1470,9 +1474,11 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                         let sf = scope_fields[0];
-                        if let FieldType::EntityRef { target } = &sf.field_type {
-                            if target.as_str() == anchor_entity {
-                                matches.push(cap);
+                        if let Ok(nv) = c.named_value_for_slot(sf) {
+                            if let FieldType::EntityRef { target } = &nv.field_type {
+                                if target.as_str() == anchor_entity {
+                                    matches.push(cap);
+                                }
                             }
                         }
                     }
@@ -1505,9 +1511,11 @@ impl<'a> Parser<'a> {
                         continue;
                     }
                     let sf = scope_fields[0];
-                    if let FieldType::EntityRef { target } = &sf.field_type {
-                        if target.as_str() == anchor_entity {
-                            matches.push(cap);
+                    if let Ok(nv) = c.named_value_for_slot(sf) {
+                        if let FieldType::EntityRef { target } = &nv.field_type {
+                            if target.as_str() == anchor_entity {
+                                matches.push(cap);
+                            }
                         }
                     }
                 }
@@ -1916,7 +1924,12 @@ impl<'a> Parser<'a> {
                 // Check EntityRef fields (e.g. .petId → ChainExpr)
                 match ent.fields.get(field.as_str()) {
                     Some(f) => {
-                        if !matches!(f.field_type, FieldType::EntityRef { .. }) {
+                        let ec = self.cgs_for_entity_required(&source_entity);
+                        let is_ref = ec
+                            .named_value_for_slot(f)
+                            .ok()
+                            .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }));
+                        if !is_ref {
                             return Err(ParseError {
                                 kind: ParseErrorKind::NotNavigable {
                                     field: field.clone(),
@@ -1969,9 +1982,11 @@ impl<'a> Parser<'a> {
             for cap in c.find_capabilities(target_entity, CapabilityKind::Query) {
                 if let Some(fields) = cap.object_params() {
                     for f in fields {
-                        if let FieldType::EntityRef { target } = &f.field_type {
-                            if target.as_str() == source_entity {
-                                return Ok(f.name.clone());
+                        if let Ok(nv) = c.named_value_for_slot(f) {
+                            if let FieldType::EntityRef { target } = &nv.field_type {
+                                if target.as_str() == source_entity {
+                                    return Ok(f.name.clone());
+                                }
                             }
                         }
                     }
@@ -1984,9 +1999,14 @@ impl<'a> Parser<'a> {
             .get_entity(target_entity)
         {
             for (fname, field) in &ent.fields {
-                if let FieldType::EntityRef { target } = &field.field_type {
-                    if target.as_str() == source_entity {
-                        return Ok(fname.as_str().to_string());
+                if let Ok(nv) = self
+                    .cgs_for_entity_required(target_entity)
+                    .named_value_for_slot(field)
+                {
+                    if let FieldType::EntityRef { target } = &nv.field_type {
+                        if target.as_str() == source_entity {
+                            return Ok(fname.as_str().to_string());
+                        }
                     }
                 }
             }

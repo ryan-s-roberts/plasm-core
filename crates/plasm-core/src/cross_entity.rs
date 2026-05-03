@@ -89,12 +89,13 @@ fn resolve_cross_entity_field(
 
     // Find the EntityRef field whose name or target entity matches the prefix.
     for (field_name, field_schema) in &source_entity.fields {
-        let FieldType::EntityRef { target } = &field_schema.field_type else {
+        let nv = cgs.named_value_for_slot(field_schema).ok()?;
+        let FieldType::EntityRef { target } = &nv.field_type else {
             continue;
         };
 
         let field_lower = field_name.to_lowercase();
-        let target_lower = target.to_lowercase();
+        let target_lower = target.as_str().to_lowercase();
 
         // Match: prefix is the field name (e.g. "petId"), field name without "Id"/"_id" suffix,
         // or the target entity name itself.
@@ -108,7 +109,7 @@ fn resolve_cross_entity_field(
         }
 
         // Verify the suffix field exists on the target entity.
-        let target_entity = cgs.get_entity(target)?;
+        let target_entity = cgs.get_entity(target.as_str())?;
         if !target_entity.fields.contains_key(suffix) {
             continue;
         }

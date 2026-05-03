@@ -5,7 +5,7 @@
 //! JSON-escaped markdown into those quotes. Before compiling HTTP templates, we normalize those
 //! payloads for structured string fields (see [`crate::schema::StringSemantics::is_structured_or_multiline`]).
 
-use crate::schema::InputType;
+use crate::schema::{InputType, CGS};
 use crate::value::{FieldType, Value};
 
 /// Unescape common JSON-style backslash sequences (`\n`, `\t`, `\uXXXX`, etc.).
@@ -73,7 +73,11 @@ pub fn unescape_json_style_escapes(s: &str) -> String {
 }
 
 /// Apply [`unescape_json_style_escapes`] to string fields marked as structured in `input_type`.
-pub fn normalize_structured_string_inputs(value: Value, input_type: &InputType) -> Value {
+pub fn normalize_structured_string_inputs(
+    value: Value,
+    input_type: &InputType,
+    cgs: &CGS,
+) -> Value {
     match input_type {
         InputType::None | InputType::Value { .. } | InputType::Union { .. } => value,
         InputType::Object { fields, .. } => {
@@ -81,11 +85,14 @@ pub fn normalize_structured_string_inputs(value: Value, input_type: &InputType) 
                 return value;
             };
             for field in fields {
-                if field.field_type != FieldType::String {
+                let Ok(nv) = cgs.named_value_for_slot(field) else {
+                    continue;
+                };
+                if nv.field_type != FieldType::String {
                     continue;
                 }
                 if !field
-                    .effective_string_semantics()
+                    .effective_string_semantics(cgs)
                     .is_structured_or_multiline()
                 {
                     continue;
@@ -106,7 +113,7 @@ pub fn normalize_structured_string_inputs(value: Value, input_type: &InputType) 
             Value::Array(
                 items
                     .into_iter()
-                    .map(|v| normalize_structured_string_inputs(v, element_type.as_ref()))
+                    .map(|v| normalize_structured_string_inputs(v, element_type.as_ref(), cgs))
                     .collect(),
             )
         }
@@ -116,7 +123,9 @@ pub fn normalize_structured_string_inputs(value: Value, input_type: &InputType) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{FieldValueKind, InputFieldSchema, StringSemantics, ValueDomainKey};
+    use crate::schema::{
+        FieldValueKind, InputFieldSchema, NamedValueSchema, StringSemantics, ValueDomainKey, CGS,
+    };
 
     #[test]
     fn unescape_basic_escapes() {
@@ -132,16 +141,23 @@ mod tests {
 
     #[test]
     fn normalize_object_markdown_field() {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "unescape_p2_md".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Markdown),
+                array_items: None,
+            },
+        );
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
                 kind: FieldValueKind::Registry(ValueDomainKey::new("unescape_p2_md").expect("key")),
-                field_type: FieldType::String,
-                value_format: None,
                 required: false,
-                allowed_values: None,
-                array_items: None,
-                string_semantics: Some(StringSemantics::Markdown),
                 description: None,
                 default: None,
                 role: None,
@@ -159,7 +175,7 @@ mod tests {
             .into_iter()
             .collect(),
         );
-        let out = normalize_structured_string_inputs(v, &input_type);
+        let out = normalize_structured_string_inputs(v, &input_type, &cgs);
         let obj = out.as_object().unwrap();
         assert_eq!(obj.get("p2").unwrap().as_str().unwrap(), "line1\n\nline2");
         assert_eq!(obj.get("id").unwrap().as_str().unwrap(), "x");
@@ -167,18 +183,25 @@ mod tests {
 
     #[test]
     fn short_semantics_unchanged() {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "unescape_p2_short".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
                 kind: FieldValueKind::Registry(
                     ValueDomainKey::new("unescape_p2_short").expect("key"),
                 ),
-                field_type: FieldType::String,
-                value_format: None,
                 required: false,
-                allowed_values: None,
-                array_items: None,
-                string_semantics: Some(StringSemantics::Short),
                 description: None,
                 default: None,
                 role: None,
@@ -190,7 +213,7 @@ mod tests {
                 .into_iter()
                 .collect(),
         );
-        let out = normalize_structured_string_inputs(v, &input_type);
+        let out = normalize_structured_string_inputs(v, &input_type, &cgs);
         assert_eq!(
             out.as_object()
                 .unwrap()

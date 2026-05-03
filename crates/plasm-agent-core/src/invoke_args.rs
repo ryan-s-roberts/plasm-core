@@ -1,6 +1,6 @@
 use clap::ArgMatches;
 use indexmap::IndexMap;
-use plasm_core::{CapabilitySchema, Value};
+use plasm_core::{CapabilitySchema, Value, CGS};
 
 use crate::input_field_cli::{build_field_args, field_value_for_invoke, FieldArgHelp};
 
@@ -8,18 +8,18 @@ use crate::input_field_cli::{build_field_args, field_value_for_invoke, FieldArgH
 ///
 /// Each InputFieldSchema becomes a named, typed flag:
 ///   --name (string), --revenue (f64), --priority (select with PossibleValues)
-pub fn build_invoke_args(cap: &CapabilitySchema) -> Vec<clap::Arg> {
-    build_field_args(cap, FieldArgHelp::Invoke)
+pub fn build_invoke_args(cap: &CapabilitySchema, cgs: &CGS) -> Vec<clap::Arg> {
+    build_field_args(cap, FieldArgHelp::Invoke, cgs)
 }
 
 /// Extract matched invoke arguments into a `Value::Object` for `InvokeExpr::input`.
-pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema) -> Option<Value> {
+pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema, cgs: &CGS) -> Option<Value> {
     let fields = cap.object_params()?;
 
     let mut obj = IndexMap::new();
 
     for field in fields {
-        if let Some(v) = field_value_for_invoke(matches, field) {
+        if let Some(v) = field_value_for_invoke(matches, field, cgs) {
             obj.insert(field.name.clone(), v);
         }
     }
@@ -36,9 +36,48 @@ mod tests {
     use super::*;
     use clap::{Arg, Command};
     use plasm_core::{
-        CapabilityKind, CapabilityMapping, FieldType, InputFieldSchema, InputSchema, InputType,
-        InputValidation,
+        CapabilityKind, CapabilityMapping, FieldType, FieldValueKind, InputFieldSchema,
+        InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, ValueDomainKey,
+        CGS,
     };
+
+    fn invoke_test_cgs() -> CGS {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "invoke_upd_name".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "invoke_upd_revenue".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Number,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "invoke_upd_priority".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Select,
+                value_format: None,
+                allowed_values: Some(vec!["low".into(), "medium".into(), "high".into()]),
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs
+    }
 
     fn test_capability() -> CapabilitySchema {
         CapabilitySchema {
@@ -54,40 +93,30 @@ mod tests {
                     fields: vec![
                         InputFieldSchema {
                             name: "name".into(),
-                            field_type: FieldType::String,
-                            value_format: None,
+                            kind: FieldValueKind::Registry(
+                                ValueDomainKey::new("invoke_upd_name").expect("key"),
+                            ),
                             required: false,
-                            allowed_values: None,
-                            array_items: None,
-                            string_semantics: None,
                             description: Some("Account name".into()),
                             default: None,
                             role: None,
                         },
                         InputFieldSchema {
                             name: "revenue".into(),
-                            field_type: FieldType::Number,
-                            value_format: None,
+                            kind: FieldValueKind::Registry(
+                                ValueDomainKey::new("invoke_upd_revenue").expect("key"),
+                            ),
                             required: false,
-                            allowed_values: None,
-                            array_items: None,
-                            string_semantics: None,
                             description: Some("Annual revenue".into()),
                             default: None,
                             role: None,
                         },
                         InputFieldSchema {
                             name: "priority".into(),
-                            field_type: FieldType::Select,
-                            value_format: None,
+                            kind: FieldValueKind::Registry(
+                                ValueDomainKey::new("invoke_upd_priority").expect("key"),
+                            ),
                             required: false,
-                            allowed_values: Some(vec![
-                                "low".into(),
-                                "medium".into(),
-                                "high".into(),
-                            ]),
-                            array_items: None,
-                            string_semantics: None,
                             description: Some("Priority level".into()),
                             default: None,
                             role: None,
@@ -110,9 +139,9 @@ mod tests {
         }
     }
 
-    fn parse_invoke(args: &[&str], cap: &CapabilitySchema) -> ArgMatches {
+    fn parse_invoke(args: &[&str], cap: &CapabilitySchema, cgs: &CGS) -> ArgMatches {
         let mut cmd = Command::new("test").arg(Arg::new("id").required(true));
-        for arg in build_invoke_args(cap) {
+        for arg in build_invoke_args(cap, cgs) {
             cmd = cmd.arg(arg);
         }
         cmd.try_get_matches_from(args).unwrap()
@@ -120,6 +149,7 @@ mod tests {
 
     #[test]
     fn typed_invoke_args() {
+        let cgs = invoke_test_cgs();
         let cap = test_capability();
         let matches = parse_invoke(
             &[
@@ -133,8 +163,9 @@ mod tests {
                 "high",
             ],
             &cap,
+            &cgs,
         );
-        let input = args_to_input(&matches, &cap).unwrap();
+        let input = args_to_input(&matches, &cap, &cgs).unwrap();
         if let Value::Object(obj) = input {
             assert_eq!(obj.get("name"), Some(&Value::String("New Corp".into())));
             assert_eq!(obj.get("revenue"), Some(&Value::Float(2000.0)));
@@ -146,9 +177,10 @@ mod tests {
 
     #[test]
     fn rejects_invalid_priority() {
+        let cgs = invoke_test_cgs();
         let cap = test_capability();
         let mut cmd = Command::new("test").arg(Arg::new("id").required(true));
-        for arg in build_invoke_args(&cap) {
+        for arg in build_invoke_args(&cap, &cgs) {
             cmd = cmd.arg(arg);
         }
         let result = cmd.try_get_matches_from(["test", "acc-1", "--priority", "INVALID"]);
@@ -157,9 +189,10 @@ mod tests {
 
     #[test]
     fn partial_fields() {
+        let cgs = invoke_test_cgs();
         let cap = test_capability();
-        let matches = parse_invoke(&["test", "acc-1", "--revenue", "500"], &cap);
-        let input = args_to_input(&matches, &cap).unwrap();
+        let matches = parse_invoke(&["test", "acc-1", "--revenue", "500"], &cap, &cgs);
+        let input = args_to_input(&matches, &cap, &cgs).unwrap();
         if let Value::Object(obj) = input {
             assert_eq!(obj.len(), 1);
             assert_eq!(obj.get("revenue"), Some(&Value::Float(500.0)));
@@ -170,8 +203,9 @@ mod tests {
 
     #[test]
     fn no_args_returns_none() {
+        let cgs = invoke_test_cgs();
         let cap = test_capability();
-        let matches = parse_invoke(&["test", "acc-1"], &cap);
-        assert!(args_to_input(&matches, &cap).is_none());
+        let matches = parse_invoke(&["test", "acc-1"], &cap, &cgs);
+        assert!(args_to_input(&matches, &cap, &cgs).is_none());
     }
 }

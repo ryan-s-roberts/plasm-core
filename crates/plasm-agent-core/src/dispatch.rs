@@ -86,7 +86,7 @@ fn build_expr(
             // (e.g. `comment_query` → subcommand "query" after stripping "comment_"
             // prefix). In that case fall through to the named-capability path below.
             if let Some(query_cap) = cgs.primary_query_capability(entity_name) {
-                let predicate = args_to_query_predicate(sub_matches, query_cap);
+                let predicate = args_to_query_predicate(sub_matches, query_cap, cgs);
                 let mut query = match predicate {
                     Some(pred) => QueryExpr::filtered(entity_name, pred),
                     None => QueryExpr::all(entity_name),
@@ -107,7 +107,7 @@ fn build_expr(
 
         if sub_name == "search" {
             if let Some(search_cap) = cgs.primary_search_capability(entity_name) {
-                let predicate = args_to_query_predicate(sub_matches, search_cap);
+                let predicate = args_to_query_predicate(sub_matches, search_cap, cgs);
                 let mut query = match predicate {
                     Some(pred) => QueryExpr::filtered(entity_name, pred),
                     None => QueryExpr::all(entity_name),
@@ -123,7 +123,7 @@ fn build_expr(
         if let Ok(cap) = find_capability(sub_name, entity_name, cgs) {
             // Scoped query/search → build QueryExpr with capability_name
             if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) {
-                let predicate = args_to_query_predicate(sub_matches, cap);
+                let predicate = args_to_query_predicate(sub_matches, cap, cgs);
                 let target_entity = &cap.domain;
                 let mut query = match predicate {
                     Some(pred) => QueryExpr::filtered(target_entity, pred),
@@ -135,7 +135,7 @@ fn build_expr(
             }
 
             if cap.kind == CapabilityKind::Create {
-                let input = args_to_input(sub_matches, cap).unwrap_or(Value::Null);
+                let input = args_to_input(sub_matches, cap, cgs).unwrap_or(Value::Null);
                 return Ok((
                     Expr::Create(CreateExpr::new(&cap.name, entity_name, input)),
                     StreamConsumeOpts::default(),
@@ -161,7 +161,7 @@ fn build_expr(
         }
 
         // EntityRef field navigation (FK auto-resolve via ChainExpr)
-        if let Some(field_key) = resolve_entity_ref_field(entity, sub_name) {
+        if let Some(field_key) = resolve_entity_ref_field(entity, sub_name, cgs) {
             let mut get = GetExpr::from_ref(node_ref.clone());
             if let Some(get_cap) = cgs.find_capability(entity_name, CapabilityKind::Get) {
                 get.path_vars = path_vars_for_cml(
@@ -182,7 +182,8 @@ fn build_expr(
             cgs.get_entity(&target_entity_name)
                 .ok_or_else(|| AgentError::EntityNotFound(target_entity_name.clone()))?;
             let rt_query_cap = cgs.find_capability(&target_entity_name, CapabilityKind::Query);
-            let user_pred = rt_query_cap.and_then(|cap| args_to_query_predicate(sub_matches, cap));
+            let user_pred =
+                rt_query_cap.and_then(|cap| args_to_query_predicate(sub_matches, cap, cgs));
             let fk_val = relation_scope_string(entity, &node_ref);
             let fk_pred = plasm_core::Predicate::eq(&param_name, fk_val);
             let combined = match user_pred {
@@ -207,7 +208,7 @@ fn build_expr(
         match cap.kind {
             CapabilityKind::Create => {
                 // Create is collection-level but might appear as a subcommand
-                let input = args_to_input(sub_matches, cap).unwrap_or(Value::Null);
+                let input = args_to_input(sub_matches, cap, cgs).unwrap_or(Value::Null);
                 return Ok((
                     Expr::Create(CreateExpr::new(&cap.name, entity_name, input)),
                     StreamConsumeOpts::default(),
@@ -225,7 +226,7 @@ fn build_expr(
             }
             _ => {
                 // Update, Action, or anything else -> Invoke
-                let input = args_to_input(sub_matches, cap);
+                let input = args_to_input(sub_matches, cap, cgs);
                 let mut inv = InvokeExpr::with_target(&cap.name, node_ref.clone(), input);
                 inv.path_vars = path_vars_for_cml(
                     &cap.mapping.template,
@@ -291,7 +292,7 @@ fn build_relation_expr(
                     capability, relation_name
                 ))
             })?;
-            let extra_pred = args_to_query_predicate(sub_matches, cap);
+            let extra_pred = args_to_query_predicate(sub_matches, cap, cgs);
             let combined = match extra_pred {
                 Some(p) => plasm_core::Predicate::and(vec![scope_pred, p]),
                 None => scope_pred,
@@ -330,7 +331,7 @@ fn build_relation_expr(
             } else {
                 plasm_core::Predicate::and(preds)
             };
-            let extra_pred = args_to_query_predicate(sub_matches, cap);
+            let extra_pred = args_to_query_predicate(sub_matches, cap, cgs);
             let combined = match extra_pred {
                 Some(p) => plasm_core::Predicate::and(vec![scope_pred, p]),
                 None => scope_pred,
@@ -351,7 +352,7 @@ fn build_relation_expr(
     }
 
     let target_query_cap = cgs.find_capability(target.as_str(), CapabilityKind::Query);
-    let predicate = target_query_cap.and_then(|cap| args_to_query_predicate(sub_matches, cap));
+    let predicate = target_query_cap.and_then(|cap| args_to_query_predicate(sub_matches, cap, cgs));
     let mut query = match predicate {
         Some(pred) => QueryExpr::filtered(target.clone(), pred),
         None => QueryExpr::all(target.clone()),
@@ -484,7 +485,11 @@ fn resolve_reverse_traversal(
 
 /// Match a CLI subcommand token to an EntityRef field on the entity.
 /// Handles both camelCase (`petId` → `pet-id`) and snake_case (`pet_id` → `pet-id`).
-fn resolve_entity_ref_field<'a>(entity: &'a EntityDef, user_sub: &str) -> Option<&'a str> {
+fn resolve_entity_ref_field<'a>(
+    entity: &'a EntityDef,
+    user_sub: &str,
+    cgs: &plasm_core::CGS,
+) -> Option<&'a str> {
     let user_kebab = normalize_cli_token(user_sub);
     entity
         .fields
@@ -494,10 +499,11 @@ fn resolve_entity_ref_field<'a>(entity: &'a EntityDef, user_sub: &str) -> Option
             if field_kebab != user_kebab {
                 return false;
             }
-            matches!(
-                entity.fields.get(*k).map(|f| &f.field_type),
-                Some(FieldType::EntityRef { .. })
-            )
+            entity
+                .fields
+                .get(*k)
+                .and_then(|f| cgs.named_value_for_slot(f).ok())
+                .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
         })
         .map(|s| s.as_str())
 }
@@ -704,11 +710,28 @@ mod tests {
     use crate::cli_builder::build_app;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, EntityKey, Expr, FieldSchema,
-        FieldType, ResourceSchema,
+        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
+        ValueDomainKey,
     };
 
     fn evm_get_cgs() -> CGS {
         let mut cgs = CGS::new();
+        for (k, sem) in [
+            ("dp_evm_account", Some(StringSemantics::Short)),
+            ("dp_evm_balance", Some(StringSemantics::Short)),
+        ] {
+            cgs.values.insert(
+                k.into(),
+                NamedValueSchema {
+                    description: String::new(),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                    string_semantics: sem,
+                    array_items: None,
+                },
+            );
+        }
         cgs.add_resource(ResourceSchema {
             name: "Balance".into(),
             description: String::new(),
@@ -718,13 +741,11 @@ mod tests {
             fields: vec![
                 FieldSchema {
                     name: "account".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("dp_evm_account").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -733,13 +754,11 @@ mod tests {
                 },
                 FieldSchema {
                     name: "balance".into(),
+                    kind: FieldValueKind::Registry(
+                        ValueDomainKey::new("dp_evm_balance").expect("key"),
+                    ),
                     description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
                     required: true,
-                    array_items: None,
-                    string_semantics: None,
                     agent_presentation: None,
                     mime_type_hint: None,
                     attachment_media: None,
@@ -809,6 +828,17 @@ mod tests {
     #[test]
     fn block_range_to_block_implies_multi_page_query() {
         let mut cgs = CGS::new();
+        cgs.values.insert(
+            "dp_transfer_event_id".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
         cgs.add_resource(ResourceSchema {
             name: "Transfer".into(),
             description: String::new(),
@@ -817,13 +847,11 @@ mod tests {
             id_from: None,
             fields: vec![FieldSchema {
                 name: "event_id".into(),
+                kind: FieldValueKind::Registry(
+                    ValueDomainKey::new("dp_transfer_event_id").expect("key"),
+                ),
                 description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
                 required: true,
-                array_items: None,
-                string_semantics: None,
                 agent_presentation: None,
                 mime_type_hint: None,
                 attachment_media: None,
@@ -894,30 +922,46 @@ mod tests {
 
     fn compound_issue_cli_cgs() -> CGS {
         let mut cgs = CGS::new();
-        let mk = |n: &str| FieldSchema {
+        for k in ["dp_issue_owner", "dp_issue_repo"] {
+            cgs.values.insert(
+                k.into(),
+                NamedValueSchema {
+                    description: String::new(),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                    string_semantics: Some(StringSemantics::Short),
+                    array_items: None,
+                },
+            );
+        }
+        cgs.values.insert(
+            "dp_issue_number".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Integer,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        let mk = |n: &str, vk: &str| FieldSchema {
             name: n.into(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new(vk).expect("key")),
             description: String::new(),
-            field_type: FieldType::String,
-            value_format: None,
-            allowed_values: None,
             required: true,
-            array_items: None,
-            string_semantics: None,
             agent_presentation: None,
             mime_type_hint: None,
             attachment_media: None,
             wire_path: None,
             derive: None,
         };
-        let mk_int = |n: &str| FieldSchema {
+        let mk_int = |n: &str, vk: &str| FieldSchema {
             name: n.into(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new(vk).expect("key")),
             description: String::new(),
-            field_type: FieldType::Integer,
-            value_format: None,
-            allowed_values: None,
             required: true,
-            array_items: None,
-            string_semantics: None,
             agent_presentation: None,
             mime_type_hint: None,
             attachment_media: None,
@@ -930,7 +974,11 @@ mod tests {
             id_field: "number".into(),
             id_format: None,
             id_from: None,
-            fields: vec![mk("owner"), mk("repo"), mk_int("number")],
+            fields: vec![
+                mk("owner", "dp_issue_owner"),
+                mk("repo", "dp_issue_repo"),
+                mk_int("number", "dp_issue_number"),
+            ],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,

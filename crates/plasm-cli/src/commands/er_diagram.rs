@@ -67,7 +67,11 @@ pub fn mermaid_er_from_cgs(cgs: &CGS, options: ErOptions) -> String {
             out.push_str(&ename);
             out.push_str(" {\n");
             for (fname, field) in &entity.fields {
-                let type_str = field_type_mermaid(&field.field_type);
+                let ft = &cgs
+                    .named_value_for_slot(field)
+                    .expect("entity field value_ref")
+                    .field_type;
+                let type_str = field_type_mermaid(ft);
                 let name_token = if fname == &entity.id_field {
                     format!("*{}", fname)
                 } else {
