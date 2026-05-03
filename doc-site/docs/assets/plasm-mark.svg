@@ -1,0 +1,15 @@
+<!-- Normalized viewBox from plasm_ui_core plasm-mark.svg for header scaling -->
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 145 145">
+  <defs>
+    <linearGradient id="plasm-mark-grad" x1="44.5" x2="44.5" y1="0" y2="144" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00ffea"/>
+      <stop offset="1" stop-color="#16c7dd"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-1185 -535)">
+    <path fill="url(#plasm-mark-grad)" d="m1224 610-10 35-11 34h-18c-17 0-17 0-17-2 1-3 15-54 16-62l2-6h19z"/>
+    <path fill="url(#plasm-mark-grad)" d="m1282 637-11 35-2 7h-35l2-8 17-62h38z"/>
+    <path fill="url(#plasm-mark-grad)" d="M1224 535v38h-39v-38h39"/>
+    <path fill="url(#plasm-mark-grad)" d="M1290 536v37h-40v-38h20z"/>
+  </g>
+</svg>

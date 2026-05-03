@@ -1,0 +1,213 @@
+/*
+ * Plasm docs theme — aligned with SaaS Phoenix shell tokens (web/assets/css/app.css).
+ * Light: daisyUI "light" primary (warm accent) + cool neutrals.
+ * Dark: daisyUI "dark" violet primary + shell-inspired chrome depth.
+ */
+
+/* --- Typography (matches --plasm-ui-font-* intent; Material loads Google Fonts from mkdocs.yml) --- */
+:root {
+  --plasm-docs-radius: 0.5rem;
+  --plasm-docs-radius-sm: 0.25rem;
+}
+
+body {
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+
+/* --- Light scheme (SaaS default / daisyUI light) --- */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: oklch(62% 0.19 47.604);
+  --md-primary-fg-color--light: oklch(70% 0.213 47.604);
+  --md-primary-fg-color--dark: oklch(52% 0.17 47.604);
+  --md-accent-fg-color: oklch(58% 0.19 259.815);
+  --md-typeset-a-color: oklch(52% 0.16 252);
+
+  --md-default-fg-color: oklch(21% 0.006 285.885);
+  --md-default-fg-color--light: oklch(38% 0.014 285.786);
+  --md-default-fg-color--lighter: oklch(52% 0.02 285);
+  --md-default-bg-color: oklch(98% 0 0);
+  --md-code-bg-color: oklch(96% 0.012 286);
+  --md-code-fg-color: oklch(28% 0.04 285);
+
+  --md-typeset-kbd-color: var(--md-default-fg-color);
+  --md-typeset-kbd-accent-color: oklch(92% 0.004 286.32);
+  --md-typeset-kbd-border-color: oklch(85% 0.012 264 / 0.45);
+
+  --md-footer-bg-color: oklch(96% 0.008 286);
+  --md-footer-fg-color: oklch(38% 0.02 285);
+  --md-footer-bg-color--dark: oklch(94% 0.01 286);
+
+  --md-typeset-table-color: oklch(44% 0.017 285.786);
+  --md-typeset-table-bg-color: oklch(99.5% 0.003 286);
+  --md-typeset-table-stripe-color: oklch(97.5% 0.006 286);
+
+  --md-admonition-fg-color: var(--md-default-fg-color);
+  --md-admonition-bg-color: oklch(97.5% 0.015 286);
+
+  --md-shadow-z1: 0 0.15rem 0.35rem oklch(0.35 0.02 264 / 0.07),
+    0 0 0 1px oklch(0.72 0.02 264 / 0.12);
+}
+
+[data-md-color-scheme="default"] .md-header {
+  background: linear-gradient(
+      105deg,
+      oklch(97% 0.04 47 / 0.35) 0%,
+      transparent 42%
+    ),
+    linear-gradient(
+      180deg,
+      oklch(99% 0.01 286) 0%,
+      oklch(97.5% 0.015 285) 100%
+    );
+  border-bottom: 1px solid oklch(0.76 0.02 264 / 0.22);
+  box-shadow: none;
+}
+
+[data-md-color-scheme="default"] .md-tabs {
+  background-color: oklch(97% 0.012 286);
+  border-bottom: 1px solid oklch(0.76 0.02 264 / 0.18);
+}
+
+[data-md-color-scheme="default"] .md-search__input {
+  border-radius: var(--plasm-docs-radius-sm);
+  border: 1px solid oklch(0.76 0.02 264 / 0.28);
+  background-color: oklch(99% 0.005 286);
+}
+
+[data-md-color-scheme="default"] .md-sidebar--primary {
+  border-right: 1px solid oklch(0.76 0.02 264 / 0.15);
+}
+
+/* --- Dark scheme (SaaS dark + shell plasma hints) --- */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: oklch(62% 0.22 277.117);
+  --md-primary-fg-color--light: oklch(68% 0.2 277);
+  --md-primary-fg-color--dark: oklch(52% 0.22 277);
+  --md-accent-fg-color: oklch(65% 0.22 292.717);
+  --md-typeset-a-color: oklch(72% 0.12 252);
+
+  --md-default-fg-color: oklch(96% 0.02 256.847);
+  --md-default-fg-color--light: oklch(82% 0.02 264);
+  --md-default-fg-color--lighter: oklch(68% 0.03 264);
+  --md-default-bg-color: oklch(26% 0.016 253);
+  --md-code-bg-color: oklch(22% 0.018 254);
+  --md-code-fg-color: oklch(92% 0.02 264);
+
+  --md-typeset-kbd-color: var(--md-default-fg-color);
+  --md-typeset-kbd-accent-color: oklch(30% 0.02 254);
+  --md-typeset-kbd-border-color: oklch(0.55 0.04 264 / 0.35);
+
+  --md-footer-bg-color: oklch(22% 0.018 254);
+  --md-footer-fg-color: oklch(78% 0.02 264);
+  --md-footer-bg-color--dark: oklch(19% 0.016 255);
+
+  --md-typeset-table-color: oklch(88% 0.02 264);
+  --md-typeset-table-bg-color: oklch(24% 0.017 253);
+  --md-typeset-table-stripe-color: oklch(27% 0.017 253);
+
+  --md-admonition-bg-color: oklch(28% 0.02 253 / 0.65);
+
+  --md-shadow-z1: 0 0.2rem 0.55rem rgb(0 0 0 / 0.35),
+    0 0 0 1px oklch(0.72 0.08 264 / 0.12);
+}
+
+[data-md-color-scheme="slate"] .md-header {
+  background:
+    radial-gradient(
+      ellipse 120% 180% at 12% -20%,
+      oklch(0.76 0.08 252 / 0.14),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 80% 120% at 92% 0%,
+      oklch(0.8 0.07 294 / 0.1),
+      transparent 45%
+    ),
+    linear-gradient(
+      180deg,
+      oklch(0.145 0.018 264 / 0.95) 0%,
+      oklch(0.12 0.017 260) 100%
+    );
+  border-bottom: 1px solid oklch(0.8 0.014 264 / 0.14);
+  box-shadow: 0 1px 0 oklch(0.5 0.06 264 / 0.08);
+}
+
+[data-md-color-scheme="slate"] .md-tabs {
+  background-color: oklch(22% 0.017 254);
+  border-bottom: 1px solid oklch(0.8 0.014 264 / 0.1);
+}
+
+[data-md-color-scheme="slate"] .md-search__input {
+  border-radius: var(--plasm-docs-radius-sm);
+  border: 1px solid oklch(0.55 0.04 264 / 0.35);
+  background-color: oklch(20% 0.016 255 / 0.9);
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary {
+  border-right: 1px solid oklch(0.8 0.014 264 / 0.08);
+  background-color: oklch(24% 0.017 253 / 0.92);
+}
+
+[data-md-color-scheme="slate"] .md-nav__link--active {
+  font-weight: 600;
+}
+
+/* Logo mark (cyan gradient): readable on both chrome backgrounds */
+.md-header__button.md-logo img {
+  height: 1.65rem;
+  width: auto;
+  filter: drop-shadow(0 1px 2px oklch(0.25 0.04 264 / 0.35));
+}
+
+[data-md-color-scheme="default"] .md-header__button.md-logo img {
+  filter: drop-shadow(0 1px 2px oklch(0.45 0.06 47 / 0.2));
+}
+
+/* --- Shared polish --- */
+.md-typeset code {
+  border-radius: var(--plasm-docs-radius-sm);
+  padding: 0.08em 0.35em;
+}
+
+.md-typeset pre > code {
+  border-radius: var(--plasm-docs-radius);
+}
+
+.md-typeset .admonition {
+  border-radius: var(--plasm-docs-radius);
+  border: 1px solid oklch(0.72 0.02 264 / 0.18);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .admonition {
+  border-color: oklch(0.55 0.04 264 / 0.28);
+}
+
+.md-typeset table:not([class]) {
+  border-radius: var(--plasm-docs-radius);
+  overflow: hidden;
+}
+
+/* SaaS cross-link strip (above footer) */
+.plasm-docs-cloud-strip {
+  margin: 2rem 0 0;
+  padding: 1rem 1.25rem;
+  border-radius: var(--plasm-docs-radius);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+[data-md-color-scheme="default"] .plasm-docs-cloud-strip {
+  background: oklch(97% 0.03 285);
+  border: 1px solid oklch(0.76 0.02 264 / 0.22);
+  color: oklch(35% 0.03 285);
+}
+
+[data-md-color-scheme="slate"] .plasm-docs-cloud-strip {
+  background: oklch(28% 0.025 253 / 0.85);
+  border: 1px solid oklch(0.72 0.06 264 / 0.15);
+  color: oklch(88% 0.02 264);
+}
+
+.plasm-docs-cloud-strip a {
+  font-weight: 600;
+}

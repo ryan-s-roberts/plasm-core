@@ -1,0 +1,35 @@
+# MCP logical sessions vs transport (`MCP-Session-Id`)
+
+## Historical behavior (superseded for MCP tools)
+
+Previously, Plasm bound **one** execute session `(prompt_hash, session_id)` per **MCP transport session** (Streamable HTTP `MCP-Session-Id` / SDK session id). Tool state (`plasm_context` → `plasm`), short artifact refs `plasm://r/{n}`, and trace roots were all keyed by that transport handle.
+
+That model breaks when:
+
+- Multiple agent instances or windows share one MCP connection.
+- The same agent needs several independent symbol spaces / execute sessions over one transport.
+- Horizontal scaling requires resuming work without sticky transport affinity.
+
+## Current model
+
+1. **Transport session** — Still the Streamable HTTP / SDK session: used for auth, connection lifecycle, and **correlation only** (which physical MCP connection issued a call).
+
+2. **Logical session** — The canonical Plasm session for prompts, execute `(prompt_hash, session_id)`, monotonic `e#`/`m#`/`p#`, run artifacts, and **trace root identity**:
+   - **`intent`** — **Host-chosen** stable string for the agent context (window, subagent, or other boundary the host defines); MCP JSON field on `plasm_context`; used for idempotent opens. The server does not infer this from the MCP transport. See [MCP session reuse](mcp-session-reuse.md).
+   - **Canonical id** — Server-minted UUID (`logical_session_id` internally): global stable identifier for archives, traces, and cross-replica correlation (when backed by shared storage).
+   - **`logical_session_ref`** — Per **MCP transport** slot string (`s0`, `s1`, …) returned by `plasm_context`, analogous to run artifact index `r/{n}` but naming the logical session. Agents pass this ref to `plasm` and see it in short run URIs.
+   - **Paginated list continuations** — Opaque handles are **`s0_pg1`**, **`s0_pg2`**, … (slot + sequence): use `page(s0_pgN)` from tool results, not plain `page(pgN)`.
+
+3. **Flow** — **`plasm_context` first** with `intent` and non-empty `seeds`, then mostly `plasm` with `logical_session_ref`. Short run URIs use `plasm://session/{logical_session_ref}/r/{n}`; canonical `plasm://execute/.../run/{uuid}` remains accepted on `resources/read`. Legacy `plasm://r/{n}` remains accepted for older run links that were created without a logical id. Those **`plasm://…` URIs are MCP `resources/read` identifiers**, not strings you pass back into the `plasm` tool as Plasm path expressions.
+
+## In-process vs scaled deployments
+
+Today, logical session metadata and execute bindings are still **in-memory** in `plasm-agent`. Surviving process restart or moving to another replica requires a shared **logical session repository** (out of scope for this document’s implementation phase); the types and IDs are chosen so that repository can be added without changing the client contract.
+
+## Related code
+
+- MCP handler: [`crates/plasm-agent-core/src/mcp_server.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/mcp_server.rs)
+- Logical session registry: [`crates/plasm-agent-core/src/session_identity.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/session_identity.rs)
+- Trace correlation: [`docs/mcp-trace-correlation.md`](mcp-trace-correlation.md)
+- Incremental DOMAIN: [`docs/incremental-domain-prompts.md`](incremental-domain-prompts.md)
+- Session reuse and `SessionReuseKey`: [`docs/mcp-session-reuse.md`](mcp-session-reuse.md)
