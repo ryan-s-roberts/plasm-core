@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Cursor editor">
+  <title>Cursor editor (Plasm placeholder mark)</title>
+  <path
+    fill="currentColor"
+    d="M4 3l16 9-16 9V3zm2.2 3.2v11.6L17.1 12 6.2 6.2z"
+  />
+</svg>

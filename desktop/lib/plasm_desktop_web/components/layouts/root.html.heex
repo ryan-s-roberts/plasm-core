@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <title>{assigns[:page_title] || "Plasm Desktop"}</title>
+    <link rel="stylesheet" href={PlasmUiCore.Assets.stylesheet_href()} />
+    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
+    </script>
+  </head>
+  <body>
+    <div class="plasm-shell">
+      <header class="plasm-shell-topbar">
+        <div class="plasm-shell-topbar-copy">
+          <p class="plasm-brand-kicker">Local appliance · MCP control station</p>
+          <p class="plasm-brand-title">Plasm Desktop</p>
+        </div>
+      </header>
+      <div class="plasm-shell-body">
+        <aside class="plasm-rail">
+          <p class="plasm-rail-label">Navigation</p>
+          <nav class="plasm-rail-nav" aria-label="Primary">
+            <p class="plasm-rail-section-label">Overview</p>
+            <a
+              href="/"
+              class={"plasm-rail-link#{if @conn.request_path == "/", do: " is-active", else: ""}"}
+            >
+              Station home
+            </a>
+            <p class="plasm-rail-section-label">Day-to-day</p>
+            <a
+              href="/connect-apis"
+              class={"plasm-rail-link#{if @conn.request_path == "/connect-apis", do: " is-active", else: ""}"}
+            >
+              Connect APIs
+            </a>
+            <a
+              href="/traces"
+              class={"plasm-rail-link#{if String.starts_with?(@conn.request_path || "", "/traces"), do: " is-active", else: ""}"}
+            >
+              Session traces
+            </a>
+            <p class="plasm-rail-section-label">More</p>
+            <a
+              href="/oauth-apps"
+              class={"plasm-rail-link#{if String.starts_with?(@conn.request_path || "", "/oauth-apps"), do: " is-active", else: ""}"}
+            >
+              OAuth apps
+            </a>
+            <a
+              href="/settings"
+              class={"plasm-rail-link#{if @conn.request_path == "/settings", do: " is-active", else: ""}"}
+            >
+              Connection settings
+            </a>
+            <p class="plasm-rail-section-label">Explore</p>
+            <a
+              href="/tools"
+              class={"plasm-rail-link#{if String.starts_with?(@conn.request_path || "", "/tools"), do: " is-active", else: ""}"}
+            >
+              Tool catalog
+            </a>
+          </nav>
+        </aside>
+        <main class="plasm-document">
+          <.flash_group flash={assigns[:flash] || %{}} />
+          {@inner_content}
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
