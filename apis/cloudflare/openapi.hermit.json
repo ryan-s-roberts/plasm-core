@@ -1,7 +1,7 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Cloudflare v4 (edge-security slice for Hermit)",
+    "title": "Cloudflare v4 (Hermit slice for Phase 1 paths)",
     "version": "1.0.0"
   },
   "servers": [{ "url": "https://api.cloudflare.com/client/v4" }],

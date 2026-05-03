@@ -1,6 +1,6 @@
-# Cloudflare edge security (Phase 1)
+# Cloudflare API (Phase 1)
 
-Plasm CGS/CML for **zone-scoped** Cloudflare REST resources used in agent flows around **rulesets**, **managed phase entrypoints** (DDoS L7, managed WAF, custom rules, etc.), and **WAF packages**.
+Plasm CGS/CML for Cloudflare REST v4. **Phase 1** covers **zone-scoped** flows: **rulesets**, **managed phase entrypoints** (DDoS L7, managed WAF, custom rules, etc.), and **WAF packages**. Add more entities and capabilities in this directory as the surface grows.
 
 Ground truth: Cloudflare REST API (OpenAPI). The upstream **full** spec is large and contains path patterns that **Hermit** (used by `plasm validate`) cannot load. This directory therefore keeps:
 
@@ -19,8 +19,8 @@ Create an [API token](https://developers.cloudflare.com/fundamentals/api/get-sta
 
 ```bash
 export CLOUDFLARE_API_TOKEN='...'
-cargo run -p plasm-cli --bin plasm -- schema validate apis/cloudflare-edge-security
-cargo run -p plasm-cli --bin plasm -- validate --spec apis/cloudflare-edge-security/openapi.hermit.json apis/cloudflare-edge-security
+cargo run -p plasm-cli --bin plasm -- schema validate apis/cloudflare
+cargo run -p plasm-cli --bin plasm -- validate --spec apis/cloudflare/openapi.hermit.json apis/cloudflare
 ```
 
 ## Scope (Phase 1)

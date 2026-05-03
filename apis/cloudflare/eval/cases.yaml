@@ -1,6 +1,6 @@
-# Cloudflare edge-security — eval coverage (goals, not raw REST paths).
+# Cloudflare — eval coverage (goals, not raw REST paths).
 - id: cf-edge-01
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "List my Cloudflare zones for the account so I can pick a zone id"
   tags: [query]
   covers: [query_filtered, projection]
@@ -8,7 +8,7 @@
     entities_any: [Zone]
 
 - id: cf-edge-02
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "Show zone details for zone_hermit_1 including paused flag and plan type"
   tags: [get]
   covers: [get, projection]
@@ -16,7 +16,7 @@
     entities_any: [Zone]
 
 - id: cf-edge-03
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "From a zone, list all rulesets to see managed WAF and DDoS phases"
   tags: [query, relation]
   covers: [query_filtered, chain, projection]
@@ -24,7 +24,7 @@
     entities_any: [Ruleset]
 
 - id: cf-edge-04
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "Fetch the full ruleset rs_1 for zone zone_hermit_1 including its rules array"
   tags: [get]
   covers: [get, projection]
@@ -32,7 +32,7 @@
     entities_any: [Ruleset]
 
 - id: cf-edge-05
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "Inspect the ddos_l7 entrypoint ruleset for a zone before tuning sensitivity"
   tags: [get]
   covers: [get, projection]
@@ -40,7 +40,7 @@
     entities_any: [RulesetEntrypoint]
 
 - id: cf-edge-06
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "Push an updated entrypoint payload for http_request_firewall_managed after reviewing the plan"
   tags: [action, write]
   covers: [invoke]
@@ -48,7 +48,7 @@
     entities_any: [RulesetEntrypoint]
 
 - id: cf-edge-07
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "From a zone, list WAF packages to compare OWASP vs managed offerings"
   tags: [query, relation]
   covers: [query_filtered, chain, projection]
@@ -56,7 +56,7 @@
     entities_any: [WafPackage]
 
 - id: cf-edge-08
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "First resolve the zone, then walk into its rulesets to audit phases before a change window"
   tags: [multi]
   covers: [multi_step, chain, projection]
@@ -64,7 +64,7 @@
     entities_any: [Zone, Ruleset]
 
 - id: cf-edge-09
-  schema: cloudflare-edge-security
+  schema: cloudflare
   goal: "Page through every ruleset on a large zone using cursor continuation after the first batch"
   tags: [query, pagination]
   covers: [query_filtered, page_next, projection]

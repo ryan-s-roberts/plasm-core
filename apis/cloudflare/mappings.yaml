@@ -1,4 +1,4 @@
-# Cloudflare REST API v4 — CML for edge-security slice (zones, rulesets, WAF packages).
+# Cloudflare REST API v4 — CML (Phase 1: zones, rulesets, WAF packages; extend mappings here).
 # Semantic model: domain.yaml. Base URL matches OpenAPI servers (client/v4 origin).
 #
 # Responses use the standard v4 envelope { success, errors, messages, result, result_info? }.
