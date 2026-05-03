@@ -1,7 +1,7 @@
 site_name: Plasm OSS
 site_description: Technical documentation for plasm-core — compiler, runtime, plasm-mcp, and apis/.
-site_url: https://ryan-s-roberts.github.io/plasm-core/
-repo_url: https://github.com/ryan-s-roberts/plasm-core
+site_url: https://plasmtools.github.io/plasm-core/
+repo_url: https://github.com/PlasmTools/plasm-core
 repo_name: plasm-core
 edit_uri: edit/main/doc-site/docs/
 copyright: Plasm OSS docs · styled to align with Plasm Cloud (platform.plasm.tools)
