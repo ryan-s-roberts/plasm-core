@@ -23,8 +23,10 @@ theme:
     - content.code.copy
     - navigation.instant
     - navigation.tracking
-    - navigation.tabs
-    - navigation.sections
+    # Hierarchical sidebar (nested nav from `nav:`). Avoid `navigation.tabs`:
+    # tabs flatten top-level items into the header and hide deeper structure.
+    - navigation.expand
+    - navigation.path
     - toc.follow
   palette:
     - scheme: default

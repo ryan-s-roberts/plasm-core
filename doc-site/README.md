@@ -39,6 +39,10 @@ mkdocs serve   # http://127.0.0.1:8000
 mkdocs build --strict
 ```
 
+## Navigation (MkDocs Material)
+
+The theme uses a **nested left sidebar** for all `nav:` levels (Language → Specification, MCP → …, etc.). Header **tabs** are intentionally disabled: with `navigation.tabs`, Material lifts every top-level entry into the header bar and the sidebar tends to look **flat / fragmented**. **`navigation.expand`** opens subsections by default; **`navigation.path`** adds breadcrumbs for nested pages.
+
 ## Visual design (SaaS-aligned)
 
 [`docs/stylesheets/plasm-saas-theme.css`](docs/stylesheets/plasm-saas-theme.css) mirrors **OKLCH palette tokens** from the Phoenix shell (`web/assets/css/app.css` in the product monorepo): warm primary (light), violet primary (dark), subtle **plasma-style header gradients**, shared radii, and **Plus Jakarta Sans** / **JetBrains Mono**. The Material footer includes a **Plasm Cloud** social link to match hosted UX positioning.
