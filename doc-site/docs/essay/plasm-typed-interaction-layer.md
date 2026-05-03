@@ -1,5 +1,7 @@
 # Plasm: A Typed Interaction Layer for Agents Working Across APIs
 
+![Typed interaction layer across APIs — hero illustration from the Medium article](../assets/essay/plasm-typed-interaction-layer-hero.webp)
+
 _Reposted on this site for stable linking alongside the technical docs. **Canonical article (Medium):** [Plasm: A Typed Interaction Layer for Agents Working Across APIs](https://medium.com/@ryansroberts/plasm-a-typed-interaction-layer-for-agents-working-across-apis-38d9d90066a7)_
 
 > An open-core runtime for turning APIs into typed graphs, composable row sets, compact agent languages, and reviewable execution plans.
