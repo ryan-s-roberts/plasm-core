@@ -1431,6 +1431,7 @@ mod tests {
             entry_id: "overshow".into(),
             label: "Overshow".into(),
             tags: vec![],
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1457,6 +1458,7 @@ mod tests {
             entry_id: "gmail".into(),
             label: "Gmail".into(),
             tags: vec![],
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1466,8 +1468,9 @@ mod tests {
         assert_eq!(m.auth.scheme.as_deref(), Some("bearer_token"));
         assert_eq!(
             m.auth.connect_profile.capability,
-            plasm_core::CatalogAuthCapability::OauthOnly
+            plasm_core::CatalogAuthCapability::ApiKeyAndOauth
         );
+        assert!(m.auth.connect_profile.has_api_key);
         assert!(m.auth.connect_profile.has_oauth);
         assert!(m.auth.connect_profile.oauth.provider_present);
         let oauth = m.auth.oauth.as_ref().expect("gmail oauth block");
@@ -1486,6 +1489,7 @@ mod tests {
             entry_id: "pokeapi_mini".into(),
             label: "PokeAPI Mini".into(),
             tags: vec![],
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1521,6 +1525,7 @@ mod tests {
             entry_id: "github".into(),
             label: "GitHub".into(),
             tags: vec![],
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1557,6 +1562,7 @@ mod tests {
             entry_id: "notion".into(),
             label: "Notion".into(),
             tags: vec![],
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         };
         let q = ToolModelQuery {
             focus: "all".into(),

@@ -87,6 +87,9 @@ pub struct CatalogEntryMeta {
     pub label: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Stable digest of the loaded CGS (`CGS::catalog_cgs_hash_hex`); bumps when the graph changes.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub catalog_cgs_hash: String,
 }
 
 /// Agent query: deterministic match over registered graphs.
@@ -303,6 +306,7 @@ impl CgsCatalog for InMemoryCgsRegistry {
                 entry_id: id.clone(),
                 label: row.label.clone(),
                 tags: row.tags.clone(),
+                catalog_cgs_hash: row.cgs.catalog_cgs_hash_hex(),
             })
             .collect()
     }
@@ -312,6 +316,7 @@ impl CgsCatalog for InMemoryCgsRegistry {
             entry_id: entry_id.to_string(),
             label: row.label.clone(),
             tags: row.tags.clone(),
+            catalog_cgs_hash: row.cgs.catalog_cgs_hash_hex(),
         })
     }
 
