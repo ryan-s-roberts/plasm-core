@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
@@ -184,6 +184,15 @@ capabilities:
     kind: get
     entity: Ruleset
     description: One ruleset for a zone by identifier.
+    parameters:
+    - name: zone_id
+      value_ref: nv_cloudflare_zone_id
+      required: true
+      role: scope
+    - name: ruleset_id
+      value_ref: nv_wire_str_short
+      required: true
+      role: scope
     provides:
     - zone_id
     - id
@@ -197,6 +206,15 @@ capabilities:
     kind: get
     entity: RulesetEntrypoint
     description: Get the managed entrypoint ruleset for a phase (DDoS L7, managed WAF, custom rules, etc.).
+    parameters:
+    - name: zone_id
+      value_ref: nv_cloudflare_zone_id
+      required: true
+      role: scope
+    - name: ruleset_phase
+      value_ref: nv_wire_sel_b53dd05524ff4281
+      required: true
+      role: scope
     provides:
     - zone_id
     - ruleset_phase
