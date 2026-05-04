@@ -786,6 +786,7 @@ impl IdentMetadata {
         &self,
         value_row_description: &str,
         map: Option<&SymbolMap>,
+        cgs: Option<&CGS>,
     ) -> Option<String> {
         let IdentMetadata::RegistryBacked {
             field_type,
@@ -798,6 +799,13 @@ impl IdentMetadata {
         else {
             return None;
         };
+        if let FieldType::EntityRef { target } = field_type {
+            return Some(entity_ref_value_domain_row_gloss(
+                target,
+                cgs,
+                value_row_description,
+            ));
+        }
         let type_label =
             array_or_scalar_gloss_label(field_type, array_items, *string_semantics, map);
         if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
@@ -816,6 +824,39 @@ impl IdentMetadata {
             let truncated = truncate_desc(desc, 100);
             Some(format!("{type_label} · {truncated}"))
         }
+    }
+}
+
+/// Full **`v#` Meaning** for an `entity_ref` value domain: `ref:Zone · str · …` — canonical target
+/// entity name (not `e#`), id primitive when resolvable, then optional `values:` row prose.
+pub(crate) fn entity_ref_value_domain_row_gloss(
+    target: &EntityName,
+    cgs: Option<&CGS>,
+    value_row_description: &str,
+) -> String {
+    let canonical = target.as_str();
+    let prim = cgs.and_then(|c| {
+        let ent = c.get_entity(target.as_str())?;
+        let f = ent.fields.get(ent.id_field.as_str())?;
+        let nv = c.named_value_for_slot(f).ok()?;
+        match &nv.field_type {
+            FieldType::EntityRef { .. } => None,
+            FieldType::String => Some(string_semantics_gloss_label(nv.string_semantics)),
+            FieldType::Array | FieldType::Json => None,
+            ft => Some(field_type_to_gloss_label(ft)),
+        }
+    });
+    let desc = value_row_description.trim();
+    let desc_opt = if desc.is_empty() {
+        None
+    } else {
+        Some(truncate_desc(desc, 100))
+    };
+    match (prim.as_deref(), desc_opt) {
+        (Some(p), Some(d)) => format!("ref:{canonical} · {p} · {d}"),
+        (Some(p), None) => format!("ref:{canonical} · {p}"),
+        (None, Some(d)) => format!("ref:{canonical} · {d}"),
+        (None, None) => format!("ref:{canonical}"),
     }
 }
 
@@ -1504,8 +1545,80 @@ pub fn field_syms_for_teaching_row(
     ordered
 }
 
-fn truncate_desc(s: &str, max: usize) -> String {
+/// Byte scan: `t` ends with `)` — find the `(` that balances the **outermost** trailing `)`.
+fn matching_open_paren_for_trailing_close(t: &str) -> Option<usize> {
+    if !t.ends_with(')') {
+        return None;
+    }
+    let bytes = t.as_bytes();
+    let mut depth = 0i32;
+    let mut i = t.len();
+    while i > 0 {
+        i -= 1;
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Trailing `( … )` blocks that are example laundry-lists, not tight semantics (e.g. `(DDoS L7, …, etc.)`).
+fn trailing_paren_inner_is_agent_noise(inner: &str) -> bool {
+    let t = inner.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    if lower.contains("etc.") || lower.contains("e.g.") {
+        return true;
+    }
+    if t.matches(',').count() >= 2 {
+        return true;
+    }
+    t.len() > 55
+}
+
+fn strip_trailing_noise_parentheticals(mut s: &str) -> &str {
+    loop {
+        let mut t = s.trim_end();
+        // Allow authored `(...).` — peel `.` so the balancing scan sees final `)`.
+        t = t.strip_suffix('.').unwrap_or(t).trim_end();
+        let Some(open) = matching_open_paren_for_trailing_close(t) else {
+            break;
+        };
+        let inner = t[open + 1..t.len() - 1].trim();
+        if !trailing_paren_inner_is_agent_noise(inner) {
+            break;
+        }
+        let before = t[..open].trim_end();
+        if before.is_empty() {
+            break;
+        }
+        s = before;
+    }
+    s.trim_end()
+}
+
+/// Normalize authored `description:` prose for compact agent gloss: trim edges, drop trailing
+/// parenthetical example lists, then strip a terminal ASCII full stop.
+pub(crate) fn trim_description_for_agent_gloss(s: &str) -> &str {
     let t = s.trim();
+    let t = strip_trailing_noise_parentheticals(t);
+    match t.strip_suffix('.') {
+        Some(rest) => rest.trim_end(),
+        None => t,
+    }
+}
+
+fn truncate_desc(s: &str, max: usize) -> String {
+    let t = trim_description_for_agent_gloss(s);
     crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(t, max)
 }
 
@@ -2304,7 +2417,11 @@ impl DomainExposureSession {
                 continue;
             };
             let nv_desc = self.named_value_row_description(meta);
-            if let Some(g) = meta.render_value_domain_row_gloss(&nv_desc, Some(&sm)) {
+            let cgs_opt = self
+                .catalog_cgs
+                .get(meta.catalog_entry_id())
+                .map(|arc| arc.as_ref());
+            if let Some(g) = meta.render_value_domain_row_gloss(&nv_desc, Some(&sm), cgs_opt) {
                 sm.value_sym_gloss.insert(vsym.clone(), g);
             }
         }
@@ -2909,6 +3026,31 @@ mod tests {
         assert_eq!(
             strip_prompt_expression_annotations("e1  =>  [e1]  ;;  List all accessible workspaces"),
             "e1"
+        );
+    }
+
+    #[test]
+    fn trim_description_for_agent_gloss_strips_terminal_period() {
+        assert_eq!(
+            trim_description_for_agent_gloss("Zone identifier."),
+            "Zone identifier"
+        );
+        assert_eq!(trim_description_for_agent_gloss("  x.  "), "x");
+        assert_eq!(trim_description_for_agent_gloss("no period"), "no period");
+        assert_eq!(trim_description_for_agent_gloss(""), "");
+    }
+
+    #[test]
+    fn trim_description_for_agent_gloss_strips_example_list_parentheticals() {
+        assert_eq!(
+            trim_description_for_agent_gloss(
+                "Managed entrypoint ruleset for one execution phase on a zone (DDoS L7, managed WAF, rate limits, etc.)."
+            ),
+            "Managed entrypoint ruleset for one execution phase on a zone"
+        );
+        assert_eq!(
+            trim_description_for_agent_gloss("Short capability (single token)."),
+            "Short capability (single token)"
         );
     }
 

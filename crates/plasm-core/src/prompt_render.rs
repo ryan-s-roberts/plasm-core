@@ -21,7 +21,8 @@
 //! **DOMAIN** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
 //! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
 //! entity when one exists, otherwise to the **identity** get row; `v#` / `p#` gloss rows precede the first
-//! `e#` teaching line (value domain once, then each distinct `v# · wire` teaching once per shared `p#`).
+//! `e#` teaching line (value domain once, then each distinct `v# · wire` teaching once per shared `p#`;
+//! point-of-use prose is omitted when it duplicates the shared `values:` row description).
 //! Model output must be those expression shapes—not prose.
 //! Use [`RenderConfig::focus`] to subset entities.
 //!
@@ -1383,6 +1384,43 @@ fn parse_trailing_projection_bracket(expr: &str) -> Option<String> {
     (open + 1 < t.len()).then_some(t[open..].to_string())
 }
 
+fn values_row_description_trimmed_for_ident(meta: &IdentMetadata, cgs: &CGS) -> String {
+    match meta {
+        IdentMetadata::RegistryBacked {
+            value_registry_key, ..
+        } => cgs
+            .values
+            .get(value_registry_key.as_str())
+            .map(|nv| {
+                crate::symbol_tuning::trim_description_for_agent_gloss(nv.description.as_str())
+                    .to_string()
+            })
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// Compact `p#` Meaning (`v# · wire` / `v# · wire · prose`) when the slot shares a `values:` row;
+/// omit point-of-use prose when it duplicates that row's description.
+fn compact_p_slot_registry_description(
+    sym_m: &SymbolMap,
+    p_sym: &str,
+    meta: &IdentMetadata,
+    cgs: &CGS,
+) -> Option<String> {
+    let vsym = sym_m.value_sym_for_p_sym(p_sym)?;
+    let nv_desc = values_row_description_trimmed_for_ident(meta, cgs);
+    let wire = meta.wire_name().to_string();
+    let slot_norm = crate::symbol_tuning::trim_description_for_agent_gloss(meta.description());
+    let mut description = format!("{vsym} · {wire}");
+    if !slot_norm.is_empty() && slot_norm != nv_desc.as_str() {
+        let t = crate::symbol_tuning::gloss_description_truncated(meta.description());
+        description = format!("{vsym} · {wire} · {t}");
+    }
+    Some(description)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_teaching_field_gloss_row(
     out: &mut Vec<TeachingFieldGloss>,
     symbol: String,
@@ -1391,6 +1429,7 @@ fn push_teaching_field_gloss_row(
     catalog_entry_id: &str,
     symbol_map: Option<&SymbolMap>,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
+    cgs: Option<&CGS>,
 ) {
     let mut cs = symbol.chars();
     let first = match cs.next() {
@@ -1428,14 +1467,20 @@ fn push_teaching_field_gloss_row(
                 .as_ref()
                 .map(|m| m.wire_name().to_string())
                 .unwrap_or_else(|| field_name.clone());
-            let mut description = format!("{vsym} · {wire}");
-            if let Some(m) = &meta {
-                let d = m.description().trim();
-                if !d.is_empty() {
-                    let t = crate::symbol_tuning::gloss_description_truncated(d);
-                    description = format!("{vsym} · {wire} · {t}");
+            let description = if let (Some(m), Some(cgs_ref)) = (&meta, cgs) {
+                compact_p_slot_registry_description(sym_m, symbol.as_str(), m, cgs_ref)
+                    .unwrap_or_else(|| format!("{vsym} · {wire}"))
+            } else {
+                let mut description = format!("{vsym} · {wire}");
+                if let Some(m) = &meta {
+                    let d = m.description().trim();
+                    if !d.is_empty() {
+                        let t = crate::symbol_tuning::gloss_description_truncated(d);
+                        description = format!("{vsym} · {wire} · {t}");
+                    }
                 }
-            }
+                description
+            };
             out.push(TeachingFieldGloss {
                 symbol,
                 field_type: String::new(),
@@ -1895,7 +1940,7 @@ fn incoming_relation_nav_bases_to_entity(
             let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
                 continue;
             };
-            let expr = format!("{}.{}", recv, id_sym_rel(map, src_name, fname.as_str()));
+            let expr = format!("{}.{}", recv, id_sym_entity(map, src_name, fname.as_str()));
             let work = domain_line_work_string(&expr, map);
             if domain_line_valid_work(cgs, &work) && seen.insert(expr.clone()) {
                 out.push(expr);
@@ -2034,7 +2079,7 @@ fn try_push_projection_witness_row(
 const DOMAIN_PARAM_VALUE_PLACEHOLDER: &str = "$";
 
 fn truncate_inline_desc(s: &str, max: usize) -> String {
-    let t = s.trim().replace('\t', " ");
+    let t = crate::symbol_tuning::trim_description_for_agent_gloss(s).replace('\t', " ");
     crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(&t, max)
 }
 
@@ -2860,8 +2905,9 @@ fn collect_entity_teaching_block(
         gs.emit_before_teaching_example(&es, ent_desc_short.as_deref(), None);
     }
 
-    let primary_get_projection_bracket: Option<String> =
-        cgs.domain_projection_heading_fields(ename, ent).map(|f| {
+    let primary_get_projection_bracket: Option<String> = cgs
+        .domain_projection_teaching_wire_fields(ename, ent)
+        .map(|f| {
             let syms: Vec<String> = f
                 .iter()
                 .map(|k| id_sym_entity(map, ename, k.as_str()))
@@ -3239,7 +3285,11 @@ fn collect_entity_teaching_block(
         if skip_many_unresolved {
             continue;
         }
-        let rel_sym = id_sym_rel(map, ename, rel.as_str());
+        let rel_sym = if rel_for_meta.is_some() {
+            id_sym_rel(map, ename, rel.as_str())
+        } else {
+            id_sym_entity(map, ename, rel.as_str())
+        };
         let suffix = format!(".{rel_sym}");
         let Some(recv) = receiver_for_dotted_suffix(&es, ent, cgs, map, &suffix) else {
             continue;
@@ -3592,6 +3642,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     if spec.symbolic {
         s.push_str(
             "- `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.\n\
+- Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.\n\
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
 - `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.\n\
 - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.\n\
@@ -3740,6 +3791,7 @@ struct GlossScratch<'a> {
     meta: &'a HashMap<IdentMetaKey, IdentMetadata>,
     catalog_entry_id: &'a str,
     entity: &'a str,
+    cgs: &'a CGS,
 }
 
 impl GlossScratch<'_> {
@@ -3759,6 +3811,7 @@ impl GlossScratch<'_> {
             self.catalog_entry_id,
             self.meta,
             self.state,
+            self.cgs,
         );
     }
 }
@@ -3774,6 +3827,7 @@ fn emit_field_def_lines_before_example(
     catalog_entry_id: &str,
     ident_meta: &HashMap<IdentMetaKey, IdentMetadata>,
     state: &mut FieldGlossEmitState,
+    cgs: &CGS,
 ) {
     let en = EntityName::from(entity.to_string());
     let cid = catalog_entry_id.to_string();
@@ -3798,14 +3852,19 @@ fn emit_field_def_lines_before_example(
                             catalog_entry_id,
                             Some(map),
                             Some(ident_meta),
+                            Some(cgs),
                         );
                     }
-                    let mut compact = format!("{} \u{00b7} {}", vs, m.wire_name());
-                    let d = m.description().trim();
-                    if !d.is_empty() {
-                        let t = crate::symbol_tuning::gloss_description_truncated(d);
-                        compact = format!("{} \u{00b7} {} \u{00b7} {}", vs, m.wire_name(), t);
-                    }
+                    let compact = compact_p_slot_registry_description(map, sym.as_str(), m, cgs)
+                        .unwrap_or_else(|| {
+                            let mut c = format!("{} · {}", vs, m.wire_name());
+                            let d = m.description().trim();
+                            if !d.is_empty() {
+                                let t = crate::symbol_tuning::gloss_description_truncated(d);
+                                c = format!("{} · {} · {}", vs, m.wire_name(), t);
+                            }
+                            c
+                        });
                     if state
                         .registry_p_slot_compact_gloss
                         .get(&sym)
@@ -3824,6 +3883,7 @@ fn emit_field_def_lines_before_example(
                         catalog_entry_id,
                         Some(map),
                         Some(ident_meta),
+                        Some(cgs),
                     );
                     continue;
                 }
@@ -3872,6 +3932,7 @@ fn emit_field_def_lines_before_example(
                 catalog_entry_id,
                 Some(map),
                 Some(ident_meta),
+                Some(cgs),
             );
         }
     }
@@ -3932,6 +3993,7 @@ fn render_domain_table_resolved<'b, F>(
                 meta,
                 catalog_entry_id: cgs.entry_id.as_deref().unwrap_or(""),
                 entity: ename,
+                cgs,
             }),
             _ => None,
         };
@@ -4598,6 +4660,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let mut lines = tsv.lines();
         let first = lines.next().expect("tsv frontmatter");
@@ -4711,15 +4774,21 @@ mod tests {
                 || issue_comment_create_row.contains("scope"),
             "invoke row should reference scoping, got {issue_comment_create_row:?}"
         );
+        let contrib_ent = map.entity_sym("Contributor");
+        let p_repo = map.ident_sym_cap_param("Contributor", "contributor_query", "repository");
+        let p_anon = map.ident_sym_cap_param("Contributor", "contributor_query", "anon");
         let contrib = tsv
             .lines()
             .find(|l| {
                 let cols: Vec<&str> = l.split('\t').collect();
                 cols.len() == 2
-                    && (cols[0].to_lowercase().contains("contributor")
-                        || cols[1].to_lowercase().contains("contributor"))
+                    && parse_trailing_projection_bracket(cols[0].trim()).is_none()
+                    && cols[0].starts_with(&format!("{contrib_ent}{{"))
+                    && cols[0].contains(&format!("{p_repo}="))
+                    && cols[0].contains(&format!("{p_anon}="))
+                    && (cols[1].contains("optional params:") || cols[1].contains("[scope"))
             })
-            .expect("Contributor list DOMAIN row");
+            .expect("Contributor list DOMAIN row (non-projection query exemplar)");
         assert!(
             contrib.starts_with('e') && contrib.contains("{p"),
             "contributor query row should be a brace-query exemplar: {contrib:?}"
@@ -4851,6 +4920,89 @@ mod tests {
     }
 
     #[test]
+    fn plasm_language_contract_defines_ref_meaning_prefix() {
+        let contract = render_plasm_mcp_language_frontmatter();
+        assert!(
+            contract.contains("ref:Zone") && contract.contains("str · Zone identifier"),
+            "contract must teach entity-ref Meaning shape with canonical entity (not e#):\n{contract}"
+        );
+    }
+
+    #[test]
+    fn cloudflare_symbolic_prompt_avoids_raw_zone_id_navigation_suffix() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        for line in prompt.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((expr, _)) = line.split_once('\t') else {
+                continue;
+            };
+            if expr == "plasm_expr" {
+                continue;
+            }
+            if expr.starts_with('e') && expr.contains('.') {
+                assert!(
+                    !expr.contains(".zone_id"),
+                    "entity_ref fields must teach symbolic p# navigation, not raw `.zone_id`: {expr}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cloudflare_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let p = map.ident_sym_entity_field("Ruleset", "zone_id");
+        let v = map
+            .value_sym_for_p_sym(&p)
+            .expect("Ruleset.zone_id should map to a value-domain symbol");
+        let g = map
+            .value_domain_gloss_for_v_sym(v)
+            .expect("value-domain gloss");
+        assert!(
+            g.starts_with("ref:Zone · str ·"),
+            "expected ref:Zone · str · … value-domain gloss, got {g:?}"
+        );
+    }
+
+    #[test]
+    fn cloudflare_zone_id_p_slot_gloss_omits_duplicate_values_row_prose() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let p = map.ident_sym_entity_field("Ruleset", "zone_id");
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        for line in prompt.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((expr, meaning)) = line.split_once('\t') else {
+                continue;
+            };
+            if expr == p {
+                assert!(
+                    !meaning.contains("Zone identifier"),
+                    "compact p# gloss must not repeat values: row description; got {meaning:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cloudflare_zone_projection_tsv_row_has_exactly_one_machine_tab() {
         let dir = apis_dir("cloudflare");
         if !dir.exists() {
@@ -4906,11 +5058,11 @@ mod tests {
             !prompt.contains("List rulesets on a zone"),
             "ruleset_query capability prose must not leak into TSV Meaning"
         );
-        let desc = "Rules that control traffic handling for a Cloudflare zone.";
+        let desc = "Rules that control traffic handling for a Cloudflare zone";
         assert_eq!(
             prompt.matches(desc).count(),
             1,
-            "Ruleset entity description should appear exactly once; excerpt around Ruleset teaching rows should be inspected"
+            "Ruleset entity description should appear exactly once (terminal `.` stripped for agent gloss); excerpt around Ruleset teaching rows should be inspected"
         );
         let bundle = render_domain_prompt_bundle(&cgs, RenderConfig::for_eval(None));
         let (names, _) = resolve_prompt_surface_entities(&cgs, FocusSpec::All, true);
@@ -4955,6 +5107,66 @@ mod tests {
                 "projection witness should precede query brace line in synthesis order"
             );
         }
+    }
+
+    #[test]
+    fn cloudflare_waf_package_query_projection_witness_row() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let mut line_valid_cache = HashMap::new();
+        let mut gloss_emit_none = None;
+        let block = collect_entity_teaching_block(
+            &cgs,
+            "WafPackage",
+            Some(&map),
+            None,
+            false,
+            &mut line_valid_cache,
+            &mut gloss_emit_none,
+        );
+        let witness = block.teaching_rows.iter().find(|r| {
+            r.teaching_expr.is_projection_teaching
+                && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
+        });
+        let Some(row) = witness else {
+            panic!(
+                "expected query-backed projection witness for WafPackage; rows={:?}",
+                block
+                    .teaching_rows
+                    .iter()
+                    .map(|r| r.teaching_expr.expression.as_str())
+                    .collect::<Vec<_>>()
+            );
+        };
+        assert!(
+            row.teaching_expr.expression.contains('{'),
+            "witness base should be query-shaped brace form: {}",
+            row.teaching_expr.expression
+        );
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let expr = row.teaching_expr.expression.as_str();
+        let line = prompt.lines().find(|l| {
+            !l.starts_with('#')
+                && !l.is_empty()
+                && l.split_once('\t').is_some_and(|(e, _)| e == expr)
+        });
+        let Some(line) = line else {
+            panic!("TSV row for WafPackage projection witness not found: {expr:?}");
+        };
+        assert_eq!(
+            line.bytes().filter(|b| *b == b'\t').count(),
+            1,
+            "single tab delimiter; line={line:?}"
+        );
+        assert!(
+            line.split_once('\t')
+                .is_some_and(|(_, m)| m.contains("· projection")),
+            "Meaning should include projection gloss: {line:?}"
+        );
     }
 
     #[test]

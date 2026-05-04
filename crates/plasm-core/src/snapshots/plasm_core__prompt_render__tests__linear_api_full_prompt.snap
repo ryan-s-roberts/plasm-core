@@ -18,6 +18,7 @@ expression: prompt
 #
 # Symbol and fill rules:
 # - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
+# - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 # - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
 # - `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
 # - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
@@ -63,113 +64,113 @@ expression: prompt
 plasm_expr	Meaning
 v2	uuid
 v33	markdown
-p11	v1 · issue · Issue this comment belongs to.
+p11	v1 · issue · Issue this comment belongs to
 p12	v2 · id
 p43	v33 · body
-e1[p12,p43]	returns e1 · projection · A comment on an issue.
-e1.m1(p11=e3($), p43=$)	returns e1 · Add a markdown comment on an issue.
+e1[p12,p43]	returns e1 · projection · A comment on an issue
+e1.m1(p11=e3($), p43=$)	returns e1 · Add a markdown comment on an issue
 e1	returns [e1]
-e1.p1	relation e1 => e3 · Issue this comment belongs to.
+e1.p1	relation e1 => e3 · Issue this comment belongs to
 v4	uuid
-v5	float · Cycle index within the team (Linear exposes as a number).
-v7	str · Cycle start (ISO-8601 timestamp from the API).
-v3	str · Cycle end (ISO-8601 timestamp from the API).
-p16	v6 · team · Team this cycle belongs to.
+v5	float · Cycle index within the team (Linear exposes as a number)
+v7	str · Cycle start (ISO-8601 timestamp from the API)
+v3	str · Cycle end (ISO-8601 timestamp from the API)
+p16	v6 · team · Team this cycle belongs to
 p14	v4 · id
-p15	v5 · number · Cycle index within the team (Linear exposes as a number).
-p17	v7 · startsAt · Cycle start (ISO-8601 timestamp from the API).
-p13	v3 · endsAt · Cycle end (ISO-8601 timestamp from the API).
-e2{p16=e6($)}[p14,p15,p17,p13,team]	returns [e2] · projection · A time-boxed iteration on a team (sprint / cycle window).
+p15	v5 · number
+p17	v7 · startsAt
+p13	v3 · endsAt
+e2{p16=e6($)}[p14,p15,p17,p13,team]	returns [e2] · projection · A time-boxed iteration on a team (sprint / cycle window)
 e2{p16=e6($)}	returns [e2]
-e2{p16=e6($)}.p2	relation e2 => e6 · Team this cycle belongs to.
+e2{p16=e6($)}.p2	relation e2 => e6 · Team this cycle belongs to
 v16	uuid
-v17	str · Human-visible key (e.g. ENG-42).
+v17	str · Human-visible key
 v34	str
-v8	ref:Label
-v18	ref:Label
-p32	v22 · project · Project this issue belongs to.
-p29	v19 · assignee · User assigned to the issue.
-p33	v23 · state · Current workflow state.
-p31	v21 · parent · Parent issue when this issue is a sub-issue (otherwise absent).
-p30	v20 · cycle · Iteration cycle when the issue is scheduled into one.
+v8	ref:Label · uuid
+v18	ref:Label · uuid
+p32	v22 · project · Project this issue belongs to
+p29	v19 · assignee · User assigned to the issue
+p33	v23 · state · Current workflow state
+p31	v21 · parent · Parent issue when this issue is a sub-issue (otherwise absent)
+p30	v20 · cycle · Iteration cycle when the issue is scheduled into one
 p18	v8 · label
-p25	v15 · team · Owning team.
-p23	v13 · project · Project this issue belongs to.
-p20	v10 · assignee · User assigned to the issue.
-p24	v14 · state · Current workflow state.
-p22	v12 · parent · Parent issue when this issue is a sub-issue (otherwise absent).
-p21	v11 · cycle · Iteration cycle when the issue is scheduled into one.
+p25	v15 · team · Owning team
+p23	v13 · project · Project this issue belongs to
+p20	v10 · assignee · User assigned to the issue
+p24	v14 · state · Current workflow state
+p22	v12 · parent · Parent issue when this issue is a sub-issue (otherwise absent)
+p21	v11 · cycle · Iteration cycle when the issue is scheduled into one
 p28	v18 · label
-p19	v9 · team · Owning team.
+p19	v9 · team · Owning team
 p27	v16 · id
-p26	v17 · identifier · Human-visible key (e.g. ENG-42).
+p26	v17 · identifier
 p49	v34 · title
 p44	v33 · description
-e3[p27,p26,p49,p44,parent,team,project,assignee,state,cycle]	returns e3 · projection · A Linear issue (task, bug, or feature).
-e3($).m9()	returns e3 · Move an issue to trash (recoverable; not a permanent delete).
+e3[p27,p26,p49,p44,parent,team,project,assignee,state,cycle]	returns e3 · projection · A Linear issue
+e3($).m9()	returns e3 · Move an issue to trash (recoverable; not a permanent delete)
 e3($).m13()	returns e3 · optional params: p49, p44, p32, p29, p33, p31, p30 · Update an issue
-e3($).m6(p18=e4($))	returns e3 · Attach one label to this issue (existing labels kept).
-e3.m8(p25=e6($), p49=$,..)	returns e3 · optional params: p44, p23, p20, p24, p22, p21 · Create a new issue on a team, optionally in a project, column, cycle, or under a parent issue.
-e3($).m12(p28=e4($))	returns e3 · Remove one label from this issue.
+e3($).m6(p18=e4($))	returns e3 · Attach one label to this issue (existing labels kept)
+e3.m8(p25=e6($), p49=$,..)	returns e3 · optional params: p44, p23, p20, p24, p22, p21 · Create a new issue on a team, optionally in a project, column, cycle, or under a parent issue
+e3($).m12(p28=e4($))	returns e3 · Remove one label from this issue
 e3{p19=e6($)}	returns [e3]
 e3	returns [e3]
-e3{p19=e6($)}.p9	relation e3 => e7 · User assigned to the issue.
-e3{p19=e6($)}.p4	relation e3 => [e3] · Sub-issues nested directly under this issue in the work hierarchy.
-e3{p19=e6($)}.p3	relation e3 => e2 · Iteration cycle when the issue is scheduled into one.
-e3{p19=e6($)}.p6	relation e3 => [e4] · Labels on this issue.
-e3{p19=e6($)}.p5	relation e3 => e3 · Parent issue when this issue is a sub-issue (otherwise absent).
-e3{p19=e6($)}.p7	relation e3 => e5 · Project this issue belongs to.
-e3{p19=e6($)}.p10	relation e3 => e8 · Current workflow state.
-e3{p19=e6($)}.p8	relation e3 => e6 · Owning team.
+e3{p19=e6($)}.p9	relation e3 => e7 · User assigned to the issue
+e3{p19=e6($)}.p4	relation e3 => [e3] · Sub-issues nested directly under this issue in the work hierarchy
+e3{p19=e6($)}.p3	relation e3 => e2 · Iteration cycle when the issue is scheduled into one
+e3{p19=e6($)}.p6	relation e3 => [e4] · Labels on this issue
+e3{p19=e6($)}.p5	relation e3 => e3 · Parent issue when this issue is a sub-issue (otherwise absent)
+e3{p19=e6($)}.p7	relation e3 => e5 · Project this issue belongs to
+e3{p19=e6($)}.p10	relation e3 => e8 · Current workflow state
+e3{p19=e6($)}.p8	relation e3 => e6 · Owning team
 v26	uuid
-v25	ref:Team · Team to scope the label to; omit for workspace label.
-v24	str · Hex swatch color for the label.
-p35	v25 · team · Team to scope the label to; omit for workspace label.
+v25	ref:Team · uuid · Team to scope the label to; omit for workspace label
+v24	str · Hex swatch color for the label
+p35	v25 · team
 p34	v24 · color
 p36	v26 · id
 p48	v34 · name
 p45	v34 · color
-e4[p36,p48,p45]	returns e4 · projection · An issue label.
-e4($).m17()	returns e4 · optional params: p48, p45, p44 · Update label name, color, or description.
-e4.m14(p48=$,..)	returns e4 · optional params: p35, p34, p44 · Create an issue label (optionally scoped to a team; omit team for workspace-wide).
+e4[p36,p48,p45]	returns e4 · projection · An issue label
+e4($).m17()	returns e4 · optional params: p48, p45, p44 · Update label name, color, or description
+e4.m14(p48=$,..)	returns e4 · optional params: p35, p34, p44 · Create an issue label
 e4	returns [e4]
 v28	uuid
-v29	str · Stable slug for the project within its team.
-v27	ref:Team · Primary team that owns the new project.
-p37	v27 · team · Primary team that owns the new project.
+v29	str · Stable slug for the project within its team
+v27	ref:Team · uuid · Primary team that owns the new project
+p37	v27 · team
 p38	v28 · id
-p39	v29 · slugId · Stable slug for the project within its team.
-e5[p38,p48,p39]	returns e5 · projection · A Linear project within a team.
-e5.m18(p48=$, p37=e6($),..)	returns e5 · optional params: p44 · Create a project owned by one or more teams.
+p39	v29 · slugId
+e5[p38,p48,p39]	returns e5 · projection · A Linear project within a team
+e5.m18(p48=$, p37=e6($),..)	returns e5 · optional params: p44 · Create a project owned by one or more teams
 e5	returns [e5]
 v30	uuid
-v31	str · Short key (e.g. ENG).
+v31	str · Short key
 p40	v30 · id
-p41	v31 · key · Short key (e.g. ENG).
-e6[p40,p48,p41]	returns e6 · projection · A Linear team (workspace grouping).
+p41	v31 · key
+e6[p40,p48,p41]	returns e6 · projection · A Linear team (workspace grouping)
 e6	returns [e6]
 v32	uuid
 p42	v32 · id
 p46	v34 · displayName
 p47	v34 · email
-e7[p42,p48,p46,p47]	returns e7 · projection · A Linear user.
+e7[p42,p48,p46,p47]	returns e7 · projection · A Linear user
 e7	returns [e7]
-v41	ref:Team · Team whose columns to list.
+v41	ref:Team · uuid · Team whose columns to list
 v39	uuid
-v42	str · State category (e.g. started, completed).
+v42	str · State category
 v40	float
-v38	ref:Team
-v37	str · One of triage, backlog, unstarted, started, completed, canceled, duplicate.
-v35	str · Column header hex color on the board.
-v36	float · Column order within the workflow.
-p56	v41 · team · Team whose columns to list.
-p53	v38 · team · Team whose columns to list.
-p52	v37 · state_type · One of triage, backlog, unstarted, started, completed, canceled, duplicate.
-p50	v35 · color · Column header hex color on the board.
+v38	ref:Team · uuid
+v37	str · One of triage, backlog, unstarted, started, completed, canceled, duplicate
+v35	str · Column header hex color on the board
+v36	float · Column order within the workflow
+p56	v41 · team
+p53	v38 · team
+p52	v37 · state_type
+p50	v35 · color
 p51	v36 · position
 p54	v39 · id
-p57	v42 · type · State category (e.g. started, completed).
+p57	v42 · type
 p55	v40 · position
-e8{p56=e6($)}[p54,p48,p57,p55]	returns [e8] · projection · A workflow column/state for a team (backlog, in progress, done, …).
-e8.m25(p48=$, p53=e6($), p52=$, p50=$,..)	returns e8 · optional params: p44, p51 · Create a workflow column on a team.
+e8{p56=e6($)}[p54,p48,p57,p55]	returns [e8] · projection · A workflow column/state for a team
+e8.m25(p48=$, p53=e6($), p52=$, p50=$,..)	returns e8 · optional params: p44, p51 · Create a workflow column on a team
 e8{p56=e6($)}	returns [e8]

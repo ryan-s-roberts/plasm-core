@@ -2618,6 +2618,52 @@ impl CGS {
         }
     }
 
+    /// Ordered wire field names for **DOMAIN projection witness** teaching (`e#…[p#,…]`).
+    ///
+    /// Same scalar set semantics as [`Self::domain_projection_heading_fields`] when a primary **Get**
+    /// exists; when there is no Get, falls back to **`effective_ordered_response_fields`** from a
+    /// representative **Query** (primary unscoped query when present, else first Query sorted by
+    /// capability name — matching scoped-only entities like zone-scoped lists), then **Search** the
+    /// same way.
+    ///
+    /// Use this for prompt synthesis only; [`Self::domain_projection_heading_fields`] stays Get-only
+    /// for callers that mean “heading bracket from fetch”.
+    pub fn domain_projection_teaching_wire_fields(
+        &self,
+        entity_name: &str,
+        ent: &EntityDef,
+    ) -> Option<Vec<String>> {
+        if !ent.domain_projection_examples {
+            return None;
+        }
+        if let Some(cap) = self.resolved_primary_get_for_projection(entity_name, ent) {
+            let f = self.effective_ordered_response_fields(cap);
+            return (!f.is_empty()).then_some(f);
+        }
+
+        let query_cap = self.primary_query_capability(entity_name).or_else(|| {
+            let mut qs: Vec<_> = self.find_capabilities(entity_name, CapabilityKind::Query);
+            qs.sort_by(|a, b| a.name.cmp(&b.name));
+            qs.into_iter().next()
+        });
+        if let Some(cap) = query_cap {
+            let f = self.effective_ordered_response_fields(cap);
+            if !f.is_empty() {
+                return Some(f);
+            }
+        }
+
+        let search_cap = self.primary_search_capability(entity_name).or_else(|| {
+            let mut ss: Vec<_> = self.find_capabilities(entity_name, CapabilityKind::Search);
+            ss.sort_by(|a, b| a.name.cmp(&b.name));
+            ss.into_iter().next()
+        });
+        search_cap.and_then(|cap| {
+            let f = self.effective_ordered_response_fields(cap);
+            (!f.is_empty()).then_some(f)
+        })
+    }
+
     /// One vector per DOMAIN projection teaching: the **full** ordered field list **`F`** for the
     /// entity heading’s `[f1,…,fN]` (canonical order). The renderer places that bracket on the **entity
     /// heading** line after `;;` (not as a separate indented expression line). The Valid expressions
@@ -3072,6 +3118,37 @@ mod capability_index_tests {
             cgs.domain_projection_heading_fields("Pet", ent).as_deref(),
             Some(f.as_slice())
         );
+        assert_eq!(
+            cgs.domain_projection_teaching_wire_fields("Pet", ent)
+                .as_deref(),
+            Some(f.as_slice()),
+            "teaching helper matches Get-backed heading fields when Get exists"
+        );
+    }
+
+    #[test]
+    fn domain_projection_teaching_wire_fields_falls_back_to_query_when_no_get() {
+        let p = Path::new("../../apis/cloudflare");
+        if !p.exists() {
+            return;
+        }
+        let cgs = crate::loader::load_schema_dir(p).expect("cloudflare");
+        let Some(ent) = cgs.get_entity("WafPackage") else {
+            panic!("missing WafPackage");
+        };
+        assert!(
+            cgs.domain_projection_heading_fields("WafPackage", ent)
+                .is_none(),
+            "query-only entity has no Get-backed heading projection"
+        );
+        let f = cgs
+            .domain_projection_teaching_wire_fields("WafPackage", ent)
+            .expect("scoped query should still supply teaching field order");
+        let q = cgs
+            .capabilities
+            .get("waf_package_query")
+            .expect("waf_package_query");
+        assert_eq!(f, cgs.effective_ordered_response_fields(q));
     }
 
     #[test]

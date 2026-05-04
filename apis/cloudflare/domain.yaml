@@ -46,7 +46,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_wire_str_short
+        value_ref: nv_cloudflare_zone_id
       ruleset_id:
         required: true
         path: id
@@ -81,7 +81,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_wire_str_short
+        value_ref: nv_cloudflare_zone_id
       ruleset_phase:
         required: true
         value_ref: nv_wire_sel_b53dd05524ff4281
@@ -114,7 +114,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_wire_str_short
+        value_ref: nv_cloudflare_zone_id
       id:
         required: true
         value_ref: nv_wire_str_short
@@ -173,7 +173,7 @@ capabilities:
     description: Rulesets scoped to one zone.
     parameters:
     - name: zone_id
-      value_ref: nv_ruleset_query_zone_id
+      value_ref: nv_cloudflare_zone_id
       required: true
       role: scope
     - name: per_page
@@ -213,7 +213,7 @@ capabilities:
     description: Replace the managed entrypoint ruleset for one execution phase on a zone.
     parameters:
     - name: zone_id
-      value_ref: nv_wire_str_short
+      value_ref: nv_cloudflare_zone_id
       required: true
       role: scope
     - name: ruleset_phase
@@ -232,7 +232,7 @@ capabilities:
     description: List WAF packages available for a zone.
     parameters:
     - name: zone_id
-      value_ref: nv_wire_str_short
+      value_ref: nv_cloudflare_zone_id
       required: true
       role: scope
     - name: page
@@ -253,9 +253,9 @@ values:
   nv_ruleset_query_per_page:
     type: integer
     description: Preferred maximum rows per page when listing rulesets.
-  nv_ruleset_query_zone_id:
-    type: string
-    string_semantics: short
+  nv_cloudflare_zone_id:
+    type: entity_ref
+    target: Zone
     description: Zone identifier.
   nv_wire_date_rfc3339:
     type: date
