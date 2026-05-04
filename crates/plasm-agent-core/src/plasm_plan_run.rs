@@ -43,7 +43,7 @@ use plasm_core::{CapabilityKind, EntityName, Expr, Ref, TypedFieldValue, Value};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 /// CGS layers for [`parse_with_cgs_layers`] (primary + federated contexts).
@@ -475,7 +475,210 @@ pub fn evaluate_validated_plasm_plan_dry(
     })
 }
 
-/// Render the canonical human-facing dry-run form: compact topology, roots, approvals, and returns.
+fn is_synthetic_plan_node_id(id: &str) -> bool {
+    id.starts_with("__plasm_")
+        || id
+            .strip_prefix("return_")
+            .and_then(|rest| rest.parse::<u32>().ok())
+            .is_some()
+}
+
+#[derive(Default)]
+struct SyntheticPlanLabelCounters {
+    r: usize,
+    w: usize,
+    c: usize,
+    d: usize,
+    f: usize,
+    l: usize,
+    x: usize,
+}
+
+fn next_synthetic_plan_label(
+    node: &ValidatedPlanNode,
+    counters: &mut SyntheticPlanLabelCounters,
+) -> String {
+    match node {
+        ValidatedPlanNode::Surface(surface) => match surface.effect_class {
+            EffectClass::Read => {
+                counters.r += 1;
+                format!("r{}", counters.r)
+            }
+            EffectClass::Write | EffectClass::SideEffect => {
+                counters.w += 1;
+                format!("w{}", counters.w)
+            }
+            EffectClass::ArtifactRead => {
+                counters.x += 1;
+                format!("x{}", counters.x)
+            }
+        },
+        ValidatedPlanNode::Compute(_) => {
+            counters.c += 1;
+            format!("c{}", counters.c)
+        }
+        ValidatedPlanNode::Derive(_) => {
+            counters.d += 1;
+            format!("d{}", counters.d)
+        }
+        ValidatedPlanNode::ForEach(_) => {
+            counters.f += 1;
+            format!("f{}", counters.f)
+        }
+        ValidatedPlanNode::RelationTraversal(_) => {
+            counters.l += 1;
+            format!("l{}", counters.l)
+        }
+        ValidatedPlanNode::Data(_) => {
+            counters.x += 1;
+            format!("x{}", counters.x)
+        }
+    }
+}
+
+fn build_plan_node_display_map(
+    plan: &Plan<ValidatedPlanState>,
+    topological_order: &[String],
+) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut counters = SyntheticPlanLabelCounters::default();
+    for id in topological_order {
+        let Some(node) = plan.nodes.iter().find(|n| n.id().as_str() == id) else {
+            continue;
+        };
+        let label = if is_synthetic_plan_node_id(id.as_str()) {
+            next_synthetic_plan_label(node, &mut counters)
+        } else {
+            id.clone()
+        };
+        map.insert(id.clone(), label);
+    }
+    map
+}
+
+fn replace_all_substrings(haystack: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = haystack;
+    while let Some(pos) = rest.find(needle) {
+        out.push_str(&rest[..pos]);
+        out.push_str(replacement);
+        rest = &rest[pos + needle.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn remap_plan_node_ids_in_text(text: String, map: &HashMap<String, String>) -> String {
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+    let mut out = text;
+    for k in keys {
+        let Some(v) = map.get(k.as_str()) else {
+            continue;
+        };
+        if k == v {
+            continue;
+        }
+        if !out.contains(k.as_str()) {
+            continue;
+        }
+        out = replace_all_substrings(&out, k.as_str(), v.as_str());
+    }
+    out
+}
+
+fn render_node_operation_for_dry_display(
+    node: &ValidatedPlanNode,
+    display_map: &HashMap<String, String>,
+) -> String {
+    remap_plan_node_ids_in_text(render_node_operation(node).to_string(), display_map)
+}
+
+fn render_dependency_suffix_mapped(
+    deps: &[String],
+    display_map: &HashMap<String, String>,
+) -> String {
+    if deps.is_empty() {
+        String::new()
+    } else {
+        let mapped: Vec<String> = deps
+            .iter()
+            .map(|d| {
+                display_map
+                    .get(d.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| d.clone())
+            })
+            .collect();
+        format!(" <- {}", mapped.join(", "))
+    }
+}
+
+fn render_uses_result_mapped(
+    node: &ValidatedPlanNode,
+    display_map: &HashMap<String, String>,
+) -> Vec<String> {
+    node.uses_result()
+        .iter()
+        .map(|u| {
+            let node_label = display_map
+                .get(u.node.as_str())
+                .cloned()
+                .unwrap_or_else(|| u.node.clone());
+            format!("{node_label} as {}", u.r#as)
+        })
+        .collect()
+}
+
+fn render_return_lines_mapped(
+    ret: &ValidatedPlanReturn,
+    display_map: &HashMap<String, String>,
+) -> Vec<String> {
+    match ret {
+        ValidatedPlanReturn::Node(id) => {
+            let label = display_map
+                .get(id.as_str())
+                .cloned()
+                .unwrap_or_else(|| id.as_str().to_string());
+            vec![label]
+        }
+        ValidatedPlanReturn::Parallel { parallel } => parallel
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let label = display_map
+                    .get(id.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| id.as_str().to_string());
+                format!("parallel[{i}] -> {label}")
+            })
+            .collect(),
+    }
+}
+
+fn render_return_shape_hint(plan: &Plan<ValidatedPlanState>, ret: &ValidatedPlanReturn) -> String {
+    match ret {
+        ValidatedPlanReturn::Parallel { parallel } => format!("parallel({})", parallel.len()),
+        ValidatedPlanReturn::Node(id) => {
+            let Some(node) = plan.nodes.iter().find(|n| n.id() == id) else {
+                return "unknown".to_string();
+            };
+            match node.result_shape() {
+                crate::plasm_plan::ResultShape::List => "list".to_string(),
+                crate::plasm_plan::ResultShape::Single => "single".to_string(),
+                crate::plasm_plan::ResultShape::MutationResult => "mutation_result".to_string(),
+                crate::plasm_plan::ResultShape::SideEffectAck => "side_effect_ack".to_string(),
+                crate::plasm_plan::ResultShape::Page => "page".to_string(),
+                crate::plasm_plan::ResultShape::Artifact => "artifact".to_string(),
+            }
+        }
+    }
+}
+
+/// Render the canonical human-facing dry-run form: verdict, shape, confidence/risks, DAG, returns, next.
 pub fn render_plasm_plan_dry_text(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
@@ -488,16 +691,33 @@ pub fn render_plasm_plan_dry_text(
         .and_then(|a| a.plan_name)
         .or(dry.name.as_deref().or(plan.name.as_deref()))
         .unwrap_or("<unnamed>");
-    let roots = json_string_array(summary.get("parallelizable_roots"));
-    let approvals = summary
-        .get("approval_gates")
-        .and_then(|v| v.as_array())
-        .map_or(0, Vec::len);
     let reads = json_string_array(summary.get("read_nodes")).len();
     let writes = json_string_array(summary.get("write_or_side_effect_nodes")).len();
-    let warnings = json_string_array(summary.get("warnings"));
-    let boundedness_facts = json_string_array(summary.get("boundedness_facts"));
+    let risks = json_string_array(summary.get("warnings"));
+    let confidence = json_string_array(summary.get("boundedness_facts"));
     let staged = dry.staged_nodes.len();
+    let display_map = build_plan_node_display_map(plan, &dry.topological_order);
+    let return_unbounded = return_roots_include_unbounded_list_surface(plan);
+    let verdict = if !risks.is_empty() || return_unbounded {
+        "review"
+    } else {
+        "ok"
+    };
+    let exec = if dry.parallel_root_surfaces_only {
+        "parallel roots"
+    } else {
+        "ordered"
+    };
+    let return_hint = render_return_shape_hint(plan, &plan.return_value);
+    let shape = format!(
+        "{} nodes, {}, {} read, {} write/se, {} staged, return={}",
+        plan.nodes.len(),
+        exec,
+        reads,
+        writes,
+        staged,
+        return_hint
+    );
 
     let _ = writeln!(out, "plasm-program dry-run");
     let _ = writeln!(out, "name: {name}");
@@ -506,53 +726,20 @@ pub fn render_plasm_plan_dry_text(
         let _ = writeln!(out, "archive: {}", a.canonical_plan_uri);
         let _ = writeln!(out, "hash: {}", a.plan_hash);
     }
-    let _ = writeln!(
-        out,
-        "nodes: {} total, {} read, {} write/side-effect, {} staged",
-        plan.nodes.len(),
-        reads,
-        writes,
-        staged
-    );
-    let _ = writeln!(
-        out,
-        "execution: {}",
-        if dry.parallel_root_surfaces_only {
-            "parallel roots (no inter-node dependencies)"
-        } else {
-            "ordered (dependencies or non-root/staged nodes)"
-        }
-    );
-    let _ = writeln!(
-        out,
-        "roots: {}",
-        if roots.is_empty() {
-            "none".to_string()
-        } else {
-            roots.join(", ")
-        }
-    );
-    let _ = writeln!(
-        out,
-        "approvals: {}",
-        if approvals == 0 {
-            "none".to_string()
-        } else {
-            approvals.to_string()
-        }
-    );
+    let _ = writeln!(out, "verdict: {verdict}");
+    let _ = writeln!(out, "shape: {shape}");
     let _ = writeln!(out);
-    if !warnings.is_empty() {
-        let _ = writeln!(out, "warnings:");
-        for warning in warnings {
-            let _ = writeln!(out, "- {warning}");
+    if !confidence.is_empty() {
+        let _ = writeln!(out, "confidence:");
+        for fact in &confidence {
+            let _ = writeln!(out, "- {fact}");
         }
         let _ = writeln!(out);
     }
-    if !boundedness_facts.is_empty() {
-        let _ = writeln!(out, "boundedness:");
-        for fact in boundedness_facts {
-            let _ = writeln!(out, "- {fact}");
+    if !risks.is_empty() {
+        let _ = writeln!(out, "risks:");
+        for risk in risks.iter().take(4) {
+            let _ = writeln!(out, "- {risk}");
         }
         let _ = writeln!(out);
     }
@@ -563,36 +750,35 @@ pub fn render_plasm_plan_dry_text(
             continue;
         };
         let deps = node_dependencies(node);
+        let display_id = display_map
+            .get(id.as_str())
+            .cloned()
+            .unwrap_or_else(|| id.clone());
         let _ = writeln!(
             out,
             "{:02}. {}{} -> {} [{}; {}]",
             ordinal + 1,
-            node.id(),
-            render_dependency_suffix(&deps),
-            render_node_operation(node),
+            display_id,
+            render_dependency_suffix_mapped(&deps, &display_map),
+            render_node_operation_for_dry_display(node, &display_map),
             render_effect_class(node.effect_class()),
             render_result_shape(node.result_shape())
         );
-        let uses = render_uses_result(node);
+        let uses = render_uses_result_mapped(node, &display_map);
         if !uses.is_empty() {
             let _ = writeln!(out, "    uses: {}", uses.join(", "));
-        }
-        if let Some(approval) = inferred_node_approval(node) {
-            if let Some(policy) = approval.get("policy_key").and_then(|v| v.as_str()) {
-                let _ = writeln!(out, "    approval: {policy}");
-            }
         }
     }
 
     let _ = writeln!(out);
     let _ = writeln!(out, "returns:");
-    for line in render_return_lines(&plan.return_value) {
+    for line in render_return_lines_mapped(&plan.return_value, &display_map) {
         let _ = writeln!(out, "- {line}");
     }
     let guidance = plasm_plan_review_guidance_lines(dry);
     if !guidance.is_empty() {
         let _ = writeln!(out);
-        let _ = writeln!(out, "review:");
+        let _ = writeln!(out, "next:");
         for line in guidance {
             let _ = writeln!(out, "- {line}");
         }
@@ -625,18 +811,50 @@ fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) 
 
 /// Short human-facing review bullets for agents (also surfaced under `_meta.plasm.guidance`).
 ///
-/// Keeps to at most four lines: composition nudge when the plan looks like a broad list,
-/// optional single-node hint, and an execute-intent reminder.
+/// Keeps to at most two lines: one targeted coaching line when useful, plus an execute-intent
+/// reminder. Pair with the dry-run `risks:` / `confidence:` sections for full context.
 pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<String> {
     let mut out = Vec::new();
     let plan = dry.validated_plan();
-    let warnings = json_string_array(dry.graph_summary.get("warnings"));
-    let unbounded_warned = warnings.iter().any(|w| w.contains("unbounded read root"));
     let return_unbounded = return_roots_include_unbounded_list_surface(plan);
+    let dr = dry.graph_summary.get("dry_review");
+    let has_unbounded = dr
+        .and_then(|v| v.get("has_unbounded_read_root"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_full_compute = dr
+        .and_then(|v| v.get("has_full_collection_compute"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_foreach_fanout = dr
+        .and_then(|v| v.get("has_foreach_fanout_risk"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_unprojected_multi_row = dr
+        .and_then(|v| v.get("has_unprojected_multi_row_read"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    if unbounded_warned || return_unbounded {
+    if has_unprojected_multi_row {
         out.push(
-            "Result shape tends toward a broad list. Prefer node[field,…], .limit(n) / .page_size(n), .sort(...), .aggregate(...), .group_by(...), or render heredocs before execute.".into(),
+            "Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped."
+                .to_string(),
+        );
+    }
+    if has_unbounded || return_unbounded {
+        out.push(
+            "When row counts are unknown, combine filters/search or `.limit`/`.page_size` with projection—not raw full entities."
+                .to_string(),
+        );
+    }
+    if has_foreach_fanout {
+        out.push(
+            "Mutating for_each fans out per source row; keep sources bounded and projected.".to_string(),
+        );
+    } else if has_full_compute {
+        out.push(
+            "Aggregates/group_by/sort see the full logical row set before `.limit`; narrow reads first when counts are uncertain."
+                .to_string(),
         );
     } else if plan.nodes.len() == 1 {
         if let Some(ValidatedPlanNode::Surface(s)) = plan.nodes.first() {
@@ -644,14 +862,14 @@ pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<Str
                 && s.effect_class == EffectClass::Read
             {
                 out.push(
-                    "Single-node list: use when row-level output is already the answer; for analysis, bind intermediates and return compact roots."
-                        .into(),
+                    "Prefer a short multi-binding program (source → project/filter → return roots) when the answer needs more than one step."
+                        .to_string(),
                 );
             }
         }
     }
 
-    out.push("Execute only after this plan matches the answer shape you intend.".into());
+    out.push("Execute only after topology and result shape match intent.".to_string());
     out.truncate(4);
     out
 }
@@ -744,14 +962,6 @@ fn push_unique(out: &mut Vec<String>, values: impl IntoIterator<Item = String>) 
         if !out.iter().any(|seen| seen == &value) {
             out.push(value);
         }
-    }
-}
-
-fn render_dependency_suffix(deps: &[String]) -> String {
-    if deps.is_empty() {
-        String::new()
-    } else {
-        format!(" <- {}", deps.join(", "))
     }
 }
 
@@ -1133,6 +1343,15 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
     let mut warnings = Vec::new();
     let mut boundedness_facts = Vec::new();
 
+    let mut has_unbounded_read_root = false;
+    let mut has_narrowed_search_root = false;
+    let mut has_narrowed_filter_root = false;
+    let mut has_explicit_limit = false;
+    let mut has_full_collection_compute = false;
+    let mut has_foreach_fanout_risk = false;
+    let mut relation_traversal_nodes = 0usize;
+    let mut has_unprojected_multi_row_read = false;
+
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
             parallelizable_roots.push(n.id().as_str().to_string());
@@ -1158,51 +1377,97 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
                 ValidatedPlanNode::Surface(surface)
                     if surface.kind == PlanNodeKind::Search || !surface.predicates.is_empty() =>
                 {
-                    boundedness_facts.push(format!(
-                        "{} has API-side narrowing via {}",
-                        n.id().as_str(),
-                        if surface.kind == PlanNodeKind::Search {
-                            "search text"
-                        } else {
-                            "filters"
-                        }
-                    ));
+                    if surface.kind == PlanNodeKind::Search {
+                        has_narrowed_search_root = true;
+                    } else {
+                        has_narrowed_filter_root = true;
+                    }
                 }
-                _ => warnings.push(format!(
-                    "{} is an unbounded read root; add API filters/search text or Plan.limit(...) when cost or latency is uncertain",
-                    n.id().as_str()
-                )),
+                _ => {
+                    has_unbounded_read_root = true;
+                }
             }
         }
         if matches!(n, ValidatedPlanNode::Compute(_)) {
             let op = render_node_operation(n);
             if op.contains("limit ") {
-                boundedness_facts.push(format!(
-                    "{} uses Plan.limit for explicit semantic truncation",
-                    n.id().as_str()
-                ));
+                has_explicit_limit = true;
             } else {
-                warnings.push(format!(
-                    "{} computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed",
-                    n.id().as_str()
-                ));
+                has_full_collection_compute = true;
             }
         }
-        if let ValidatedPlanNode::RelationTraversal(relation) = n {
-            boundedness_facts.push(format!(
-                "{} traverses {} relation {} from a {:?} source",
-                n.id().as_str(),
-                render_relation_cardinality(relation.relation.cardinality),
-                relation.relation.relation.as_str(),
-                relation.relation.source_cardinality
-            ));
+        if let ValidatedPlanNode::RelationTraversal(_) = n {
+            relation_traversal_nodes += 1;
         }
-        if matches!(n, ValidatedPlanNode::ForEach(_)) {
-            warnings.push(format!(
-                "{} may fan out over every row in its logical source; keep the source bounded when approval/cost matters",
-                n.id().as_str()
-            ));
+        if let ValidatedPlanNode::ForEach(fe) = n {
+            if for_each_body_mutates_remote(
+                fe.effect_template.kind,
+                fe.effect_template.effect_class,
+            ) {
+                has_foreach_fanout_risk = true;
+            }
         }
+        match n {
+            ValidatedPlanNode::Surface(s)
+                if s.effect_class == EffectClass::Read
+                    && s.projection.is_empty()
+                    && matches!(
+                        s.result_shape,
+                        crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+                    ) =>
+            {
+                has_unprojected_multi_row_read = true;
+            }
+            ValidatedPlanNode::ForEach(fe)
+                if fe.effect_class == EffectClass::Read
+                    && fe.projection.is_empty()
+                    && matches!(
+                        fe.result_shape,
+                        crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+                    ) =>
+            {
+                has_unprojected_multi_row_read = true;
+            }
+            _ => {}
+        }
+    }
+
+    if has_narrowed_search_root {
+        boundedness_facts.push("Root read narrowed by search text".to_string());
+    }
+    if has_narrowed_filter_root {
+        boundedness_facts.push("Root read narrowed by API-side filters".to_string());
+    }
+    if has_explicit_limit {
+        boundedness_facts.push("Explicit .limit truncation in the compute chain".to_string());
+    }
+    if relation_traversal_nodes > 0 {
+        boundedness_facts.push("Includes relation traversal".to_string());
+    }
+
+    if has_unprojected_multi_row_read {
+        warnings.push(
+            "List/page reads without `[field,…]` projection materialize full rows; project at the read or add an explicit project step."
+                .to_string(),
+        );
+    }
+    if has_unbounded_read_root {
+        warnings.push(
+            "Unbounded root read; add API filters/search text or .limit(n)/.page_size(n) when cost or latency is uncertain"
+                .to_string(),
+        );
+    }
+    if has_full_collection_compute {
+        warnings.push(
+            "Aggregates/group_by/sort run over the full logical row set before `.limit`; narrow reads (filters + projected fields) when counts are uncertain."
+                .to_string(),
+        );
+    }
+    if has_foreach_fanout_risk {
+        warnings.push(
+            "Mutating for_each may fan out over every source row; keep the upstream source bounded when cost or latency matters"
+                .to_string(),
+        );
     }
 
     serde_json::json!({
@@ -1215,16 +1480,13 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
         "parallelizable_roots": parallelizable_roots,
         "warnings": warnings,
         "boundedness_facts": boundedness_facts,
+        "dry_review": {
+            "has_unbounded_read_root": has_unbounded_read_root,
+            "has_full_collection_compute": has_full_collection_compute,
+            "has_foreach_fanout_risk": has_foreach_fanout_risk,
+            "has_unprojected_multi_row_read": has_unprojected_multi_row_read,
+        }
     })
-}
-
-fn render_relation_cardinality(
-    cardinality: crate::plasm_plan::RelationCardinality,
-) -> &'static str {
-    match cardinality {
-        crate::plasm_plan::RelationCardinality::One => "one",
-        crate::plasm_plan::RelationCardinality::Many => "many",
-    }
 }
 
 fn inferred_node_approval(node: &ValidatedPlanNode) -> Option<serde_json::Value> {
@@ -1262,11 +1524,20 @@ fn inferred_template_approval(node: &ValidatedForEachNode) -> Option<serde_json:
     ))
 }
 
-fn node_requires_approval(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
+fn remote_mutation_effect(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
     matches!(
         kind,
         PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
     ) || matches!(effect_class, EffectClass::Write | EffectClass::SideEffect)
+}
+
+fn node_requires_approval(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
+    remote_mutation_effect(kind, effect_class)
+}
+
+/// Remote mutation inside a `for_each` body (fan-out / multi-write risk). Read-only bodies excluded.
+fn for_each_body_mutates_remote(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
+    remote_mutation_effect(kind, effect_class)
 }
 
 fn approval_gate_json(
@@ -3650,14 +3921,13 @@ name: product-summary
 handle: p7 (plasm://session/s0/p/7)
 archive: plasm://execute/ph/s/plan/uuid
 hash: abc123
-nodes: 3 total, 1 read, 0 write/side-effect, 2 staged
-execution: ordered (dependencies or non-root/staged nodes)
-roots: products
-approvals: none
+verdict: review
+shape: 3 nodes, ordered, 1 read, 0 write/se, 2 staged, return=parallel(2)
 
-warnings:
-- products is an unbounded read root; add API filters/search text or Plan.limit(...) when cost or latency is uncertain
-- summary computes over the full logical source collection; returned result views may be paged, but aggregate/project/group/map semantics are not page-windowed
+risks:
+- List/page reads without `[field,…]` projection materialize full rows; project at the read or add an explicit project step.
+- Unbounded root read; add API filters/search text or .limit(n)/.page_size(n) when cost or latency is uncertain
+- Aggregates/group_by/sort run over the full logical row set before `.limit`; narrow reads (filters + projected fields) when counts are uncertain.
 
 dag:
 01. products -> query acme.Product <= Query(Product all) [read; list]
@@ -3669,9 +3939,11 @@ returns:
 - parallel[0] -> summary
 - parallel[1] -> cards
 
-review:
-- Result shape tends toward a broad list. Prefer node[field,…], .limit(n) / .page_size(n), .sort(...), .aggregate(...), .group_by(...), or render heredocs before execute.
-- Execute only after this plan matches the answer shape you intend.
+next:
+- Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped.
+- When row counts are unknown, combine filters/search or `.limit`/`.page_size` with projection—not raw full entities.
+- Aggregates/group_by/sort see the full logical row set before `.limit`; narrow reads first when counts are uncertain.
+- Execute only after topology and result shape match intent.
 "###
         );
         assert!(!text.contains("node_results"));
@@ -3990,12 +4262,18 @@ review:
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         let text = render_plasm_plan_dry_text(&dry, None);
-        assert!(text.contains("review:"), "{text}");
-        assert!(text.contains("broad list"), "{text}");
+        assert!(text.contains("verdict: review"), "{text}");
+        assert!(text.contains("risks:"), "{text}");
+        assert!(text.contains("Unbounded root read"), "{text}");
+        assert!(text.contains("next:"), "{text}");
+        assert!(
+            text.contains("projection") || text.contains("`[field"),
+            "{text}"
+        );
         let g = plasm_plan_review_guidance_lines(&dry);
         assert!(
-            g.iter().any(|l| l.contains("broad list")),
-            "expected broad-list guidance, got {g:?}"
+            g.iter().any(|l| l.contains("[field") || l.contains("projection")),
+            "expected projection-first guidance, got {g:?}"
         );
     }
 
@@ -4021,10 +4299,10 @@ review:
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         let text = render_plasm_plan_dry_text(&dry, None);
-        assert!(text.contains("review:"), "{text}");
+        assert!(text.contains("verdict: ok"), "{text}");
         assert!(
-            !text.contains("broad list"),
-            "bounded get should not get broad-list nudge: {text}"
+            !text.contains("Unbounded root read"),
+            "bounded get should not get unbounded risk: {text}"
         );
     }
 
@@ -4084,7 +4362,10 @@ review:
             "{text}"
         );
         assert!(!text.contains("=> {}"), "{text}");
-        assert!(text.contains("approvals: none"), "{text}");
+        assert!(
+            text.contains("verdict: review"),
+            "root list read is unbounded in this fixture: {text}"
+        );
     }
 
     #[test]
@@ -4158,9 +4439,15 @@ review:
             "return": { "kind": "node", "node": "createIssue" }
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        assert_eq!(
+            dry.graph_summary["approval_gates"][0]["policy_key"],
+            "linear.Issue.create"
+        );
         let text = render_plasm_plan_dry_text(&dry, None);
-        assert!(text.contains("approval: linear.Issue.create"), "{text}");
-        assert!(!text.contains("approval: linear.Issue.\n"), "{text}");
+        assert!(
+            !text.contains("approval:"),
+            "dry-run text omits approval policy lines (auto-approved host policy): {text}"
+        );
     }
 
     #[test]
