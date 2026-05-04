@@ -944,7 +944,7 @@ fn compile_node_expr(
                 page_size: None,
                 source: DagNodeSource::ForEach {
                     source: source.to_string(),
-                    parsed_template: expr_template_json(&parsed, &uses)?,
+                    parsed_template: expr_template_json(&parsed, &uses, right.trim())?,
                     display_expr: right.trim().to_string(),
                     effect_kind: kind,
                     qualified_entity: qualified,
@@ -1014,6 +1014,11 @@ fn anchor_expanded_plasm(state: &CompileState<'_>, label: &str) -> Option<String
     match &node.source {
         DagNodeSource::Surface { .. } => Some(node.expr.clone()),
         DagNodeSource::RelationTraversal { expanded_plasm, .. } => Some(expanded_plasm.clone()),
+        DagNodeSource::Compute {
+            source,
+            op: ComputeOp::Project { .. },
+            ..
+        } => anchor_expanded_plasm(state, source),
         DagNodeSource::Data(_)
         | DagNodeSource::Compute { .. }
         | DagNodeSource::Derive { .. }
@@ -1039,6 +1044,11 @@ fn relation_source_cardinality_from_bound_node(
             }
         }
         DagNodeSource::RelationTraversal { .. } => RelationSourceCardinality::Many,
+        DagNodeSource::Compute {
+            source,
+            op: ComputeOp::Project { .. },
+            ..
+        } => relation_source_cardinality_from_bound_node(state, source),
         DagNodeSource::Data(_)
         | DagNodeSource::Compute { .. }
         | DagNodeSource::Derive { .. }
@@ -1154,7 +1164,7 @@ fn compile_surface_node(
             ));
         }
         return Err(format!(
-            "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — compute/derive/data/for_each bindings cannot be extended with `{label}.…`; repeat the full taught `plasm_expr` or bind an intermediate surface node"
+            "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — only surface/relation bindings and row-preserving projection bindings can be extended with `{label}.…`; aggregate/render/derive/data/for_each bindings must use postfix transforms or an explicit entity constructor"
         ));
     }
     let refs = state.program_node_id_set();
@@ -1203,7 +1213,7 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
                     "display_expr": node.expr,
                 })
             } else {
-                expr_template_json(parsed, uses_result)?
+                expr_template_json(parsed, uses_result, node.expr.as_str())?
             };
             let mut obj = json!({
                 "id": node.id,
@@ -1529,6 +1539,12 @@ fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState, St
         }
         i += cl;
     }
+    if quote.is_some() {
+        return Err(
+            "physical newline inside a quoted Plasm string parameter; use a tagged heredoc for multiline string parameters, e.g. `p58=<<MAIL_7f3a` then the body and a closing `MAIL_7f3a)` line"
+                .to_string(),
+        );
+    }
     if depth != 0 {
         return Err(format!(
             "unbalanced delimiters in Plasm program line `{line}`"
@@ -1589,19 +1605,22 @@ fn strip_comment(line: &str) -> &str {
 }
 
 fn flattened_program_newline_diagnostic(src: &str) -> Option<String> {
-    let line = src.trim();
-    if line.is_empty() || line.contains('\n') || line.contains("<<") {
-        return None;
+    for raw in src.lines() {
+        let line = strip_comment(raw).trim();
+        if line.is_empty() || line.contains("<<") {
+            continue;
+        }
+        let Some((_id, rhs)) = split_assignment(line) else {
+            continue;
+        };
+        if has_flattened_assignment_boundary(rhs) || has_flattened_final_root_boundary(rhs) {
+            return Some(
+                "Plasm program statements must be separated by real newline characters (U+000A) in the `program` string; use one binding per line, then final roots on their own line. Do not separate bindings or final roots with spaces. Send one physical line per binding, e.g. `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`. For multiline string parameters, use tagged heredocs such as `p58=<<MAIL_7f3a` followed by body lines and a closing `MAIL_7f3a)`."
+                    .to_string(),
+            );
+        }
     }
-    let (_id, rhs) = split_assignment(line)?;
-    if has_flattened_assignment_boundary(rhs) || has_flattened_final_root_boundary(rhs) {
-        Some(
-            "Plasm program statements must be separated by real newline characters (U+000A) in the `program` string. Do not separate bindings or final roots with spaces. Send one physical line per binding, then final roots on their own line, e.g. `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`."
-                .to_string(),
-        )
-    } else {
-        None
-    }
+    None
 }
 
 fn has_flattened_assignment_boundary(s: &str) -> bool {
@@ -2046,12 +2065,13 @@ fn parse_literal(raw: &str) -> Result<serde_json::Value, String> {
 fn expr_template_json(
     parsed: &plasm_core::expr_parser::ParsedExpr,
     uses: &[serde_json::Value],
+    display_expr: &str,
 ) -> Result<serde_json::Value, String> {
     let value = serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?;
     Ok(json!({
         "expr": value,
         "projection": parsed.projection,
-        "display_expr": crate::expr_display::expr_display(&parsed.expr),
+        "display_expr": display_expr,
         "input_bindings": uses.iter().map(|u| {
             json!({
                 "from": u.get("as").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -2269,7 +2289,9 @@ mod tests {
     //! graphs). When a case overlaps the matrix, cite the matrix row id on the test (e.g.
     //! `lang_domain_symbol_page_size`).
     use super::*;
-    use crate::plasm_plan_run::{evaluate_plasm_plan_dry, symbol_map_for_plasm_surface_parse};
+    use crate::plasm_plan_run::{
+        evaluate_plasm_plan_dry, render_plasm_plan_dry_text, symbol_map_for_plasm_surface_parse,
+    };
     use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig, CGS};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -2450,6 +2472,35 @@ mod tests {
         .expect_err("flattened input should fail with diagnostic");
         assert!(
             err.contains("Do not separate bindings or final roots with spaces"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn flattened_dag_with_multiline_quoted_arg_gets_newline_diagnostic_first() {
+        let session = test_session();
+        let source = "prof = LangItem(\"i1\") LangLine(message=\"long\nbody\")";
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flattened-quote",
+            source,
+        )
+        .expect_err("flattened input should fail with diagnostic");
+        assert!(
+            err.contains("one binding per line") && err.contains("tagged heredocs"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn multiline_quoted_arg_gets_heredoc_diagnostic() {
+        let err = parse_statements("body = LangLine(message=\"long\nbody\")")
+            .expect_err("physical newline in quote");
+        assert!(
+            err.contains("physical newline inside a quoted Plasm string parameter")
+                && err.contains("tagged heredoc"),
             "unexpected: {err}"
         );
     }
@@ -2850,21 +2901,52 @@ report"#;
     }
 
     #[test]
-    fn rejects_continuation_from_compute_projection_anchor() {
+    fn compiles_continuation_from_projection_anchor() {
         let session = github_repository_commit_session();
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 trimmed = repo[id]
-bad = trimmed.commits"#;
+commits = trimmed.commits
+commits"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "projection-anchor",
+            source,
+        )
+        .expect("projection anchor should compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let rel = nodes
+            .iter()
+            .find(|n| n["id"] == "commits")
+            .expect("relation node");
+        assert_eq!(rel["kind"], "relation");
+        assert_eq!(rel["relation"]["source"], "trimmed");
+        assert_eq!(rel["relation"]["relation"], "commits");
+        assert_eq!(rel["relation"]["source_cardinality"], "single");
+        assert_eq!(rel["uses_result"][0]["node"], "trimmed");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        let text = render_plasm_plan_dry_text(&dry, None);
+        assert!(text.contains("trimmed.commits"), "{text}");
+    }
+
+    #[test]
+    fn rejects_continuation_from_aggregate_anchor() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits
+totals = commits.aggregate(n=count)
+bad = totals.commits"#;
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
-            "non-anchor",
+            "aggregate-non-anchor",
             source,
         )
-        .expect_err("compute projection is not a Plasm anchor");
+        .expect_err("aggregate is not a Plasm anchor");
         assert!(
-            err.contains("not a Plasm expression anchor"),
+            err.contains("row-preserving projection bindings"),
             "unexpected: {err}"
         );
     }

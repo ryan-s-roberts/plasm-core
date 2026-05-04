@@ -3,6 +3,6 @@
 
 **Brace `{…}` predicates:** Entity-ref slots expect DOMAIN constructors, scalar ids, or **`anchor.<relation>`** — not opaque rows unless keys match that entity.
 
-**Continuation:** `next = row.<relation>` continues taught surface rows only—not after projection/limit/etc.; rebind a surface node first.
+**Continuation:** `next = row.<relation>` continues a taught surface/relation row. A label produced by a row-preserving projection such as `trimmed = row[id,name]` may also be continued (`next = trimmed.<relation>`); aggregate/render/derive/data/for_each labels are not row anchors. Use postfix transforms for shaping rows, or an explicit entity constructor when you no longer have row identity.
 
 Reuse **`logical_session_ref`**. Call **`plasm_context`** again only to append picks or when **`_meta.plasm`** shows stale binding—not every turn.

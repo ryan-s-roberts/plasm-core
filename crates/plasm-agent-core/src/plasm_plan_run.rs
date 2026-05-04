@@ -834,6 +834,10 @@ pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<Str
         .and_then(|v| v.get("has_unprojected_multi_row_read"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let has_relation = plan
+        .nodes
+        .iter()
+        .any(|n| matches!(n, ValidatedPlanNode::RelationTraversal(_)));
 
     if has_unprojected_multi_row {
         out.push(
@@ -849,7 +853,8 @@ pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<Str
     }
     if has_foreach_fanout {
         out.push(
-            "Mutating for_each fans out per source row; keep sources bounded and projected.".to_string(),
+            "Mutating for_each fans out per source row; keep sources bounded and projected."
+                .to_string(),
         );
     } else if has_full_compute {
         out.push(
@@ -867,6 +872,12 @@ pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<Str
                 );
             }
         }
+    }
+    if has_relation {
+        out.push(
+            "`label.<relation>` follows surface/relation rows or row-preserving projections; use constructors when row identity has been aggregated, rendered, or derived away."
+                .to_string(),
+        );
     }
 
     out.push("Execute only after topology and result shape match intent.".to_string());
@@ -2418,12 +2429,11 @@ fn materialized_singleton_inputs(
             )
         })?;
         if mat.all_entities.len() != 1 {
-            return Err(format!(
-                "Plan input {:?} for alias {:?} expected one row for {:?} broadcast, got {}",
+            return Err(singleton_input_row_count_error(
                 input.node.as_str(),
                 input.alias.as_str(),
-                input.proof,
-                mat.all_entities.len()
+                mat.all_entities.len(),
+                format!("{:?} broadcast", input.proof).as_str(),
             ));
         }
         let row = mat
@@ -2465,11 +2475,11 @@ fn materialized_result_use_inputs(
             )
         })?;
         if mat.all_entities.len() != 1 {
-            return Err(format!(
-                "Plan input {:?} for alias {:?} expected one row for staged expression rendering, got {}",
+            return Err(singleton_input_row_count_error(
                 node.as_str(),
                 alias.as_str(),
-                mat.all_entities.len()
+                mat.all_entities.len(),
+                "staged expression rendering",
             ));
         }
         let row = mat
@@ -2493,6 +2503,23 @@ fn materialized_result_use_inputs(
         );
     }
     Ok(out)
+}
+
+fn singleton_input_row_count_error(
+    node: &str,
+    alias: &str,
+    row_count: usize,
+    context: &str,
+) -> String {
+    if row_count == 0 {
+        format!(
+            "Plan input {node:?} for alias {alias:?} expected exactly one row for {context}, but the source produced zero rows. This is a data-empty result, not a Plasm syntax error: run or inspect {node:?}, loosen filters if it should match, branch around empty results, or use `.singleton()` only when exactly one row is guaranteed."
+        )
+    } else {
+        format!(
+            "Plan input {node:?} for alias {alias:?} expected exactly one row for {context}, but the source produced {row_count} rows. Add filters/projection to make the source unique, aggregate intentionally, or use `.singleton()` only when exactly one row is guaranteed."
+        )
+    }
 }
 
 /// Deserialize → [`instantiate_expr_template_value`] → deserialize so predicate/CML env holes (e.g.
@@ -3448,6 +3475,22 @@ mod tests {
     }
 
     #[test]
+    fn singleton_input_zero_row_error_is_actionable() {
+        let err = singleton_input_row_count_error("src", "_", 0, "staged expression rendering");
+        assert!(err.contains("zero rows"), "{err}");
+        assert!(err.contains("not a Plasm syntax error"), "{err}");
+        assert!(err.contains("branch around empty results"), "{err}");
+    }
+
+    #[test]
+    fn singleton_input_multi_row_error_mentions_ambiguity_remedy() {
+        let err = singleton_input_row_count_error("src", "_", 2, "staged expression rendering");
+        assert!(err.contains("2 rows"), "{err}");
+        assert!(err.contains("make the source unique"), "{err}");
+        assert!(err.contains(".singleton()"), "{err}");
+    }
+
+    #[test]
     fn cmp_json_sort_values_string_collates_non_numeric_strings_lexically() {
         use std::cmp::Ordering;
         let apple = serde_json::json!("apple");
@@ -4272,7 +4315,8 @@ next:
         );
         let g = plasm_plan_review_guidance_lines(&dry);
         assert!(
-            g.iter().any(|l| l.contains("[field") || l.contains("projection")),
+            g.iter()
+                .any(|l| l.contains("[field") || l.contains("projection")),
             "expected projection-first guidance, got {g:?}"
         );
     }
