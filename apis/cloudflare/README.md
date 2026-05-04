@@ -15,7 +15,9 @@ Base URL: `https://api.cloudflare.com/client/v4`.
 
 ## Auth
 
-Create an [API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) with at least **Zone → Zone → Read** and **Zone → WAF → …** / **Zone → Rulesets** permissions for the operations you use.
+**API tokens (recommended for automation):** create an [API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) with at least **Zone → Zone → Read** and **Zone → WAF → Read** for read-only Phase 1 flows; add **Zone WAF Edit** if you use `ruleset_entrypoint_update`. Permission names align with Cloudflare’s [token permission reference](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
+
+**OAuth (demo / product UI):** `domain.yaml` declares `oauth.provider: cloudflare` with Plasm scope ids (`cloudflare.zone.read`, `cloudflare.zone.waf.read`, `cloudflare.zone.waf.edit`, …) mapped to capabilities via `requirements.capabilities`, plus `default_scope_sets` **`plasm_cloudflare_demo_readonly`** and **`plasm_cloudflare_demo_operator`**. Wire a real OAuth client through your control plane (Ops outbound OAuth app → agent link provider); scope strings must match what your Cloudflare OAuth app accepts—treat the YAML ids as **catalog-stable handles** you can map to provider grants.
 
 ```bash
 export CLOUDFLARE_API_TOKEN='...'
@@ -30,4 +32,4 @@ cargo run -p plasm-cli --bin plasm -- validate --spec apis/cloudflare/openapi.he
 - **RulesetEntrypoint** — get/update the managed entrypoint for a **phase** (`…/rulesets/phases/{phase}/entrypoint`).
 - **WafPackage** — list WAF packages for a zone.
 
-OAuth 2.1 flows (e.g. hosted MCP) are out of scope for this catalog; use a static bearer token from the environment.
+Hosted MCP / browser OAuth can use the same capability graph once an outbound OAuth app is registered; API tokens remain the simplest path for CI and local REPL.

@@ -1,4 +1,4 @@
-version: 2
+version: 3
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
@@ -243,8 +243,76 @@ capabilities:
       value_ref: nv_wire_int
       required: false
       role: response_control
-# Bearer API token only for this catalog (no `oauth:` block). Tool-model `connect_profile`
-# classifies `bearer_token` + env as API-key-style outbound connect (not OAuth-only).
+oauth:
+  provider: cloudflare
+  scopes:
+    cloudflare.zone.read:
+      label: Zone Read
+      notes: Lists and reads zones and zone metadata (matches API token permission **Zone Read**; scope family `com.cloudflare.api.account.zone`).
+      docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
+    cloudflare.zone.edit:
+      label: Zone Edit
+      notes: Zone lifecycle and configuration writes beyond read-only (API token **Zone Edit**).
+      docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
+    cloudflare.zone.waf.read:
+      label: Zone WAF Read
+      notes: Read zone WAF surfaces — rulesets, packages, managed phases (API token **Zone WAF Read**).
+      docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
+    cloudflare.zone.waf.edit:
+      label: Zone WAF Edit
+      notes: Change zone WAF rulesets including phase entrypoints (API token **Zone WAF Edit**).
+      docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
+  default_scope_sets:
+    plasm_cloudflare_demo_readonly:
+      description: Demo read bundle — zones plus zone WAF read (list zones, inspect rulesets/WAF packages; no entrypoint writes).
+      scopes:
+      - cloudflare.zone.read
+      - cloudflare.zone.waf.read
+    plasm_cloudflare_demo_operator:
+      description: Demo operator bundle — adds Zone WAF Edit so `ruleset_entrypoint_update` can replace managed phase entrypoints (Phase 1 catalog).
+      scopes:
+      - cloudflare.zone.read
+      - cloudflare.zone.waf.read
+      - cloudflare.zone.waf.edit
+  requirements:
+    capabilities:
+      zone_query:
+        any_of:
+        - cloudflare.zone.read
+      zone_get:
+        any_of:
+        - cloudflare.zone.read
+      ruleset_query:
+        all_of:
+        - any_of:
+          - cloudflare.zone.read
+        - any_of:
+          - cloudflare.zone.waf.read
+      ruleset_get:
+        all_of:
+        - any_of:
+          - cloudflare.zone.read
+        - any_of:
+          - cloudflare.zone.waf.read
+      ruleset_entrypoint_get:
+        all_of:
+        - any_of:
+          - cloudflare.zone.read
+        - any_of:
+          - cloudflare.zone.waf.read
+      waf_package_query:
+        all_of:
+        - any_of:
+          - cloudflare.zone.read
+        - any_of:
+          - cloudflare.zone.waf.read
+      ruleset_entrypoint_update:
+        all_of:
+        - any_of:
+          - cloudflare.zone.read
+        - any_of:
+          - cloudflare.zone.waf.edit
+# Bearer API tokens (`CLOUDFLARE_API_TOKEN`) plus optional outbound OAuth (`oauth:`) — tool-model `connect_profile` is mixed auth.
 auth:
   scheme: bearer_token
   env: CLOUDFLARE_API_TOKEN
