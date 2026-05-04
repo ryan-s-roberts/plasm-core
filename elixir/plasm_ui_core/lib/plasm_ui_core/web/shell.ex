@@ -6,6 +6,8 @@ defmodule PlasmUiCore.Web.Shell do
 
   import PlasmUiCore.Web.CoreComponents, only: [icon: 1]
 
+  alias Phoenix.LiveView.JS
+
   @doc """
   Vertical section stack with consistent spacing between major blocks.
   """
@@ -199,40 +201,55 @@ defmodule PlasmUiCore.Web.Shell do
 
   def stacked_modal(assigns) do
     ~H"""
-    <div
-      id={@id}
-      class={[
-        "fixed inset-0",
-        @z,
-        "flex items-start justify-center overflow-hidden",
-        "pl-[max(1rem,env(safe-area-inset-left,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pt-[max(1rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))]",
-        "sm:pl-[max(2rem,env(safe-area-inset-left,0px))] sm:pr-[max(2rem,env(safe-area-inset-right,0px))] sm:pt-[max(2rem,env(safe-area-inset-top,0px))] sm:pb-[max(2rem,env(safe-area-inset-bottom,0px))]"
-      ]}
-      phx-window-keydown={@close_event}
-      phx-key="Escape"
-    >
-      <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" phx-click={@close_event} />
-      <div class={[
-        "relative z-10 my-4 flex w-full min-h-0 max-h-[min(100dvh-2rem,calc(100vh-2rem))] flex-col sm:my-8",
-        @max_w
-      ]}>
-        <.doc_card
-          padding={@card_padding}
-          class={[
-            "flex min-h-0 max-h-full flex-col overflow-hidden !border-white/25 !bg-slate-950 shadow-[0_40px_110px_-35px_rgba(0,0,0,0.72)]",
-            @card_class
-          ]}
-        >
-          <div class="shrink-0">{render_slot(@title_row)}</div>
-          <div class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-            {render_slot(@body)}
+    <.portal id={"portal-" <> @id} target="body">
+      <div
+        id={@id}
+        class={[
+          "fixed inset-0",
+          @z,
+          "flex min-h-0 flex-col overflow-hidden",
+          "pl-[max(1rem,env(safe-area-inset-left,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pt-[max(1rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))]",
+          "sm:pl-[max(2rem,env(safe-area-inset-left,0px))] sm:pr-[max(2rem,env(safe-area-inset-right,0px))] sm:pt-[max(2rem,env(safe-area-inset-top,0px))] sm:pb-[max(2rem,env(safe-area-inset-bottom,0px))]"
+        ]}
+        phx-window-keydown={@close_event}
+        phx-key="Escape"
+        phx-mounted={
+          JS.add_class("overflow-hidden", to: "html") |> JS.add_class("overflow-hidden", to: "body")
+        }
+        phx-remove={
+          JS.remove_class("overflow-hidden", to: "html")
+          |> JS.remove_class("overflow-hidden", to: "body")
+        }
+      >
+        <div
+          class="absolute inset-0 z-0 bg-slate-950/90 backdrop-blur-sm"
+          phx-click={@close_event}
+          aria-hidden="true"
+        />
+        <div class="relative z-10 flex min-h-0 flex-1 items-start justify-center overflow-hidden">
+          <div class={[
+            "relative my-4 flex w-full min-h-0 max-h-[min(100dvh-2rem,calc(100vh-2rem))] flex-col sm:my-8",
+            @max_w
+          ]}>
+            <.doc_card
+              padding={@card_padding}
+              class={[
+                "flex min-h-0 max-h-full flex-col overflow-hidden !border-white/25 !bg-slate-950 shadow-[0_40px_110px_-35px_rgba(0,0,0,0.72)]",
+                @card_class
+              ]}
+            >
+              <div class="shrink-0">{render_slot(@title_row)}</div>
+              <div class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+                {render_slot(@body)}
+              </div>
+              <div :if={@footer != []} class="shrink-0 border-t border-white/[0.06]">
+                {render_slot(@footer)}
+              </div>
+            </.doc_card>
           </div>
-          <div :if={@footer != []} class="shrink-0 border-t border-white/[0.06]">
-            {render_slot(@footer)}
-          </div>
-        </.doc_card>
+        </div>
       </div>
-    </div>
+    </.portal>
     """
   end
 
