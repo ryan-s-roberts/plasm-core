@@ -196,7 +196,10 @@ impl AuthResolver {
                     .map(str::trim)
                     .filter(|s| !s.is_empty());
                 let token = match (e, h) {
-                    (_, Some(kv)) => self.provider.resolve_hosted_bearer(kv).await?,
+                    (_, Some(kv)) => {
+                        self.resolve_hosted_oauth_envelope_or_bare(kv, "bearer_token")
+                            .await?
+                    }
                     (Some(name), None) => self.require_secret_trimmed(name).await?,
                     (None, None) => {
                         return Err(RuntimeError::AuthenticationError {
@@ -263,6 +266,39 @@ impl AuthResolver {
         Ok(trimmed.to_string())
     }
 
+    /// Hosted KV values are either a **bare secret** (API key, static bearer) or JSON
+    /// [`crate::hosted_oauth_kv::OutboundOAuthKvV1`] when the payload starts with `{`.
+    async fn resolve_hosted_oauth_envelope_or_bare(
+        &self,
+        kv: &str,
+        context: &'static str,
+    ) -> Result<String, RuntimeError> {
+        let raw = self
+            .provider
+            .get_hosted_secret(kv)
+            .await
+            .ok_or_else(|| RuntimeError::AuthenticationError {
+                message: format!(
+                    "Hosted credential '{kv}' is not available ({context}). \
+                     Store it via the control plane or check auth-framework storage."
+                ),
+            })?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(RuntimeError::AuthenticationError {
+                message: format!(
+                    "Hosted credential '{kv}' is empty or whitespace-only ({context})."
+                ),
+            });
+        }
+        // OAuth link + outbound `plasm:outbound:v1:*` keys store JSON v1 envelopes; slots may also
+        // hold a bare token string (same as env-backed bearer/API keys).
+        if trimmed.starts_with('{') {
+            return self.provider.resolve_hosted_bearer(kv).await;
+        }
+        Ok(trimmed.to_string())
+    }
+
     async fn resolve_credential_slot(
         &self,
         env: Option<&str>,
@@ -272,34 +308,7 @@ impl AuthResolver {
         let e = env.map(str::trim).filter(|s| !s.is_empty());
         let h = hosted_kv.map(str::trim).filter(|s| !s.is_empty());
         match (e, h) {
-            (_, Some(kv)) => {
-                let raw = self
-                    .provider
-                    .get_hosted_secret(kv)
-                    .await
-                    .ok_or_else(|| RuntimeError::AuthenticationError {
-                        message: format!(
-                            "Hosted credential '{kv}' is not available ({context}). \
-                             Store it via the control plane or check auth-framework storage."
-                        ),
-                    })?;
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    return Err(RuntimeError::AuthenticationError {
-                        message: format!(
-                            "Hosted credential '{kv}' is empty or whitespace-only ({context})."
-                        ),
-                    });
-                }
-                // OAuth link + outbound `plasm:outbound:v1:*` keys store JSON v1 envelopes; `api_key_*`
-                // slots historically used raw `get_hosted_secret` and would send JSON as the header/query
-                // value. Reuse bearer resolution so access tokens (and refresh) work for `api_key_header`
-                // (e.g. Linear `Authorization`) as well as `bearer_token`.
-                if trimmed.starts_with('{') {
-                    return self.provider.resolve_hosted_bearer(kv).await;
-                }
-                Ok(trimmed.to_string())
-            }
+            (_, Some(kv)) => self.resolve_hosted_oauth_envelope_or_bare(kv, context).await,
             (Some(name), None) => self.require_secret_trimmed(name).await,
             (None, None) => Err(RuntimeError::AuthenticationError {
                 message: format!(
@@ -408,5 +417,66 @@ impl std::fmt::Debug for AuthResolver {
         f.debug_struct("AuthResolver")
             .field("scheme", &self.scheme)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod hosted_bearer_resolution_tests {
+    use super::*;
+    use plasm_core::AuthScheme;
+    use std::collections::HashMap;
+
+    #[derive(Clone, Default)]
+    struct MockSecrets {
+        hosted: HashMap<String, String>,
+    }
+
+    impl SecretProvider for MockSecrets {
+        fn get_secret<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<String>> {
+            Box::pin(async move { None })
+        }
+
+        fn get_hosted_secret<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<String>> {
+            let v = self.hosted.get(key).cloned();
+            Box::pin(async move { v })
+        }
+    }
+
+    #[tokio::test]
+    async fn bearer_token_hosted_kv_accepts_bare_api_key_string() {
+        let key = "plasm:outbound:v1:test";
+        let mut hosted = HashMap::new();
+        hosted.insert(key.into(), "plain-api-key-value".into());
+        let scheme = AuthScheme::BearerToken {
+            env: None,
+            hosted_kv: Some(key.into()),
+        };
+        let r = AuthResolver::new(scheme, Arc::new(MockSecrets { hosted }));
+        let auth = r.resolve().await.expect("resolve");
+        assert_eq!(
+            auth.headers,
+            vec![(
+                "Authorization".into(),
+                "Bearer plain-api-key-value".into()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn bearer_token_hosted_kv_accepts_oauth_envelope_json() {
+        let key = "plasm:outbound:v1:test";
+        let json = r#"{"version":1,"entry_id":"cloudflare","access_token":"oauth-at","expires_at_unix":9999999999}"#;
+        let mut hosted = HashMap::new();
+        hosted.insert(key.into(), json.into());
+        let scheme = AuthScheme::BearerToken {
+            env: None,
+            hosted_kv: Some(key.into()),
+        };
+        let r = AuthResolver::new(scheme, Arc::new(MockSecrets { hosted }));
+        let auth = r.resolve().await.expect("resolve");
+        assert_eq!(
+            auth.headers,
+            vec![("Authorization".into(), "Bearer oauth-at".into())]
+        );
     }
 }
