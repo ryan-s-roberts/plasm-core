@@ -34,9 +34,6 @@ defmodule PlasmUiCore.Web.McpRegistryVisuals do
     "vultr" => "vultr"
   }
 
-  # Remove broken img and reveal the pre-rendered SVG sibling (no dependency on LV hooks).
-  @brand_img_onerror "const r=this.closest('[data-mcp-icon-root]');const f=r&&r.querySelector('[data-mcp-icon-fallback]');this.remove();if(f){f.classList.remove('hidden');f.classList.add('flex');}"
-
   @doc """
   Returns `{:local, basename}` or `:fallback` for unknown entry ids.
 
@@ -177,11 +174,11 @@ defmodule PlasmUiCore.Web.McpRegistryVisuals do
       |> assign(:box_class, box)
       |> assign(:svg_font, svg_font)
       |> assign(:dom_id, dom_id)
-      |> assign(:brand_img_onerror, @brand_img_onerror)
 
     ~H"""
     <span
       data-mcp-icon-root
+      phx-hook="McpBrandIcon"
       class={["relative inline-flex shrink-0 overflow-hidden ring-1 ring-white/10", @box_class]}
       id={@dom_id}
       title={@title}
@@ -201,7 +198,6 @@ defmodule PlasmUiCore.Web.McpRegistryVisuals do
             class="brand-icon-img relative z-[2] h-full w-full bg-slate-100/90 object-contain p-1"
             loading={@img_loading}
             decoding="async"
-            onerror={@brand_img_onerror}
           />
         <% :fallback -> %>
           <span

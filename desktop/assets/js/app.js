@@ -2,10 +2,13 @@ import "phoenix_html"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 
+import {McpBrandIcon} from "./hooks/mcp_brand_icon"
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
 /** Same contract as SaaS `web/` — LiveView `push_event("mcp:copy", %{text})`. */
 const Hooks = {
+  McpBrandIcon,
   McpClipboardBridge: {
     mounted() {
       this.handleEvent("mcp:copy", ({text}) => {

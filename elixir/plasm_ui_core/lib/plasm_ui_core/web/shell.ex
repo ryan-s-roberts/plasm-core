@@ -222,7 +222,7 @@ defmodule PlasmUiCore.Web.Shell do
         }
       >
         <div
-          class="absolute inset-0 z-0 bg-slate-950/90 backdrop-blur-sm"
+          class="absolute inset-0 z-0 bg-slate-950 backdrop-blur-sm"
           phx-click={@close_event}
           aria-hidden="true"
         />
