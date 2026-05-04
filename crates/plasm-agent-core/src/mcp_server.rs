@@ -735,7 +735,7 @@ impl PlasmMcpHandler {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
                 description: Some(
-                    "**Open or extend** one logical session. Send a stable **`intent`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick**. **List every pick on the first open** — several **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …). **Adding picks:** call again with **additional** `{api, entity}` rows when you discover more integrations. **Steady state:** reuse **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; do **not** repeat **`plasm_context`** with identical **`seeds`** every turn—no-op expands omit full DOMAIN replay (token-saving).\n\n\
+                    "**Open or extend** one logical session. Send a stable **`intent`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick**. **List every pick on the first open** — several **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …) as the first line of the Markdown body. **Adding picks:** call again with **additional** `{api, entity}` rows when you discover more integrations. **Steady state:** reuse **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; do **not** repeat **`plasm_context`** with identical **`seeds`** every turn—no-op expands omit full DOMAIN replay (token-saving).\n\n\
                     **Federation / symbols:** `e#` / `m#` / `p#` are **session-local and append-only**. **`p#` tokens are scoped by registry `entry_id`, owning CGS entity, and slot identity** — same wire name on **different** entities or catalogs gets **distinct** opaque `p#` values (no structural sharing across unrelated rows). **`e#` order follows exposed entity rows** in DOMAIN. Prefer **canonical constructor keys** from the CGS (e.g. `owner=`, `repo=`) when multiple integrations load. **Postfix projections** use the **row entity** of that expression; bracket chains like `author[login]` normalize to dotted paths (`author.login`). **`m#` methods are per `(catalog entry_id, domain entity, kebab)`** — resolve `eN` from the current DOMAIN heading before calling `eN.mK()`. Response **`_meta.plasm`** may include **`domain_revision`**, **`domain_wave_count`**, and **`catalog_entry_ids`** so you can verify new teaching text shipped.".into(),
                 ),
                 input_schema: ToolInputSchema::new(
@@ -2263,6 +2263,8 @@ impl ServerHandler for PlasmMcpHandler {
                     }
                     if text.is_empty() {
                         text = format!("`{logical_session_ref}`\n");
+                    } else {
+                        text = format!("`{logical_session_ref}`\n\n{text}");
                     }
                     let mut res = CallToolResult::text_content(vec![TextContent::new(
                         text, None, None,
