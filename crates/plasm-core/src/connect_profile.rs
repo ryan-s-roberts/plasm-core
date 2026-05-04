@@ -14,7 +14,7 @@ pub enum CatalogAuthCapability {
     Public,
     /// `api_key` only.
     ApiKeyOnly,
-    /// `oauth2` only (OAuth extension and/or bearer / client-credentials schemes).
+    /// `oauth2` only (OAuth extension and/or client-credentials auth scheme).
     OauthOnly,
     /// Both `api_key` and `oauth2` are valid for this catalog.
     ApiKeyAndOauth,
@@ -60,7 +60,14 @@ fn normalized_auth_kind_tags(
                 out.push("api_key".to_string());
             }
         }
-        Some(AuthScheme::BearerToken { .. }) | Some(AuthScheme::Oauth2ClientCredentials { .. }) => {
+        // Env-/KV-held bearer secrets (PATs, Cloudflare API tokens, etc.) are API-key style for
+        // outbound connect UX — distinct from OAuth client-credentials machine flow below.
+        Some(AuthScheme::BearerToken { .. }) => {
+            if !out.iter().any(|k| k == "api_key") {
+                out.push("api_key".to_string());
+            }
+        }
+        Some(AuthScheme::Oauth2ClientCredentials { .. }) => {
             if !out.iter().any(|k| k == "oauth2") {
                 out.push("oauth2".to_string());
             }
@@ -118,7 +125,7 @@ pub fn catalog_connect_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::AuthScheme;
+    use crate::schema::{AuthScheme, OauthExtension};
 
     #[test]
     fn explicit_none_is_public_profile() {
@@ -162,5 +169,51 @@ mod tests {
         assert!(p.has_api_key);
         assert!(p.has_oauth);
         assert!(p.oauth.provider_present);
+    }
+
+    #[test]
+    fn bearer_token_env_is_api_key_only() {
+        let auth = AuthScheme::BearerToken {
+            env: Some("CLOUDFLARE_API_TOKEN".into()),
+            hosted_kv: None,
+        };
+        let p = catalog_connect_profile(Some(&auth), None);
+        assert_eq!(p.capability, CatalogAuthCapability::ApiKeyOnly);
+        assert!(p.has_api_key);
+        assert!(!p.has_oauth);
+    }
+
+    #[test]
+    fn bearer_token_plus_oauth_extension_is_mixed() {
+        let auth = AuthScheme::BearerToken {
+            env: Some("GITHUB_TOKEN".into()),
+            hosted_kv: None,
+        };
+        let oauth = OauthExtension {
+            provider: "github".into(),
+            scopes: Default::default(),
+            default_scope_sets: Default::default(),
+            requirements: Default::default(),
+        };
+        let p = catalog_connect_profile(Some(&auth), Some(&oauth));
+        assert_eq!(p.capability, CatalogAuthCapability::ApiKeyAndOauth);
+        assert!(p.has_api_key);
+        assert!(p.has_oauth);
+    }
+
+    #[test]
+    fn oauth2_client_credentials_is_oauth_only() {
+        let auth = AuthScheme::Oauth2ClientCredentials {
+            token_url: "https://example.com/token".into(),
+            client_id_env: Some("CID".into()),
+            client_id_hosted_kv: None,
+            client_secret_env: Some("SEC".into()),
+            client_secret_hosted_kv: None,
+            scopes: vec![],
+        };
+        let p = catalog_connect_profile(Some(&auth), None);
+        assert_eq!(p.capability, CatalogAuthCapability::OauthOnly);
+        assert!(!p.has_api_key);
+        assert!(p.has_oauth);
     }
 }
