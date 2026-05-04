@@ -31,14 +31,20 @@ defmodule PlasmUiCore.ConnectPolicy do
   @type workspace :: :personal | :organization
 
   @doc """
-  When true, the catalog row must not appear in the personal registry (OAuth-only catalogs
-  with no Ops OAuth app and no API-key escape hatch).
+  When true, the catalog row must not appear in the personal registry.
+
+  Hidden only when outbound OAuth is the **sole** advertised path (`has_oauth`, no `has_api_key`,
+  no `has_public_mode`) and Ops has not registered an OAuth app yet. Mixed catalogs must stay
+  visible so users can connect via API key even if `capability` was authored as `oauth_only`.
   """
   def hide_personal_catalog_row?(nil, _), do: true
 
   def hide_personal_catalog_row?(%ConnectProfile{} = p, ops_oauth_ready)
       when is_boolean(ops_oauth_ready) do
-    p.capability == :oauth_only and not ops_oauth_ready
+    oauth_only_no_escape_hatch =
+      p.has_oauth and not p.has_api_key and not p.has_public_mode
+
+    oauth_only_no_escape_hatch and not ops_oauth_ready
   end
 
   @doc """
