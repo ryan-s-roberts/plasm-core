@@ -21,7 +21,7 @@ pub enum TypeError {
         field_type: String,
     },
 
-    /// The model echoed DOMAIN's `$` literally instead of substituting a real value.
+    /// The model echoed the teaching placeholder `$` literally instead of substituting a real value.
     #[error("Literal `$` is prompt-only teaching syntax for field '{field}'; replace with a real value ({expected_type})")]
     DomainPlaceholderLiteral {
         field: String,
@@ -308,18 +308,20 @@ pub enum SchemaError {
         detail: String,
     },
 
-    /// After structural checks, no type-checked DOMAIN-style example line could be synthesized.
+    /// After structural checks, no type-checked teaching example line could be synthesized.
     #[error("Entity '{entity}' is not expression-complete: {detail}")]
     EntityExpressionIncomplete { entity: String, detail: String },
 
-    /// A capability exists in the CGS but has zero representation in the synthesized DOMAIN prompt.
+    /// A capability exists in the CGS but has zero representation in the teaching bundle.
     #[error(
-        "Capability '{capability}' (entity '{entity}') has no synthesized example line in the prompt — the prompt renderer could not produce a valid teaching line for it"
+        "Capability '{capability}' (entity '{entity}') has no synthesized teaching line in the teaching bundle — the renderer could not produce a valid expression witness for it"
     )]
     CapabilityNotRepresentedInDomain { capability: String, entity: String },
 
-    /// One or more capabilities were not taught by synthesized DOMAIN examples.
-    #[error("Capability coverage incomplete: the synthesized DOMAIN prompt omitted {uncovered:?}")]
+    /// One or more capabilities were not represented in teaching-line synthesis.
+    #[error(
+        "Capability coverage incomplete: teaching-line synthesis omitted examples for {uncovered:?}"
+    )]
     CapabilityCoverageIncomplete { uncovered: Vec<(String, String)> },
 
     #[error("oauth.provider must be non-empty")]

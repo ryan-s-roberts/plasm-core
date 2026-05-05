@@ -399,6 +399,7 @@ fn coerce_value_for_field_type(
             _ => val,
         }),
         FieldType::Json => match val {
+            Value::String(ref s) if s.as_str() == "$" => Ok(val),
             Value::String(s) => crate::value::parse_json_subtree_str(&s).ok_or_else(|| {
                 "Json parameter: string must be valid JSON with a top-level object or array"
                     .to_string()
@@ -1198,14 +1199,14 @@ impl<'a> Parser<'a> {
         path_vars.iter().all(|pv| pv == &expected)
     }
 
-    fn parse_dotted_call_with_payload(
+    /// Build Create / Update / Action / Delete from dotted-call args after `resolve_dotted_call_capability`.
+    fn finish_dotted_call_with_payload(
         &mut self,
         source: Expr,
-        label: String,
+        field_raw: String,
+        mut map: IndexMap<String, Value>,
     ) -> Result<Expr, ParseError> {
-        let label = self.normalize_method_symbol_label(&label);
-        let mut map = self.parse_paren_object_arg_list()?;
-        self.expect_char(')')?;
+        let label = self.normalize_method_symbol_label(&field_raw);
         let cap = self.resolve_dotted_call_capability(&label, &source)?;
         self.inject_path_vars_from_get(cap, &source, &mut map);
         self.coerce_object_input_for_cap(cap, &mut map)?;
@@ -1233,6 +1234,16 @@ impl<'a> Parser<'a> {
                     .into(),
             })),
         }
+    }
+
+    fn parse_dotted_call_with_payload(
+        &mut self,
+        source: Expr,
+        label: String,
+    ) -> Result<Expr, ParseError> {
+        let map = self.parse_paren_object_arg_list()?;
+        self.expect_char(')')?;
+        self.finish_dotted_call_with_payload(source, label, map)
     }
 
     /// Parse a comparison operator.
@@ -1850,6 +1861,18 @@ impl<'a> Parser<'a> {
                 self.skip_ws();
                 if self.peek_char() == Some(')') {
                     self.pos += 1;
+                    // Empty `()` must still run path-var injection when the capability has required
+                    // inputs (e.g. scope copied from `Entity(k=$,…)`); zero-arity routing skips that.
+                    let label_norm = self.normalize_method_symbol_label(&field_raw);
+                    if let Ok(cap) = self.resolve_dotted_call_capability(&label_norm, &source) {
+                        if !capability_is_zero_arity_invoke(cap) {
+                            return self.finish_dotted_call_with_payload(
+                                source,
+                                field_raw,
+                                IndexMap::new(),
+                            );
+                        }
+                    }
                     return self.parse_zero_arity_invoke(source, field_raw);
                 }
                 return self.parse_dotted_call_with_payload(source, field_raw);

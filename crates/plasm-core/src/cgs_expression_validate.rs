@@ -2,8 +2,8 @@
 //! expression surface.
 //!
 //! Invoked from [`CGS::validate`](crate::schema::CGS::validate). Structural checks run first; a
-//! witness pass reuses the same line synthesis as DOMAIN ([`crate::prompt_render`]) so we do not
-//! silently skip entities or capabilities in prompts.
+//! witness pass reuses the same line synthesis as the catalog teaching bundle ([`crate::prompt_render`])
+//! so we do not silently skip entities or capabilities on the expression-teaching surface.
 
 use std::collections::HashSet;
 
@@ -94,14 +94,14 @@ fn validate_expression_witnesses(cgs: &CGS) -> Result<(), SchemaError> {
         if n == 0 {
             return Err(SchemaError::EntityExpressionIncomplete {
                 entity: entity_name.to_string(),
-                detail: "no type-checked example lines could be synthesized for DOMAIN (see collect_entity_teaching_block / domain_line_valid)".to_string(),
+                detail: "no type-checked teaching lines could be synthesized for the teaching bundle (see collect_entity_teaching_block / domain_line_valid)".to_string(),
             });
         }
     }
     Ok(())
 }
 
-/// Collect capability ids taught by DOMAIN lines, using renderer metadata (`source_capability`).
+/// Collect capability ids taught by teaching-bundle lines, using renderer metadata (`source_capability`).
 fn covered_capabilities(cgs: &CGS) -> HashSet<String> {
     let bundle = render_domain_prompt_bundle(cgs, RenderConfig::for_eval(None));
     let mut covered = HashSet::new();
@@ -133,7 +133,7 @@ fn covered_capabilities(cgs: &CGS) -> HashSet<String> {
             covered.insert(cap.name.to_string());
         }
     }
-    // When any `Query` for an entity is on the DOMAIN surface, treat every `Get` on that entity as
+    // When any `Query` for an entity appears in the teaching bundle, treat every `Get` on that entity as
     // covered too — fetch-by-id is compositional on the same row type (no unary `e#($)` required).
     let mut domains_with_query: HashSet<String> = HashSet::new();
     for cap_name in &covered {
@@ -211,6 +211,7 @@ mod tests {
             "../../apis/jira",
             "../../apis/linear",
             "../../apis/discord",
+            "../../apis/cloudflare",
         ] {
             let p = Path::new(dir);
             if !p.exists() {
@@ -227,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn linear_domain_covers_all_capabilities() {
+    fn linear_teaching_bundle_covers_all_capabilities() {
         let p = Path::new("../../apis/linear");
         if !p.exists() {
             return;
@@ -236,12 +237,12 @@ mod tests {
         let missing = uncovered_capabilities(&cgs);
         assert!(
             missing.is_empty(),
-            "DOMAIN should witness every capability (GraphQL id binding counts as pathful): {missing:?}"
+            "Teaching bundle should witness every capability (GraphQL id binding counts as pathful): {missing:?}"
         );
     }
 
     #[test]
-    fn slack_domain_covers_all_capabilities() {
+    fn slack_teaching_bundle_covers_all_capabilities() {
         let p = Path::new("../../apis/slack");
         if !p.exists() {
             return;
@@ -250,12 +251,12 @@ mod tests {
         let missing = uncovered_capabilities(&cgs);
         assert!(
             missing.is_empty(),
-            "DOMAIN should witness every capability: {missing:?}"
+            "Teaching bundle should witness every capability: {missing:?}"
         );
     }
 
     #[test]
-    fn discord_domain_covers_all_capabilities() {
+    fn discord_teaching_bundle_covers_all_capabilities() {
         let p = Path::new("../../apis/discord");
         if !p.exists() {
             return;
@@ -264,12 +265,12 @@ mod tests {
         let missing = uncovered_capabilities(&cgs);
         assert!(
             missing.is_empty(),
-            "DOMAIN should witness every capability: {missing:?}"
+            "Teaching bundle should witness every capability: {missing:?}"
         );
     }
 
     #[test]
-    fn overshow_tools_domain_covers_all_capabilities() {
+    fn overshow_tools_teaching_bundle_covers_all_capabilities() {
         let p = Path::new("../../fixtures/schemas/overshow_tools");
         if !p.exists() {
             return;
@@ -278,12 +279,12 @@ mod tests {
         let missing = uncovered_capabilities(&cgs);
         assert!(
             missing.is_empty(),
-            "DOMAIN should witness every capability for overshow_tools fixture: {missing:?}"
+            "Teaching bundle should witness every capability for overshow_tools fixture: {missing:?}"
         );
     }
 
     #[test]
-    fn validate_fails_when_domain_omits_a_declared_capability() {
+    fn validate_fails_when_teaching_bundle_omits_a_declared_capability() {
         let p = Path::new("../../fixtures/schemas/overshow_tools");
         if !p.exists() {
             return;
@@ -300,7 +301,7 @@ mod tests {
 
         let err = cgs
             .validate()
-            .expect_err("duplicate get should fail strict DOMAIN capability coverage");
+            .expect_err("duplicate get should fail strict teaching-bundle capability coverage");
         assert!(
             matches!(
                 err,

@@ -317,11 +317,11 @@ pub enum DomainPromptSource<'a> {
     ExecuteWave { exposure: &'a DomainExposureSession },
 }
 
-/// Product-facing knobs for DOMAIN bundle / TSV (prefer over assembling [`RenderConfig`] at new call sites).
+/// Product-facing knobs for the teaching bundle / TSV (prefer over assembling [`RenderConfig`] at new call sites).
 #[derive(Clone, Copy, Debug)]
 pub struct DomainPromptSettings<'a> {
     pub include_domain_execution_model: bool,
-    /// When false, DOMAIN uses canonical names (tool explorer / narrow tests); when true, `e#`/`p#`/`m#` symbolic TSV.
+    /// When false, teaching rows use canonical names (tool explorer / narrow tests); when true, `e#`/`p#`/`m#` symbolic TSV.
     pub symbolic: bool,
     pub symbol_map_cross_cache: Option<&'a SymbolMapCrossRequestCache>,
 }
@@ -667,7 +667,7 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
     }
 }
 
-/// DOMAIN bundle using [`crate::symbol_tuning::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`).
+/// Teaching bundle using [`crate::symbol_tuning::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`).
 /// When `emit_entity_blocks` is `Some`, only those entity blocks are rendered (incremental wave).
 pub fn render_domain_prompt_bundle_for_exposure(
     cgs: &CGS,
@@ -2533,9 +2533,11 @@ fn can_bind_create_from_anchor(cap: &crate::CapabilitySchema, anchor: &str) -> b
     path_vars.iter().all(|pv| pv == &expected)
 }
 
-/// Omit `team_id`-style path keys from explicit `(…)` — parser injects them from `Entity($)` / `Entity(42)` on the left.
+/// Omit path-bound scope keys from explicit dotted-call `(…)` when they are already supplied by the
+/// receiver: unary `Entity($)` injects `{entity}_id`, and compound `Entity(k1=$, k2=$)` injects each
+/// `key_vars` slot that also appears as a path template variable.
 fn field_omitted_from_path_inject(
-    anchor_entity: &str,
+    ent: &EntityDef,
     cap: &crate::CapabilitySchema,
     field_name: &str,
 ) -> bool {
@@ -2543,8 +2545,35 @@ fn field_omitted_from_path_inject(
     if !path_vars.iter().any(|pv| pv == field_name) {
         return false;
     }
-    let expected = format!("{}_id", anchor_entity.to_lowercase());
-    field_name == expected
+    let unary_anchor_id = format!("{}_id", ent.name.to_lowercase());
+    if field_name == unary_anchor_id {
+        return true;
+    }
+    // Compound receiver `Entity(k1=$,…)` may inject path vars that duplicate explicit scope args,
+    // but only when every identity key that appears on this capability's HTTP path is also a
+    // declared required scope parameter (some APIs bind extra path segments purely from row keys).
+    if ent.key_vars.len() > 1 {
+        if let Some(is) = cap.input_schema.as_ref() {
+            if let InputType::Object { fields, .. } = &is.input_type {
+                let required_scope: HashSet<&str> = fields
+                    .iter()
+                    .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
+                    .map(|f| f.name.as_str())
+                    .collect();
+                let path_set: HashSet<&str> = path_vars.iter().map(|s| s.as_str()).collect();
+                let every_path_bound_key_declared = ent.key_vars.iter().all(|kv| {
+                    let k = kv.as_str();
+                    !path_set.contains(k) || required_scope.contains(k)
+                });
+                if every_path_bound_key_declared
+                    && ent.key_vars.iter().any(|kv| kv.as_str() == field_name)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Capability legend after result gloss in teaching rows: `[scope …]` / `optional params: …` only.
@@ -2634,6 +2663,7 @@ fn build_dotted_call_paren_args(
     cgs: &CGS,
     map: Option<&SymbolMap>,
 ) -> Option<String> {
+    let ent = cgs.get_entity(anchor_entity)?;
     let is = cap.input_schema.as_ref()?;
     let InputType::Object { fields, .. } = &is.input_type else {
         return None;
@@ -2646,7 +2676,7 @@ fn build_dotted_call_paren_args(
         if !field_is_filter_like(f) {
             continue;
         }
-        if field_omitted_from_path_inject(anchor_entity, cap, f.name.as_str()) {
+        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
         if !f.required {
@@ -2659,7 +2689,7 @@ fn build_dotted_call_paren_args(
         if !f.required || !matches!(f.role, Some(ParameterRole::Scope)) {
             continue;
         }
-        if field_omitted_from_path_inject(anchor_entity, cap, f.name.as_str()) {
+        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
         parts.push(scope_param_slot(f, cap, cgs, map));
@@ -2671,7 +2701,7 @@ fn build_dotted_call_paren_args(
         if !field_is_filter_like(f) {
             continue;
         }
-        if field_omitted_from_path_inject(anchor_entity, cap, f.name.as_str()) {
+        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
         if !f.required {
@@ -2688,8 +2718,10 @@ fn build_dotted_call_paren_args(
     if parts.is_empty() && has_optional {
         return Some("..".to_string());
     }
+    // Path-bound scope slots may be fully injected from a compound receiver (`Entity(k1=$,k2=$)`),
+    // leaving only `method()` for zero-body deletes / similar invokes.
     if parts.is_empty() {
-        return None;
+        return Some(String::new());
     }
     if has_optional {
         Some(format!("{},..", parts.join(", ")))
@@ -2721,6 +2753,7 @@ fn build_standalone_create_paren_args(
         return build_dotted_call_paren_args(ename, cap, cgs, map);
     }
 
+    let ent = cgs.get_entity(ename)?;
     let mut has_optional = false;
     for f in fields {
         if matches!(f.role, Some(ParameterRole::Scope)) {
@@ -2729,7 +2762,7 @@ fn build_standalone_create_paren_args(
         if !field_is_filter_like(f) {
             continue;
         }
-        if field_omitted_from_path_inject(ename, cap, f.name.as_str()) {
+        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
         if !f.required {
@@ -2750,7 +2783,7 @@ fn build_standalone_create_paren_args(
         if !field_is_filter_like(f) {
             continue;
         }
-        if field_omitted_from_path_inject(ename, cap, f.name.as_str()) {
+        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
         match invoke_dotted_call_arg_example(f, cap, cgs, map) {

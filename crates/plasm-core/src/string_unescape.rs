@@ -84,8 +84,8 @@ pub fn normalize_structured_string_inputs(
             if matches!(field_type, FieldType::Json) {
                 if let Value::String(s) = value {
                     let candidate = unescape_json_style_escapes(&s);
-                    if let Some(parsed) = parse_json_subtree_str(&candidate)
-                        .or_else(|| parse_json_subtree_str(&s))
+                    if let Some(parsed) =
+                        parse_json_subtree_str(&candidate).or_else(|| parse_json_subtree_str(&s))
                     {
                         return parsed;
                     }
@@ -286,9 +286,6 @@ mod tests {
         let out = normalize_structured_string_inputs(v, &input_type, &cgs);
         let obj = out.as_object().unwrap();
         let inner = obj.get("p4").unwrap().as_object().unwrap();
-        assert_eq!(
-            inner.get("name").unwrap().as_str().unwrap(),
-            "t"
-        );
+        assert_eq!(inner.get("name").unwrap().as_str().unwrap(), "t");
     }
 }
