@@ -16,3 +16,4 @@ tracing = { workspace = true }
 opentelemetry = { workspace = true }
 fastembed = { workspace = true }
 indexmap = { workspace = true }
+inflection = { workspace = true }

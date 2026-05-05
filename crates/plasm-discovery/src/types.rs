@@ -15,6 +15,8 @@ pub mod evidence_codes {
     pub const EMBEDDING_SIM: &str = "embedding_similarity";
     pub const GRAPH_QUALIFIER_OK: &str = "graph_qualifier_ok";
     pub const GRAPH_QUALIFIER_BAD: &str = "graph_qualifier_bad";
+    pub const RELATION_INTENT: &str = "relation_intent";
+    pub const CAMEL_SEGMENT_CONJUNCTION: &str = "camel_segment_conjunction";
 }
 
 #[derive(Debug, Clone, Error)]

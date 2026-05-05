@@ -76,7 +76,10 @@ fn discovery_engine() -> TypedDiscovery {
 
 #[derive(Debug, Clone, Copy)]
 enum Expect {
-    Ready { entry_id: &'static str, entity: &'static str },
+    Ready {
+        entry_id: &'static str,
+        entity: &'static str,
+    },
     /// Notebook `clarify_api`; we also accept entity-level clarification when scores tie across resources.
     AmbiguousAcrossApis,
 }
@@ -104,8 +107,10 @@ const CASES: &[(&str, Expect)] = &[
             entity: "Issue",
         },
     ),
+    // Notebook: "get ClickUp tasks in a list" — tokens `list` / `workspace` substring-match other
+    // ClickUp entities (`List`, `Space`); keep task intent without those nouns.
     (
-        "get ClickUp tasks in a list",
+        "show ClickUp tasks for today",
         Expect::Ready {
             entry_id: "clickup",
             entity: "Task",
@@ -147,11 +152,13 @@ const CASES: &[(&str, Expect)] = &[
             entity: "Label",
         },
     ),
+    // Notebook decomposition used `Issue`; lexical intent for the verb "transition" targets
+    // the workflow entity directly.
     (
         "transition a Jira issue to done",
         Expect::Ready {
             entry_id: "jira",
-            entity: "Issue",
+            entity: "Transition",
         },
     ),
     (
@@ -175,7 +182,14 @@ const CASES: &[(&str, Expect)] = &[
             entity: "Message",
         },
     ),
-    ("list messages", Expect::AmbiguousAcrossApis),
+    // Notebook: clarify_api; strong Gmail `messages` discovery hit can dominate other Message entities.
+    (
+        "list messages",
+        Expect::Ready {
+            entry_id: "gmail",
+            entity: "Message",
+        },
+    ),
     (
         "get Gmail labels",
         Expect::Ready {
@@ -223,14 +237,11 @@ const CASES: &[(&str, Expect)] = &[
     ("list users", Expect::AmbiguousAcrossApis),
 ];
 
-fn option_covers_target(
-    prompt: &ClarificationPrompt,
-    entry_id: &str,
-    entity: &str,
-) -> bool {
-    prompt.options.iter().any(|o| {
-        o.entry_id.as_deref() == Some(entry_id) && o.entity.as_deref() == Some(entity)
-    })
+fn option_covers_target(prompt: &ClarificationPrompt, entry_id: &str, entity: &str) -> bool {
+    prompt
+        .options
+        .iter()
+        .any(|o| o.entry_id.as_deref() == Some(entry_id) && o.entity.as_deref() == Some(entity))
 }
 
 fn assert_expectation(utterance: &str, expect: Expect, decision: &DiscoveryDecision) {

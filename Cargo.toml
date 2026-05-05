@@ -124,6 +124,7 @@ rquickjs = { version = "0.6", default-features = true }
 
 # Utility crates
 arc-swap = "1.7"
+inflection = "0.1.2"
 indexmap = { version = "2.0", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "v5"] }
 url = "2.5"

@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use inflection::{plural, singular};
 use plasm_core::schema::{CapabilityKind, CGS};
 use tracing::{debug_span, info_span, Instrument};
 
-use crate::decompose::decompose;
+use crate::decompose::{decompose, tokenize};
 use crate::embedder::{cosine_sim, BlockingEmbedder};
 use crate::index::{qualifier_supported, CatalogIndex, PhraseHit, PhraseSource};
 use crate::metrics;
@@ -17,6 +18,124 @@ use crate::types::{
     ClarificationPrompt, ClarificationState, DiscoveryDecision, DiscoveryError, DiscoveryEvidence,
     DiscoveryQuery, ReadyTarget, TargetHypothesis,
 };
+
+/// Score bump when an utterance token matches a CGS relation wire name on some hypothesis entity,
+/// boosting that relation's target entity (only if the target is already a lexical hypothesis).
+/// Large enough to overcome typical entity-name-token bonuses on a parent entity when relation
+/// vocabulary (e.g. `comments`) is present in the utterance.
+const RELATION_INTENT_SCORE_BONUS: f64 = 55.0;
+
+fn token_matches_inflected_noun(token_lower: &str, label_lower: &str) -> bool {
+    if token_lower == label_lower {
+        return true;
+    }
+    let l_pl = plural::<_, String>(label_lower);
+    let l_sg = singular::<_, String>(label_lower);
+    if token_lower == l_pl.as_str() || token_lower == l_sg.as_str() {
+        return true;
+    }
+    let t_sg = singular::<_, String>(token_lower);
+    let t_pl = plural::<_, String>(token_lower);
+    t_sg.as_str() == label_lower || t_pl.as_str() == label_lower
+}
+
+fn relation_wire_name_matches_tokens(wire_name: &str, tokens: &[String]) -> bool {
+    let parts: Vec<&str> = wire_name.split('_').filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return false;
+    }
+    // Every segment must match: avoids `issue_types` firing on utterances that only mention
+    // `issues` (Linear/GitHub-style pivots).
+    parts.iter().all(|part| {
+        let label = part.to_lowercase();
+        tokens
+            .iter()
+            .any(|t| token_matches_inflected_noun(t.as_str(), &label))
+    })
+}
+
+/// Same rule as the entity `+25` bonus: whole-token entity name (ASCII alnum split), plus simple plural forms.
+fn utterance_has_entity_name_token(entity: &str, utterance_lower: &str) -> bool {
+    let en = entity.to_lowercase();
+    for t in utterance_lower.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let t = t.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t == en {
+            return true;
+        }
+        if !en.ends_with('s') && t == format!("{en}s") {
+            return true;
+        }
+        if en.ends_with('e') && t == format!("{}s", en) {
+            return true;
+        }
+    }
+    false
+}
+
+fn apply_relation_intent_boosts(
+    hypotheses: &mut [TargetHypothesis],
+    discovery: &TypedDiscovery,
+    utterance_tokens: &[String],
+    utterance_lower: &str,
+) {
+    let present: HashSet<(String, String)> = hypotheses
+        .iter()
+        .map(|h| (h.entry_id.clone(), h.entity.clone()))
+        .collect();
+
+    #[derive(Default)]
+    struct Acc {
+        bonus: f64,
+        details: Vec<String>,
+    }
+    let mut boost_by_target: HashMap<(String, String), Acc> = HashMap::new();
+
+    for h in hypotheses.iter() {
+        let Some(cgs) = discovery.cgs_for_entry(&h.entry_id) else {
+            continue;
+        };
+        let Some(ent) = cgs.entities.get(h.entity.as_str()) else {
+            continue;
+        };
+        for rel in ent.relations.values() {
+            if !relation_wire_name_matches_tokens(rel.name.as_str(), utterance_tokens) {
+                continue;
+            }
+            let target = rel.target_resource.to_string();
+            let key = (h.entry_id.clone(), target);
+            if present.contains(&key) {
+                let acc = boost_by_target.entry(key).or_default();
+                acc.bonus += RELATION_INTENT_SCORE_BONUS;
+                acc.details
+                    .push(format!("{}.{}", h.entity, rel.name.as_str()));
+            }
+        }
+    }
+
+    for h in hypotheses.iter_mut() {
+        let k = (h.entry_id.clone(), h.entity.clone());
+        let Some(acc) = boost_by_target.get(&k) else {
+            continue;
+        };
+        if acc.bonus <= 0.0 {
+            continue;
+        }
+        // Scope pivots ("for a team") already surface the target entity via the normal entity-token
+        // bonus; relation-name boosts are for reaching *nested* rows (e.g. comments) whose wire name
+        // appears but whose entity slug does not.
+        if utterance_has_entity_name_token(&h.entity, utterance_lower) {
+            continue;
+        }
+        h.score += acc.bonus;
+        h.evidence.push(DiscoveryEvidence::new(
+            evidence_codes::RELATION_INTENT,
+            acc.details.join("; "),
+        ));
+    }
+}
 
 /// Async typed discovery over one or more loaded CGS graphs.
 pub struct TypedDiscovery {
@@ -191,6 +310,7 @@ impl TypedDiscovery {
         metrics::record_intent_decompose_duration(t_dec0.elapsed());
 
         let lower = utterance.to_lowercase();
+        let ut_tokens = tokenize(&lower);
 
         let mut hits: Vec<PhraseHit> = Vec::new();
         for idx in &self.indexes {
@@ -236,8 +356,25 @@ impl TypedDiscovery {
             else {
                 continue;
             };
-            let score = Self::score_hit(&h);
-            let ev = vec![Self::evidence_for_hit(&h)];
+            let mut score = Self::score_hit(&h);
+            // Prefer the entity whose *name* appears as a tokenizer word (not a substring), plus
+            // common English plurals, over description-only hits (e.g. Linear `Issue` vs `Comment`).
+            let ent_token_hit = utterance_has_entity_name_token(&h.entity, &lower);
+            if ent_token_hit {
+                score += 25.0;
+            }
+            score += crate::index::camel_entity_phrase_substring_bonus(&h.entity, &lower);
+            let camel_seg = crate::index::camel_entity_segment_token_bonus(&h.entity, &ut_tokens);
+            if camel_seg > 0.0 {
+                score += camel_seg;
+            }
+            let mut ev = vec![Self::evidence_for_hit(&h)];
+            if camel_seg > 0.0 {
+                ev.push(DiscoveryEvidence::new(
+                    evidence_codes::CAMEL_SEGMENT_CONJUNCTION,
+                    h.entity.clone(),
+                ));
+            }
             hypotheses.push(TargetHypothesis {
                 entry_id: h.entry_id.clone(),
                 entity: h.entity.clone(),
@@ -265,6 +402,7 @@ impl TypedDiscovery {
                 .or_insert(hyp);
         }
         let mut hypotheses: Vec<TargetHypothesis> = best.into_values().collect();
+        apply_relation_intent_boosts(&mut hypotheses, self, &ut_tokens, &lower);
         hypotheses.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -552,5 +690,153 @@ impl crate::AgentDiscovery for TypedDiscovery {
             q.force_entity = Some(e.clone());
         }
         self.discover_inner(&q).await
+    }
+}
+
+#[cfg(test)]
+mod relation_intent_rank_tests {
+    use super::*;
+    use crate::AgentDiscovery;
+    use plasm_core::schema::{
+        CapabilityMapping, CapabilitySchema, Cardinality, DiscoveryCapabilityHints, FieldSchema,
+        FieldValueKind, NamedValueSchema, RelationSchema, ResourceSchema, ValueDomainKey,
+    };
+    use plasm_core::{CapabilityName, EntityFieldName, EntityName, FieldType, RelationName};
+
+    fn query_mapping_body() -> serde_json::Value {
+        serde_json::json!({
+            "method": "POST",
+            "path": [
+                {"type": "literal", "value": "query"},
+            ],
+            "body": {"type": "object", "fields": []}
+        })
+    }
+
+    fn minimal_parent_child_comments_cgs() -> CGS {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tid".to_string(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        let id_key = ValueDomainKey::new("tid").unwrap();
+        let id_field = FieldSchema {
+            name: EntityFieldName::from("id"),
+            kind: FieldValueKind::Registry(id_key),
+            description: String::new(),
+            required: true,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+        };
+        cgs.add_resource(ResourceSchema {
+            name: EntityName::from("Parent"),
+            description: "Stores files in the system".into(),
+            id_field: EntityFieldName::from("id"),
+            id_format: None,
+            id_from: None,
+            fields: vec![id_field.clone()],
+            relations: vec![RelationSchema {
+                name: RelationName::from("comments"),
+                description: String::new(),
+                target_resource: EntityName::from("Child"),
+                cardinality: Cardinality::Many,
+                materialize: None,
+                discovery: None,
+            }],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: Some(plasm_core::schema::DiscoveryEntityHints {
+                names: vec!["thing".into()],
+                qualifier_names: vec![],
+            }),
+        })
+        .unwrap();
+        cgs.add_resource(ResourceSchema {
+            name: EntityName::from("Child"),
+            description: "Reply threads for nested views".into(),
+            id_field: EntityFieldName::from("id"),
+            id_format: None,
+            id_from: None,
+            fields: vec![id_field],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: None,
+        })
+        .unwrap();
+
+        let tmpl: CapabilityMapping = CapabilityMapping {
+            template: query_mapping_body().into(),
+        };
+        cgs.add_capability(CapabilitySchema {
+            name: CapabilityName::from("query_parent"),
+            description: String::new(),
+            kind: CapabilityKind::Query,
+            domain: EntityName::from("Parent"),
+            mapping: tmpl.clone(),
+            input_schema: None,
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            invoke_preflight: None,
+            discovery: None,
+        })
+        .unwrap();
+        cgs.add_capability(CapabilitySchema {
+            name: CapabilityName::from("query_child"),
+            description: String::new(),
+            kind: CapabilityKind::Query,
+            domain: EntityName::from("Child"),
+            mapping: tmpl,
+            input_schema: None,
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            invoke_preflight: None,
+            discovery: Some(DiscoveryCapabilityHints {
+                operation_terms: vec![],
+                target_terms: vec!["comment".into()],
+            }),
+        })
+        .unwrap();
+        cgs
+    }
+
+    #[tokio::test]
+    async fn relation_intent_boost_prefers_relation_target_over_parent_token_match() {
+        let cgs = Arc::new(minimal_parent_child_comments_cgs());
+        let discovery = TypedDiscovery::from_cgs_entries(vec![("demo".into(), cgs)], false);
+        let q = DiscoveryQuery {
+            utterance: "get thing comments".into(),
+            allowed_entry_ids: vec![],
+            prior_state: None,
+            max_options: 8,
+            enable_embeddings: false,
+            force_entry_id: None,
+            force_entity: None,
+        };
+        let decision = discovery.discover(q).await.unwrap();
+        match decision {
+            DiscoveryDecision::Ready { target } => assert_eq!(target.entity, "Child"),
+            other => panic!("expected Ready, got {other:?}"),
+        }
     }
 }
