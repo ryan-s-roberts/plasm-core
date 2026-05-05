@@ -5615,6 +5615,7 @@ mod tests {
                 target_resource: "Shelf".into(),
                 cardinality: Cardinality::Many,
                 materialize: None,
+                discovery: None,
             }],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -5622,6 +5623,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_resource(ResourceSchema {
@@ -5638,6 +5640,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         let tmpl =
@@ -5656,6 +5659,7 @@ mod tests {
                 provides: vec![],
                 scope_aggregate_key_policy: Default::default(),
                 invoke_preflight: None,
+                discovery: None,
             })
             .unwrap();
         }
@@ -5754,6 +5758,7 @@ mod tests {
                 abstract_entity: false,
                 domain_projection_examples: true,
                 primary_read: None,
+                discovery: None,
             })
             .unwrap();
             let cap_name: String = format!("{}_get", name.to_lowercase());
@@ -5777,6 +5782,7 @@ mod tests {
                 provides: vec![],
                 scope_aggregate_key_policy: Default::default(),
                 invoke_preflight: None,
+                discovery: None,
             })
             .unwrap();
         }

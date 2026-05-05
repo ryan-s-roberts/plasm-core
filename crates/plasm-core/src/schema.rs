@@ -28,6 +28,38 @@ impl From<serde_json::Value> for CapabilityTemplateJson {
     }
 }
 
+/// Domain-language hints for typed discovery phrase / lexical indexes (`domain.yaml` → [`ResourceSchema`] / [`EntityDef`]).
+///
+/// Authoring should name how humans refer to the entity (synonyms), not ranking preferences across catalogs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiscoveryEntityHints {
+    /// Noun phrases that refer to this entity (matched case-insensitively; normalize to lowercase in authoring).
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// Tokens that often scope this entity in prepositional phrases (e.g. `type` for a subtype entity).
+    #[serde(default)]
+    pub qualifier_names: Vec<String>,
+}
+
+/// Optional capability-level vocabulary for operation vs target wording in natural language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiscoveryCapabilityHints {
+    #[serde(default)]
+    pub operation_terms: Vec<String>,
+    #[serde(default)]
+    pub target_terms: Vec<String>,
+}
+
+/// Optional relation edge hints for graph-aware qualifier validation and traversal bias.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DiscoveryRelationHints {
+    #[serde(default)]
+    pub qualifier_terms: Vec<String>,
+    /// Optional edge weight when graph distance is used as evidence (not a cross-catalog ranking flag).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traversal_weight: Option<f32>,
+}
+
 /// A complete schema definition for a resource/entity type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceSchema {
@@ -88,6 +120,9 @@ pub struct ResourceSchema {
     /// another entity, [`CGS::resolved_primary_get_for_projection`] falls back to [`CGS::primary_get_capability`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
+    /// Typed-discovery vocabulary for this entity (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<DiscoveryEntityHints>,
 }
 
 fn default_domain_projection_examples() -> bool {
@@ -464,6 +499,8 @@ pub struct RelationSchema {
     /// When set, defines how chain traversal materializes targets (`cardinality: many` required).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub materialize: Option<RelationMaterialization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<DiscoveryRelationHints>,
 }
 
 /// Cardinality of a relation.
@@ -523,6 +560,9 @@ pub struct CapabilitySchema {
     /// on the invoke target and merge decoded fields into the CML env under `env_prefix_*`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invoke_preflight: Option<InvokePreflight>,
+    /// Typed-discovery hints for this capability (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<DiscoveryCapabilityHints>,
 }
 
 /// Declarative preflight for [`CapabilitySchema`] (e.g. hydrate parent row before a write).
@@ -1363,6 +1403,8 @@ pub struct EntityDef {
     /// Optional: capability **id** of a **Get** on this entity for DOMAIN heading projection order (see [`CGS::resolved_primary_get_for_projection`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<DiscoveryEntityHints>,
 }
 
 impl ResourceSchema {
@@ -1432,6 +1474,7 @@ impl ResourceSchema {
             abstract_entity: self.abstract_entity,
             domain_projection_examples: self.domain_projection_examples,
             primary_read: self.primary_read.clone(),
+            discovery: self.discovery.clone(),
         })
     }
 }

@@ -122,6 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         abstract_entity: false,
         domain_projection_examples: false,
         primary_read: None,
+        discovery: None,
     };
     cgs.add_resource(account)?;
     cgs.validate()?;

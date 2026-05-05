@@ -85,6 +85,10 @@ pub fn internal_or_outbound_setup_authorized(
 mod tests {
     use super::*;
     use axum::http::{HeaderName, HeaderValue};
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate `PLASM_OUTBOUND_SETUP_SECRET` (parallel runs race on process env).
+    static OUTBOUND_SETUP_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_plasm_outbound_setup_secret<R>(secret: &str, f: impl FnOnce() -> R) -> R {
         const KEY: &str = "PLASM_OUTBOUND_SETUP_SECRET";
@@ -117,6 +121,9 @@ mod tests {
 
     #[test]
     fn outbound_setup_secret_authorizes_when_env_and_header_match() {
+        let _g = OUTBOUND_SETUP_ENV_LOCK
+            .lock()
+            .expect("outbound setup env lock");
         let secret = "0123456789012345678901234567890ab";
         with_plasm_outbound_setup_secret(secret, || {
             let mut headers = HeaderMap::new();
@@ -128,6 +135,9 @@ mod tests {
 
     #[test]
     fn outbound_setup_secret_rejects_mismatch() {
+        let _g = OUTBOUND_SETUP_ENV_LOCK
+            .lock()
+            .expect("outbound setup env lock");
         let secret = "0123456789012345678901234567890ab";
         with_plasm_outbound_setup_secret(secret, || {
             let mut headers = HeaderMap::new();

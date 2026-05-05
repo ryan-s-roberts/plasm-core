@@ -1,0 +1,18 @@
+[package]
+name = "plasm-discovery"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+description = "Typed, graph-aware discovery with optional local fastembed recall"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+opentelemetry = { workspace = true }
+fastembed = { workspace = true }
+indexmap = { workspace = true }

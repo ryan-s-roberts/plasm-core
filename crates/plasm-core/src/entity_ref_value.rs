@@ -298,6 +298,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let row = Value::Object(
             vec![
@@ -331,6 +332,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let row = Value::Object(
             vec![(
@@ -400,6 +402,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let row = Value::Object(
             vec![(
@@ -437,6 +440,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let partial = Value::Object(
             vec![("repo".into(), Value::String("plasm-core".into()))]

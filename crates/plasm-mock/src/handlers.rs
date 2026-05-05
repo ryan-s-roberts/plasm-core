@@ -268,6 +268,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         schema.add_resource(account).unwrap();
 

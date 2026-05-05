@@ -15,6 +15,10 @@ pub mod problem_types {
         "https://plasm.invalid/problems/plasm-discovery-empty-query";
     pub const DISCOVERY_UNKNOWN_ENTRY: &str =
         "https://plasm.invalid/problems/plasm-discovery-unknown-entry";
+    pub const DISCOVERY_TYPED_BAD_REQUEST: &str =
+        "https://plasm.invalid/problems/plasm-discovery-typed-bad-request";
+    pub const DISCOVERY_TYPED_ERROR: &str =
+        "https://plasm.invalid/problems/plasm-discovery-typed-error";
     pub const TOOL_MODEL_BAD_REQUEST: &str =
         "https://plasm.invalid/problems/plasm-tool-model-bad-request";
 

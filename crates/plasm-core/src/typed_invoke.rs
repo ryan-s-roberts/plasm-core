@@ -136,7 +136,17 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
         } => {
             use crate::FieldType;
             if matches!(field_type, FieldType::Json) {
-                return Ok(TypedInvokeInput::Json(value.clone()));
+                let v = match value {
+                    Value::String(ref s) => {
+                        if let Some(parsed) = crate::value::parse_json_subtree_str(s) {
+                            parsed
+                        } else {
+                            value.clone()
+                        }
+                    }
+                    _ => value.clone(),
+                };
+                return Ok(TypedInvokeInput::Json(v));
             }
             let lit = TypedLiteral::try_from_value(value).map_err(|_| ())?;
             Ok(TypedInvokeInput::Leaf(lit))

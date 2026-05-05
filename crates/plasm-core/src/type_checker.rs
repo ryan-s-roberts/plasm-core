@@ -1395,6 +1395,7 @@ mod tests {
                 target_resource: "Contact".into(),
                 cardinality: Cardinality::Many,
                 materialize: None,
+                discovery: None,
             }],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -1402,6 +1403,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
 
         let contact = ResourceSchema {
@@ -1428,6 +1430,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
 
         cgs.add_resource(account).unwrap();
@@ -1508,6 +1511,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1534,6 +1538,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1554,6 +1559,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         };
         cgs.add_capability(get_pet).unwrap();
 
@@ -1574,6 +1580,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         };
         cgs.add_capability(get_order).unwrap();
 
@@ -1709,6 +1716,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_resource(ResourceSchema {
@@ -1731,6 +1739,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         // No Get capability for B
@@ -1821,6 +1830,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let cap_params = [InputFieldSchema {
             name: "owner".to_string(),
@@ -1898,6 +1908,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let cap_params = [InputFieldSchema {
             name: "state".to_string(),
@@ -1932,6 +1943,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let cap_params = [InputFieldSchema {
             name: "includeSpamTrash".to_string(),
@@ -1982,6 +1994,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let cap_params = [InputFieldSchema {
             name: "q".to_string(),
@@ -2030,6 +2043,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
         let cap_params = [InputFieldSchema {
             name: "limit".to_string(),
@@ -2103,6 +2117,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -2129,6 +2144,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -2189,6 +2205,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -2215,6 +2232,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 

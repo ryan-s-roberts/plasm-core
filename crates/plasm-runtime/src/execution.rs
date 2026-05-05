@@ -4657,6 +4657,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
 
         cgs.add_resource(account).unwrap();
@@ -4685,6 +4686,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         };
 
         cgs.add_capability(query_capability).unwrap();
@@ -4711,6 +4713,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         };
 
         cgs.add_capability(get_capability).unwrap();

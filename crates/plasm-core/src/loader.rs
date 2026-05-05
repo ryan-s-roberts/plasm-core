@@ -126,6 +126,8 @@ pub struct DomainEntity {
     /// Optional Get capability id for projection exemplar field order (`provides` / default order).
     #[serde(default)]
     pub primary_read: Option<String>,
+    #[serde(default)]
+    pub discovery: Option<crate::DiscoveryEntityHints>,
 }
 
 fn default_domain_projection_examples() -> bool {
@@ -225,6 +227,8 @@ pub struct DomainRelation {
     /// How chain traversal resolves this edge (`query_scoped`, `from_parent_get`, …).
     #[serde(default)]
     pub materialize: Option<crate::RelationMaterialization>,
+    #[serde(default)]
+    pub discovery: Option<crate::DiscoveryRelationHints>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +262,8 @@ pub struct DomainCapability {
     pub input_schema: Option<InputSchema>,
     #[serde(default)]
     pub invoke_preflight: Option<crate::InvokePreflight>,
+    #[serde(default)]
+    pub discovery: Option<crate::DiscoveryCapabilityHints>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -665,6 +671,7 @@ fn assemble_cgs(
                     Cardinality::One
                 },
                 materialize: r.materialize.clone(),
+                discovery: r.discovery.clone(),
             })
             .collect();
 
@@ -694,6 +701,7 @@ fn assemble_cgs(
             abstract_entity: entity.abstract_entity,
             domain_projection_examples: entity.domain_projection_examples,
             primary_read: entity.primary_read.clone(),
+            discovery: entity.discovery.clone(),
         };
 
         cgs.add_resource(resource)
@@ -737,6 +745,7 @@ fn assemble_cgs(
             provides: cap.provides.clone(),
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             invoke_preflight: cap.invoke_preflight.clone(),
+            discovery: cap.discovery.clone(),
         };
 
         cgs.add_capability(capability)

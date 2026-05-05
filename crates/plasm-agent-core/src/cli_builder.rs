@@ -775,6 +775,7 @@ mod tests {
                 target_resource: "Contact".into(),
                 cardinality: Cardinality::Many,
                 materialize: None,
+                discovery: None,
             }],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -782,6 +783,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -839,6 +841,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -889,6 +892,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         }).unwrap();
 
         // query_contacts: role filter parameter (enables contacts relation filter)
@@ -930,6 +934,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         }).unwrap();
 
         cgs
@@ -1133,6 +1138,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1157,6 +1163,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1211,6 +1218,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1253,6 +1261,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1273,6 +1282,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         }).unwrap();
 
         cgs.add_capability(CapabilitySchema {
@@ -1292,6 +1302,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -1349,6 +1360,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         }).unwrap();
 
         cgs

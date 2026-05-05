@@ -617,6 +617,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .expect("resource");
         cgs
@@ -632,7 +633,8 @@ mod tests {
                 output_schema: None,
                 provides: vec![],
                 scope_aggregate_key_policy: Default::default(),
-            invoke_preflight: None,
+                invoke_preflight: None,
+                discovery: None,
             })
             .expect("capability");
         cgs.validate().expect("validate");
@@ -712,6 +714,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .expect("resource");
         cgs.add_capability(CapabilitySchema {
@@ -727,6 +730,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .expect("capability");
         cgs.validate().expect("validate");
@@ -876,6 +880,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .expect("resource");
         cgs
@@ -891,7 +896,8 @@ mod tests {
                 output_schema: None,
                 provides: vec![],
                 scope_aggregate_key_policy: Default::default(),
-            invoke_preflight: None,
+                invoke_preflight: None,
+                discovery: None,
             })
             .expect("capability");
         cgs.validate().expect("validate");

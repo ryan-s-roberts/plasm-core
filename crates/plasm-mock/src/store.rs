@@ -456,6 +456,7 @@ mod tests {
                 target_resource: "Contact".into(),
                 cardinality: Cardinality::Many,
                 materialize: None,
+                discovery: None,
             }],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -463,6 +464,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
 
         let contact = ResourceSchema {
@@ -506,6 +508,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         };
 
         cgs.add_resource(account).unwrap();

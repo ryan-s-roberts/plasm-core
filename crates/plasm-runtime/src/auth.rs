@@ -273,16 +273,14 @@ impl AuthResolver {
         kv: &str,
         context: &'static str,
     ) -> Result<String, RuntimeError> {
-        let raw = self
-            .provider
-            .get_hosted_secret(kv)
-            .await
-            .ok_or_else(|| RuntimeError::AuthenticationError {
+        let raw = self.provider.get_hosted_secret(kv).await.ok_or_else(|| {
+            RuntimeError::AuthenticationError {
                 message: format!(
                     "Hosted credential '{kv}' is not available ({context}). \
                      Store it via the control plane or check auth-framework storage."
                 ),
-            })?;
+            }
+        })?;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return Err(RuntimeError::AuthenticationError {
@@ -455,10 +453,7 @@ mod hosted_bearer_resolution_tests {
         let auth = r.resolve().await.expect("resolve");
         assert_eq!(
             auth.headers,
-            vec![(
-                "Authorization".into(),
-                "Bearer plain-api-key-value".into()
-            )]
+            vec![("Authorization".into(), "Bearer plain-api-key-value".into())]
         );
     }
 

@@ -398,6 +398,13 @@ fn coerce_value_for_field_type(
             Value::String(s) if s.eq_ignore_ascii_case("false") => Value::Bool(false),
             _ => val,
         }),
+        FieldType::Json => match val {
+            Value::String(s) => crate::value::parse_json_subtree_str(&s).ok_or_else(|| {
+                "Json parameter: string must be valid JSON with a top-level object or array"
+                    .to_string()
+            }),
+            other => Ok(other),
+        },
         _ => Ok(val),
     }
 }
@@ -3089,6 +3096,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3104,6 +3112,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -3165,6 +3174,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: Some("library_get".into()),
+            discovery: None,
         })
         .unwrap();
         cgs.add_resource(ResourceSchema {
@@ -3190,6 +3200,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3207,6 +3218,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3230,6 +3242,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -3371,6 +3384,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3394,6 +3408,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -3447,6 +3462,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: Some("library_get_nested_fixture".into()),
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3470,6 +3486,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -3513,6 +3530,7 @@ mod tests {
                 target_resource: "Child".into(),
                 cardinality: Cardinality::Many,
                 materialize: None,
+                discovery: None,
             }],
             expression_aliases: vec![],
             implicit_request_identity: false,
@@ -3520,6 +3538,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_resource(ResourceSchema {
@@ -3536,6 +3555,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3556,6 +3576,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -3574,6 +3595,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         })
         .unwrap();
         cgs.validate().unwrap();

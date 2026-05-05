@@ -295,6 +295,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -316,6 +317,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -345,6 +347,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         }).unwrap();
 
         cgs.add_capability(CapabilitySchema {
@@ -373,6 +376,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             invoke_preflight: None,
+            discovery: None,
         }).unwrap();
 
         cgs.validate()

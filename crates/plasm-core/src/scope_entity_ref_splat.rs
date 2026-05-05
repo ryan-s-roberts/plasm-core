@@ -254,6 +254,7 @@ mod tests {
             provides: vec![],
             scope_aggregate_key_policy: policy,
             invoke_preflight: None,
+            discovery: None,
         }
     }
 
@@ -279,6 +280,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -324,6 +326,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -371,6 +374,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 
@@ -418,6 +422,7 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            discovery: None,
         })
         .unwrap();
 

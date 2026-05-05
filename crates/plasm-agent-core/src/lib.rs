@@ -65,6 +65,7 @@ mod tool_model;
 pub mod trace_hub;
 pub(crate) mod trace_hub_metrics;
 pub mod trace_sink_emit;
+pub mod typed_discovery_host;
 mod web_connected_account_notify;
 
 use clap::{Arg, Command};

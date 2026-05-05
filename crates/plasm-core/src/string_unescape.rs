@@ -6,7 +6,7 @@
 //! payloads for structured string fields (see [`crate::schema::StringSemantics::is_structured_or_multiline`]).
 
 use crate::schema::{InputType, CGS};
-use crate::value::{FieldType, Value};
+use crate::value::{parse_json_subtree_str, FieldType, Value};
 
 /// Unescape common JSON-style backslash sequences (`\n`, `\t`, `\uXXXX`, etc.).
 pub fn unescape_json_style_escapes(s: &str) -> String {
@@ -79,7 +79,21 @@ pub fn normalize_structured_string_inputs(
     cgs: &CGS,
 ) -> Value {
     match input_type {
-        InputType::None | InputType::Value { .. } | InputType::Union { .. } => value,
+        InputType::None | InputType::Union { .. } => value,
+        InputType::Value { field_type, .. } => {
+            if matches!(field_type, FieldType::Json) {
+                if let Value::String(s) = value {
+                    let candidate = unescape_json_style_escapes(&s);
+                    if let Some(parsed) = parse_json_subtree_str(&candidate)
+                        .or_else(|| parse_json_subtree_str(&s))
+                    {
+                        return parsed;
+                    }
+                    return Value::String(s);
+                }
+            }
+            value
+        }
         InputType::Object { fields, .. } => {
             let Value::Object(mut map) = value else {
                 return value;
@@ -88,6 +102,17 @@ pub fn normalize_structured_string_inputs(
                 let Ok(nv) = cgs.named_value_for_slot(field) else {
                     continue;
                 };
+                if nv.field_type == FieldType::Json {
+                    if let Some(Value::String(s)) = map.get(&field.name).cloned() {
+                        let candidate = unescape_json_style_escapes(&s);
+                        if let Some(parsed) = parse_json_subtree_str(&candidate)
+                            .or_else(|| parse_json_subtree_str(&s))
+                        {
+                            map.insert(field.name.clone(), parsed);
+                        }
+                    }
+                    continue;
+                }
                 if nv.field_type != FieldType::String {
                     continue;
                 }
@@ -222,6 +247,48 @@ mod tests {
                 .as_str()
                 .unwrap(),
             "a\\nb"
+        );
+    }
+
+    #[test]
+    fn normalize_json_object_field_from_string() {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "json_p4".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::Json,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        let input_type = InputType::Object {
+            fields: vec![InputFieldSchema {
+                name: "p4".to_string(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("json_p4").expect("key")),
+                required: false,
+                description: None,
+                default: None,
+                role: None,
+            }],
+            additional_fields: false,
+        };
+        let v = Value::Object(
+            vec![(
+                "p4".to_string(),
+                Value::String(r#"{"name":"t","kind":"zone"}"#.to_string()),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let out = normalize_structured_string_inputs(v, &input_type, &cgs);
+        let obj = out.as_object().unwrap();
+        let inner = obj.get("p4").unwrap().as_object().unwrap();
+        assert_eq!(
+            inner.get("name").unwrap().as_str().unwrap(),
+            "t"
         );
     }
 }

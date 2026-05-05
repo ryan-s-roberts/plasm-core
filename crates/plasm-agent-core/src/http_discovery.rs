@@ -12,12 +12,14 @@ use plasm_core::discovery::{
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, DiscoveryError, DiscoveryResult,
 };
 use plasm_core::schema::CGS;
+use plasm_discovery::DiscoveryQuery;
 use serde::{Deserialize, Serialize};
 
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::server_state::PlasmHostState;
 use crate::tool_model::{build_tool_model, ToolModelBuildError, ToolModelQuery};
+use crate::typed_discovery_host::run_typed_catalog_discovery;
 
 #[derive(Debug, Deserialize)]
 pub struct IncludeCgsQuery {
@@ -92,6 +94,30 @@ Hosted control-plane auth (JWT, API keys, tenant policy) is composed by the priv
             "detail": "auth-framework is not initialized in this process"
         })),
     ))
+}
+
+fn typed_discovery_problem(e: plasm_discovery::DiscoveryError) -> Problem {
+    match e {
+        plasm_discovery::DiscoveryError::EmptyUtterance
+        | plasm_discovery::DiscoveryError::InvalidClarificationAnswer => Problem::custom(
+            ProblemStatus::BAD_REQUEST,
+            Uri::from_static(problem_types::DISCOVERY_TYPED_BAD_REQUEST),
+        )
+        .with_title("Bad Request")
+        .with_detail(e.to_string()),
+        plasm_discovery::DiscoveryError::UnknownEntry(_) => Problem::custom(
+            ProblemStatus::NOT_FOUND,
+            Uri::from_static(problem_types::DISCOVERY_UNKNOWN_ENTRY),
+        )
+        .with_title("Not Found")
+        .with_detail(e.to_string()),
+        _ => Problem::custom(
+            ProblemStatus::INTERNAL_SERVER_ERROR,
+            Uri::from_static(problem_types::DISCOVERY_TYPED_ERROR),
+        )
+        .with_title("Discovery Error")
+        .with_detail(e.to_string()),
+    }
 }
 
 fn discovery_problem(e: DiscoveryError) -> Problem {
@@ -197,6 +223,27 @@ fn log_discovery_response(out: &DiscoveryResult) {
     );
 }
 
+async fn post_discover_typed(
+    Extension(st): Extension<PlasmHostState>,
+    Json(query): Json<DiscoveryQuery>,
+) -> Response {
+    tracing::debug!(
+        utterance_len = query.utterance.len(),
+        allowed = query.allowed_entry_ids.len(),
+        max_options = query.max_options,
+        enable_embeddings = query.enable_embeddings,
+        "plasm typed discovery request"
+    );
+    let reg = st.catalog.snapshot();
+    match run_typed_catalog_discovery(&reg, query).await {
+        Ok(out) => Json(out).into_response(),
+        Err(e) => {
+            tracing::debug!(error = %e, "typed discovery failed");
+            problem_response(typed_discovery_problem(e))
+        }
+    }
+}
+
 async fn post_discover(
     Extension(st): Extension<PlasmHostState>,
     Json(query): Json<CapabilityQuery>,
@@ -234,4 +281,5 @@ pub fn discovery_routes_protected() -> Router {
         .route("/v1/registry/{entry_id}", get(get_registry_entry))
         .route("/v1/registry/{entry_id}/tool-model", get(get_tool_model))
         .route("/v1/discover", post(post_discover))
+        .route("/v1/discover-typed", post(post_discover_typed))
 }

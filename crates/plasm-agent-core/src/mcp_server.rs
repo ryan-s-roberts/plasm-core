@@ -45,8 +45,9 @@ use tracing::Instrument;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
+use plasm_core::discovery::{CapabilityQuery, CgsCatalog, DiscoveryError};
 use plasm_core::CgsDiscovery;
+use plasm_discovery::DiscoveryQuery;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
@@ -93,6 +94,7 @@ use crate::run_artifacts::{
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
+use crate::typed_discovery_host::run_typed_catalog_discovery;
 use chrono::Utc;
 use plasm_trace::RunArtifactArchiveRef;
 use serde_json::json;
@@ -701,8 +703,45 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "query".into(),
             json_schema_string_or_string_array(
-                "One string = what to look for (plain language or keywords), or several strings. Reply: fenced table — **`api`** (integration), **`entity`** (resource type), **`description`**. Each row is one capability pick; use rows to build **`plasm_context`** **`seeds`**.",
+                "Describe the **task or goal** you need catalog coverage for (plain language). Response is a table of matching **capabilities**: **`api`**, **`entity`**, **`description`** per row — turn the rows you need into **`plasm_context`** **`seeds`** (each row is one `{api, entity}` or `{entry_id, entity}`).",
             ),
+        );
+        discover_props.insert(
+            "typed".into(),
+            json_schema_bool_type(
+                "If **true**, response is fenced **`json`** (`DiscoveryDecision`) for structured disambiguation instead of the capability table.",
+            ),
+        );
+        discover_props.insert(
+            "utterance".into(),
+            json_schema_string_type(
+                "Typed mode: optional single string for the same intent as **`query`**; if omitted, **`query`** is used.",
+            ),
+        );
+        discover_props.insert(
+            "max_options".into(),
+            serde_json::from_value(serde_json::json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 32,
+                "description": "Typed mode: max clarification options (default 8)."
+            }))
+            .expect("max_options schema"),
+        );
+        discover_props.insert(
+            "enable_embeddings".into(),
+            json_schema_bool_type(
+                "Typed mode: when **true** (default), use local fastembed recall (CPU, downloads model on first use). Set **false** for lexical-only.",
+            ),
+        );
+        discover_props.insert(
+            "allowed_entry_ids".into(),
+            serde_json::from_value(serde_json::json!({
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Typed mode: optional restrict list of registry `entry_id`s."
+            }))
+            .expect("allowed_entry_ids schema"),
         );
         let mut context_props = init_props;
         context_props.insert(
@@ -757,9 +796,9 @@ impl PlasmMcpHandler {
             },
             Tool {
                 name: "discover_capabilities".into(),
-                title: Some("Find entities from intent".into()),
+                title: Some("Resolve intent to capabilities".into()),
                 description: Some(
-                    "When you do not yet know **`api`** and **`entity`** for each capability you need, call with **`query`**: one string (what the user wants) or several strings. You get back a small fenced table: **`api`** (integration), **`entity`** (resource type), **`description`**. Each row is one **capability pick** — copy rows into **`plasm_context`**’s **`seeds`** array (per object you may use **`entry_id`** instead of **`api`**). **Do not call** if you already have every pick you need.".into(),
+                    "Map what you are trying to do (**intent** / task wording) to concrete catalog **capabilities**. Send **`query`** as a short description of that intent. You get a table of candidate capabilities (`**api**`, **`entity**`, **`description`**); use the rows you need to build **`plasm_context`** **`seeds`**. Skip when you already know **`api`**/**`entity`** for every capability you need. With **`typed: true`**, the reply is fenced **`json`** (`DiscoveryDecision`) for stepwise disambiguation instead of the table.".into(),
                 ),
                 input_schema: ToolInputSchema::new(vec![], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
@@ -831,6 +870,16 @@ fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_j
     m
 }
 
+fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("boolean"));
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
 fn json_schema_string_or_string_array(
     description: &str,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -840,13 +889,13 @@ fn json_schema_string_or_string_array(
             {
                 "type": "string",
                 "minLength": 1,
-                "description": "One user goal phrase or short keywords."
+                "description": "One intent phrase or keywords for the task."
             },
             {
                 "type": "array",
                 "minItems": 1,
-                "items": { "type": "string" },
-                "description": "Several phrases; each is searched (combined for coverage)."
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Several strings for the same search (combined for coverage)."
             }
         ]
     });
@@ -900,8 +949,8 @@ fn args_value(params: &CallToolRequestParams) -> serde_json::Value {
     serde_json::Value::Object(params.arguments.clone().unwrap_or_default())
 }
 
-/// MCP `discover_capabilities` accepts `query` as one string (intent / keywords) or a string array.
-/// Each entry is fed into [`CapabilityQuery::tokens`] and tokenized the same as HTTP discovery.
+/// MCP `discover_capabilities`: `query` is one string or several strings (same as HTTP discovery;
+/// values feed [`CapabilityQuery::tokens`]).
 fn mcp_discover_query_from_arguments(v: &serde_json::Value) -> Result<CapabilityQuery, String> {
     let Some(obj) = v.as_object() else {
         return Err("discover_capabilities arguments must be a JSON object".to_string());
@@ -952,6 +1001,60 @@ fn discovery_mcp_error(e: DiscoveryError) -> CallToolError {
         }
         DiscoveryError::UnknownEntry(_) => CallToolError::from_message(format!("catalog: {e}")),
     }
+}
+
+fn typed_discovery_mcp_error(e: plasm_discovery::DiscoveryError) -> CallToolError {
+    match e {
+        plasm_discovery::DiscoveryError::EmptyUtterance
+        | plasm_discovery::DiscoveryError::InvalidClarificationAnswer => {
+            CallToolError::invalid_arguments("discover_capabilities", Some(e.to_string()))
+        }
+        plasm_discovery::DiscoveryError::UnknownEntry(_) => {
+            CallToolError::from_message(format!("typed discovery: {e}"))
+        }
+        _ => CallToolError::from_message(format!("typed discovery: {e}")),
+    }
+}
+
+fn mcp_typed_discovery_query_from_arguments(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    legacy_tokens: &[String],
+) -> Result<DiscoveryQuery, String> {
+    let utterance = obj
+        .get("utterance")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| legacy_tokens.join(" ").trim().to_string());
+    if utterance.is_empty() {
+        return Err("typed discovery requires a non-empty `utterance` or `query`".to_string());
+    }
+    let max_options = obj
+        .get("max_options")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(8)
+        .clamp(1, 32) as usize;
+    let enable_embeddings = obj
+        .get("enable_embeddings")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let allowed_entry_ids = match obj.get("allowed_entry_ids") {
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(DiscoveryQuery {
+        utterance,
+        allowed_entry_ids,
+        prior_state: None,
+        max_options,
+        enable_embeddings,
+        force_entry_id: None,
+        force_entity: None,
+    })
 }
 
 /// MCP entity `description` column: max chars (Unicode scalars).
@@ -2302,6 +2405,45 @@ impl ServerHandler for PlasmMcpHandler {
                         "MCP tool: discover_capabilities (search)"
                     );
                     let reg = self.plasm.catalog.snapshot();
+                    let Some(obj) = v.as_object() else {
+                        return Err(CallToolError::invalid_arguments(
+                            "discover_capabilities",
+                            Some("arguments must be a JSON object".into()),
+                        ));
+                    };
+                    let typed = obj.get("typed").and_then(|x| x.as_bool()).unwrap_or(false);
+                    if typed {
+                        let mut dq = mcp_typed_discovery_query_from_arguments(obj, &q.tokens)
+                            .map_err(|msg| {
+                                CallToolError::invalid_arguments("discover_capabilities", Some(msg))
+                            })?;
+                        let tcfg = self.tenant_mcp_cfg(&runtime).await?;
+                        if let Some(cfg) = tcfg {
+                            if dq.allowed_entry_ids.is_empty() {
+                                dq.allowed_entry_ids = mcp_policy::filter_registry_entries(
+                                    reg.list_entries(),
+                                    cfg.as_ref(),
+                                )
+                                .into_iter()
+                                .map(|m| m.entry_id)
+                                .collect();
+                            } else {
+                                dq.allowed_entry_ids.retain(|e| cfg.entry_allowed(e));
+                            }
+                        }
+                        let decision = run_typed_catalog_discovery(&reg, dq)
+                            .await
+                            .map_err(typed_discovery_mcp_error)?;
+                        drop(_discover_guard);
+                        let json = serde_json::to_string_pretty(&decision).map_err(|e| {
+                            CallToolError::from_message(format!("serialize typed discovery: {e}"))
+                        })?;
+                        let text = format!("```json\n{json}\n```");
+                        return Ok(CallToolResult::text_content(vec![TextContent::new(
+                            text, None, None,
+                        )]));
+                    }
+
                     let mut r = reg.discover(&q).map_err(discovery_mcp_error)?;
                     drop(_discover_guard);
                     let tcfg = self.tenant_mcp_cfg(&runtime).await?;

@@ -161,6 +161,20 @@ impl Default for ValueTableCellBudget {
     }
 }
 
+/// Parse `s` as JSON and return a Plasm [`Value`] when the top-level form is an object or array.
+///
+/// Used for [`FieldType::Json`] slots filled from quoted literals or heredocs whose body is JSON
+/// text. Scalar JSON (`"hi"`, `42`, `true`, `null`) returns [`None`] so arbitrary short strings
+/// are not silently reinterpreted as JSON payloads.
+#[must_use]
+pub fn parse_json_subtree_str(s: &str) -> Option<Value> {
+    let v: Value = serde_json::from_str(s.trim()).ok()?;
+    match &v {
+        Value::Object(_) | Value::Array(_) => Some(v),
+        _ => None,
+    }
+}
+
 impl Value {
     /// Parse this value as a normalized [`crate::entity_ref_value::EntityRefPayload`] when it is
     /// shaped as an `entity_ref` constructor (atomic or compound tree).
@@ -247,6 +261,7 @@ impl Value {
             }
             (Value::Array(_), FieldType::Array | FieldType::MultiSelect) => true,
             (Value::Object(_) | Value::Array(_), FieldType::Json) => true,
+            (Value::String(s), FieldType::Json) => parse_json_subtree_str(s).is_some(),
             _ => false,
         }
     }
@@ -653,6 +668,33 @@ pub enum CompOp {
     Contains,
     #[serde(rename = "exists")]
     Exists,
+}
+
+#[cfg(test)]
+mod json_subtree_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parse_object_and_array() {
+        let o = parse_json_subtree_str(r#"{"a":1}"#).unwrap();
+        assert!(matches!(o, Value::Object(_)));
+        let a = parse_json_subtree_str(r#"[1,2]"#).unwrap();
+        assert!(matches!(a, Value::Array(_)));
+    }
+
+    #[test]
+    fn rejects_scalar_json_and_invalid() {
+        assert!(parse_json_subtree_str(r#""hi""#).is_none());
+        assert!(parse_json_subtree_str("not json").is_none());
+    }
+
+    #[test]
+    fn string_json_compatible_with_json_field() {
+        let v = Value::String(r#"{"x":true}"#.to_string());
+        assert!(v.is_compatible_with_field_type(&FieldType::Json));
+        let bad = Value::String("plain".to_string());
+        assert!(!bad.is_compatible_with_field_type(&FieldType::Json));
+    }
 }
 
 #[cfg(test)]
