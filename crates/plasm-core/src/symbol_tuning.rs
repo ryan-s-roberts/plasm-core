@@ -211,6 +211,12 @@ impl ExposureSurface {
 
 /// Full per-entity closure (legacy HTTP execute / REPL paths): every field, relation, capability, and param.
 ///
+/// Declared relation **targets** are also inserted into [`ExposureSurface::entities`] so
+/// [`crate::prompt_render::surface_exposes_relation_nav_target`] admits CGS relation-nav rows toward those
+/// types without requiring a separate DOMAIN block for every hop (e.g. Pokeapi `Type`-only slices).
+/// Entity-ref **fields** do not add their targets — incremental surfaces omit cross-entity navigation until
+/// those entities are explicitly exposed.
+///
 /// `entry_id` is the caller’s registry row id (HTTP/MCP); exposure keys follow [`CGS::entry_id`] when set.
 #[allow(unused_variables)]
 pub fn legacy_exposure_surface_for_entities(
@@ -237,11 +243,18 @@ pub fn legacy_exposure_surface_for_entities(
                 field: fname.clone(),
             });
         }
-        for (rname, _r) in &ent.relations {
+        for (rname, rel) in &ent.relations {
             out.slots.insert(ExposureSlotKey::Relation {
                 source: ekey.clone(),
                 relation: rname.clone(),
             });
+            let tgt = rel.target_resource.as_str();
+            if cgs.get_entity(tgt).is_some() {
+                out.entities.insert(ExposureEntityKey {
+                    entry_id: cid.clone(),
+                    entity: EntityName::from(tgt),
+                });
+            }
         }
         let Some(names) = cgs.capability_names_by_domain().get(ename) else {
             continue;
