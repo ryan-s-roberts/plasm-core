@@ -689,7 +689,8 @@ fn ranked_gate_allows_mutation(ranked_capability_names: Option<&[String]>, cap_n
 
 /// Minimal intent-filtered DOMAIN surface for MCP `plasm_context` / incremental expand waves.
 ///
-/// - Read capabilities (`query` / `search` / `get`) on each batched entity are always admitted.
+/// - Read capabilities (`query` / `search` / `get`) require a non-zero lexicon overlap score against
+///   `intent`, same as mutating capabilities (via [`score_capability`]).
 /// - Mutating capabilities require a non-zero lexicon overlap score against `intent`.
 /// - With the default `ranked_capability_gate` feature, when `ranked_capability_names` is non-empty,
 ///   mutating capabilities must also appear in that list (typically discovery-ranked picks).
@@ -742,10 +743,10 @@ pub fn derive_intent_exposure_surface_batch(
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
+            let (score, _) = score_capability(&query_tokens, cgs, cap);
             let include = match cap.kind {
-                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => true,
+                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => score > 0,
                 _ => {
-                    let (score, _) = score_capability(&query_tokens, cgs, cap);
                     if score == 0 {
                         false
                     } else {
@@ -990,6 +991,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn intent_surface_drops_unscored_reads_when_intent_targets_other_entity() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
+        let mut endpoints = vec!["Meeting".to_string(), "Profile".to_string()];
+        endpoints.sort_unstable();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "organisation project profile metadata list",
+            &endpoints,
+            &["Meeting".to_string(), "Profile".to_string()],
+            None,
+        );
+        assert!(
+            delta.required.capabilities.iter().any(|c| {
+                c.domain.as_str() == "Profile"
+                    && matches!(c.capability.as_str(), "profile_query" | "profile_get")
+            }),
+            "expected Profile query/get to remain when intent lexicon scores profile vocabulary"
+        );
+        assert!(
+            !delta.required.capabilities.iter().any(|c| {
+                c.domain.as_str() == "Meeting"
+                    && matches!(c.capability.as_str(), "meeting_query" | "meeting_get")
+            }),
+            "Meeting reads should be omitted when intent does not score meeting vocabulary"
+        );
+    }
+
     #[cfg(feature = "ranked_capability_gate")]
     #[test]
     fn intent_surface_ranked_gate_excludes_scored_mutation_not_in_list() {
@@ -1010,9 +1045,11 @@ mod tests {
             Some(&ranked),
         );
         assert!(
-            !delta.required.capabilities.iter().any(|c| {
-                c.capability.as_str() == "prompt_run_create"
-            }),
+            !delta
+                .required
+                .capabilities
+                .iter()
+                .any(|c| { c.capability.as_str() == "prompt_run_create" }),
             "ranked gate should drop scored mutations absent from the ranked name list"
         );
     }

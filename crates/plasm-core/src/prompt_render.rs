@@ -26,7 +26,12 @@
 //! Model output must be those expression shapes—not prose.
 //! Use [`RenderConfig::focus`] to subset entities.
 //!
-//! **Relations** lines teach `Get(id).relation` when that path **parses and type-checks**. Meaning uses
+//! **Relations** lines teach `Get(id).relation` when that path **parses and type-checks**. With an
+//! [`ExposureSurface`](crate::symbol_tuning::ExposureSurface) filter (incremental DOMAIN waves), **outgoing**
+//! navigation teaches only targets in the surface entity set, and **incoming** projection-witness bases
+//! (`ParentRecv…[p#,…]`) require the parent entity on the surface plus the same slot checks as outgoing nav;
+//! field gloss rows and `ref:*` typing are unchanged.
+//! Meaning uses
 //! `relation e#_src => [e#_tgt]` (many) or `relation e#_src => e#_tgt` (one); the full receiver stays in `plasm_expr`.
 //! For terminal relation chains, the example line already carries a **result gloss** (`relation …`), so the redundant standalone `p#` gloss row
 //! before it is omitted (see [`skip_redundant_terminal_relation_sym_gloss`]). For cardinality-many
@@ -1894,16 +1899,25 @@ fn receiver_for_dotted_suffix(
 const MAX_INCOMING_REL_NAV_PROJECTION_BASES: usize = 16;
 
 /// `ParentRecv.rel` expressions that type-check and return `target_ename` (incoming edges).
+///
+/// With `surface_filter: Some`, only edges whose **parent** (`src_name`) is in
+/// [`ExposureSurface::entities`] and passes [`surface_allows_relation_nav`] for that slot are kept —
+/// symmetric with outgoing relation-nav rows on the parent entity block.
 fn incoming_relation_nav_bases_to_entity(
     cgs: &CGS,
     target_ename: &str,
     map: Option<&SymbolMap>,
+    surface_filter: Option<&ExposureSurface>,
+    catalog_entry_id: &str,
 ) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for (src_key, src_ent) in cgs.entities.iter() {
         let src_name = src_key.as_str();
         if src_name == target_ename {
+            continue;
+        }
+        if !surface_includes_exposed_entity(surface_filter, cgs, catalog_entry_id, src_name) {
             continue;
         }
         let parent_es = ent_sym(map, src_name);
@@ -1913,6 +1927,15 @@ fn incoming_relation_nav_bases_to_entity(
                 continue;
             }
             if rel_s.cardinality == Cardinality::Many && !many_relation_nav_emittable(rel_s) {
+                continue;
+            }
+            if !surface_allows_relation_nav(
+                surface_filter,
+                catalog_entry_id,
+                src_name,
+                rel_k.as_str(),
+                true,
+            ) {
                 continue;
             }
             let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
@@ -1938,6 +1961,15 @@ fn incoming_relation_nav_bases_to_entity(
                 continue;
             };
             if target.as_str() != target_ename {
+                continue;
+            }
+            if !surface_allows_relation_nav(
+                surface_filter,
+                catalog_entry_id,
+                src_name,
+                fname.as_str(),
+                false,
+            ) {
                 continue;
             }
             let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
@@ -1987,6 +2019,8 @@ fn try_push_projection_witness_row(
     primary_get_cap: Option<&crate::CapabilitySchema>,
     query_caps: &[&crate::CapabilitySchema],
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    surface_filter: Option<&ExposureSurface>,
+    catalog_entry_id: &str,
 ) -> bool {
     let bracket = bracket.trim();
     if bracket.is_empty() || !bracket.starts_with('[') {
@@ -2019,7 +2053,9 @@ fn try_push_projection_witness_row(
             attempts.push((cmp, primary_get_cap));
         }
     }
-    for rel_base in incoming_relation_nav_bases_to_entity(cgs, ename, map) {
+    for rel_base in
+        incoming_relation_nav_bases_to_entity(cgs, ename, map, surface_filter, catalog_entry_id)
+    {
         if seen_bases.insert(rel_base.clone()) {
             attempts.push((rel_base, None));
         }
@@ -2888,6 +2924,58 @@ fn surface_allows_relation_nav(
     surface_allows_entity_field(surface, catalog_entry_id, entity, relation)
 }
 
+/// Canonical catalog-qualified entity key for [`ExposureSurface::entities`] membership checks.
+fn exposure_entity_key_for_surface(
+    cgs: &CGS,
+    catalog_entry_id: &str,
+    raw_entity: &str,
+) -> Option<ExposureEntityKey> {
+    let raw = raw_entity.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    for k in cgs.entities.keys() {
+        if k.eq_ignore_ascii_case(raw) {
+            return Some(ExposureEntityKey {
+                entry_id: catalog_entry_id.to_string(),
+                entity: EntityName::from(k.as_str()),
+            });
+        }
+    }
+    None
+}
+
+/// Catalog-qualified entity appears in [`ExposureSurface::entities`] (canonical name via CGS keys).
+/// Without a surface (`None`), treated as included (legacy full DOMAIN).
+#[inline]
+fn surface_includes_exposed_entity(
+    surface: Option<&ExposureSurface>,
+    cgs: &CGS,
+    catalog_entry_id: &str,
+    raw_entity: &str,
+) -> bool {
+    let Some(s) = surface else {
+        return true;
+    };
+    let Some(ekey) = exposure_entity_key_for_surface(cgs, catalog_entry_id, raw_entity) else {
+        return false;
+    };
+    s.entities.contains(&ekey)
+}
+
+/// Relation-navigation rows (`… .p#` toward another CGS entity, or declared relation chains) are only
+/// taught when the **target** entity name appears in [`ExposureSurface::entities`] for the same
+/// `catalog_entry_id`. Without a surface (`None`), navigation is unrestricted (legacy full DOMAIN).
+#[inline]
+fn surface_exposes_relation_nav_target(
+    surface: Option<&ExposureSurface>,
+    cgs: &CGS,
+    catalog_entry_id: &str,
+    target_entity: &str,
+) -> bool {
+    surface_includes_exposed_entity(surface, cgs, catalog_entry_id, target_entity)
+}
+
 /// Non–zero-arity invoke/create/update: `e#($).m#(p#=…)` (same rules as parser dotted-call capability resolution).
 fn collect_multi_arity_method_lines(
     cgs: &CGS,
@@ -3088,6 +3176,8 @@ fn collect_entity_teaching_block(
             primary_get_cap,
             &query_cap_refs,
             line_valid_cache,
+            surface_filter,
+            catalog_entry_id,
         );
     }
 
@@ -3441,6 +3531,14 @@ fn collect_entity_teaching_block(
             } else {
                 continue;
             };
+        if !surface_exposes_relation_nav_target(
+            surface_filter,
+            cgs,
+            catalog_entry_id,
+            target_entity.as_str(),
+        ) {
+            continue;
+        }
         if skip_many_unresolved {
             continue;
         }
@@ -4366,10 +4464,11 @@ mod tests {
     };
     use crate::symbol_tuning::{
         entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
-        DomainExposureSession, FocusSpec,
+        DomainExposureSession, ExposureEntityKey, FocusSpec,
     };
     use crate::CapabilityKind;
     use crate::Cardinality;
+    use crate::EntityName;
     use crate::FieldType;
     use crate::CGS;
 
@@ -4518,7 +4617,8 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
-        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let exposure =
+            crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
         let surface = Some(&exposure.surface);
         let Some(ent) = cgs.get_entity("Issue") else {
             panic!("missing Issue entity");
@@ -4576,7 +4676,8 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
-        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let exposure =
+            crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
         let surface = Some(&exposure.surface);
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
         let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
@@ -4612,7 +4713,8 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
-        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let exposure =
+            crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
         let surface = Some(&exposure.surface);
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
         let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
@@ -5151,6 +5253,143 @@ mod tests {
         assert!(
             g.starts_with("ref:Zone · str ·"),
             "expected ref:Zone · str · … value-domain gloss, got {g:?}"
+        );
+    }
+
+    #[test]
+    fn exposure_surface_omits_entity_ref_nav_when_target_entity_not_exposed() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let entry = cgs.entry_id.clone().unwrap_or_default();
+        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+            &cgs,
+            entry.as_str(),
+            "rules traffic handling Cloudflare zone firewall WAF",
+            &["Ruleset".to_string()],
+            &["Ruleset".to_string()],
+            None,
+        );
+        assert!(
+            delta
+                .required
+                .entities
+                .iter()
+                .any(|e| e.entity.as_str() == "Ruleset"),
+            "expected Ruleset in exposure entities"
+        );
+        assert!(
+            !delta
+                .required
+                .entities
+                .iter()
+                .any(|e| e.entity.as_str() == "Zone"),
+            "narrow wave should not list Zone as an exposed entity"
+        );
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Ruleset"]), true)
+            .expect("symbol map");
+        let zone_nav_sym = map.ident_sym_entity_field("Ruleset", "zone_id");
+        let mut line_valid_cache = HashMap::new();
+        let mut gloss_emit_none = None;
+        let block = collect_entity_teaching_block(
+            &cgs,
+            "Ruleset",
+            Some(&map),
+            None,
+            false,
+            &mut line_valid_cache,
+            &mut gloss_emit_none,
+            Some(&delta.required),
+        );
+        let has_zone_nav = block.teaching_rows.iter().any(|r| {
+            let ex = r.teaching_expr.expression.as_str();
+            ex.contains('.') && ex.contains(zone_nav_sym.as_str())
+        });
+        assert!(
+            !has_zone_nav,
+            "zone_id navigation should be omitted when Zone is not on the exposure entity set; exprs={:?}",
+            block
+                .teaching_rows
+                .iter()
+                .map(|r| r.teaching_expr.expression.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let mut surface_with_zone = delta.required.clone();
+        surface_with_zone.entities.insert(ExposureEntityKey {
+            entry_id: entry.clone(),
+            entity: EntityName::from("Zone"),
+        });
+        let mut line_valid_cache2 = HashMap::new();
+        let mut gloss_emit_none2 = None;
+        let block2 = collect_entity_teaching_block(
+            &cgs,
+            "Ruleset",
+            Some(&map),
+            None,
+            false,
+            &mut line_valid_cache2,
+            &mut gloss_emit_none2,
+            Some(&surface_with_zone),
+        );
+        assert!(
+            block2.teaching_rows.iter().any(|r| {
+                let ex = r.teaching_expr.expression.as_str();
+                ex.contains('.') && ex.contains(zone_nav_sym.as_str())
+            }),
+            "adding Zone to exposure entities should admit zone_id navigation again; exprs={:?}",
+            block2
+                .teaching_rows
+                .iter()
+                .map(|r| r.teaching_expr.expression.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn incoming_relation_nav_bases_respect_exposure_surface_parent_and_slots() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let entry = cgs.entry_id.clone().unwrap_or_default();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let zone_es = map.entity_sym("Zone");
+        let unfiltered = super::incoming_relation_nav_bases_to_entity(
+            &cgs,
+            "Ruleset",
+            Some(&map),
+            None,
+            entry.as_str(),
+        );
+        assert!(
+            unfiltered.iter().any(|line| line.contains(zone_es.as_str())),
+            "without surface filter expect Zone-anchored incoming bases toward Ruleset; got {unfiltered:?}"
+        );
+
+        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+            &cgs,
+            entry.as_str(),
+            "rules traffic handling Cloudflare zone firewall WAF",
+            &["Ruleset".to_string()],
+            &["Ruleset".to_string()],
+            None,
+        );
+        let filtered = super::incoming_relation_nav_bases_to_entity(
+            &cgs,
+            "Ruleset",
+            Some(&map),
+            Some(&delta.required),
+            entry.as_str(),
+        );
+        assert!(
+            !filtered
+                .iter()
+                .any(|line| line.contains(zone_es.as_str())),
+            "Zone must not anchor incoming projection bases when Zone is absent from exposure.entities; got {filtered:?}"
         );
     }
 
