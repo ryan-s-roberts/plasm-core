@@ -84,7 +84,7 @@ Probed **2026-05** with anonymous requests (no doc secrets):
 | `POST https://www.proofeditor.ai/report/bug` | **404** |
 | `POST https://www.proofeditor.ai/api/bridge/report_bug` | **200** with JSON validation envelope (`needs_more_info` on minimal `{}` body) |
 
-**Presence:** onboarding docs sometimes cite **`POST /api/agent/:slug/presence`**. This catalog uses **`POST /documents/:slug/bridge/presence`** with Proof SDK bridge headers (`_gen_mappings.py`). Confirm equivalence against [proof-sdk](https://github.com/EveryInc/proof-sdk) for your deployment if you see **426** or routing mismatches.
+**Presence:** use **`POST /documents/:slug/presence`** (hosted alias **`POST /api/agent/:slug/presence`**) with **`Authorization: Bearer`** + **`X-Agent-Id`** and JSON **`{ "status": "online" }`** (default when `presence_status` is omitted). **`…/bridge/presence`** is for the desktop/SDK bridge — it does **not** substitute for agent join on hosted collab UIs.
 
 ## Incremental DOMAIN waves (execute / MCP)
 

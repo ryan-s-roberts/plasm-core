@@ -847,8 +847,6 @@ presence_update:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
     value: presence
   query:
     type: object
@@ -870,15 +868,9 @@ presence_update:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
+    - - Accept
       - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
+        value: application/json
   body:
     type: object
     fields:

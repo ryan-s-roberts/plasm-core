@@ -349,9 +349,12 @@ presence_status_expr = {
 
 m["presence_update"] = {
     "method": "POST",
-    "path": path_documents_slug() + [LIT("bridge"), LIT("presence")],
+    # Canonical agent presence (collab UI). Bridge route `.../bridge/presence` is for desktop/SDK
+    # bridge clients — hosted editors treat `POST /documents/:slug/presence` (alias `/api/agent/:slug/presence`)
+    # as the join signal.
+    "path": path_documents_slug() + [LIT("presence")],
     "query": query_token_optional(),
-    "headers": headers_proof_sdk_bridge(headers_agent()),
+    "headers": merge_header_objects(headers_agent(), headers_json()),
     "body": {"type": "object", "fields": [["status", presence_status_expr]]},
     "response": response_single(),
 }
