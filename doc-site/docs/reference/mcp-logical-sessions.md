@@ -20,7 +20,7 @@ That model breaks when:
    - **`logical_session_ref`** — Per **MCP transport** slot string (`s0`, `s1`, …) returned by `plasm_context`, analogous to run artifact index `r/{n}` but naming the logical session. Agents pass this ref to `plasm` and see it in short run URIs.
    - **Paginated list continuations** — Opaque handles are **`s0_pg1`**, **`s0_pg2`**, … (slot + sequence): use `page(s0_pgN)` from tool results, not plain `page(pgN)`.
 
-3. **Flow** — **`plasm_context` first** with `intent` and non-empty `seeds`, then mostly `plasm` with `logical_session_ref`. Short run URIs use `plasm://session/{logical_session_ref}/r/{n}`; canonical `plasm://execute/.../run/{uuid}` remains accepted on `resources/read`. Legacy `plasm://r/{n}` remains accepted for older run links that were created without a logical id. Those **`plasm://…` URIs are MCP `resources/read` identifiers**, not strings you pass back into the `plasm` tool as Plasm path expressions.
+3. **Flow** — **`plasm_context` first** with `intent` and non-empty `seeds`, then mostly `plasm` with `logical_session_ref`. Short run URIs use `plasm://session/{logical_session_ref}/r/{n}`; canonical `plasm://execute/.../run/{uuid}` remains accepted on `resources/read`. Legacy `plasm://r/{n}` remains for HTTP-only execute paths without a logical id. Those **`plasm://…` URIs are MCP `resources/read` identifiers**, not strings you pass back into the `plasm` tool as Plasm path expressions.
 
 ## In-process vs scaled deployments
 
@@ -28,8 +28,8 @@ Today, logical session metadata and execute bindings are still **in-memory** in 
 
 ## Related code
 
-- MCP handler: [`crates/plasm-agent-core/src/mcp_server.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/mcp_server.rs)
-- Logical session registry: [`crates/plasm-agent-core/src/session_identity.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/session_identity.rs)
+- MCP handler: [`plasm-oss/crates/plasm-agent-core/src/mcp_server.rs`](plasm-oss/crates/plasm-agent-core/src/mcp_server.rs)
+- Logical session registry: [`plasm-oss/crates/plasm-agent-core/src/session_identity.rs`](plasm-oss/crates/plasm-agent-core/src/session_identity.rs)
 - Trace correlation: [`docs/mcp-trace-correlation.md`](mcp-trace-correlation.md)
 - Incremental DOMAIN: [`docs/incremental-domain-prompts.md`](incremental-domain-prompts.md)
 - Session reuse and `SessionReuseKey`: [`docs/mcp-session-reuse.md`](mcp-session-reuse.md)

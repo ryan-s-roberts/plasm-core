@@ -48,7 +48,7 @@ Agents don’t POST arbitrary JSON against raw URLs (unless you bypass Plasm). T
 - **`m#`** — Scalar metrics / counts / summaries that showed up in the session.
 - **`p#`** — Plans or projections from earlier steps.
 
-Expressions compose with pipes and postfix transforms (`.limit`, `.sort`, …). Multi-line payloads use tagged **heredocs** or bracket render—see the [Language specification](reference/plasm-language-unification.md).
+Expressions compose with pipes and postfix transforms (`.limit`, `.sort`, …). Multi-line payloads use tagged **heredocs** or bracket render—see the [Language definition](reference/plasm-language-definition.md).
 
 ---
 

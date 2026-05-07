@@ -1,6 +1,6 @@
 # plasm-mcp incoming (inbound) authentication
 
-**Planes:** inbound execute identity (JWT / API keys below) is separate from **MCP transport** Bearer keys (when tenant MCP configs exist) and from **outbound** API credentials on catalogs. See [OSS appliance MCP persistence](oss-appliance-mcp-persistence.md).
+**Architecture context:** [saas-architecture.md](saas-architecture.md) (§0.4 — inbound identity vs MCP transport vs outbound provider auth).
 
 `plasm-mcp` can require **JWT** (`Authorization: Bearer`) and/or **API keys** (`X-API-Key`) for HTTP discovery/execute routes and for MCP tools (see below).
 
@@ -49,7 +49,7 @@ Execute sessions are keyed by **tenant scope** from the principal; cross-tenant 
 
 ## MCP
 
-**Tenant MCP transport** (graph allowlists loaded from the MCP config store) is separate: use a provisioned **API key** as `Authorization: Bearer <api_key>` on Streamable HTTP. See [OSS appliance MCP persistence](oss-appliance-mcp-persistence.md).
+**Tenant MCP transport** (graph allowlists pushed from the control plane) is separate: use a provisioned **API key** as `Authorization: Bearer <api_key>` on Streamable HTTP. See [`docs/plasm-mcp-tenant-configuration.md`](plasm-mcp-tenant-configuration.md).
 
 **Incoming (inbound) auth** for execute sessions: Streamable HTTP does not pass `Authorization` to tool handlers, so clients must call the tool **`plasm_incoming_auth`** once per MCP transport session with **exactly one** of:
 
@@ -72,4 +72,4 @@ For local development, **`just local-web`** exports **`PLASM_WEB_DEV_AUTO_BEARER
 
 The SaaS shell resolves tenant/workspace/project from **`GET /v1/incoming-auth/context`** (Rust-owned principal + workspace/project list). Phoenix does not maintain parallel user or membership tables for that flow.
 
-Configure `PLASM_MCP_HTTP_BASE_URL` (see `web/config/runtime.exs`, default `http://127.0.0.1:3001` for the local `plasm-mcp` server with `just local-web`).
+Configure `PLASM_MCP_HTTP_BASE_URL` (see `web/config/runtime.exs`, default `http://127.0.0.1:3001` for the MCP HTTP API with `just local-web`).

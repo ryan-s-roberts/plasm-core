@@ -19,3 +19,7 @@ fragment to the `Meaning` cell (TSV) or the `;;` tail (markdown DOMAIN), using t
 **Measuring size:** `cargo run -p plasm-core --bin dump_prompt -- <path/to/schema-dir> >/dev/null` prints `chars | ~tok (heuristic) | …` on stderr. A measured table of example catalogs is in the root [Plasm README](../README.md).
 
 See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.
+
+## Language definition
+
+The canonical **Plasm language definition** (surface grammar, programs, postfix, heredocs, EBNF sketch, CGS capability-input rules) lives in the **Plasm monorepo** at [`docs/plasm-language-definition.md`](https://github.com/ryan-s-roberts/plasm/blob/main/docs/plasm-language-definition.md). The public [**MkDocs site**](https://plasmtools.github.io/plasm-core/) mirrors it under **Language → Language definition** (sync via [`doc-site/scripts/sync_allowlisted_docs.py`](../doc-site/scripts/sync_allowlisted_docs.py)).

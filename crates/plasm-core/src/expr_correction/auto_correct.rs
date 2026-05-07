@@ -1,5 +1,6 @@
 use crate::domain_lexicon::{tokens, DomainLexicon};
-use crate::{expr_parser, CapabilityKind, FieldType, InputType, CGS};
+use crate::expr_parser::{self, predicate_surface};
+use crate::{CapabilityKind, FieldType, InputType, CGS};
 
 use super::RecoveryHint;
 
@@ -25,7 +26,7 @@ pub enum CorrectionOutcome {
 pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> CorrectionOutcome {
     // Only correct Entity{...} forms
     let input = input.trim();
-    let Some((entity_name, pred_body)) = split_entity_preds(input) else {
+    let Some((entity_name, pred_body)) = predicate_surface::split_query_brace_form(input) else {
         return CorrectionOutcome::Uncorrectable;
     };
 
@@ -37,8 +38,12 @@ pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> Corr
     // Build list of all valid field/param names for this entity (for quick lookup)
     let valid_for_entity = collect_valid_names(cgs, entity_name);
 
-    // Parse predicates leniently
-    let raw_preds: Vec<RawPred> = parse_raw_predicates(pred_body);
+    // Parse predicates with the same surface scan as the main parser (commas, heredocs, quotes).
+    let raw_preds: Vec<predicate_surface::PredicateSurfaceClause> =
+        match predicate_surface::parse_loose_query_predicate_body(pred_body) {
+            Ok(p) => p,
+            Err(_) => return CorrectionOutcome::Uncorrectable,
+        };
     if raw_preds.is_empty() {
         return CorrectionOutcome::Uncorrectable;
     }
@@ -171,101 +176,6 @@ pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> Corr
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// A leniently-parsed predicate extracted from the raw `{...}` block.
-#[derive(Debug)]
-struct RawPred {
-    /// Original predicate string (used when keeping unchanged)
-    raw: String,
-    field: String,
-    op: String,
-    value: String,
-}
-
-/// Split `Entity{pred1, pred2}` into `("Entity", "pred1, pred2")`.
-/// Returns `None` if the input is not in this form.
-fn split_entity_preds(input: &str) -> Option<(&str, &str)> {
-    let brace = input.find('{')?;
-    let entity = input[..brace].trim();
-    if !input.ends_with('}') {
-        return None;
-    }
-    let body = &input[brace + 1..input.len() - 1];
-    if entity.is_empty() || entity.contains('(') || entity.contains('.') {
-        return None; // get-by-id or chain form — don't touch
-    }
-    Some((entity, body))
-}
-
-/// Parse `"field=value, field2>val2"` into individual `RawPred` items.
-/// Lenient — does not validate field names or types.
-fn parse_raw_predicates(body: &str) -> Vec<RawPred> {
-    let mut result = Vec::new();
-    for part in split_predicates(body) {
-        let raw = part.trim().to_string();
-        if raw.is_empty() {
-            continue;
-        }
-        // Find operator position (!=, >=, <=, =, ~, >, <) — try multi-char first
-        let op_start = find_op_pos(&raw);
-        let Some((op_idx, op_len)) = op_start else {
-            continue;
-        };
-        let field = raw[..op_idx].trim().to_string();
-        let op = raw[op_idx..op_idx + op_len].to_string();
-        let value = raw[op_idx + op_len..].trim().to_string();
-        if field.is_empty() || value.is_empty() {
-            continue;
-        }
-        result.push(RawPred {
-            raw,
-            field,
-            op,
-            value,
-        });
-    }
-    result
-}
-
-/// Split predicates on `,` but respect nested `Entity(id)` parentheses.
-fn split_predicates(body: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth: i32 = 0;
-    let mut start = 0;
-    for (i, ch) in body.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            ',' if depth == 0 => {
-                parts.push(&body[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&body[start..]);
-    parts
-}
-
-/// Find the position and length of the first comparison operator in `s`.
-fn find_op_pos(s: &str) -> Option<(usize, usize)> {
-    let bytes = s.as_bytes();
-    for i in 0..bytes.len() {
-        // Two-char operators
-        if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if two == b"!=" || two == b">=" || two == b"<=" {
-                return Some((i, 2));
-            }
-        }
-        // Single-char operators
-        match bytes[i] {
-            b'=' | b'~' | b'>' | b'<' => return Some((i, 1)),
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Extract the id portion from a value like `Space(42)`, `"abc"`, or bare `42`.
 fn extract_id_from_value(value: &str) -> String {
     let v = value.trim();
@@ -347,28 +257,6 @@ fn collect_valid_names<'a>(cgs: &'a CGS, entity_name: &str) -> std::collections:
 mod tests {
     use super::*;
     use crate::domain_lexicon::DomainLexicon;
-
-    #[test]
-    fn split_entity_preds_basic() {
-        let r = split_entity_preds("Space{team_id=Team(42)}");
-        assert_eq!(r, Some(("Space", "team_id=Team(42)")));
-    }
-
-    #[test]
-    fn split_entity_preds_ignores_get() {
-        assert!(split_entity_preds("Space(42)").is_none());
-        assert!(split_entity_preds("Space(42).folders").is_none());
-    }
-
-    #[test]
-    fn parse_raw_predicates_basic() {
-        let preds = parse_raw_predicates("space_id=Space(42), archived=true");
-        assert_eq!(preds.len(), 2);
-        assert_eq!(preds[0].field, "space_id");
-        assert_eq!(preds[0].value, "Space(42)");
-        assert_eq!(preds[1].field, "archived");
-        assert_eq!(preds[1].value, "true");
-    }
 
     #[test]
     fn extract_id_from_entity_ref() {

@@ -55,11 +55,18 @@ Split **`domain.yaml`** declares a catalog-local registry of **named semantic sl
 
 **Sharing `values` keys:** Only point multiple slots at the **same** `values` key when they are intentionally the same domain concept (e.g. one shared enum, or the same `entity_ref` target meaning the same id space) **and** gloss text is compatible. **Never** merge unrelated strings, integers, or dates solely because the wire type matches — use distinct keys per slot (`nv_<entity>_<field>`, `nv_<capability>_<param>`) so `description` / `string_semantics` stay truthful.
 
+**Canonical `values:` keys (optional entropy control):** [`scripts/dedupe_primitive_domain_values.py`](scripts/dedupe_primitive_domain_values.py) `--canonicalize-primitives` collapses duplicate anonymous rows in the **same** `domain.yaml` when **two or more** keys share the same normalized body:
+
+- **Primitives** → fixed names: `nv_wire_str_short`, `nv_wire_str_markdown`, `nv_wire_int`, `nv_wire_num`, `nv_wire_bool`, `nv_wire_date_rfc3339` (empty `values:` `description`; no `items` / `target`; `allowed_values` absent or `[]`; only the scalar keys required for that shape).
+- **Closed sets** → `nv_wire_sel_<16hex>` / `nv_wire_msel_<16hex>` from a SHA-256 of the normalized `{ type, allowed_values }` body (`allowed_values` sorted and deduped for fingerprinting).
+
+**`--write`** rewrites every `value_ref` (including nested `items.value_ref`), removes merged keys, bumps `version:`, and reorders `values:` **topologically** so `items.value_ref` targets appear before parents (required by `load_schema`). Re-run `cargo test -p plasm-core` on touched catalogs before committing. Rows with non-empty `description`, arrays, entity refs, or extra YAML keys stay bespoke.
+
 **`input_schema` (create / update / action body):** YAML uses full **`InputFieldSchema`** interchange: each object field has **`name`**, **`value_ref`**, **`field_type:`** (singleton map), plus mirrors (`value_format`, `allowed_values`, `array_items`, `string_semantics`, …). Those mirrors must match **`CGS::values[value_ref]`** — `CGS::validate` / registry denormalization rejects drift. Prefer defining the shape once under **`values:`** and copying the mirrored keys from that row.
 
 Combined **`.cgs.yaml`** interchange may still show denormalized **`field_type`** on entity fields for serde round-trips; **authoring** new split domains should use **`values:` + `value_ref`**.
 
-**`description` on `values:` rows:** Optional prose for tooling and DOMAIN gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot’s `description` is empty, [`field_schema_from_domain_field`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/loader.rs) uses the named value’s description as [`FieldSchema.description`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
+**`description` on `values:` rows:** Optional prose for tooling and DOMAIN gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](plasm-oss/crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot’s `description` is empty, [`field_schema_from_domain_field`](plasm-oss/crates/plasm-core/src/loader.rs) uses the named value’s description as [`FieldSchema.description`](plasm-oss/crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](plasm-oss/crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
 
 ### Entities
 
@@ -112,9 +119,9 @@ entities:
 
 ### `path` and `derive` (wire response shaping)
 
-By default, each field is read from a **top-level JSON key** matching the field name on the decoded row. Override the location with **`path`** on the **field slot** (next to **`value_ref`**) in `domain.yaml` (loads as [`FieldSchema.wire_path`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs)): either a dotted string (`owner.login`) or a YAML list of object keys (`[payload, headers]`).
+By default, each field is read from a **top-level JSON key** matching the field name on the decoded row. Override the location with **`path`** on the **field slot** (next to **`value_ref`**) in `domain.yaml` (loads as [`FieldSchema.wire_path`](plasm-oss/crates/plasm-core/src/schema.rs)): either a dotted string (`owner.login`) or a YAML list of object keys (`[payload, headers]`).
 
-**`derive`** runs on the extracted JSON value **before** optional scalar [`Transform`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-compile/src/decoder.rs) steps. Rules ([`FieldDeriveRule`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs), `type` tag, `snake_case`):
+**`derive`** runs on the extracted JSON value **before** optional scalar [`Transform`](plasm-oss/crates/plasm-compile/src/decoder.rs) steps. Rules ([`FieldDeriveRule`](plasm-oss/crates/plasm-core/src/schema.rs), `type` tag, `snake_case`):
 
 | `type` | Input shape | Behavior |
 |--------|-------------|----------|
@@ -122,13 +129,19 @@ By default, each field is read from a **top-level JSON key** matching the field 
 | `name_value_array_lookup` | JSON **array** of objects | Find the first element where `match_key_field` equals `equals` (defaults: `match_key_field` = `name`, `value_field` = `value`). Optional **`case_insensitive`** ASCII fold on that comparison (RFC 5322 header names). Return `value_field` from that object; if no match, the field decodes as null. Fits Gmail `payload.headers`, AWS-style `[{ "Key": "…", "Value": "…" }]` tags when `match_key_field` / `value_field` are set to `Key` / `Value`, and similar EAV-lite arrays. |
 | `object_key_lookup` | JSON **object** | Return `obj[key]`; optional **`case_insensitive`** resolution of the key string against object keys. |
 
-**`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path`/`derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs)) and DOMAIN projection teaching; it does **not** strip extra decoded fields from the cached entity row by itself. If you need two different agent-facing projections over the same HTTP operation, duplicate capabilities with different `provides` is only a *documentation* narrowing unless the runtime adds explicit field filtering.
+**`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path`/`derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](plasm-oss/crates/plasm-core/src/schema.rs)) and DOMAIN projection teaching; it does **not** strip extra decoded fields from the cached entity row by itself. If you need two different agent-facing projections over the same HTTP operation, duplicate capabilities with different `provides` is only a *documentation* narrowing unless the runtime adds explicit field filtering.
 
 **Other `apis/*` adopters:** prefer `name_value_array_lookup` wherever a vendor exposes metadata as an array of small records (tags, headers, key/value rows). This repository’s **Gmail** CGS uses it for message headers; AWS/GCP-style tag arrays are a natural next candidate when those surfaces are modeled.
 
-**CML HTTP `body` (beyond `object` / `var`):** the CML expression enum includes vendor-specific builders. Example: **`gmail_rfc5322_send_body`** evaluates to the JSON body for Gmail `users.messages.send` (`raw` plus optional `threadId`) from CML env keys `from`, `to`, `subject`, `plainBody`, and optional `threadId`, `inReplyTo`, `references` — see [`apis/gmail/mappings.yaml`](https://github.com/ryan-s-roberts/plasm-core/blob/main/apis/gmail/mappings.yaml) `message_send_simple` and [`plasm-oss/crates/plasm-cml/src/gmail_send_body.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/gmail_send_body.rs). **`gmail_rfc5322_reply_send_body`** is the same wire shape but derives defaults from preflight **`parent_*`** keys (see **`invoke_preflight`** on [`CapabilitySchema`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/schema.rs) and Gmail **`message_reply`**).
+**CML HTTP `body` (beyond `object` / `var`):** the CML expression enum includes vendor-specific builders. Example: **`gmail_rfc5322_send_body`** evaluates to the JSON body for Gmail `users.messages.send` (`raw` plus optional `threadId`) from CML env keys `from`, `to`, `subject`, `plainBody`, and optional `threadId`, `inReplyTo`, `references` — see [`apis/gmail/mappings.yaml`](apis/gmail/mappings.yaml) `message_send_simple` and [`plasm-oss/crates/plasm-cml/src/gmail_send_body.rs`](plasm-oss/crates/plasm-cml/src/gmail_send_body.rs). **`gmail_rfc5322_reply_send_body`** is the same wire shape but derives defaults from preflight **`parent_*`** keys (see **`invoke_preflight`** on [`CapabilitySchema`](plasm-oss/crates/plasm-core/src/schema.rs) and Gmail **`message_reply`**).
 
 **`description` on entities and capabilities:** Optional but recommended when it helps agents and humans. Write **short domain prose**—what the thing *is* or what the operation *means* to a user or integrator. Do **not** paste HTTP methods, URL paths, OpenAPI operation ids, bare **`http://` / `https://` links**, or “maps to …” wiring notes; those belong in **`mappings.yaml`** (comments may name products and hosts in words, not pasted URIs) or external API docs. The same rule applies to **`output.description`** for `side_effect` actions: state the **domain effect** (e.g. “message moves to Trash”), not the transport shape (“PATCH, empty body”, “returns 204”). **Exception:** `auth.token_url` and similar **machine** OAuth/OpenID fields may contain a provider token URL string—those are runtime wiring, not human DOMAIN copy.
+
+#### Gloss: do not restate typed structure
+
+Entity **field** descriptions (and similar gloss fed from slots) must **not** inventory shapes the schema already teaches—e.g. “map keyed by …”, “JSON containing …”, repeating **`select`** alternatives, or narrating **`entity_ref`** / **`json`** innards when **`value_ref`**, **`provides:`**, **`input_schema`** unions, or relation materialization already convey them. Prefer **omitting** the field `description` when the parent entity (or **`values:`** row for that slot) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance **beyond** type (staleness, trust boundary, “refresh before …”). Primitive semantics stay on **`values:`** rows (`string_semantics`, allowed enums, date meaning).
+
+**Prompt-facing copy (symbolic TSV / MCP DOMAIN):** Treat `description` on entities, **read** capabilities (`query` / `get` / `search`), and `values:` rows as **agent selection hints only**—what to choose in the domain, not how the host hydrates or routes. Do **not** explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, “full vs summary” rows, or **`provides:`** behavior there; authors document those in **`mappings.yaml`**, maintainer comments, or tests. **`create` / `update` / `delete` / `action`** capability descriptions may stay richer where they disambiguate **`m#`** choice. The renderer **omits** long-form read-capability descriptions from TSV `Meaning` (types and scope still teach shape).
 
 ### Field Types
 
@@ -295,7 +308,7 @@ capabilities:
 
 Wire shape for each parameter is **`values[value_ref]`** — same scalar vocabulary as entity field value rows (`type`, `target`, `allowed_values`, `items`, `value_format`, `string_semantics`, …).
 
-**`description` on capability parameters:** Optional. When the prompt uses a **symbolic** `PromptRenderMode` (**compact** or **tsv**, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval` — not a legacy `symbol_tuning: true` flag), each parameter gets a `p#` gloss line in DOMAIN (compact: line before first use; tsv: folded into the teaching table). The gloss shows the parameter type and, after a middle dot (`·`), either this **`description`** (trimmed, possibly truncated) or, if omitted, the **wire `name`** from YAML. Use the same style as entity field descriptions: short domain prose, not HTTP or mapping trivia.
+**`description` on capability parameters:** Optional. When the prompt uses a **symbolic** `PromptRenderMode` (**compact** or **tsv**, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval` — not a legacy `symbol_tuning: true` flag), each parameter gets a `p#` gloss line in DOMAIN (compact: line before first use; tsv: folded into the teaching table). The gloss shows the parameter type and, after a middle dot (`·`), either this **`description`** (trimmed, possibly truncated) or, if omitted, the **wire `name`** from YAML. Use the same style as entity field descriptions: short domain prose, not HTTP or mapping trivia. **Do not** restate the parameter **`name:`**, wire type, or enum members—the table already does; omit **`description`** unless it adds non-obvious semantics (access scope, staleness, human-facing units).
 
 ### Parameter Roles
 
@@ -632,7 +645,7 @@ Default when neither is set: **first page only** (LLM execute matches this unles
 
 #### Pagination block schema (composable `PaginationConfig`)
 
-Rust ground truth: [`PaginationConfig`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/cml.rs) in **`mappings.yaml`** under `pagination:`.
+Rust ground truth: [`PaginationConfig`](plasm-oss/crates/plasm-cml/src/cml.rs) in **`mappings.yaml`** under `pagination:`.
 
 ```yaml
 pagination:
@@ -685,7 +698,7 @@ GraphQL list capabilities use the **same** composable `pagination:` shape as HTT
 - **`response_prefix`**: optional path from the **root JSON response** for **`stop_when`** and **`from_response`** (e.g. `[data, issues, pageInfo]`).
 - **`--limit` / `--all`**: same CLI behavior as HTTP when `pagination` is present.
 
-**CML `object` fields: `Value::Null` keys are omitted at eval time.** In [`eval_cml`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/cml.rs), when building a `type: object`, any key whose sub-expression evaluates to **`Value::Null`** is **not inserted** into the parent object. So the common optional pattern `type: if` / `condition: exists` / `else_expr: { type: const, value: null }` produces **no key** for missing inputs—well-typed **omit** semantics in the compiled `Value`, not only on the wire. Nested objects are evaluated recursively with the same rule.
+**CML `object` fields: `Value::Null` keys are omitted at eval time.** In [`eval_cml`](plasm-oss/crates/plasm-cml/src/cml.rs), when building a `type: object`, any key whose sub-expression evaluates to **`Value::Null`** is **not inserted** into the parent object. So the common optional pattern `type: if` / `condition: exists` / `else_expr: { type: const, value: null }` produces **no key** for missing inputs—well-typed **omit** semantics in the compiled `Value`, not only on the wire. Nested objects are evaluated recursively with the same rule.
 
 **HTTP JSON body: null keys are still stripped before POST** (`strip_null_fields` in `plasm-oss/crates/plasm-runtime/src/http_transport.rs`) as a safety net for any remaining `null` in nested JSON (e.g. from non-`object` paths). Together, CML omit + transport strip match typical **partial GraphQL mutation inputs** (omit field = leave unchanged). Mappings YAML may still show `else: null`; that evaluates to null, then the key is dropped at object construction.
 
@@ -915,7 +928,7 @@ When the user runs `pet create --name Fido --status available`:
 
 ### Request body formats (`body_format`)
 
-Default is **`json`**: `body:` is evaluated to a Plasm [`Value`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-core/src/value.rs) and POSTed as `application/json` (nulls stripped on the wire).
+Default is **`json`**: `body:` is evaluated to a Plasm [`Value`](plasm-oss/crates/plasm-core/src/value.rs) and POSTed as `application/json` (nulls stripped on the wire).
 
 **`form_urlencoded`:** `body:` must evaluate to a **flat object** of string/number/bool fields; the runtime sends `application/x-www-form-urlencoded`.
 
@@ -947,7 +960,7 @@ multipart:
         name: file
 ```
 
-Rust ground truth: [`HttpBodyFormat`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/cml.rs), [`MultipartBodySpec`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-cml/src/cml.rs), wire build in [`http_transport.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-runtime/src/http_transport.rs).
+Rust ground truth: [`HttpBodyFormat`](plasm-oss/crates/plasm-cml/src/cml.rs), [`MultipartBodySpec`](plasm-oss/crates/plasm-cml/src/cml.rs), wire build in [`http_transport.rs`](plasm-oss/crates/plasm-runtime/src/http_transport.rs).
 
 ---
 

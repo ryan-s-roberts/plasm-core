@@ -36,7 +36,7 @@ Details and edge cases live in the [Reference](reference/cli-and-env.md) section
 |------|------|
 | First commands and “did it work?” | [Start here](getting-started.md) |
 | Mental model + vocabulary | [Concepts](concepts.md) |
-| Language + heredocs | [Language specification](reference/plasm-language-unification.md) |
+| Language + heredocs | [Language definition](reference/plasm-language-definition.md) |
 | MCP sessions and `intent` | [MCP session reuse](reference/mcp-session-reuse.md) |
 | Full CLI/env index | [CLI & environment](reference/cli-and-env.md) |
 

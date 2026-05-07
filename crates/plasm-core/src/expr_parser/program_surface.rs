@@ -1,0 +1,297 @@
+//! Physical-line program staging and delimiter-aware splitting shared with DAG lowering.
+//!
+//! Multi-line Plasm programs must join tagged heredocs across physical lines before binding/root
+//! splitting — same rules as structured parameter heredocs ([`super::heredoc_surface`]).
+
+use super::heredoc_surface::{
+    heredoc_surface_step_at, tagged_heredoc_close_kind, HeredocSurfaceStep,
+};
+
+/// Strip trailing `;;` line comments (DOMAIN-style).
+#[inline]
+pub fn strip_line_comment(line: &str) -> &str {
+    line.split_once(";;").map_or(line, |(left, _)| left)
+}
+
+/// One physical line is a complete Plasm program statement, **unless** it opens a tagged heredoc
+/// whose closing `TAG` line has not yet been seen (then callers accumulate further physical lines).
+#[derive(Debug)]
+pub enum PhysicalLineStmtState {
+    Complete,
+    AwaitingHeredocClose { tag: String },
+}
+
+pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState, String> {
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    while i < line.len() {
+        let c = line[i..]
+            .chars()
+            .next()
+            .ok_or_else(|| "invalid UTF-8 boundary".to_string())?;
+        let cl = c.len_utf8();
+        if quote.is_none() {
+            match heredoc_surface_step_at(line, i)? {
+                HeredocSurfaceStep::NotAnOpener => {}
+                HeredocSurfaceStep::OpenerIncomplete { tag } => {
+                    return Ok(PhysicalLineStmtState::AwaitingHeredocClose { tag });
+                }
+                HeredocSurfaceStep::SkipTo(next) => {
+                    i = next;
+                    continue;
+                }
+            }
+        }
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            _ => {}
+        }
+        i += cl;
+    }
+    if quote.is_some() {
+        return Err(
+            "physical newline inside a quoted Plasm string parameter; use a tagged heredoc for multiline string parameters, e.g. `p58=<<MAIL_7f3a` then the body and a closing `MAIL_7f3a)` line"
+                .to_string(),
+        );
+    }
+    if depth != 0 {
+        return Err(format!(
+            "unbalanced delimiters in Plasm program line `{line}`"
+        ));
+    }
+    Ok(PhysicalLineStmtState::Complete)
+}
+
+/// Join physical lines into logical statements, respecting tagged heredocs that span lines.
+pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut pending_tag: Option<String> = None;
+
+    for raw in src.lines() {
+        let w = strip_line_comment(raw);
+        if pending_tag.is_some() {
+            if !cur.is_empty() {
+                cur.push('\n');
+            }
+            cur.push_str(w);
+            let last = cur.lines().last().unwrap_or("");
+            if tagged_heredoc_close_kind(last, pending_tag.as_deref().unwrap()).is_some() {
+                out.push(cur.trim_end().to_string());
+                cur.clear();
+                pending_tag = None;
+            }
+        } else {
+            if w.trim().is_empty() {
+                continue;
+            }
+            cur.clear();
+            cur.push_str(w);
+            match scan_physical_line_stmt_state(&cur)? {
+                PhysicalLineStmtState::Complete => {
+                    out.push(cur.trim_end().to_string());
+                    cur.clear();
+                }
+                PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
+                    pending_tag = Some(tag);
+                }
+            }
+        }
+    }
+
+    if pending_tag.is_some() {
+        return Err(
+            "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)".into(),
+        );
+    }
+    if !cur.is_empty() {
+        return Err("unterminated Plasm program statement (unexpected trailing fragment)".into());
+    }
+    Ok(out)
+}
+
+pub fn looks_like_domain_symbol(label: &str) -> bool {
+    let mut chars = label.chars();
+    matches!(chars.next(), Some('e' | 'p' | 'm'))
+        && matches!(chars.next(), Some(c) if c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_digit())
+}
+
+/// Valid identifier for a program binding label (not `e1`/`p2`-style DOMAIN symbols).
+pub fn is_valid_program_label(label: &str) -> bool {
+    let mut chars = label.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !looks_like_domain_symbol(label)
+}
+
+pub fn validate_program_label(label: &str) -> Result<(), String> {
+    if !is_valid_program_label(label) || matches!(label, "_" | "$" | "return") {
+        return Err(format!("invalid Plasm program label `{label}`"));
+    }
+    Ok(())
+}
+
+/// Split `lhs = rhs` at the first top-level `=` (respecting quotes and nesting).
+///
+/// Does **not** validate `lhs`; use [`validate_program_label`] after splitting when the line is
+/// intended as a program binding.
+pub fn split_assignment_at_top_level(line: &str) -> Option<(&str, &str)> {
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            '=' if quote.is_none() && depth == 0 => {
+                let left = line[..i].trim();
+                let right = line[i + 1..].trim();
+                if !left.is_empty() && !right.is_empty() {
+                    return Some((left, right));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split `label = rhs` at top-level `=` only when `label` is a valid program binding name.
+#[inline]
+pub fn split_assignment_for_binding(line: &str) -> Option<(&str, &str)> {
+    let (l, r) = split_assignment_at_top_level(line)?;
+    is_valid_program_label(l).then_some((l, r))
+}
+
+/// Split on `delimiter` at nesting depth 0, skipping quoted regions and tagged heredocs.
+///
+/// Used for comma-separated roots and aggregate argument lists. Unlike [`collect_program_statement_lines`],
+/// this errors if a heredoc opener on one line is incomplete (hard newline required after `TAG`).
+pub fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    let mut i = 0usize;
+    while i < s.len() {
+        let c = s[i..]
+            .chars()
+            .next()
+            .ok_or_else(|| "invalid UTF-8 boundary".to_string())?;
+        let cl = c.len_utf8();
+        if quote.is_none() {
+            match heredoc_surface_step_at(s, i)? {
+                HeredocSurfaceStep::NotAnOpener => {}
+                HeredocSurfaceStep::OpenerIncomplete { .. } => {
+                    return Err(
+                        "tagged heredoc `<<TAG` must have a newline immediately after the tag on the opener line (hard newline; do not squash `<<TAG` with the body on one line)".into(),
+                    );
+                }
+                HeredocSurfaceStep::SkipTo(next) => {
+                    i = next;
+                    continue;
+                }
+            }
+        }
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            _ if c == delimiter && quote.is_none() && depth == 0 => {
+                out.push(&s[start..i]);
+                start = i + cl;
+            }
+            _ => {}
+        }
+        i += cl;
+    }
+    if depth != 0 {
+        return Err(format!("unbalanced delimiters in `{s}`"));
+    }
+    out.push(&s[start..]);
+    Ok(out)
+}
+
+/// Split at the first top-level occurrence of `token` (e.g. `"=>"` for effect templates).
+pub fn split_token_top_level<'a>(
+    line: &'a str,
+    token: &str,
+) -> Result<Option<(&'a str, &'a str)>, String> {
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    let bytes = line.as_bytes();
+    let token_b = token.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = line[i..].chars().next().ok_or("invalid UTF-8 boundary")?;
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            '(' | '[' | '{' if quote.is_none() => depth += 1,
+            ')' | ']' | '}' if quote.is_none() => depth -= 1,
+            _ => {}
+        }
+        if quote.is_none() && depth == 0 && bytes[i..].starts_with(token_b) {
+            return Ok(Some((&line[..i], &line[i + token.len()..])));
+        }
+        i += c.len_utf8();
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_top_level_keeps_commas_inside_tagged_heredoc() {
+        let parts = split_top_level("fn(<<T\na,b,c\nT\n), bar", ',').expect("split");
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("a,b,c"));
+        assert_eq!(parts[1].trim(), "bar");
+    }
+
+    #[test]
+    fn collect_program_statement_lines_errors_on_squashed_heredoc_opener() {
+        let err = collect_program_statement_lines("body = <<B # junk").expect_err("err");
+        assert!(
+            err.contains("tagged heredoc") || err.contains("<<"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn collect_program_statement_lines_glued_heredoc_close() {
+        let stmts = collect_program_statement_lines("x = <<H\none\nH)").expect("parse");
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].contains("<<H"));
+        assert!(stmts[0].contains("one"));
+    }
+
+    #[test]
+    fn split_token_top_level_respects_nesting() {
+        let got1 = split_token_top_level("src => Effect(x)", "=>").expect("ok");
+        assert_eq!(
+            got1.map(|(a, b)| (a.trim(), b.trim())),
+            Some(("src", "Effect(x)"))
+        );
+        let got2 = split_token_top_level("(a=>b) => c", "=>").expect("ok");
+        assert_eq!(
+            got2.map(|(a, b)| (a.trim(), b.trim())),
+            Some(("(a=>b)", "c"))
+        );
+    }
+
+    #[test]
+    fn rejects_domain_symbol_labels_for_assignment_split() {
+        assert!(split_assignment_for_binding("e1 = foo").is_none());
+        assert!(split_assignment_for_binding("repo = x").is_some());
+    }
+}

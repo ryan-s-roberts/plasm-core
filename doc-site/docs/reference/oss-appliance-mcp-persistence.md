@@ -1,18 +1,8 @@
 # OSS appliance MCP persistence — synthetic tenant + sqlx tables
 
-!!! tip "Read this when…"
-
-    You run desktop Phoenix + local `plasm-mcp`, configure Postgres, or trace why MCP suddenly requires API keys.
-
-**What to know first:** [Run the MCP appliance](../appliance/onboarding.md) (credential planes), [Incoming auth](plasm-mcp-incoming-auth.md).
-
-**Practical takeaway:** OSS uses **one synthetic tenant** in the same **`project_mcp_*`** tables as hosted paths—**no** parallel desktop policy duplicate for allowlists.
-
----
-
 This document fixes **where MCP policy lives** for the single-user **OSS appliance** (desktop Phoenix + local `plasm-mcp`): **no parallel policy store** in desktop KV or bespoke schemas; **one synthetic tenant row** in the **same `project_mcp_*` tables** the agent already reads via sqlx.
 
-**Related:** [Outgoing OAuth promotion](oss-outgoing-oauth-promotion.md). SQL migrations: `crates/plasm-agent-core/migrations/` in this repository.
+**Related:** [oss-saas-boundary.md](oss-saas-boundary.md), [private-control-plane-api.md](private-control-plane-api.md), [plasm-mcp-tenant-configuration.md](plasm-mcp-tenant-configuration.md), [oss-outgoing-oauth-promotion.md](oss-outgoing-oauth-promotion.md), [`web/` ProjectMcp](web/lib/plasm_web/project_mcp.ex), [`plasm-agent-core` migrations](../plasm-oss/crates/plasm-agent-core/migrations/).
 
 ---
 
@@ -21,7 +11,7 @@ This document fixes **where MCP policy lives** for the single-user **OSS applian
 | Concern | Location |
 |--------|----------|
 | MCP allowlists, capability/auth bindings, API key hashes | **`project_mcp_*`** tables applied by **`plasm-agent-core` migrations** (e.g. `project_mcp_configs`, `project_mcp_allowed_graphs`, related auth rows). |
-| Runtime reads | **`plasm-mcp`** process via sqlx (`McpRuntimeConfig` → [`mcp_policy.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/mcp_policy.rs)). |
+| Runtime reads | **`plasm-mcp`** process via sqlx (`McpRuntimeConfig` → [`mcp_policy.rs`](../plasm-oss/crates/plasm-agent-core/src/mcp_policy.rs)). |
 
 The appliance **does not introduce** a second logical model (no duplicated allowlist columns in `desktop_settings`, no separate “appliance policy” table).
 
@@ -31,7 +21,7 @@ The appliance **does not introduce** a second logical model (no duplicated allow
 
 SaaS binds MCP config to `(tenant_id, workspace_slug, project_slug)`. The appliance uses **exactly one** intended configuration:
 
-- **Stable identifiers** — Rust defaults live in [`appliance_mcp_defaults`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/appliance_mcp_defaults.rs): `PLASM_APPLIANCE_MCP_TENANT_ID` (`appliance-local`), `PLASM_APPLIANCE_MCP_WORKSPACE_SLUG` / `PLASM_APPLIANCE_MCP_PROJECT_SLUG` (`default`). Every upsert must reuse the same triple and config UUID.
+- **Stable identifiers** — Rust defaults live in [`appliance_mcp_defaults`](../plasm-oss/crates/plasm-agent-core/src/appliance_mcp_defaults.rs): `PLASM_APPLIANCE_MCP_TENANT_ID` (`appliance-local`), `PLASM_APPLIANCE_MCP_WORKSPACE_SLUG` / `PLASM_APPLIANCE_MCP_PROJECT_SLUG` (`default`). Every upsert must reuse the same triple and config UUID.
 - **Desktop chrome** — Phoenix desktop persists `mcp_appliance_config_id` and `mcp_appliance_endpoint_hash_hex` in `desktop_settings` (policy pointers only). Optional env overrides: `PLASM_APPLIANCE_MCP_CONFIG_ID`, `PLASM_APPLIANCE_MCP_ENDPOINT_HASH_HEX` (must match the row already on the agent if set).
 - **Invariant** — at most **one** active appliance MCP policy row for that triple (plus normal versioning fields); UI edits **that** row’s graphs and secrets, not a catalog of workspaces.
 
@@ -53,9 +43,9 @@ Optional desktop KV (`desktop_settings`) remains **chrome only** (e.g. agent bas
 
 ## Secure upsert path (without SaaS `/internal/*`)
 
-Hosted product stacks push JSON to **`/internal/*`** on the composed binary using a control-plane secret.
+SaaS pushes JSON via [`PlasmWeb.PlasmMcpControlPlane`](web/lib/plasm_web/plasm_mcp_control_plane.ex) to **`/internal/*`** on the hosted binary.
 
-**OSS `plasm-mcp` (implemented):** When `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL` / `DATABASE_URL` resolves, the OSS binary connects **`project_mcp_*`**, mounts **`McpConfig_v1`** / **`McpApiKey_v1`** routes under `/internal/mcp-config/v1/*` and `/internal/mcp-api-key/v1/*` (handlers in [`http_mcp_config.rs`](https://github.com/ryan-s-roberts/plasm-core/blob/main/crates/plasm-agent-core/src/http_mcp_config.rs)), and wires MCP transport API keys (Postgres auth KV when available, otherwise **in-memory** keys only until restart). Use **`cargo run -p plasm-agent --bin plasm-mcp -- --migrate-mcp-config-db`** against that URL to apply migrations.
+**OSS `plasm-mcp` (implemented):** When `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL` / `DATABASE_URL` resolves, the OSS binary connects **`project_mcp_*`**, mounts the same routes as [private-control-plane-api.md](private-control-plane-api.md) **`McpConfig_v1`** / **`McpApiKey_v1`** under `/internal/…` (handlers in [`http_mcp_config.rs`](../plasm-oss/crates/plasm-agent-core/src/http_mcp_config.rs)), and wires MCP transport API keys (Postgres auth KV when available, otherwise **in-memory** keys only until restart). Use **`cargo run -p plasm-agent --bin plasm-mcp -- --migrate-mcp-config-db`** against that URL to apply migrations.
 
 **Guards:**
 

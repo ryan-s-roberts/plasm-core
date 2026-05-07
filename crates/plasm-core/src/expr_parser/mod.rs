@@ -53,16 +53,28 @@
 //! parse("Order(5).petId", &cgs) → Ok(ParsedExpr { expr: Chain(..), .. })
 //! ```
 
+pub(crate) mod heredoc_surface;
+pub(crate) mod predicate_surface;
+pub(crate) mod program_surface;
 mod value;
 
-pub mod value_expr;
-pub use value_expr::{RenderExpr, ValueExpr};
-
 pub mod postfix;
+pub mod program;
+pub mod value_expr;
+
+pub use heredoc_surface::{tagged_heredoc_close_kind, HeredocCloseLineKind};
 pub use postfix::{
     normalize_nested_projection_field, peel_postfix_suffixes, try_parse_bracket_render,
     try_parse_render_tail, BracketRender, PlasmPostfixOp, RenderTailParse,
 };
+pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, Statement};
+pub use program_surface::{
+    collect_program_statement_lines, is_valid_program_label, looks_like_domain_symbol,
+    scan_physical_line_stmt_state, split_assignment_at_top_level, split_assignment_for_binding,
+    split_token_top_level, split_top_level, strip_line_comment, validate_program_label,
+    PhysicalLineStmtState,
+};
+pub use value_expr::{RenderExpr, ValueExpr};
 
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,

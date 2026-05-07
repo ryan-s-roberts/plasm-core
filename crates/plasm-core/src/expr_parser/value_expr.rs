@@ -17,7 +17,7 @@ pub enum ValueExpr {
     Object(IndexMap<String, ValueExpr>),
 }
 
-/// `source[field,…] <<TAG` … `TAG` render surface (see repository `docs/plasm-language-unification.md`).
+/// `source[field,…] <<TAG` … `TAG` render surface (see repository `docs/plasm-language-definition.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderExpr {
     pub source: String,

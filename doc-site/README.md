@@ -47,7 +47,7 @@ Long-form pieces live under `docs/essay/` and are **omitted from `nav:`** so the
 
 ## Navigation (MkDocs Material)
 
-The theme uses a **nested left sidebar** for all `nav:` levels (Language → Specification, MCP → …, etc.). Header **tabs** are intentionally disabled: with `navigation.tabs`, Material lifts every top-level entry into the header bar and the sidebar tends to look **flat / fragmented**. **`navigation.expand`** opens subsections by default; **`navigation.path`** adds breadcrumbs for nested pages.
+The theme uses a **nested left sidebar** for all `nav:` levels (Language → Language definition, MCP → …, etc.). Header **tabs** are intentionally disabled: with `navigation.tabs`, Material lifts every top-level entry into the header bar and the sidebar tends to look **flat / fragmented**. **`navigation.expand`** opens subsections by default; **`navigation.path`** adds breadcrumbs for nested pages.
 
 ## Visual design (SaaS-aligned)
 

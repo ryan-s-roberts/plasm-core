@@ -70,7 +70,7 @@ nav:
   - Run the MCP appliance: appliance/onboarding.md
   - Glossary: glossary.md
   - Language:
-      - Specification: reference/plasm-language-unification.md
+      - Language definition: reference/plasm-language-definition.md
       - Correction catalogue: reference/correction-catalogue.md
   - Service endpoints:
       - Tool model: reference/tool-model-http.md

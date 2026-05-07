@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 ALLOWLIST = [
-    "plasm-language-unification.md",
+    "plasm-language-definition.md",
     "incremental-domain-prompts.md",
     "tool-model-http.md",
     "oss-core-trace-artifacts.md",

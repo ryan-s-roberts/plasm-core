@@ -18,6 +18,8 @@
 //!    segment). Example: `message{…}` → `Message{…}` when only `Message` exists.
 //! 3. [`try_auto_correct`] — only `Entity{predicate,…}` query shapes; uses
 //!    [`DomainLexicon`](crate::domain_lexicon::DomainLexicon) for synonym / scope resolution and predicate rewrite.
+//!    Predicate commas and comparison operators are scanned via
+//!    [`crate::expr_parser::predicate_surface`] so correction agrees with the main parser surface.
 //!
 //! # Lexicon safety contract
 //!

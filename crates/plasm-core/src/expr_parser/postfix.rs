@@ -6,6 +6,8 @@
 //! **Bracket render** (`source[field,...] <<TAG … TAG`) is recognized by [`try_parse_bracket_render`]
 //! using delimiter depth so `<<` inside calls/parens is not mistaken for a render opener.
 
+use super::heredoc_surface::tagged_heredoc_close_kind;
+
 /// Postfix operations peeled from the right of an expression, in **application order**
 /// (index `0` applies first to the primary, then `1`, …).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,35 +86,6 @@ pub fn normalize_nested_projection_field(segment: &str) -> Result<String, String
 /// `ident[field,...]` with no trailing junk after `]` (same contract as program DAG `parse_projection`).
 /// Closing line for row-to-text template heredocs — matches structured parameter heredocs
 /// ([`crate::expr_parser::value`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderHeredocCloseLineKind {
-    LineOnly,
-    GluedSuffix,
-}
-
-fn render_tail_tagged_close_kind(
-    line_slice: &str,
-    tag: &str,
-) -> Option<(RenderHeredocCloseLineKind, usize)> {
-    let leading_ws = line_slice.len() - line_slice.trim_start().len();
-    let t = line_slice.trim();
-    if t == tag {
-        return Some((RenderHeredocCloseLineKind::LineOnly, leading_ws));
-    }
-    if !t.starts_with(tag) {
-        return None;
-    }
-    let after = &t[tag.len()..];
-    let after = after.trim_start();
-    if after.len() == 1 {
-        let b = after.as_bytes()[0];
-        if matches!(b, b')' | b',' | b'}') {
-            return Some((RenderHeredocCloseLineKind::GluedSuffix, leading_ws));
-        }
-    }
-    None
-}
-
 fn parse_projection_head(head: &str) -> Option<(&str, &str)> {
     let head = head.trim_end();
     if !head.ends_with(']') {
@@ -156,7 +129,7 @@ fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> 
             pos += 1;
         }
         let line_slice = &rest[line_start..pos];
-        if render_tail_tagged_close_kind(line_slice, tag).is_some() {
+        if tagged_heredoc_close_kind(line_slice, tag).is_some() {
             return Ok(rest[body_start..line_start].to_string());
         }
         if pos >= bytes.len() {

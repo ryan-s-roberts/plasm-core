@@ -34,6 +34,7 @@
 //! - Predicated LL / lookahead — Parr & Fisher, *LL(\*)* (OOPSLA 2011)
 //! - Corrections: [`crate::error_render`], [`crate::expr_correction`]
 
+use super::heredoc_surface::{tagged_heredoc_close_kind, HeredocCloseLineKind};
 use super::{ParseError, ParseErrorKind, Parser, Value};
 use crate::PlasmInputRef;
 use indexmap::IndexMap;
@@ -45,36 +46,6 @@ fn is_v_numeric_union_ctor_label(name: &str) -> bool {
     }
     let tail = &name[1..];
     !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
-}
-
-/// How a structured heredoc closing line was recognized (tagged `TAG` line).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HeredocCloseLineKind {
-    /// Trimmed line is exactly the close sentinel; consume trailing newline after the line.
-    LineOnly,
-    /// Sentinel plus optional ASCII whitespace and a single `)` / `,` / `}`; leave that suffix for the outer parser.
-    GluedSuffix,
-}
-
-/// Tagged heredoc close: trim matches `TAG` alone, or `TAG` + optional ASCII ws + one of `)` `,` `}`.
-fn tagged_heredoc_close_kind(line_slice: &str, tag: &str) -> Option<(HeredocCloseLineKind, usize)> {
-    let leading_ws = line_slice.len() - line_slice.trim_start().len();
-    let t = line_slice.trim();
-    if t == tag {
-        return Some((HeredocCloseLineKind::LineOnly, leading_ws));
-    }
-    if !t.starts_with(tag) {
-        return None;
-    }
-    let after = &t[tag.len()..];
-    let after = after.trim_start();
-    if after.len() == 1 {
-        let b = after.as_bytes()[0];
-        if matches!(b, b')' | b',' | b'}') {
-            return Some((HeredocCloseLineKind::GluedSuffix, leading_ws));
-        }
-    }
-    None
 }
 
 #[derive(Clone, Copy, Debug)]

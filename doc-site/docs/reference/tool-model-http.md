@@ -1,4 +1,4 @@
-# Tool model endpoint
+# Tool model HTTP API
 
 `plasm-agent` exposes an operator-facing JSON projection aligned with DOMAIN prompt rendering and the dynamic CLI (`cli_builder`), not raw CGS parsing in clients.
 
