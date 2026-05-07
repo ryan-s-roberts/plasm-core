@@ -471,9 +471,17 @@ bug_report_submit:
   method: POST
   path:
   - type: literal
-    value: report
+    value: api
   - type: literal
-    value: bug
+    value: bridge
+  - type: literal
+    value: report_bug
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
   body:
     type: object
     fields: []
@@ -584,13 +592,17 @@ document_bug_report_submit:
   method: POST
   path:
   - type: literal
-    value: documents
-  - type: var
-    name: slug
+    value: api
   - type: literal
-    value: report
+    value: bridge
   - type: literal
-    value: bug
+    value: report_bug
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
   query:
     type: object
     fields:
@@ -607,7 +619,10 @@ document_bug_report_submit:
           value: null
   body:
     type: object
-    fields: []
+    fields:
+    - - slug
+      - type: var
+        name: slug
   response:
     single: true
 document_edit_v2:

@@ -1,0 +1,68 @@
+# Proof — NL eval / form coverage. Run from repo root:
+#   cargo run -p plasm-eval -- coverage --schema apis/proof --cases apis/proof/eval/cases.yaml
+#
+# Goals are agent-shaped: join + read (real-backend flow), then create/update/query/chain as needed.
+- id: proof-01-join-read
+  schema: proof
+  goal: "For shared document slug acme, set presence for automation agent 'plasm-bot', then load editor state and the markdown body so I can answer the user in that doc."
+  tags: [agent, multi_step]
+  covers: [multi_step, get, invoke]
+  expect:
+    entities_any: [Document, EditorState]
+
+- id: proof-02-markdown-projection
+  schema: proof
+  goal: "Fetch only the markdown field for document beta using the fast markdown read path."
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Document]
+    projection_contains: [markdown]
+
+- id: proof-03-block-snapshot
+  schema: proof
+  goal: "List current blocks for document gamma so I can anchor a structural edit on block refs."
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Document, Block]
+
+- id: proof-04-new-doc
+  schema: proof
+  goal: "Create a new shared document whose initial body is markdown '# Kickoff notes' for the retro."
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [ShareLink]
+
+- id: proof-05-rename-title
+  schema: proof
+  goal: "Update the document title for slug delta to 'Q2 planning'."
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Document]
+
+- id: proof-06-pending-events
+  schema: proof
+  goal: "Fetch pending collaboration events for document epsilon scoped by that document, after event id evt-9 if present."
+  tags: [query, collab]
+  covers: [query_filtered, reverse]
+  expect:
+    entities_any: [Document, CollaborationEvent]
+
+- id: proof-07-chain-blocks
+  schema: proof
+  goal: "From document zeta, follow the blocks relation to read structural chunk refs for the editor."
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Document, Block]
+
+- id: proof-08-bug-report
+  schema: proof
+  goal: "Send a global bug report to Proof with a short summary and pasted HTTP error context."
+  tags: [meta]
+  covers: [create]
+  expect:
+    entities_any: [BugReport]

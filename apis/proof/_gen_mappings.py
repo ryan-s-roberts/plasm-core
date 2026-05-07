@@ -28,6 +28,11 @@ def path_documents_slug() -> list:
     return [LIT("documents"), VAR("slug")]
 
 
+def path_bridge_report_bug() -> list:
+    """Hosted Proof accepts POST here (verified); POST /report/bug returns 404 on www.proofeditor.ai."""
+    return [LIT("api"), LIT("bridge"), LIT("report_bug")]
+
+
 def query_token_optional() -> dict:
     return {"type": "object", "fields": [["token", if_var("share_token")]]}
 
@@ -360,16 +365,23 @@ m["share_link_create"] = {
 
 m["bug_report_submit"] = {
     "method": "POST",
-    "path": [LIT("report"), LIT("bug")],
+    "path": path_bridge_report_bug(),
+    "headers": headers_json(),
     "body": {"type": "object", "fields": []},
     "response": response_single(),
 }
 
 m["document_bug_report_submit"] = {
     "method": "POST",
-    "path": path_documents_slug() + [LIT("report"), LIT("bug")],
+    "path": path_bridge_report_bug(),
+    "headers": headers_json(),
     "query": query_token_optional(),
-    "body": {"type": "object", "fields": []},
+    "body": {
+        "type": "object",
+        "fields": [
+            ["slug", VAR("slug")],
+        ],
+    },
     "response": response_single(),
 }
 

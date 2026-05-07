@@ -70,8 +70,39 @@ curl -sS -H "Authorization: Bearer $PROOF_API_TOKEN" -H 'Accept: application/jso
 - **Agent identity:** `agent_id` is sent as **`X-Agent-Id`** on mutating routes.
 - **Idempotency:** explicit capability parameter `idempotency_key` is sent as **`Idempotency-Key`** when set. On HTTP/MCP execute, Plasm also injects CML env keys `plasm_execute_prompt_hash` and `plasm_execute_session_id`; the generated **`document_edit_*`** mappings derive a default `Idempotency-Key` from those plus mutation fields (`baseRevision`, refs, text, …) when the caller omits `idempotency_key`. Align with Proof rollout: read `contract.idempotencyRequired` and `contract.mutationStage` from `GET …/state` — during required stages the wire must still carry a key (host-derived or explicit). Same key with a different payload hash yields `IDEMPOTENCY_KEY_REUSED`.
 - **`document_edit_find_replace_in_doc`:** CML currently emits a single structured `replace` op; optional sweep fields in the domain are not yet mapped — extend `_gen_mappings.py` when you confirm the live JSON shape.
-- **`annotation_comment_unresolve`** / **`annotation_comment_batch_apply`** / **bug report** routes are **best-effort** placeholders (`/ops` payload types or `/report/bug` paths) — verify against your Proof revision and adjust `_gen_mappings.py` if the server returns 4xx.
+- **Bug intake:** mappings use **`POST /api/bridge/report_bug`** with **`Accept: application/json`** (hosted `www.proofeditor.ai` and apex `proofeditor.ai`). Older **`POST /report/bug`** returned **404** in production probes — do not revert without re-verifying. **`document_bug_report_submit`** uses the same URL and sends **`slug`** in the JSON body plus optional share **`token`** query when `share_token` is set.
+- **`annotation_comment_unresolve`** / **`annotation_comment_batch_apply`** / **`/ops`** shapes remain **best-effort** — verify against your Proof revision if the server returns 4xx.
+
+## Hosted production checks (manual)
+
+Probed **2026-05** with anonymous requests (no doc secrets):
+
+| Check | Result |
+| ----- | ------ |
+| `GET https://proofeditor.ai/` vs `https://www.proofeditor.ai/` | **200** / **200** |
+| `GET …/documents/{slug}/state` vs `…/api/agent/{slug}/state` (unknown slug) | **404** / **404** on both apex and www (same status — aliases behave consistently for missing docs) |
+| `POST https://www.proofeditor.ai/report/bug` | **404** |
+| `POST https://www.proofeditor.ai/api/bridge/report_bug` | **200** with JSON validation envelope (`needs_more_info` on minimal `{}` body) |
+
+**Presence:** onboarding docs sometimes cite **`POST /api/agent/:slug/presence`**. This catalog uses **`POST /documents/:slug/bridge/presence`** with Proof SDK bridge headers (`_gen_mappings.py`). Confirm equivalence against [proof-sdk](https://github.com/EveryInc/proof-sdk) for your deployment if you see **426** or routing mismatches.
+
+## Incremental DOMAIN waves (execute / MCP)
+
+To keep prompts small and monotonic (`e#` / `m#` / `p#`), open sessions with a **tight seed list** and expand in waves ([incremental-domain-prompts.md](../../../docs/incremental-domain-prompts.md)):
+
+1. **Wave 1 — `Document`:** read paths (`document_get_markdown`, `document_get`), `presence_update`, and lightweight meta (`share_link_create`, bug reports) as needed.
+2. **Wave 2 — `EditorState`:** `editor_state_get` for revision / contract / marks before mutating.
+3. **Wave 3 — `Block`:** `block_query` + `document_edit_v2` for structural edits.
+4. **Wave 4 — `CollaborationEvent`:** `collaboration_event_query` + `collaboration_event_ack` for polling.
+
+Federation and exact seed lists follow host tooling (`plasm_context` seeds, HTTP execute entities).
+
+## Eval cases (form coverage)
+
+```bash
+cargo run -p plasm-eval -- coverage --schema apis/proof --cases apis/proof/eval/cases.yaml
+```
 
 ## Hosted Proof
 
-The default `http_backend` in `domain.yaml` remains `https://www.proofeditor.ai`. Hosted deployments may expose compatibility aliases (`/api/agent/*`, `/share/markdown`); this catalog follows the **canonical SDK paths** above.
+The default `http_backend` in `domain.yaml` remains `https://www.proofeditor.ai`. Hosted deployments expose **`/api/agent/*`** compatibility aliases in places; this catalog uses **`documents/…`** for reads/edits/collaboration and **`/api/bridge/report_bug`** for product bug intake as verified above.
