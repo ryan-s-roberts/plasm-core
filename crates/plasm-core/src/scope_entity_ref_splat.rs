@@ -28,7 +28,7 @@ pub fn apply_entity_ref_scope_splat(
         if !matches!(param.role, Some(ParameterRole::Scope)) {
             continue;
         }
-        let Ok(nv) = cgs.named_value_for_slot(param) else {
+        let Ok(nv) = param.named_value(cgs) else {
             continue;
         };
         let FieldType::EntityRef { target } = &nv.field_type else {

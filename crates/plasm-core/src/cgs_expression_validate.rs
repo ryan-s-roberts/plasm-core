@@ -1,15 +1,13 @@
 //! CGS rules so schemas cannot load unless every entity and capability is teachable on the typed
 //! expression surface.
 //!
-//! Invoked from [`CGS::validate`](crate::schema::CGS::validate). Structural checks run first; a
-//! witness pass reuses the same line synthesis as the catalog teaching bundle ([`crate::prompt_render`])
-//! so we do not silently skip entities or capabilities on the expression-teaching surface.
+//! Invoked from [`CGS::validate`](crate::schema::CGS::validate). Structural checks run first; witness +
+//! capability coverage share **one** [`crate::prompt_render::render_domain_prompt_bundle`] (same synthesis as eval DOMAIN).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::prompt_render::{render_domain_prompt_bundle, RenderConfig};
+use crate::prompt_render::{render_domain_prompt_bundle_for_validation, DomainPromptModel};
 use crate::schema::{CapabilityKind, InputFieldSchema, ParameterRole};
-use crate::symbol_tuning::symbol_map_for_prompt;
 use crate::{FieldType, SchemaError, ValueWireFormat, CGS};
 
 /// Validate expression-surface invariants: entity/capability graph, scope encodability,
@@ -17,8 +15,7 @@ use crate::{FieldType, SchemaError, ValueWireFormat, CGS};
 pub fn validate_cgs_expression_surface(cgs: &CGS) -> Result<(), SchemaError> {
     validate_every_entity_has_capability(cgs)?;
     validate_query_search_scope_params_encodable(cgs)?;
-    validate_expression_witnesses(cgs)?;
-    validate_per_capability_coverage(cgs)?;
+    validate_expression_surface_from_single_bundle(cgs)?;
     Ok(())
 }
 
@@ -38,7 +35,7 @@ fn validate_every_entity_has_capability(cgs: &CGS) -> Result<(), SchemaError> {
 }
 
 fn scope_param_encodable(cgs: &CGS, f: &InputFieldSchema) -> bool {
-    let Ok(nv) = cgs.named_value_for_slot(f) else {
+    let Ok(nv) = f.named_value(cgs) else {
         return false;
     };
     match &nv.field_type {
@@ -80,17 +77,30 @@ fn validate_query_search_scope_params_encodable(cgs: &CGS) -> Result<(), SchemaE
     Ok(())
 }
 
-fn validate_expression_witnesses(cgs: &CGS) -> Result<(), SchemaError> {
-    let map = symbol_map_for_prompt(cgs, crate::symbol_tuning::FocusSpec::All, true);
+/// One [`render_domain_prompt_bundle`] pass for witness + capability coverage (was ~2× synthesis).
+fn validate_expression_surface_from_single_bundle(cgs: &CGS) -> Result<(), SchemaError> {
+    let bundle = render_domain_prompt_bundle_for_validation(cgs);
+    validate_expression_witnesses_from_model(cgs, &bundle.model)?;
+    let missing = collect_uncovered_capabilities_with_model(cgs, &bundle.model);
+    if !missing.is_empty() {
+        return Err(SchemaError::CapabilityCoverageIncomplete { uncovered: missing });
+    }
+    Ok(())
+}
+
+fn validate_expression_witnesses_from_model(
+    cgs: &CGS,
+    model: &DomainPromptModel,
+) -> Result<(), SchemaError> {
+    let mut line_counts: HashMap<&str, usize> = HashMap::new();
+    for ep in &model.entities {
+        line_counts.insert(ep.entity.as_str(), ep.lines.len());
+    }
     for (entity_name, ent) in &cgs.entities {
         if ent.abstract_entity {
             continue;
         }
-        let n = crate::prompt_render::domain_example_line_count(
-            cgs,
-            entity_name.as_str(),
-            map.as_ref(),
-        );
+        let n = line_counts.get(entity_name.as_str()).copied().unwrap_or(0);
         if n == 0 {
             return Err(SchemaError::EntityExpressionIncomplete {
                 entity: entity_name.to_string(),
@@ -101,11 +111,10 @@ fn validate_expression_witnesses(cgs: &CGS) -> Result<(), SchemaError> {
     Ok(())
 }
 
-/// Collect capability ids taught by teaching-bundle lines, using renderer metadata (`source_capability`).
-fn covered_capabilities(cgs: &CGS) -> HashSet<String> {
-    let bundle = render_domain_prompt_bundle(cgs, RenderConfig::for_eval(None));
+/// Collect capability ids taught by teaching lines, using renderer metadata (`source_capability`).
+fn covered_capabilities_from_model(cgs: &CGS, model: &DomainPromptModel) -> HashSet<String> {
     let mut covered = HashSet::new();
-    for entity in &bundle.model.entities {
+    for entity in &model.entities {
         for line in &entity.lines {
             if let Some(cap) = &line.source_capability {
                 covered.insert(cap.clone());
@@ -151,8 +160,11 @@ fn covered_capabilities(cgs: &CGS) -> HashSet<String> {
     covered
 }
 
-fn collect_uncovered_capabilities(cgs: &CGS) -> Vec<(String, String)> {
-    let covered = covered_capabilities(cgs);
+fn collect_uncovered_capabilities_with_model(
+    cgs: &CGS,
+    model: &DomainPromptModel,
+) -> Vec<(String, String)> {
+    let covered = covered_capabilities_from_model(cgs, model);
     let mut missing = Vec::new();
     for (cap_name, cap) in &cgs.capabilities {
         let Some(ent) = cgs.get_entity(cap.domain.as_str()) else {
@@ -168,18 +180,11 @@ fn collect_uncovered_capabilities(cgs: &CGS) -> Vec<(String, String)> {
     missing
 }
 
-fn validate_per_capability_coverage(cgs: &CGS) -> Result<(), SchemaError> {
-    let missing = collect_uncovered_capabilities(cgs);
-    if !missing.is_empty() {
-        return Err(SchemaError::CapabilityCoverageIncomplete { uncovered: missing });
-    }
-    Ok(())
-}
-
 /// Strict per-capability coverage check (for tests). Returns uncovered capability names.
 #[cfg(test)]
 pub(crate) fn uncovered_capabilities(cgs: &CGS) -> Vec<(String, String)> {
-    collect_uncovered_capabilities(cgs)
+    let bundle = render_domain_prompt_bundle_for_validation(cgs);
+    collect_uncovered_capabilities_with_model(cgs, &bundle.model)
 }
 
 #[cfg(test)]
@@ -309,6 +314,20 @@ mod tests {
                 if uncovered.iter().any(|(cap, ent)| cap == extra_key.as_str() && ent == "CaptureItem")
             ),
             "expected strict coverage failure to mention synthetic capability; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn proof_teaching_bundle_covers_all_capabilities() {
+        let p = Path::new("../../apis/proof");
+        if !p.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(p).expect("proof");
+        let missing = uncovered_capabilities(&cgs);
+        assert!(
+            missing.is_empty(),
+            "Teaching bundle should witness every capability: {missing:?}"
         );
     }
 }

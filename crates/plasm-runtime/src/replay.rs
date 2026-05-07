@@ -338,6 +338,7 @@ fn value_to_json_value(value: &Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
+        Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
     }
 }
 
@@ -609,7 +610,7 @@ mod tests {
     #[test]
     fn invoke_input_payload_lift_preserves_http_fingerprint() {
         use plasm_core::schema::{
-            FieldValueKind, InputFieldSchema, InputType, NamedValueSchema, StringSemantics,
+            InputFieldSchema, InputFieldWire, InputType, NamedValueSchema, StringSemantics,
             ValueDomainKey, CGS,
         };
         use plasm_core::typed_invoke::InvokeInputPayload;
@@ -630,11 +631,13 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "title".into(),
-                kind: FieldValueKind::Registry(ValueDomainKey::new("replay_title").expect("key")),
+                wire: InputFieldWire::Registry(ValueDomainKey::new("replay_title").expect("key")),
                 required: true,
                 description: None,
                 default: None,
                 role: None,
+                wire_json_path: None,
+                wire_array_element_key: None,
             }],
             additional_fields: false,
         };

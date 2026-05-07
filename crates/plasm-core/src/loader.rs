@@ -269,8 +269,12 @@ pub struct DomainCapability {
 #[derive(Debug, Deserialize)]
 pub struct DomainParameter {
     pub name: String,
-    /// Catalog-local key into `values:` — **only** way to declare wire shape for this parameter.
+    /// Catalog-local key into `values:` when this parameter is registry-backed.
+    #[serde(default)]
     pub value_ref: String,
+    /// Inline structural input (`type: object`, `array`, `union`, …); mutually exclusive with non-empty `value_ref`.
+    #[serde(default)]
+    pub input_type: Option<Box<InputType>>,
     #[serde(default)]
     pub required: bool,
     /// Semantic role of this parameter. One of:
@@ -321,7 +325,8 @@ pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS
     debug!(keys = mappings.len(), "phase: mappings YAML parsed");
 
     debug!("phase: assemble_cgs");
-    let cgs = assemble_cgs(domain, mappings)?;
+    let cgs = assemble_cgs_core(domain, mappings)?;
+    finalize_cgs_load(&cgs)?;
 
     info!(
         elapsed_ms = t0.elapsed().as_millis() as u64,
@@ -330,6 +335,33 @@ pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS
         "load_split_schema finished"
     );
     Ok(cgs)
+}
+
+fn finalize_cgs_load(cgs: &CGS) -> Result<(), String> {
+    debug!(
+        entities = cgs.entities.len(),
+        capabilities = cgs.capabilities.len(),
+        "assemble_cgs: calling CGS::validate"
+    );
+    cgs.validate()
+        .map_err(|e| format!("CGS validation failed: {}", e))?;
+
+    warn_scope_aggregate_policy_template_mismatches(cgs);
+
+    let sem_violations = cgs.string_semantics_violations();
+    if !sem_violations.is_empty() {
+        for msg in &sem_violations {
+            error!(target: "plasm_core::cgs", "{}", msg);
+        }
+        return Err(format!(
+            "CGS load requires string_semantics on every string field and string capability parameter ({} issue(s); first: {})",
+            sem_violations.len(),
+            sem_violations[0]
+        ));
+    }
+
+    trace!("assemble_cgs: validate ok");
+    Ok(())
 }
 
 /// If `dir/domain.yaml` is missing, resolve known authoring typos to a sibling directory that exists.
@@ -533,34 +565,55 @@ fn input_field_schema_from_domain_parameter(
 ) -> Result<InputFieldSchema, String> {
     let ctx = format!("capability '{cap_name}', parameter '{}'", p.name);
     let vr = p.value_ref.trim();
-    if vr.is_empty() {
-        return Err(format!(
-            "{ctx}: `value_ref` is required — declare the wire shape under top-level `values:`"
-        ));
-    }
-    let nv = values
-        .get(vr)
-        .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
-    let description = if p.description.trim().is_empty() {
-        let nd = nv.description.trim();
-        if nd.is_empty() {
-            None
-        } else {
-            Some(nv.description.clone())
-        }
-    } else {
-        Some(p.description.clone())
-    };
     let role = p.role.as_deref().map(parse_parameter_role);
-    let vdk = ValueDomainKey::new(vr.to_string()).map_err(|e| format!("{ctx}: {e}"))?;
-    Ok(InputFieldSchema {
-        name: p.name.clone(),
-        kind: FieldValueKind::Registry(vdk),
-        required: p.required,
-        description,
-        default: None,
-        role,
-    })
+    match (vr.is_empty(), p.input_type.as_ref()) {
+        (false, None) => {
+            let nv = values
+                .get(vr)
+                .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
+            let description = if p.description.trim().is_empty() {
+                let nd = nv.description.trim();
+                if nd.is_empty() {
+                    None
+                } else {
+                    Some(nv.description.clone())
+                }
+            } else {
+                Some(p.description.clone())
+            };
+            let vdk = ValueDomainKey::new(vr.to_string()).map_err(|e| format!("{ctx}: {e}"))?;
+            Ok(InputFieldSchema {
+                name: p.name.clone(),
+                wire: crate::InputFieldWire::Registry(vdk),
+                required: p.required,
+                description,
+                default: None,
+                role,
+                wire_json_path: None,
+                wire_array_element_key: None,
+            })
+        }
+        (true, Some(ty)) => Ok(InputFieldSchema {
+            name: p.name.clone(),
+            wire: crate::InputFieldWire::Inline(ty.clone()),
+            required: p.required,
+            description: if p.description.trim().is_empty() {
+                None
+            } else {
+                Some(p.description.clone())
+            },
+            default: None,
+            role,
+            wire_json_path: None,
+            wire_array_element_key: None,
+        }),
+        (false, Some(_)) => Err(format!(
+            "{ctx}: set exactly one of `value_ref` or `input_type`, not both"
+        )),
+        (true, None) => Err(format!(
+            "{ctx}: missing `value_ref` and `input_type` — declare a `values:` key or inline `input_type`"
+        )),
+    }
 }
 
 fn input_fields_from_domain_parameters(
@@ -634,7 +687,7 @@ fn merge_domain_capability_input_schema(
     })
 }
 
-fn assemble_cgs(
+fn assemble_cgs_core(
     domain: DomainFile,
     mappings: IndexMap<String, serde_json::Value>,
 ) -> Result<CGS, String> {
@@ -752,30 +805,15 @@ fn assemble_cgs(
             .map_err(|e| format!("Failed to add capability '{}': {}", cap_name, e))?;
     }
 
-    debug!(
-        entities = cgs.entities.len(),
-        capabilities = cgs.capabilities.len(),
-        "assemble_cgs: calling CGS::validate"
-    );
-    // Includes relation `target` → existing entity keys (`SchemaError::UnknownTargetEntity`).
-    cgs.validate()
-        .map_err(|e| format!("CGS validation failed: {}", e))?;
+    Ok(cgs)
+}
 
-    warn_scope_aggregate_policy_template_mismatches(&cgs);
-
-    let sem_violations = cgs.string_semantics_violations();
-    if !sem_violations.is_empty() {
-        for msg in &sem_violations {
-            error!(target: "plasm_core::cgs", "{}", msg);
-        }
-        return Err(format!(
-            "CGS load requires string_semantics on every string field and string capability parameter ({} issue(s); first: {})",
-            sem_violations.len(),
-            sem_violations[0]
-        ));
-    }
-
-    trace!("assemble_cgs: validate ok");
+fn assemble_cgs(
+    domain: DomainFile,
+    mappings: IndexMap<String, serde_json::Value>,
+) -> Result<CGS, String> {
+    let cgs = assemble_cgs_core(domain, mappings)?;
+    finalize_cgs_load(&cgs)?;
     Ok(cgs)
 }
 
@@ -850,7 +888,7 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
             if !matches!(param.role, Some(ParameterRole::Scope)) {
                 continue;
             }
-            let Ok(nv) = cgs.named_value_for_slot(param) else {
+            let Ok(nv) = param.named_value(cgs) else {
                 continue;
             };
             if !matches!(nv.field_type, FieldType::EntityRef { .. }) {

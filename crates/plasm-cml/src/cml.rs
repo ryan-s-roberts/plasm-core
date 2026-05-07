@@ -724,7 +724,7 @@ fn value_to_string(value: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
-        Value::Array(_) | Value::Object(_) => format!("{:?}", value),
+        Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => format!("{:?}", value),
     }
 }
 

@@ -517,6 +517,20 @@ fn resolve_relation_key<'a>(entity: &'a EntityDef, user_sub: &str) -> Option<&'a
         .map(|s| s.as_str())
 }
 
+/// Template vars from CML may be wired as GET-style `--flag` args (`path_param__{var}`) or as
+/// invoke/query flags named `{var}` (see [`crate::invoke_args::build_invoke_args`]). Only one id exists
+/// per command level — use [`ArgMatches::try_get_one`] so missing ids never panic.
+fn optional_template_var_flag(matches: &ArgMatches, var_name: &str) -> Option<String> {
+    let path_style = path_param_arg_id(var_name);
+    if let Ok(Some(s)) = matches.try_get_one::<String>(path_style) {
+        return Some(s.clone());
+    }
+    match matches.try_get_one::<String>(var_name) {
+        Ok(Some(s)) => Some(s.clone()),
+        Ok(None) | Err(_) => None,
+    }
+}
+
 /// Positional `id` binds the **last** CML path var; earlier vars use `--{kebab(name)}`.
 /// Path segments are read from `entity_matches`; optional `cap_matches` supplies
 /// invoke/delete-only template flags (parent still holds shared path flags).
@@ -560,10 +574,9 @@ fn collect_template_string_bindings(
         if var_name == "id" || http_path_vars.contains(&var_name) {
             continue;
         }
-        let arg_id = path_param_arg_id(&var_name);
         let s = extra_matches
-            .and_then(|m| m.get_one::<String>(arg_id))
-            .or_else(|| path_matches.get_one::<String>(arg_id));
+            .and_then(|m| optional_template_var_flag(m, &var_name))
+            .or_else(|| optional_template_var_flag(path_matches, &var_name));
         if let Some(s) = s {
             out.insert(var_name.clone(), s.clone());
         }

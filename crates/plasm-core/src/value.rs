@@ -136,6 +136,13 @@ pub enum Value {
     Float(f64),
     String(String),
     Array(Vec<Value>),
+    /// Union variant constructor from DOMAIN `v101{field=$,…}`; HTTP lowering injects `wire` discriminator.
+    UnionCtor {
+        #[serde(rename = "__plasm_union_ctor")]
+        ctor_label: String,
+        #[serde(flatten)]
+        ctor_fields: indexmap::IndexMap<String, Value>,
+    },
     Object(indexmap::IndexMap<String, Value>),
 }
 
@@ -170,7 +177,7 @@ impl Default for ValueTableCellBudget {
 pub fn parse_json_subtree_str(s: &str) -> Option<Value> {
     let v: Value = serde_json::from_str(s.trim()).ok()?;
     match &v {
-        Value::Object(_) | Value::Array(_) => Some(v),
+        Value::Object(_) | Value::Array(_) | Value::UnionCtor { .. } => Some(v),
         _ => None,
     }
 }
@@ -199,6 +206,9 @@ impl Value {
         match self {
             Value::String(s) if s == "$" => true,
             Value::String(_) => false,
+            Value::UnionCtor { ctor_fields, .. } => ctor_fields
+                .values()
+                .any(Self::contains_domain_placeholder_deep),
             Value::Object(m) => m.values().any(Self::contains_domain_placeholder_deep),
             Value::Array(a) => a.iter().any(Self::contains_domain_placeholder_deep),
             Value::PlasmInputRef(_)
@@ -219,6 +229,7 @@ impl Value {
             Value::Float(_) => "float",
             Value::String(_) => "string",
             Value::Array(_) => "array",
+            Value::UnionCtor { .. } => "union_ctor",
             Value::Object(_) => "object",
         }
     }
@@ -404,6 +415,20 @@ impl Value {
                 append_table_cell_overflow_suffix(&mut out, take, a.len());
                 out.push(']');
                 out
+            }
+            Value::UnionCtor {
+                ctor_label,
+                ctor_fields,
+            } => {
+                if depth >= budget.max_depth {
+                    return format!("{ctor_label}{{…}}");
+                }
+                let inner = Self::format_table_cell_inner(
+                    &Value::Object(ctor_fields.clone()),
+                    budget,
+                    depth + 1,
+                );
+                format!("{ctor_label}{{{inner}}}")
             }
             Value::Object(o) => {
                 if depth >= budget.max_depth {

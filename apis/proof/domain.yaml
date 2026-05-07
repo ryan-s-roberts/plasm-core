@@ -1,0 +1,779 @@
+version: 11
+http_backend: https://www.proofeditor.ai
+auth:
+  scheme: bearer_token
+  env: PROOF_API_TOKEN
+
+entities:
+  Document:
+    id_field: slug
+    description: >
+      Shared document the user sees in Proof: body, title, and hints for follow-up reads or edits.
+    primary_read: document_get
+    fields:
+      slug:
+        value_ref: nv_proof_document_ref
+        required: true
+      markdown:
+        value_ref: nv_proof_markdown
+        required: false
+      title:
+        value_ref: nv_proof_str
+        required: false
+      links:
+        value_ref: nv_proof_json
+        required: false
+        description: Related URLs or endpoints surfaced with this read (navigation, not document body).
+      agent_auth:
+        value_ref: nv_proof_json
+        required: false
+        description: When present, how authenticated automation should call mutating flows for this document.
+    relations:
+      blocks:
+        target: Block
+        cardinality: many
+        description: Structural slices of the snapshot used for precise insert, replace, or delete edits.
+        materialize:
+          kind: query_scoped
+          capability: block_query
+          param: document_id
+      collaboration_events:
+        target: CollaborationEvent
+        cardinality: many
+        description: Recent collaboration activity (edits, marks, presence) not yet acknowledged by this client.
+        materialize:
+          kind: query_scoped
+          capability: collaboration_event_query
+          param: document_id
+
+  EditorState:
+    id_field: slug
+    description: >
+      Authoritative editing picture: comments and suggestions as marks, revision for safe concurrent edits,
+      and collaboration rules (who may mutate, idempotency expectations).
+    domain_projection_examples: false
+    fields:
+      slug:
+        value_ref: nv_proof_document_ref
+        required: true
+      marks:
+        value_ref: nv_proof_json
+        required: false
+        path: marks
+      contract:
+        value_ref: nv_proof_json
+        required: false
+        path: contract
+        description: Host-defined constraints on how this session may mutate the document.
+      connected_clients:
+        value_ref: nv_proof_int
+        required: false
+        path: connectedClients
+      revision:
+        value_ref: nv_proof_int
+        required: false
+      collab:
+        value_ref: nv_proof_json
+        required: false
+        path: collab
+      raw:
+        value_ref: nv_proof_json
+        required: false
+        description: Complete state payload when the typed slices above do not carry enough detail.
+
+  Block:
+    id_field: ref
+    description: >
+      One structural chunk of the document at a point in time. Treat refs as tied to that snapshot;
+      after others edit, refresh snapshot before applying further structural changes.
+    domain_projection_examples: false
+    fields:
+      ref:
+        value_ref: nv_proof_block_ref
+        required: true
+      ordinal_ref:
+        value_ref: nv_proof_block_ref
+        required: false
+        path: ordinalRef
+      markdown:
+        value_ref: nv_proof_markdown
+        required: false
+      block_kind:
+        value_ref: nv_proof_str
+        required: false
+        path: type
+
+  CollaborationEvent:
+    id_field: id
+    description: >
+      Incremental collaboration signal (what changed and when). Poll to stay current; acknowledge so the
+      server can advance your cursor.
+    domain_projection_examples: false
+    fields:
+      id:
+        value_ref: nv_proof_str
+        required: true
+      kind:
+        value_ref: nv_proof_str
+        required: false
+      at:
+        value_ref: nv_proof_str
+        required: false
+      payload:
+        value_ref: nv_proof_json
+        required: false
+
+  ShareLink:
+    id_field: slug
+    description: >
+      Outcome of seeding a new shared document: identifiers and share URL when the host returns them.
+    fields:
+      slug:
+        value_ref: nv_proof_document_ref
+        required: false
+      url:
+        value_ref: nv_proof_str
+        required: false
+      token:
+        value_ref: nv_proof_str
+        required: false
+      raw:
+        value_ref: nv_proof_json
+        required: false
+
+  BugReport:
+    id_field: id
+    description: >
+      Acknowledgement from sending diagnostics to Proof support; may include a short triage or fixer-facing note.
+    domain_projection_examples: false
+    fields:
+      id:
+        value_ref: nv_proof_str
+        required: false
+      status:
+        value_ref: nv_proof_str
+        required: false
+      fixer_brief:
+        value_ref: nv_proof_markdown
+        required: false
+      raw:
+        value_ref: nv_proof_json
+        required: false
+
+capabilities:
+  document_get:
+    description: Load structured document fields for reading or as context before edits.
+    kind: get
+    entity: Document
+    parameters:
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    provides:
+      - slug
+      - markdown
+      - title
+      - links
+      - agent_auth
+
+  document_get_markdown:
+    description: Load only the document body as markdown (fast path for content extraction).
+    kind: action
+    entity: Document
+    parameters:
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    provides:
+      - slug
+      - markdown
+
+  editor_state_get:
+    description: Load marks, revision, and collaboration contract needed to edit safely with others.
+    kind: get
+    entity: EditorState
+    parameters:
+      - name: kinds
+        value_ref: nv_proof_str
+        required: false
+        role: response_control
+    provides:
+      - slug
+      - marks
+      - contract
+      - connected_clients
+      - revision
+      - collab
+
+  block_query:
+    description: Enumerate blocks from the current snapshot so edits anchor on stable structural ids.
+    kind: query
+    entity: Block
+    parameters:
+      - name: document_id
+        value_ref: nv_proof_document_ref
+        required: true
+        role: scope
+    provides:
+      - ref
+      - ordinal_ref
+      - markdown
+      - block_kind
+
+  collaboration_event_query:
+    description: Fetch collaboration updates newer than your last seen event id.
+    kind: query
+    entity: CollaborationEvent
+    parameters:
+      - name: document_id
+        value_ref: nv_proof_document_ref
+        required: true
+        role: scope
+      - name: after
+        value_ref: nv_proof_str
+        required: false
+      - name: limit
+        value_ref: nv_proof_int
+        required: false
+        role: response_control
+
+  document_edit_v2:
+    description: >
+      Apply one batch of structural edits against the revision token from the latest snapshot. Combine replace,
+      insert, delete, span replace, and scoped find/replace operations in a single atomic submission when supported.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: idempotency_key
+        value_ref: nv_proof_uuid
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    input_schema:
+      description: >
+        Batch payload: who is acting, the snapshot revision token those edits assume, and an ordered list of
+        operations (replace block text, insert adjacent blocks, delete, replace span, find/replace in block or doc).
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: by
+            value_ref: nv_proof_str
+            required: true
+          - name: base_token
+            value_ref: nv_proof_str
+            required: true
+          - name: operations
+            required: true
+            input_type:
+              type: array
+              element_type:
+                type: union
+                variants:
+                  - name: replace_block
+                    constructor_symbol: v101
+                    description: Replace the markdown body of one existing block.
+                    wire:
+                      field: op
+                      value: replace_block
+                    fields:
+                      - name: ref
+                        value_ref: nv_proof_block_ref
+                        required: true
+                      - name: markdown
+                        value_ref: nv_proof_markdown
+                        required: true
+                        wire_json_path:
+                          - block
+                          - markdown
+                  - name: insert_before
+                    constructor_symbol: v102
+                    description: Insert new blocks immediately before a chosen anchor block.
+                    wire:
+                      field: op
+                      value: insert_before
+                    fields:
+                      - name: ref
+                        value_ref: nv_proof_block_ref
+                        required: true
+                      - name: blocks
+                        value_ref: nv_proof_insert_blocks_markdown
+                        required: true
+                        wire_array_element_key: markdown
+                  - name: insert_after
+                    constructor_symbol: v103
+                    description: Insert new blocks immediately after a chosen anchor block.
+                    wire:
+                      field: op
+                      value: insert_after
+                    fields:
+                      - name: ref
+                        value_ref: nv_proof_block_ref
+                        required: true
+                      - name: blocks
+                        value_ref: nv_proof_insert_blocks_markdown
+                        required: true
+                        wire_array_element_key: markdown
+                  - name: delete_block
+                    constructor_symbol: v104
+                    description: Remove one block from the structure.
+                    wire:
+                      field: op
+                      value: delete_block
+                    fields:
+                      - name: ref
+                        value_ref: nv_proof_block_ref
+                        required: true
+                  - name: replace_range
+                    constructor_symbol: v105
+                    description: Replace every block from one anchor through another with new blocks.
+                    wire:
+                      field: op
+                      value: replace_range
+                    fields:
+                      - name: fromRef
+                        value_ref: nv_proof_block_ref
+                        required: true
+                      - name: toRef
+                        value_ref: nv_proof_block_ref
+                        required: true
+                      - name: blocks
+                        value_ref: nv_proof_insert_blocks_markdown
+                        required: true
+                        wire_array_element_key: markdown
+                  - name: find_replace_in_block
+                    constructor_symbol: v106
+                    description: Search-and-replace literal text inside a single block.
+                    wire:
+                      field: op
+                      value: find_replace_in_block
+                    fields:
+                      - name: ref
+                        value_ref: nv_proof_block_ref
+                        required: true
+                      - name: find
+                        value_ref: nv_proof_markdown
+                        required: true
+                      - name: replace
+                        value_ref: nv_proof_markdown
+                        required: true
+                      - name: occurrence
+                        value_ref: nv_proof_occurrence
+                        required: false
+                  - name: find_replace_in_doc
+                    constructor_symbol: v107
+                    description: Search-and-replace across the document, optionally limited to a block range or kind filter.
+                    wire:
+                      field: op
+                      value: find_replace_in_doc
+                    fields:
+                      - name: find
+                        value_ref: nv_proof_markdown
+                        required: true
+                      - name: replace
+                        value_ref: nv_proof_markdown
+                        required: true
+                      - name: occurrence
+                        value_ref: nv_proof_occurrence
+                        required: false
+                      - name: fromRef
+                        value_ref: nv_proof_block_ref
+                        required: false
+                      - name: toRef
+                        value_ref: nv_proof_block_ref
+                        required: false
+                      - name: blockFilter
+                        value_ref: nv_proof_str
+                        required: false
+      validation:
+        allow_null: false
+    output:
+      type: side_effect
+      description: Structural document content updates according to the batch and revision token.
+
+  annotation_comment_add:
+    description: Start a review thread anchored on an exact quoted passage from the document.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: quote
+        value_ref: nv_proof_markdown
+        required: true
+      - name: text
+        value_ref: nv_proof_markdown
+        required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Document gains a new comment mark tied to the quoted selection.
+
+  annotation_comment_reply:
+    description: Continue an existing comment thread; may close it as resolved in the same step.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: mark_id
+        value_ref: nv_proof_str
+        required: true
+      - name: text
+        value_ref: nv_proof_markdown
+        required: true
+      - name: resolve
+        value_ref: nv_proof_bool
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Thread grows with the new reply and optional resolved state.
+
+  annotation_comment_resolve:
+    description: Close a comment thread as addressed while keeping history visible.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: mark_id
+        value_ref: nv_proof_str
+        required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Thread shows as resolved for collaborators.
+
+  annotation_comment_unresolve:
+    description: Bring a resolved thread back to active discussion.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: mark_id
+        value_ref: nv_proof_str
+        required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Thread is open again for further replies.
+
+  annotation_suggestion_add:
+    description: Propose an insert, removal, or replacement anchored on quoted text for human acceptance.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: suggestion_kind
+        value_ref: nv_proof_suggestion_kind
+        required: true
+      - name: quote
+        value_ref: nv_proof_markdown
+        required: true
+      - name: content
+        value_ref: nv_proof_markdown
+        required: false
+      - name: status
+        value_ref: nv_proof_str
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Document shows a pending suggestion collaborators can accept or reject.
+
+  annotation_suggestion_accept:
+    description: Apply a pending suggestion so its proposed change becomes real content.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: mark_id
+        value_ref: nv_proof_str
+        required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Proposed edit lands in the document body; mark clears or updates per server rules.
+
+  annotation_suggestion_reject:
+    description: Discard a pending suggestion without changing the document body.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: mark_id
+        value_ref: nv_proof_str
+        required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Suggestion is withdrawn from the active review set.
+
+  annotation_comment_batch_apply:
+    description: Perform several comment-thread updates in one coordinated step.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: operations
+            required: true
+            input_type:
+              type: array
+              element_type:
+                type: union
+                variants:
+                  - name: comment_reply
+                    constructor_symbol: v210
+                    description: Append to an existing comment thread; may resolve in the same step.
+                    wire:
+                      field: type
+                      value: comment.reply
+                    fields:
+                      - name: mark_id
+                        value_ref: nv_proof_str
+                        required: true
+                        wire_json_path:
+                          - markId
+                      - name: text
+                        value_ref: nv_proof_markdown
+                        required: true
+                      - name: resolve
+                        value_ref: nv_proof_bool
+                        required: false
+                  - name: comment_resolve
+                    constructor_symbol: v211
+                    description: Close a thread as addressed while keeping history.
+                    wire:
+                      field: type
+                      value: comment.resolve
+                    fields:
+                      - name: mark_id
+                        value_ref: nv_proof_str
+                        required: true
+                        wire_json_path:
+                          - markId
+                  - name: comment_unresolve
+                    constructor_symbol: v212
+                    description: Re-open a resolved thread for further discussion.
+                    wire:
+                      field: type
+                      value: comment.unresolve
+                    fields:
+                      - name: mark_id
+                        value_ref: nv_proof_str
+                        required: true
+                        wire_json_path:
+                          - markId
+      validation:
+        allow_null: false
+      description: Ordered comment-thread steps issued under one authorship context.
+    output:
+      type: side_effect
+      description: All listed comment updates succeed or none apply, per server semantics.
+
+  document_title_update:
+    description: Change the document title shown to readers and collaborators.
+    kind: update
+    entity: Document
+    parameters:
+      - name: title
+        value_ref: nv_proof_str
+        required: true
+
+  collaboration_event_ack:
+    description: Confirm how far this client has consumed collaboration events so the host can trim history.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: up_to_id
+        value_ref: nv_proof_str
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+    output:
+      type: side_effect
+      description: Server records your processed-through position for subsequent polls.
+
+  presence_update:
+    description: Signal whether this automation session is actively viewing or editing the document.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: presence_status
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Collaborators see updated presence for this automation actor on the document.
+
+  share_link_create:
+    description: Spin up a new shared document whose initial body is the supplied markdown.
+    kind: create
+    entity: ShareLink
+    parameters:
+      - name: markdown
+        value_ref: nv_proof_markdown
+        required: true
+
+  bug_report_submit:
+    description: Send diagnostics about Proof itself to operator-facing triage (not document edits).
+    kind: create
+    entity: BugReport
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+      validation:
+        allow_null: false
+      description: Free-form diagnostic envelope for product-level bug intake.
+
+  document_bug_report_submit:
+    description: Send diagnostics tied to this document’s context (logs, repro steps, environment).
+    kind: action
+    entity: Document
+    output:
+      type: side_effect
+      description: Accepts a diagnostic envelope for product intake; does not change persisted document content.
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+      validation:
+        allow_null: false
+      description: Diagnostic envelope including anything needed to reproduce issues seen on this document.
+    provides:
+      - status
+      - fixer_brief
+      - raw
+
+values:
+  nv_proof_document_ref:
+    type: entity_ref
+    target: Document
+    description: Stable document key shared across reads, edits, collaboration, and sharing flows.
+
+  nv_proof_block_ref:
+    type: string
+    string_semantics: short
+    description: >
+      Identifier for one block in a specific snapshot; reuse only with the snapshot it came from, then refresh
+      after concurrent edits.
+
+  nv_proof_agent_id:
+    type: string
+    string_semantics: short
+    description: Stable label for this automation actor on mutating flows so attribution and locks stay consistent.
+
+  nv_proof_str:
+    type: string
+    string_semantics: short
+    description: Short free-text bucket for opaque ids, titles, tokens, filters, and similar scalars.
+
+  nv_proof_markdown:
+    type: string
+    string_semantics: markdown
+
+  nv_proof_json:
+    type: json
+    description: Structured bundles such as navigation hints, auth guidance, collaboration payloads, or raw slices.
+
+  nv_proof_int:
+    type: integer
+    description: Whole numbers for revisions, presence counts, pagination sizing, and similar quantities.
+
+  nv_proof_bool:
+    type: boolean
+    description: Simple toggles carried on mutations such as resolving discussion threads.
+
+  nv_proof_uuid:
+    type: uuid
+    description: Optional uniqueness token so identical edit batches can be retried safely.
+
+  nv_proof_occurrence:
+    type: select
+    allowed_values: [first, all]
+    description: Whether find/replace touches the first match only or every match in scope.
+
+  nv_proof_suggestion_kind:
+    type: select
+    allowed_values: [insert, delete, replace]
+    description: Shape of a tracked suggestion—add text, remove quoted text, or swap quoted text for new content.
+
+  nv_proof_insert_blocks_markdown:
+    type: array
+    items:
+      value_ref: nv_proof_markdown
+    description: New blocks to splice next to an anchor, in top-to-bottom order.

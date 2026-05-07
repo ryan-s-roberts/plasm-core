@@ -370,6 +370,14 @@ fn add_multipart_part(
             });
         }
         Value::Object(_) | Value::Array(_) => unreachable!("handled above"),
+        Value::UnionCtor { .. } => {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "multipart part `{}`: union constructor values must be lowered before HTTP encode",
+                    spec.name
+                ),
+            });
+        }
     };
 
     if let Some(ct) = &spec.content_type {
@@ -657,6 +665,7 @@ fn plasm_value_to_json(value: &Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
+        Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
     }
 }
 

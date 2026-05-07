@@ -36,7 +36,7 @@ mod tests {
     use super::*;
     use clap::{Arg, Command};
     use plasm_core::{
-        CapabilityKind, CapabilityMapping, FieldType, FieldValueKind, InputFieldSchema,
+        CapabilityKind, CapabilityMapping, FieldType, InputFieldSchema, InputFieldWire,
         InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, ValueDomainKey,
         CGS,
     };
@@ -93,33 +93,39 @@ mod tests {
                     fields: vec![
                         InputFieldSchema {
                             name: "name".into(),
-                            kind: FieldValueKind::Registry(
+                            wire: InputFieldWire::Registry(
                                 ValueDomainKey::new("invoke_upd_name").expect("key"),
                             ),
                             required: false,
                             description: Some("Account name".into()),
                             default: None,
                             role: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
                         },
                         InputFieldSchema {
                             name: "revenue".into(),
-                            kind: FieldValueKind::Registry(
+                            wire: InputFieldWire::Registry(
                                 ValueDomainKey::new("invoke_upd_revenue").expect("key"),
                             ),
                             required: false,
                             description: Some("Annual revenue".into()),
                             default: None,
                             role: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
                         },
                         InputFieldSchema {
                             name: "priority".into(),
-                            kind: FieldValueKind::Registry(
+                            wire: InputFieldWire::Registry(
                                 ValueDomainKey::new("invoke_upd_priority").expect("key"),
                             ),
                             required: false,
                             description: Some("Priority level".into()),
                             default: None,
                             role: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
                         },
                     ],
                     additional_fields: false,

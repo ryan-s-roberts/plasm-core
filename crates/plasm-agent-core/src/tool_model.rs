@@ -11,8 +11,9 @@ use plasm_core::prompt_render::{
     DomainPromptSource,
 };
 use plasm_core::schema::{
-    AuthScheme, EntityDef, FieldSchema, InputFieldSchema, OauthExtension, OutputType,
-    RelationMaterialization, RelationSchema, StringSemantics, CGS,
+    input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
+    InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema,
+    StringSemantics, CGS,
 };
 use plasm_core::symbol_tuning::FocusSpec;
 use plasm_core::{capability_method_label_kebab, CapabilityKind, CapabilitySchema, FieldType};
@@ -451,14 +452,58 @@ fn type_label_from_parts(
     }
 }
 
+fn input_type_tool_label(ty: &InputType, cgs: &CGS) -> String {
+    match ty {
+        InputType::None => "none".into(),
+        InputType::Value {
+            field_type,
+            allowed_values,
+        } => type_label_from_parts(
+            field_type,
+            allowed_values.as_deref(),
+            StringSemantics::Short,
+            None,
+        ),
+        InputType::Object { .. } => "object".into(),
+        InputType::Array { element_type, .. } => {
+            format!("array[{}]", input_type_tool_label(element_type, cgs))
+        }
+        InputType::Union { variants } => {
+            let labels: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+            format!("union · {}", labels.join(" | "))
+        }
+    }
+}
+
+fn ref_entity_for_input_type(cgs: &CGS, ty: &InputType) -> Option<String> {
+    match ty {
+        InputType::Value { field_type: ft, .. } => navigable_entity_ref_target(cgs, ft),
+        InputType::Object { fields, .. } => fields
+            .iter()
+            .find_map(|f| ref_entity_for_input_field(cgs, f)),
+        InputType::Array { element_type, .. } => {
+            ref_entity_for_input_type(cgs, element_type.as_ref())
+        }
+        InputType::Union { variants } => variants
+            .iter()
+            .find_map(|v| ref_entity_for_input_type(cgs, &input_variant_body_type(v))),
+        _ => None,
+    }
+}
+
 fn input_field_type_label(field: &InputFieldSchema, cgs: &CGS) -> String {
-    let nv = cgs.named_value_for_slot(field).expect("param value_ref");
-    type_label_from_parts(
-        &nv.field_type,
-        nv.allowed_values.as_deref(),
-        field.effective_string_semantics(cgs),
-        field.resolved_array_items(cgs),
-    )
+    match &field.wire {
+        InputFieldWire::Inline(ty) => input_type_tool_label(ty.as_ref(), cgs),
+        InputFieldWire::Registry(_) => {
+            let nv = field.named_value(cgs).expect("param value_ref");
+            type_label_from_parts(
+                &nv.field_type,
+                nv.allowed_values.as_deref(),
+                field.effective_string_semantics(cgs),
+                field.resolved_array_items(cgs),
+            )
+        }
+    }
 }
 
 fn navigable_entity_ref_target(cgs: &CGS, field_type: &FieldType) -> Option<String> {
@@ -471,8 +516,13 @@ fn navigable_entity_ref_target(cgs: &CGS, field_type: &FieldType) -> Option<Stri
 }
 
 fn ref_entity_for_input_field(cgs: &CGS, field: &InputFieldSchema) -> Option<String> {
-    let nv = cgs.named_value_for_slot(field).ok()?;
-    navigable_entity_ref_target(cgs, &nv.field_type)
+    match &field.wire {
+        InputFieldWire::Registry(_) => {
+            let nv = field.named_value(cgs).ok()?;
+            navigable_entity_ref_target(cgs, &nv.field_type)
+        }
+        InputFieldWire::Inline(ty) => ref_entity_for_input_type(cgs, ty.as_ref()),
+    }
 }
 
 fn field_type_compact_label(ft: &FieldType) -> String {

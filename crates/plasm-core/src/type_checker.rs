@@ -232,6 +232,7 @@ pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
         Expr::Invoke(invoke) => type_check_invoke(invoke, cgs),
         Expr::Chain(chain) => type_check_chain(chain, cgs),
         Expr::Page(page) => type_check_page(page),
+        Expr::TeachingValue { .. } => Ok(()),
     }
 }
 
@@ -254,6 +255,7 @@ pub fn type_check_expr_federated(
             type_check_invoke(invoke, cgs_for(invoke.target.entity_type.as_str()))
         }
         Expr::Chain(chain) => type_check_chain_federated(chain, fed, fallback),
+        Expr::TeachingValue { .. } => Ok(()),
     }
 }
 
@@ -265,8 +267,8 @@ fn resolve_chain_target<'a>(
     cgs: &CGS,
 ) -> Result<(String, Option<&'a RelationSchema>), TypeError> {
     if let Some(field) = source_entity.fields.get(selector) {
-        let nv = cgs
-            .named_value_for_slot(field)
+        let nv = field
+            .named_value(cgs)
             .map_err(|_| TypeError::FieldNotFound {
                 field: selector.to_string(),
                 entity: source_entity_name.to_string(),
@@ -674,8 +676,8 @@ fn type_check_comparison(
     // Reject `$` for comparisons that target entity fields only (not a cap param name).
     if value.is_domain_example_placeholder() {
         if let Some(f) = entity.fields.get(field_name) {
-            let ft = &cgs
-                .named_value_for_slot(f)
+            let ft = &f
+                .named_value(cgs)
                 .map_err(|_| TypeError::FieldNotFound {
                     field: field_name.to_string(),
                     entity: entity.name.to_string(),
@@ -697,8 +699,8 @@ fn type_check_comparison(
     // We do NOT enforce operator compatibility — the operator is just a hint for
     // how the CLI flag was built; the CML template determines the actual HTTP encoding.
     if let Some(param) = cap_params.iter().find(|p| p.name == field_name) {
-        let pnv = cgs
-            .named_value_for_slot(param)
+        let pnv = param
+            .named_value(cgs)
             .map_err(|_| TypeError::FieldNotFound {
                 field: field_name.to_string(),
                 entity: entity.name.to_string(),
@@ -748,8 +750,8 @@ fn type_check_comparison(
 
     // ── 2. Entity field ──────────────────────────────────────────────────────
     if let Some(field) = entity.fields.get(field_name) {
-        let fnv = cgs
-            .named_value_for_slot(field)
+        let fnv = field
+            .named_value(cgs)
             .map_err(|_| TypeError::FieldNotFound {
                 field: field_name.to_string(),
                 entity: entity.name.to_string(),
@@ -973,71 +975,91 @@ fn validate_input_type(
                 match object.get(&field_schema.name) {
                     Some(field_value) => {
                         if !field_value.is_domain_example_placeholder() {
-                            let fnv = cgs.named_value_for_slot(field_schema).map_err(|_| {
-                                TypeError::FieldNotFound {
-                                    field: field_path.clone(),
-                                    entity: "input object".to_string(),
-                                }
-                            })?;
-                            match &fnv.field_type {
-                                FieldType::Array => {
-                                    let spec = fnv.array_items.as_ref();
-                                    let Some(spec) = spec else {
-                                        return Err(TypeError::IncompatibleValue {
-                                            field: field_path.clone(),
-                                            value_type: field_value.type_name().to_string(),
-                                            field_type: "array (missing items schema)".to_string(),
-                                        });
-                                    };
-                                    validate_typed_array_value(
+                            match &field_schema.wire {
+                                crate::InputFieldWire::Inline(ty) => {
+                                    validate_input_type(
                                         field_value,
-                                        spec,
+                                        ty.as_ref(),
                                         &field_path,
                                         cgs,
                                     )?;
                                 }
-                                FieldType::MultiSelect => {
-                                    let allowed = fnv.allowed_values.as_deref().unwrap_or(&[]);
-                                    validate_multiselect_value(field_value, allowed, &field_path)?;
-                                }
-                                _ => {
-                                    if !value_fits_field_type_entity_ref_aware(
-                                        field_value,
-                                        &fnv.field_type,
-                                        cgs,
-                                    ) {
-                                        return Err(match &fnv.field_type {
-                                            FieldType::EntityRef { target } => {
-                                                entity_ref_incompatible_value(
-                                                    &field_path,
-                                                    target.as_str(),
-                                                    field_value,
-                                                    cgs,
-                                                )
+                                crate::InputFieldWire::Registry(_) => {
+                                    let fnv = field_schema.named_value(cgs).map_err(|_| {
+                                        TypeError::FieldNotFound {
+                                            field: field_path.clone(),
+                                            entity: "input object".to_string(),
+                                        }
+                                    })?;
+                                    match &fnv.field_type {
+                                        FieldType::Array => {
+                                            let spec = fnv.array_items.as_ref();
+                                            let Some(spec) = spec else {
+                                                return Err(TypeError::IncompatibleValue {
+                                                    field: field_path.clone(),
+                                                    value_type: field_value.type_name().to_string(),
+                                                    field_type: "array (missing items schema)"
+                                                        .to_string(),
+                                                });
+                                            };
+                                            validate_typed_array_value(
+                                                field_value,
+                                                spec,
+                                                &field_path,
+                                                cgs,
+                                            )?;
+                                        }
+                                        FieldType::MultiSelect => {
+                                            let allowed =
+                                                fnv.allowed_values.as_deref().unwrap_or(&[]);
+                                            validate_multiselect_value(
+                                                field_value,
+                                                allowed,
+                                                &field_path,
+                                            )?;
+                                        }
+                                        _ => {
+                                            if !value_fits_field_type_entity_ref_aware(
+                                                field_value,
+                                                &fnv.field_type,
+                                                cgs,
+                                            ) {
+                                                return Err(match &fnv.field_type {
+                                                    FieldType::EntityRef { target } => {
+                                                        entity_ref_incompatible_value(
+                                                            &field_path,
+                                                            target.as_str(),
+                                                            field_value,
+                                                            cgs,
+                                                        )
+                                                    }
+                                                    _ => TypeError::IncompatibleValue {
+                                                        field: field_path.clone(),
+                                                        value_type: field_value
+                                                            .type_name()
+                                                            .to_string(),
+                                                        field_type: format!("{:?}", fnv.field_type),
+                                                    },
+                                                });
                                             }
-                                            _ => TypeError::IncompatibleValue {
-                                                field: field_path.clone(),
-                                                value_type: field_value.type_name().to_string(),
-                                                field_type: format!("{:?}", fnv.field_type),
-                                            },
-                                        });
-                                    }
 
-                                    if let (Some(allowed), Some(str_val)) =
-                                        (&fnv.allowed_values, field_value.as_str())
-                                    {
-                                        if !allowed.contains(&str_val.to_string()) {
-                                            return Err(TypeError::IncompatibleValue {
-                                                field: field_path,
-                                                value_type: format!(
-                                                    "'{}' (not in allowed values)",
-                                                    str_val
-                                                ),
-                                                field_type: format!(
-                                                    "select with values: {:?}",
-                                                    allowed
-                                                ),
-                                            });
+                                            if let (Some(allowed), Some(str_val)) =
+                                                (&fnv.allowed_values, field_value.as_str())
+                                            {
+                                                if !allowed.contains(&str_val.to_string()) {
+                                                    return Err(TypeError::IncompatibleValue {
+                                                        field: field_path,
+                                                        value_type: format!(
+                                                            "'{}' (not in allowed values)",
+                                                            str_val
+                                                        ),
+                                                        field_type: format!(
+                                                            "select with values: {:?}",
+                                                            allowed
+                                                        ),
+                                                    });
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1121,19 +1143,63 @@ fn validate_input_type(
 
         crate::InputType::Union { variants } => {
             if value.is_domain_example_placeholder() {
-                return Err(TypeError::DomainPlaceholderLiteral {
-                    field: path_label(),
-                    expected_type: format!(
-                        "a concrete value matching the example for this capability in the prompt — never copy `$` from teaching lines (union of {} shapes)",
-                        variants.len()
-                    ),
-                    description: None,
-                });
+                // DOMAIN dotted-call teaching uses `$` / `[$]` as fill-ins; union-shaped invoke slots
+                // (e.g. edit/v2 `operations` rows) share the same placeholder convention as scalar params.
+                return Ok(());
             }
-            // Input must match at least one variant
-            for variant in variants {
-                if validate_input_type(value, variant, path, cgs).is_ok() {
-                    return Ok(()); // Found compatible variant
+            if let Value::UnionCtor {
+                ctor_label,
+                ctor_fields,
+            } = value
+            {
+                let Some(variant) = variants.iter().find(|v| {
+                    crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label.as_str())
+                }) else {
+                    return Err(TypeError::IncompatibleValue {
+                        field: path.to_string(),
+                        value_type: format!("unknown union constructor `{ctor_label}`"),
+                        field_type: format!("union of {} variants", variants.len()),
+                    });
+                };
+                let body_ty = crate::schema::input_variant_body_type(variant);
+                return validate_input_type(
+                    &Value::Object(ctor_fields.clone()),
+                    &body_ty,
+                    path,
+                    cgs,
+                );
+            }
+            if let Value::Object(obj) = value {
+                for variant in variants {
+                    let wf = variant.wire.field.as_str();
+                    if let Some(Value::String(disc)) = obj.get(wf) {
+                        if disc.as_str() == variant.wire.value.as_str() {
+                            let mut stripped = obj.clone();
+                            stripped.shift_remove(wf);
+                            let body_ty = crate::schema::input_variant_body_type(variant);
+                            let logical_val =
+                                if crate::typed_invoke::union_variant_needs_wire_decode(variant) {
+                                    match crate::typed_invoke::logical_object_from_wire_union_body(
+                                        &stripped, variant,
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(()) => {
+                                            return Err(TypeError::IncompatibleValue {
+                                                field: path.to_string(),
+                                                value_type: "object".into(),
+                                                field_type: format!(
+                                                    "union variant `{}` wire body decode failed",
+                                                    variant.name
+                                                ),
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    Value::Object(stripped)
+                                };
+                            return validate_input_type(&logical_val, &body_ty, path, cgs);
+                        }
+                    }
                 }
             }
 
@@ -1854,11 +1920,15 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "owner".to_string(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_ph_owner_cap").expect("key")),
+            wire: crate::InputFieldWire::Registry(
+                ValueDomainKey::new("tc_ph_owner_cap").expect("key"),
+            ),
             required: true,
             description: None,
             default: None,
             role: Some(ParameterRole::Scope),
+            wire_json_path: None,
+            wire_array_element_key: None,
         }];
         let pred = Predicate::eq("owner", "$");
         type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap();
@@ -1932,11 +2002,15 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "state".to_string(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_qs_state_cap").expect("key")),
+            wire: crate::InputFieldWire::Registry(
+                ValueDomainKey::new("tc_qs_state_cap").expect("key"),
+            ),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }];
         let pred = Predicate::eq("state", "all");
         type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap();
@@ -1967,11 +2041,13 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "includeSpamTrash".to_string(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_bool").expect("key")),
+            wire: crate::InputFieldWire::Registry(ValueDomainKey::new("tc_cap_bool").expect("key")),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }];
         let pred = Predicate::eq("includeSpamTrash", "INBOX");
         let mut cgs = CGS::new();
@@ -2018,11 +2094,15 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "q".to_string(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_q_str").expect("key")),
+            wire: crate::InputFieldWire::Registry(
+                ValueDomainKey::new("tc_cap_q_str").expect("key"),
+            ),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }];
         let pred = Predicate::eq("q", true);
         let mut cgs = CGS::new();
@@ -2067,11 +2147,15 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "limit".to_string(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("tc_cap_limit_int").expect("key")),
+            wire: crate::InputFieldWire::Registry(
+                ValueDomainKey::new("tc_cap_limit_int").expect("key"),
+            ),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }];
         let pred = Predicate::eq("limit", "10");
         let mut cgs = CGS::new();
@@ -2278,5 +2362,95 @@ mod tests {
         let json = serde_json::to_string(&expr).unwrap();
         let parsed: Expr = serde_json::from_str(&json).unwrap();
         assert_eq!(expr, parsed);
+    }
+
+    fn proof_document_edit_v2_operations_element_type(cgs: &CGS) -> crate::InputType {
+        let cap = cgs.capabilities.get("document_edit_v2").expect("cap");
+        let crate::InputType::Object { fields, .. } =
+            &cap.input_schema.as_ref().expect("schema").input_type
+        else {
+            panic!("object input");
+        };
+        let ops = fields
+            .iter()
+            .find(|f| f.name == "operations")
+            .expect("operations");
+        let crate::InputFieldWire::Inline(ty) = &ops.wire else {
+            panic!("inline");
+        };
+        let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
+            panic!("array");
+        };
+        element_type.as_ref().clone()
+    }
+
+    #[test]
+    fn proof_edit_v2_union_accepts_constructor_and_rejects_plain_shape_object() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("proof");
+        let el_ty = proof_document_edit_v2_operations_element_type(&cgs);
+        let ctor_ok = Value::UnionCtor {
+            ctor_label: "v101".into(),
+            ctor_fields: {
+                let mut m = IndexMap::new();
+                m.insert("ref".into(), Value::String("r".into()));
+                m.insert("markdown".into(), Value::String("md".into()));
+                m
+            },
+        };
+        validate_input_type(&ctor_ok, &el_ty, "operations[0]", &cgs).expect("union ctor");
+
+        let plain = Value::Object({
+            let mut m = IndexMap::new();
+            m.insert("ref".into(), Value::String("r".into()));
+            m.insert("markdown".into(), Value::String("md".into()));
+            m
+        });
+        assert!(
+            validate_input_type(&plain, &el_ty, "operations[0]", &cgs).is_err(),
+            "plain object must not silently match a union variant without ctor or discriminator"
+        );
+
+        assert!(
+            validate_input_type(
+                &Value::UnionCtor {
+                    ctor_label: "v199".into(),
+                    ctor_fields: IndexMap::new(),
+                },
+                &el_ty,
+                "operations[0]",
+                &cgs
+            )
+            .is_err(),
+            "unknown ctor label must fail"
+        );
+    }
+
+    #[test]
+    fn proof_edit_v2_union_accepts_wire_discriminated_object() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("proof");
+        let el_ty = proof_document_edit_v2_operations_element_type(&cgs);
+        let wire = Value::Object({
+            let mut m = IndexMap::new();
+            m.insert("op".into(), Value::String("replace_block".into()));
+            m.insert("ref".into(), Value::String("r".into()));
+            m.insert(
+                "block".into(),
+                Value::Object({
+                    let mut b = IndexMap::new();
+                    b.insert("markdown".into(), Value::String("md".into()));
+                    b
+                }),
+            );
+            m
+        });
+        validate_input_type(&wire, &el_ty, "operations[0]", &cgs).expect("wire object");
     }
 }

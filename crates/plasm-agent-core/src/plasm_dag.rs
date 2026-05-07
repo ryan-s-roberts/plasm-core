@@ -209,6 +209,9 @@ fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr)
             }
         }
         Expr::Page(_) => {}
+        Expr::TeachingValue { value } => {
+            collect_value_for_template_uses(acc, value);
+        }
     }
 }
 
@@ -2335,48 +2338,50 @@ fn infer_surface_contract_from_expr(
     ),
     String,
 > {
-    let (kind, entity, effect, shape) = match expr {
-        Expr::Query(q) => (
+    match expr {
+        Expr::TeachingValue { .. } => Err(
+            "Expr::TeachingValue is DOMAIN-only and cannot appear in execution plans".to_string(),
+        ),
+        Expr::Query(q) => Ok((
             PlanNodeKind::Query,
             q.entity.as_str().to_string(),
             EffectClass::Read,
             crate::plasm_plan::ResultShape::List,
-        ),
-        Expr::Get(g) => (
+        )),
+        Expr::Get(g) => Ok((
             PlanNodeKind::Get,
             g.reference.entity_type.as_str().to_string(),
             EffectClass::Read,
             crate::plasm_plan::ResultShape::Single,
-        ),
-        Expr::Create(c) => (
+        )),
+        Expr::Create(c) => Ok((
             PlanNodeKind::Create,
             c.entity.as_str().to_string(),
             EffectClass::Write,
             crate::plasm_plan::ResultShape::MutationResult,
-        ),
-        Expr::Delete(d) => (
+        )),
+        Expr::Delete(d) => Ok((
             PlanNodeKind::Delete,
             d.target.entity_type.as_str().to_string(),
             EffectClass::Write,
             crate::plasm_plan::ResultShape::SideEffectAck,
-        ),
-        Expr::Invoke(i) => (
+        )),
+        Expr::Invoke(i) => Ok((
             PlanNodeKind::Action,
             i.target.entity_type.as_str().to_string(),
             EffectClass::SideEffect,
             crate::plasm_plan::ResultShape::SideEffectAck,
-        ),
+        )),
         Expr::Chain(_) => unreachable!(
             "infer_surface_contract routes Expr::Chain before infer_surface_contract_from_expr"
         ),
-        Expr::Page(_) => (
+        Expr::Page(_) => Ok((
             PlanNodeKind::Query,
             "__page__".to_string(),
             EffectClass::Read,
             crate::plasm_plan::ResultShape::Page,
-        ),
-    };
-    Ok((kind, entity, effect, shape))
+        )),
+    }
 }
 
 fn schema_from_output_fields<'a>(

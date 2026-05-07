@@ -538,7 +538,7 @@ fn value_to_key_slot(v: &Value) -> Option<String> {
             }
         }
         Value::Bool(b) => Some(b.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) => None,
+        Value::Null | Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => None,
     }
 }
 

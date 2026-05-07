@@ -99,6 +99,7 @@ impl<'de> Deserialize<'de> for TypedFieldValue {
 impl From<Value> for TypedFieldValue {
     fn from(v: Value) -> Self {
         match v {
+            Value::UnionCtor { .. } => TypedFieldValue::Json(v),
             Value::PlasmInputRef(r) => TypedFieldValue::PlasmInputRef(r),
             Value::Null => TypedFieldValue::Null,
             Value::Bool(b) => TypedFieldValue::Bool(b),

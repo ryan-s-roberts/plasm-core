@@ -8,6 +8,7 @@
 //!            | Entity "{" pred ("," pred)* "}"  — QueryExpr with filters
 //!            | Entity "~" quoted_or_bare         — Search QueryExpr
 //!            | Entity                            — QueryExpr::all
+//!            | `v` DIGITS `{` union_ctor_fields `}` — [`Expr::TeachingValue`] (DOMAIN union constructor literal)
 //!
 //! **Not valid:** `Entity:id` or `Get(Entity, id)` — there is no `Get(` wrapper; use **`Entity(id)`** only.
 //! A typo like `Pokemon:pikachu` is rejected (otherwise it would parse as `Pokemon` + ignored tail → wrong query).
@@ -325,6 +326,16 @@ impl std::fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+/// Top-level `v` + ASCII digits — union constructor surface (`v101{…}`), not a CGS entity name.
+fn is_root_union_ctor_surface_label(name: &str) -> bool {
+    let b = name.as_bytes();
+    if b.first() != Some(&b'v') {
+        return false;
+    }
+    let tail = &name[1..];
+    !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
+}
 
 fn normalize_numeric_id_float(f: f64) -> String {
     if f.fract() == 0.0 && f.is_finite() {
@@ -891,7 +902,7 @@ impl<'a> Parser<'a> {
         let ec = self.cgs_for_entity_required(entity_name);
         if let Some(ent) = ec.get_entity(entity_name) {
             if let Some(fs) = ent.fields.get(field) {
-                let nv = ec.named_value_for_slot(fs).ok()?;
+                let nv = fs.named_value(ec).ok()?;
                 return Some((
                     nv.field_type.clone(),
                     nv.value_format,
@@ -904,7 +915,7 @@ impl<'a> Parser<'a> {
                 if let Some(is) = cap.input_schema.as_ref() {
                     if let InputType::Object { fields, .. } = &is.input_type {
                         if let Some(f) = fields.iter().find(|f| f.name == field) {
-                            let nv = ec.named_value_for_slot(f).ok()?;
+                            let nv = f.named_value(ec).ok()?;
                             return Some((
                                 nv.field_type.clone(),
                                 nv.value_format,
@@ -1124,8 +1135,11 @@ impl<'a> Parser<'a> {
         let ec = self.cgs_for_entity_required(cap.domain.as_str());
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
+                if matches!(&f.wire, crate::InputFieldWire::Inline(_)) {
+                    continue;
+                }
                 let old = std::mem::replace(v, Value::Null);
-                let nv = ec.named_value_for_slot(f).map_err(|_| {
+                let nv = f.named_value(ec).map_err(|_| {
                     self.err(ParseErrorKind::Other {
                         message: format!("internal: unknown value_ref for parameter `{}`", f.name),
                     })
@@ -1514,7 +1528,7 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                         let sf = scope_fields[0];
-                        if let Ok(nv) = c.named_value_for_slot(sf) {
+                        if let Ok(nv) = sf.named_value(c) {
                             if let FieldType::EntityRef { target } = &nv.field_type {
                                 if target.as_str() == anchor_entity {
                                     matches.push(cap);
@@ -1551,7 +1565,7 @@ impl<'a> Parser<'a> {
                         continue;
                     }
                     let sf = scope_fields[0];
-                    if let Ok(nv) = c.named_value_for_slot(sf) {
+                    if let Ok(nv) = sf.named_value(c) {
                         if let FieldType::EntityRef { target } = &nv.field_type {
                             if target.as_str() == anchor_entity {
                                 matches.push(cap);
@@ -1649,6 +1663,18 @@ impl<'a> Parser<'a> {
             if self.peek_char() == Some('(') {
                 return self.parse_page_invocation();
             }
+        }
+        self.skip_ws();
+        if is_root_union_ctor_surface_label(&raw) && self.peek_char() == Some('{') {
+            self.pos += 1;
+            let obj = self.parse_brace_kv_object_map()?;
+            self.expect_char('}')?;
+            return Ok(Expr::TeachingValue {
+                value: Value::UnionCtor {
+                    ctor_label: raw,
+                    ctor_fields: obj,
+                },
+            });
         }
         let mut entity: Option<String> = self.sym_map.resolve_session_entity_symbol(&raw);
         if entity.is_none() {
@@ -2002,8 +2028,8 @@ impl<'a> Parser<'a> {
                 match ent.fields.get(field.as_str()) {
                     Some(f) => {
                         let ec = self.cgs_for_entity_required(&source_entity);
-                        let is_ref = ec
-                            .named_value_for_slot(f)
+                        let is_ref = f
+                            .named_value(ec)
                             .ok()
                             .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }));
                         if !is_ref {
@@ -2059,7 +2085,7 @@ impl<'a> Parser<'a> {
             for cap in c.find_capabilities(target_entity, CapabilityKind::Query) {
                 if let Some(fields) = cap.object_params() {
                     for f in fields {
-                        if let Ok(nv) = c.named_value_for_slot(f) {
+                        if let Ok(nv) = f.named_value(c) {
                             if let FieldType::EntityRef { target } = &nv.field_type {
                                 if target.as_str() == source_entity {
                                     return Ok(f.name.clone());
@@ -2076,10 +2102,7 @@ impl<'a> Parser<'a> {
             .get_entity(target_entity)
         {
             for (fname, field) in &ent.fields {
-                if let Ok(nv) = self
-                    .cgs_for_entity_required(target_entity)
-                    .named_value_for_slot(field)
-                {
+                if let Ok(nv) = field.named_value(self.cgs_for_entity_required(target_entity)) {
                     if let FieldType::EntityRef { target } = &nv.field_type {
                         if target.as_str() == source_entity {
                             return Ok(fname.as_str().to_string());
@@ -2199,6 +2222,26 @@ mod tests {
 
     fn has_petstore() -> bool {
         std::path::Path::new("../../fixtures/schemas/petstore").exists()
+    }
+
+    #[test]
+    fn parse_root_union_ctor_teaching_line() {
+        let cgs = petstore_cgs();
+        let r = parse("v101{a=$}", &cgs).unwrap();
+        match &r.expr {
+            Expr::TeachingValue { value } => match value {
+                Value::UnionCtor {
+                    ctor_label,
+                    ctor_fields,
+                } => {
+                    assert_eq!(ctor_label, "v101");
+                    assert_eq!(ctor_fields.len(), 1);
+                }
+                _ => panic!("expected UnionCtor"),
+            },
+            _ => panic!("expected TeachingValue"),
+        }
+        crate::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     /// GraphQL `issue_get` has `variables.id` but no HTTP `path` vars; pipeline must not default id to "0".

@@ -275,7 +275,7 @@ fn string_semantics_for_wire_param(
                 .get_entity(entity.as_str())?
                 .fields
                 .get(field.as_str())?;
-            let nv = cgs.named_value_for_slot(f).ok()?;
+            let nv = f.named_value(cgs).ok()?;
             if matches!(nv.field_type, FieldType::Blob) {
                 Some(crate::StringSemantics::Blob)
             } else if matches!(nv.field_type, FieldType::String) {
@@ -294,7 +294,7 @@ fn string_semantics_for_wire_param(
             })?;
             let fields = cap.object_params()?;
             let f = fields.iter().find(|p| p.name == param)?;
-            let nv = cgs.named_value_for_slot(f).ok()?;
+            let nv = f.named_value(cgs).ok()?;
             if matches!(nv.field_type, FieldType::Blob) {
                 Some(crate::StringSemantics::Blob)
             } else if matches!(nv.field_type, FieldType::String) {
@@ -1243,7 +1243,7 @@ fn correction_no_entity_ref_bridge(
     let mut pivots: Vec<String> = Vec::new();
     if let Some(ent) = cgs.get_entity(target) {
         for (fname, field) in &ent.fields {
-            let Ok(nv) = cgs.named_value_for_slot(field) else {
+            let Ok(nv) = field.named_value(cgs) else {
                 continue;
             };
             if let FieldType::EntityRef { target: t } = &nv.field_type {
@@ -1260,7 +1260,7 @@ fn correction_no_entity_ref_bridge(
         for cap in cgs.find_capabilities(target, CapabilityKind::Query) {
             if let Some(fields) = cap.object_params() {
                 for f in fields {
-                    let Ok(nv) = cgs.named_value_for_slot(f) else {
+                    let Ok(nv) = f.named_value(cgs) else {
                         continue;
                     };
                     if let FieldType::EntityRef { target: t } = &nv.field_type {
@@ -1498,8 +1498,7 @@ fn navigable_entityrefs_and_relations_only(cgs: &CGS, entity: &str) -> Vec<Strin
     };
     let mut names = Vec::new();
     for (k, f) in &ent.fields {
-        if cgs
-            .named_value_for_slot(f)
+        if f.named_value(cgs)
             .ok()
             .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
         {
@@ -1667,7 +1666,7 @@ fn field_is_declared_scalar(cgs: &CGS, entity: &str, field: &str) -> bool {
     cgs.get_entity(entity)
         .and_then(|e| e.fields.get(field))
         .map(|f| {
-            !cgs.named_value_for_slot(f)
+            !f.named_value(cgs)
                 .ok()
                 .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
         })
@@ -1682,8 +1681,7 @@ fn scalar_field_names_for_projection(cgs: &CGS, entity: &str) -> Vec<String> {
         .fields
         .iter()
         .filter_map(|(k, f)| {
-            if cgs
-                .named_value_for_slot(f)
+            if f.named_value(cgs)
                 .ok()
                 .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
             {

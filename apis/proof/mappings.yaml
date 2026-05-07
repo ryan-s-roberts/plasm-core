@@ -1,0 +1,895 @@
+# Proof — HTTP mappings aligned with EveryInc/proof-sdk public routes.
+# See apis/proof/README.md for local curl + plasm-cli exploration.
+# Auth: domain `auth.env` bearer (PROOF_API_TOKEN); optional share `?token=` maps to `share_token`.
+
+annotation_comment_add:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: comments
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - by
+      - type: var
+        name: by
+    - - quote
+      - type: var
+        name: quote
+    - - text
+      - type: var
+        name: text
+  response:
+    single: true
+annotation_comment_batch_apply:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.batch
+    - - by
+      - type: var
+        name: by
+    - - operations
+      - type: var
+        name: operations
+  response:
+    single: true
+annotation_comment_reply:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: comments
+  - type: literal
+    value: reply
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - markId
+      - type: var
+        name: mark_id
+    - - by
+      - type: var
+        name: by
+    - - text
+      - type: var
+        name: text
+    - - resolve
+      - type: if
+        condition:
+          type: exists
+          var: resolve
+        then_expr:
+          type: var
+          name: resolve
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_comment_resolve:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: comments
+  - type: literal
+    value: resolve
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+annotation_comment_unresolve:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.unresolve
+    - - by
+      - type: var
+        name: by
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+annotation_suggestion_accept:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: marks
+  - type: literal
+    value: accept
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+annotation_suggestion_add:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: suggestions
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - by
+      - type: var
+        name: by
+    - - kind
+      - type: var
+        name: suggestion_kind
+    - - quote
+      - type: var
+        name: quote
+    - - content
+      - type: if
+        condition:
+          type: exists
+          var: content
+        then_expr:
+          type: var
+          name: content
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_suggestion_reject:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: marks
+  - type: literal
+    value: reject
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+block_query:
+  method: GET
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: document_id
+  - type: literal
+    value: snapshot
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    items_path:
+    - blocks
+bug_report_submit:
+  method: POST
+  path:
+  - type: literal
+    value: report
+  - type: literal
+    value: bug
+  body:
+    type: object
+    fields: []
+  response:
+    single: true
+collaboration_event_ack:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: events
+  - type: literal
+    value: ack
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Accept
+      - type: const
+        value: application/json
+  body:
+    type: object
+    fields:
+    - - upToId
+      - type: var
+        name: up_to_id
+    - - by
+      - type: var
+        name: by
+  response:
+    single: true
+collaboration_event_query:
+  method: GET
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: document_id
+  - type: literal
+    value: events
+  - type: literal
+    value: pending
+  query:
+    type: object
+    fields:
+    - - after
+      - type: if
+        condition:
+          type: exists
+          var: after
+        then_expr:
+          type: var
+          name: after
+        else_expr:
+          type: const
+          value: null
+    - - limit
+      - type: if
+        condition:
+          type: exists
+          var: limit
+        then_expr:
+          type: var
+          name: limit
+        else_expr:
+          type: const
+          value: null
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    items_path:
+    - events
+document_bug_report_submit:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: report
+  - type: literal
+    value: bug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  body:
+    type: object
+    fields: []
+  response:
+    single: true
+document_edit_v2:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: edit
+  - type: literal
+    value: v2
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:edit_v2:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_token
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - by
+      - type: var
+        name: by
+    - - baseToken
+      - type: var
+        name: base_token
+    - - operations
+      - type: var
+        name: operations
+  response:
+    single: true
+document_get:
+  method: GET
+  path:
+  - type: literal
+    value: d
+  - type: var
+    name: slug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+document_get_markdown:
+  method: GET
+  path:
+  - type: literal
+    value: d
+  - type: var
+    name: slug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+document_title_update:
+  method: PUT
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: title
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  body:
+    type: object
+    fields:
+    - - title
+      - type: var
+        name: title
+  response:
+    single: true
+editor_state_get:
+  method: GET
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: state
+  query:
+    type: object
+    fields:
+    - - kinds
+      - type: if
+        condition:
+          type: exists
+          var: kinds
+        then_expr:
+          type: var
+          name: kinds
+        else_expr:
+          type: const
+          value: null
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+presence_update:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  - type: var
+    name: slug
+  - type: literal
+    value: bridge
+  - type: literal
+    value: presence
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - X-Proof-Client-Version
+      - type: const
+        value: 0.30.0
+    - - X-Proof-Client-Protocol
+      - type: const
+        value: '3'
+    - - X-Proof-Client-Build
+      - type: const
+        value: plasm-agent
+  body:
+    type: object
+    fields:
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: presence_status
+        then_expr:
+          type: var
+          name: presence_status
+        else_expr:
+          type: const
+          value: online
+  response:
+    single: true
+share_link_create:
+  method: POST
+  path:
+  - type: literal
+    value: documents
+  body:
+    type: object
+    fields:
+    - - markdown
+      - type: var
+        name: markdown
+  response:
+    single: true

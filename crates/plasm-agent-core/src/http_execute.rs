@@ -27,8 +27,9 @@ use plasm_core::{
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecutionResult, ExecutionSource,
-    ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError, StreamConsumeOpts,
+    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
+    ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError,
+    StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1581,6 +1582,7 @@ fn trace_expr_api_meta(expr: &plasm_core::Expr) -> (Option<String>, String) {
         ),
         Expr::Chain(_) => (None, "chain".to_string()),
         Expr::Page(p) => (None, format!("page {}", p.handle)),
+        Expr::TeachingValue { .. } => (None, "teaching_value".to_string()),
     }
 }
 
@@ -1600,6 +1602,7 @@ fn trace_api_entry_id_for_parsed_line(sess: &ExecuteSession, parsed: &ParsedExpr
             .peek_paging_resume(&p.handle)
             .map(|r| trace_api_entry_id_for_execute_root(sess, r.query.entity.as_str()))
             .unwrap_or_else(|| sess.entry_id.clone()),
+        plasm_core::Expr::TeachingValue { .. } => sess.entry_id.clone(),
         _ => trace_api_entry_id_for_execute_root(sess, parsed.expr.primary_entity()),
     }
 }
@@ -2765,6 +2768,10 @@ async fn run_parsed_plasm_line(
         compile_query_fn,
         plugin_generation_id,
         federation: fed_holder.clone(),
+        execute_session: Some(Arc::new(ExecuteSessionMaterial {
+            prompt_hash: sess.prompt_hash.clone(),
+            session_id: session_id.to_string(),
+        })),
     };
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
     let mut result = match &parsed.expr {

@@ -36,6 +36,16 @@
 
 use super::{ParseError, ParseErrorKind, Parser, Value};
 use crate::PlasmInputRef;
+use indexmap::IndexMap;
+
+fn is_v_numeric_union_ctor_label(name: &str) -> bool {
+    let b = name.as_bytes();
+    if b.first() != Some(&b'v') {
+        return false;
+    }
+    let tail = &name[1..];
+    !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
+}
 
 /// How a structured heredoc closing line was recognized (tagged `TAG` line).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -416,6 +426,15 @@ impl<'a> Parser<'a> {
             self.consume_raw_ident();
             let name = self.input[id_start..self.pos].to_string();
             self.skip_ws();
+            if self.peek_char() == Some('{') && is_v_numeric_union_ctor_label(&name) {
+                self.pos += 1;
+                let obj = self.parse_brace_kv_object_map()?;
+                self.expect_char('}')?;
+                return Ok(Value::UnionCtor {
+                    ctor_label: name,
+                    ctor_fields: obj,
+                });
+            }
             if self.peek_char() == Some('(') {
                 self.pos = id_start;
                 return self.parse_value();
@@ -524,15 +543,121 @@ impl<'a> Parser<'a> {
         Ok(Value::Array(elements))
     }
 
+    /// Array inside a union-constructor body (`blocks=[{markdown=$}]`): elements may be inline `{…}` maps.
+    fn parse_union_ctor_array_literal(&mut self) -> Result<Value, ParseError> {
+        self.expect_char('[')?;
+        let mut elements = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.peek_char() == Some(']') {
+                self.pos += 1;
+                break;
+            }
+            elements.push(self.parse_union_ctor_array_element()?);
+            self.skip_ws();
+            match self.peek_char() {
+                Some(']') => {
+                    self.pos += 1;
+                    break;
+                }
+                Some(',') => {
+                    self.pos += 1;
+                }
+                _ => {
+                    return Err(self.err(ParseErrorKind::ExpectedChar {
+                        expected: ',',
+                        got: self.peek_char(),
+                    }));
+                }
+            }
+        }
+        Ok(Value::Array(elements))
+    }
+
+    fn parse_union_ctor_array_element(&mut self) -> Result<Value, ParseError> {
+        self.skip_ws();
+        match self.peek_char() {
+            Some('[') => self.parse_union_ctor_array_literal(),
+            Some('{') => {
+                self.pos += 1;
+                let m = self.parse_brace_kv_object_map()?;
+                self.expect_char('}')?;
+                Ok(Value::Object(m))
+            }
+            _ => self.parse_predicate_or_dotted_call_arg_value(PhraseClose::ArrayElement),
+        }
+    }
+
+    /// RHS for `k=v` inside `v101{k=v,…}` — nested `[…]` / `{…}` without relying on `program_nodes`.
+    fn parse_union_ctor_field_rhs(&mut self) -> Result<Value, ParseError> {
+        self.skip_ws();
+        match self.peek_char() {
+            Some('[') => self.parse_union_ctor_array_literal(),
+            Some('{') => {
+                self.pos += 1;
+                let m = self.parse_brace_kv_object_map()?;
+                self.expect_char('}')?;
+                Ok(Value::Object(m))
+            }
+            _ => self.parse_compound_key_value_rhs(),
+        }
+    }
+
+    /// Comma-separated `key=value` map inside `{` … `}` for union constructor surface `v21{k=v,…}`.
+    pub(super) fn parse_brace_kv_object_map(
+        &mut self,
+    ) -> Result<IndexMap<String, Value>, ParseError> {
+        let mut m = IndexMap::new();
+        loop {
+            self.skip_ws();
+            if self.peek_char() == Some('}') {
+                break;
+            }
+            if !self.ident_starts_here() {
+                return Err(self.err(ParseErrorKind::ExpectedValue));
+            }
+            let key_start = self.pos;
+            self.consume_raw_ident();
+            let key = self.input[key_start..self.pos].to_string();
+            self.skip_ws();
+            if self.peek_char() != Some('=') {
+                return Err(self.err(ParseErrorKind::ExpectedChar {
+                    expected: '=',
+                    got: self.peek_char(),
+                }));
+            }
+            self.pos += 1;
+            let val = self.parse_union_ctor_field_rhs()?;
+            if m.insert(key.clone(), val).is_some() {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: format!("duplicate key `{key}` in constructor object"),
+                }));
+            }
+            self.skip_ws();
+            match self.peek_char() {
+                Some('}') => break,
+                Some(',') => {
+                    self.pos += 1;
+                }
+                _ => {
+                    return Err(self.err(ParseErrorKind::ExpectedChar {
+                        expected: ',',
+                        got: self.peek_char(),
+                    }));
+                }
+            }
+        }
+        Ok(m)
+    }
+
     fn parse_array_element(&mut self) -> Result<Value, ParseError> {
         self.skip_ws();
         if self.peek_char() == Some('[') {
-            self.parse_array_literal()
-        } else if self.program_nodes.is_some() || self.for_each_row_context {
-            self.parse_predicate_or_dotted_call_arg_value(PhraseClose::ArrayElement)
-        } else {
-            self.parse_value()
+            return self.parse_array_literal();
         }
+        // Invoke / predicate array literals need phrase-style RHS so union constructors (`v101{…}`)
+        // and other dotted-call tokens parse without `program_nodes` (DOMAIN teaching lines).
+        self.parse_predicate_or_dotted_call_arg_value(PhraseClose::ArrayElement)
     }
 
     fn ident_starts_here(&self) -> bool {

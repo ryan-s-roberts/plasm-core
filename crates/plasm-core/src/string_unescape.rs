@@ -99,7 +99,7 @@ pub fn normalize_structured_string_inputs(
                 return value;
             };
             for field in fields {
-                let Ok(nv) = cgs.named_value_for_slot(field) else {
+                let Ok(nv) = field.named_value(cgs) else {
                     continue;
                 };
                 if nv.field_type == FieldType::Json {
@@ -149,7 +149,7 @@ pub fn normalize_structured_string_inputs(
 mod tests {
     use super::*;
     use crate::schema::{
-        FieldValueKind, InputFieldSchema, NamedValueSchema, StringSemantics, ValueDomainKey, CGS,
+        InputFieldSchema, InputFieldWire, NamedValueSchema, StringSemantics, ValueDomainKey, CGS,
     };
 
     #[test]
@@ -181,11 +181,13 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
-                kind: FieldValueKind::Registry(ValueDomainKey::new("unescape_p2_md").expect("key")),
+                wire: InputFieldWire::Registry(ValueDomainKey::new("unescape_p2_md").expect("key")),
                 required: false,
                 description: None,
                 default: None,
                 role: None,
+                wire_json_path: None,
+                wire_array_element_key: None,
             }],
             additional_fields: false,
         };
@@ -223,13 +225,15 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
-                kind: FieldValueKind::Registry(
+                wire: InputFieldWire::Registry(
                     ValueDomainKey::new("unescape_p2_short").expect("key"),
                 ),
                 required: false,
                 description: None,
                 default: None,
                 role: None,
+                wire_json_path: None,
+                wire_array_element_key: None,
             }],
             additional_fields: false,
         };
@@ -267,11 +271,13 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p4".to_string(),
-                kind: FieldValueKind::Registry(ValueDomainKey::new("json_p4").expect("key")),
+                wire: InputFieldWire::Registry(ValueDomainKey::new("json_p4").expect("key")),
                 required: false,
                 description: None,
                 default: None,
                 role: None,
+                wire_json_path: None,
+                wire_array_element_key: None,
             }],
             additional_fields: false,
         };

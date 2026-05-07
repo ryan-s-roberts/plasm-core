@@ -20,7 +20,8 @@ expression: tsv
 # - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
 # - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 # - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
-# - `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
+# - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
+# - `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.
 # - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 # - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
@@ -68,155 +69,97 @@ plasm_expr	Meaning
 v2	int
 v1	select · ui, ocr, audio, document
 v7	str
-v5	int
-v3	str
 v6	date
-v4	date
-p6	v5 · limit
-p4	v3 · app_name
+p4	v7 · app_name
+p5	v6 · end_time
+p6	v2 · limit
 p7	v6 · start_time
-p5	v4 · end_time
 p3	v2 · id
 p2	v1 · content_type
 p8	v7 · text_preview
 e1[p3,p2,p8]	returns e1 · projection · One capture pipeline item
 e1(p3=$, p2=$)	returns e1
 e1{p6=$, p4=$, p7=$, p5=$}	returns [e1] · optional params: p6, p4, p7, p5
-v8	str
 v9	bool
-p9	v8 · id
+p9	v7 · id
 p10	v9 · screen_capture_running
-e2($)[p9,p10]	returns e2 · projection · Capture running or paused
+e2(p9)[p9,p10]	returns e2 · projection · Capture running or paused
 e2.m3()	returns e2
-v10	str
 v18	markdown
-v19	bool
-v17	bool
-v11	str
-v16	int
-v12	bool
 v14	float
-v13	int
-v15	int
-p18	v17 · unresolved_only
-p12	v11 · app_name
-p17	v16 · speaker_id
-p13	v12 · include_answers
+p12	v7 · app_name
+p13	v9 · include_answers
+p14	v2 · limit
 p15	v14 · min_answer_similarity
-p14	v13 · limit
-p16	v15 · offset
-p11	v10 · id
+p16	v2 · offset
+p17	v2 · speaker_id
+p18	v9 · unresolved_only
+p11	v7 · id
 p19	v18 · question_text
-p20	v19 · resolved
+p20	v9 · resolved
 e3[p11,p19,p20]	returns e3 · projection · A detected question with optional answers
 e3{p18=$, p12=$, p17=$, p13=$, p15=$, p14=$, p16=$}	returns [e3] · optional params: p18, p12, p17, p13, p15, p14, p16
-v21	str
-v20	int
 v26	select · active, ended, cancelled
-v27	markdown
-v25	select · active, ended, cancelled
-v24	date
-v22	date
-v23	int
-p26	v25 · status
-p25	v24 · start_date
-p23	v22 · end_date
-p24	v23 · limit
-p22	v21 · meeting_uuid
-p21	v20 · meeting_id
+p23	v6 · end_date
+p24	v2 · limit
+p25	v6 · start_date
+p22	v7 · meeting_uuid
+p21	v2 · meeting_id
 p27	v26 · status
-p28	v27 · summary
+p28	v18 · summary
 e4[p22,p21,p27,p28]	returns e4 · projection · A detected meeting
-e4{p26=$, p25=$, p23=$, p24=$}	returns [e4] · optional params: p26, p25, p23, p24
-v28	str
-v29	str
+e4{p27=$, p25=$, p23=$, p24=$}	returns [e4] · optional params: p27, p25, p23, p24
+e4(p22)	returns e4
 v34	select · debug, info, warning, error, critical
-v32	str
-v33	str
-v31	select · debug, info, warning, error, critical
-v30	int
-p33	v32 · names
-p34	v33 · sources
-p32	v31 · min_severity
-p31	v30 · limit
-p29	v28 · id
-p30	v29 · name
+p31	v2 · limit
+p32	v34 · min_severity
+p33	v7 · names
+p34	v7 · sources
+p29	v7 · id
+p30	v7 · name
 p35	v34 · severity
 e5[p29,p30,p35]	returns e5 · projection · One pipeline bus event
 e5{p33=$, p34=$, p32=$, p31=$}	returns [e5] · optional params: p33, p34, p32, p31
-v35	str
-v36	str
-p36	v35 · id
-p37	v36 · workers
-e6($)[p36,p37]	returns e6 · projection · Pipeline health snapshot
+p36	v7 · id
+p37	v7 · workers
+e6(p36)[p36,p37]	returns e6 · projection · Pipeline health snapshot
 e6.m8()	returns e6
-v38	int
-v37	str
 v39	select · person, organisation, project
-v41	select · person, organisation, project
-v40	int
-p42	v41 · profile_type
-p41	v40 · limit
-p39	v38 · id
-p38	v37 · display_name
+p41	v2 · limit
+p39	v2 · id
+p38	v7 · display_name
 p40	v39 · profile_type
 e7[p39,p38,p40]	returns e7 · projection · A person, organisation, or project profile
-e7{p42=$, p41=$}	returns [e7] · optional params: p42, p41
-e7{p42=$, p41=$}.p1	relation e7 => [e9] · Content scoped to this profile
-v46	str
-v43	int
-v45	str
+e7{p40=$, p41=$}	returns [e7] · optional params: p40, p41
+e7(p39)	returns e7
+e7{p40=$, p41=$}.p1	relation e7 => [e9] · Content scoped to this profile
 v44	array[int]
-v47	date
-v42	date
-p47	v46 · slug
-p45	v43 · meeting_id
-p46	v45 · meeting_uuid
+p43	v6 · end_time
 p44	v44 · meeting_ids
-p48	v47 · start_time
-p43	v42 · end_time
+p45	v2 · meeting_id
+p46	v7 · meeting_uuid
+p47	v7 · slug
+p48	v6 · start_time
 e8.m11(p47=$,..)	returns () · Action prompt execution result · optional params: p45, p46, p44, p48, p43 · prompt-run-create
 v58	ref:Profile · int
-v59	str
-v56	int
 v57	select · auto, keyword, natural
-v54	str
-v51	str
-v52	date
 v53	select · all, ocr, audio, ui
-v55	ref:Profile · int
-v70	markdown
-v71	str
-v61	select · all, ocr, audio, ui
-v63	int
-v66	int
-v68	date
-v62	date
-v60	str
-v69	str
-v65	int
-v64	int
-p59	v58 · profile_id
-p60	v59 · query
-p57	v56 · limit
+p57	v2 · limit
 p58	v57 · mode
-p62	v61 · content_type
-p64	v63 · limit
-p67	v66 · offset
-p69	v68 · start_time
-p63	v62 · end_time
-p61	v60 · app_name
-p70	v69 · window_name
-p66	v65 · min_length
-p65	v64 · max_length
-p55	v54 · id
-p52	v51 · app_name
-p53	v52 · captured_at
+p60	v7 · query
+p63	v6 · end_time
+p65	v2 · max_length
+p66	v2 · min_length
+p67	v2 · offset
+p69	v6 · start_time
+p55	v7 · id
+p52	v7 · app_name
+p53	v6 · captured_at
 p54	v53 · content_type
-p56	v55 · profile_id
-p71	v70 · text
-p72	v71 · window_name
-e9{p59=e7($), p60=$, p57=$, p58=$}[p55,p52,p53,p54,p56,p71,p72]	returns [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e9{p59=e7($), p60=$, p57=$, p58=$}	returns [e9] · optional params: p60, p57, p58
-e9~$	returns [e9] · optional params: p62, p64, p67, p69, p63, p61, p70, p66, p65
-e9{p59=e7($), p60=$, p57=$, p58=$}.p56	relation e9 => e7
+p59	v58 · profile_id
+p71	v18 · text
+p72	v7 · window_name
+e9{p59=e7(p39), p60=$, p57=$, p58=$}[p55,p52,p53,p54,p59,p71,p72]	returns [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e9{p59=e7(p39), p60=$, p57=$, p58=$}	returns [e9] · optional params: p60, p57, p58
+e9~$	returns [e9] · optional params: p54, p57, p67, p69, p63, p52, p72, p66, p65
+e9{p59=e7(p39), p60=$, p57=$, p58=$}.p59	relation e9 => e7

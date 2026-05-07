@@ -52,7 +52,7 @@ mod tests {
     use super::*;
     use clap::Command;
     use plasm_core::{
-        CapabilityKind, CapabilityMapping, CompOp, FieldType, FieldValueKind, InputFieldSchema,
+        CapabilityKind, CapabilityMapping, CompOp, FieldType, InputFieldSchema, InputFieldWire,
         InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, Value,
         ValueDomainKey, CGS,
     };
@@ -239,11 +239,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_status_req").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_status_req").expect("key")),
             required: true,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let flags = build_query_param_args(&cap, &cgs);
         assert_eq!(flags.len(), 1);
@@ -265,11 +267,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_status_rej").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_status_rej").expect("key")),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let mut cmd = Command::new("test");
         for arg in build_query_param_args(&cap, &cgs) {
@@ -285,11 +289,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "team_id".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_team_id").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_team_id").expect("key")),
             required: true,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let mut cmd = Command::new("test");
         for arg in build_query_param_args(&cap, &cgs) {
@@ -304,21 +310,25 @@ mod tests {
         let cap = make_query_cap(vec![
             InputFieldSchema {
                 name: "archived".into(),
-                kind: FieldValueKind::Registry(ValueDomainKey::new("qa_archived").expect("key")),
+                wire: InputFieldWire::Registry(ValueDomainKey::new("qa_archived").expect("key")),
                 required: false,
                 description: None,
                 default: None,
                 role: None,
+                wire_json_path: None,
+                wire_array_element_key: None,
             },
             InputFieldSchema {
                 name: "team_id".into(),
-                kind: FieldValueKind::Registry(
+                wire: InputFieldWire::Registry(
                     ValueDomainKey::new("qa_team_id_multi").expect("key"),
                 ),
                 required: false,
                 description: None,
                 default: None,
                 role: None,
+                wire_json_path: None,
+                wire_array_element_key: None,
             },
         ]);
         let matches = parse_query(&["test", "--archived", "--team_id", "abc"], &cap, &cgs);
@@ -331,11 +341,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_status_none").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_status_none").expect("key")),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let matches = parse_query(&["test"], &cap, &cgs);
         assert!(args_to_query_predicate(&matches, &cap, &cgs).is_none());
@@ -346,11 +358,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "region".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_region_gen").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_region_gen").expect("key")),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let matches = parse_query(&["test", "--region", "EMEA"], &cap, &cgs);
         let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
@@ -368,11 +382,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "revenue".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_revenue").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_revenue").expect("key")),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let matches = parse_query(&["test", "--revenue", "1000"], &cap, &cgs);
         let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
@@ -390,11 +406,13 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "region".into(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new("qa_region_nf").expect("key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("qa_region_nf").expect("key")),
             required: false,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }]);
         let matches = parse_query(&["test"], &cap, &cgs);
         assert!(args_to_query_predicate(&matches, &cap, &cgs).is_none());

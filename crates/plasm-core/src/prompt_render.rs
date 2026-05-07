@@ -20,9 +20,12 @@
 //!
 //! **DOMAIN** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
 //! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
-//! entity when one exists, otherwise to the **identity** get row; `v#` / `p#` gloss rows precede the first
-//! `e#` teaching line (value domain once, then each distinct `v# · wire` teaching once per shared `p#`;
-//! point-of-use prose is omitted when it duplicates the shared `values:` row description).
+//! entity when one exists, otherwise to the **identity** get row. Rows are phased per block: **`v#` gloss**
+//! (except the deferred synthetic union summary), **`p#` gloss**, **union constructor exemplars**
+//! (`vN{p#=…}`), **union summary** (`union · v101 | …` on an allocator-chosen `v#`), then remaining
+//! teaching expressions (projection witnesses last). Value domain once per `v#`, then each distinct
+//! `v# · wire` teaching once per shared `p#`; point-of-use prose is omitted when it duplicates the shared
+//! `values:` row description.
 //! Model output must be those expression shapes—not prose.
 //! Use [`RenderConfig::focus`] to subset entities.
 //!
@@ -45,7 +48,7 @@
 //!
 //! **Load-time invariant:** [`CGS::validate`](crate::schema::CGS::validate) runs [`crate::cgs_expression_validate`],
 //! which requires every non-abstract entity to produce at least one such line via the same synthesis as
-//! [`collect_entity_teaching_block`] (opaque symbol map in **compact**/**tsv** modes, matching eval / REPL) — see [`domain_example_line_count`].
+//! [`collect_entity_teaching_block`] (opaque symbol map in **compact**/**tsv** modes, matching eval / REPL).
 
 use crate::{
     cross_entity::{choose_strategy, extract_cross_entity_predicates},
@@ -63,7 +66,8 @@ use crate::{
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Instant;
@@ -278,6 +282,20 @@ impl<'a> RenderConfig<'a> {
         }
     }
 
+    /// Full-schema DOMAIN synthesis for [`crate::cgs_expression_validate::validate_cgs_expression_surface`].
+    ///
+    /// Uses [`FocusSpec::All`], [`PromptRenderMode::Tsv`], and [`Self::include_domain_execution_model`] `true`
+    /// so [`DomainPromptModel`] lines carry [`DomainLineMeta::source_capability`] metadata the validator
+    /// relies on for per-capability coverage (keep renderer and validator in agreement).
+    pub fn for_expression_surface_validation() -> Self {
+        Self {
+            focus: FocusSpec::All,
+            render_mode: PromptRenderMode::Tsv,
+            include_domain_execution_model: true,
+            symbol_map_cross_cache: None,
+        }
+    }
+
     /// Several seed entities (union of 2-hop neighbourhoods), same CGS.
     pub fn for_eval_seeds(seeds: &'a [&'a str]) -> Self {
         Self {
@@ -439,6 +457,10 @@ pub struct DomainLineMeta {
     pub kind: DomainLineKind,
     /// When this line teaches a concrete CGS capability (get / query / search / method), its id.
     /// Omitted for relation-navigation lines and other synthesized lines without a single owner.
+    ///
+    /// **Schema validation contract:** [`crate::cgs_expression_validate::validate_cgs_expression_surface`]
+    /// treats populated values as evidence that the corresponding capability is teachable on the expression
+    /// surface; omitting this on a capability-backed teaching line can fail load-time coverage checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_capability: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -506,6 +528,13 @@ impl From<&RelationMaterialization> for RelationMaterializationSummary {
             RelationMaterialization::QueryScopedBindings { .. } => Self::QueryScopedBindings,
         }
     }
+}
+
+/// [`render_domain_prompt_bundle`] with [`RenderConfig::for_expression_surface_validation`].
+///
+/// Centralizes the config [`crate::cgs_expression_validate::validate_cgs_expression_surface`] must stay aligned with.
+pub(crate) fn render_domain_prompt_bundle_for_validation(cgs: &CGS) -> DomainPromptBundle {
+    render_domain_prompt_bundle(cgs, RenderConfig::for_expression_surface_validation())
 }
 
 /// Render DOMAIN (many-shot examples) and structured execution metadata.
@@ -866,6 +895,9 @@ pub struct TeachingFieldGloss {
     pub field_type: String,
     pub allowed_values: String,
     pub description: String,
+    /// Synthetic `union · v101 | …` summary row: defer in TSV until after variant ctor exemplars.
+    #[serde(default)]
+    pub is_inline_union_summary: bool,
 }
 
 /// DOMAIN teaching slices plus structured execution metadata for tooling / HTTP/MCP TSV emission.
@@ -1007,6 +1039,32 @@ fn projection_bracket_from_teaching_rows(rows: &[&TeachingExprLine]) -> Option<S
     None
 }
 
+/// Top-level union constructor teaching exemplars (`v101{p#=…}`), distinct from bare value-domain `v#` gloss symbols.
+fn is_union_ctor_teaching_surface_line(expr: &str) -> bool {
+    let e = expr.trim_start();
+    let b = e.as_bytes();
+    if b.first() != Some(&b'v') {
+        return false;
+    }
+    let mut i = 1usize;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    i > 1 && i < b.len() && b[i] == b'{'
+}
+
+/// Numeric ordering for opaque `pN` / `vN` tokens (`p12` before `p101`, not lexicographic).
+fn opaque_pv_symbol_sort_key(sym: &str) -> Option<(u32, u32)> {
+    let mut it = sym.chars();
+    let prefix = it.next()?;
+    if prefix != 'p' && prefix != 'v' {
+        return None;
+    }
+    let rest: String = it.collect();
+    let n = rest.parse::<u32>().ok()?;
+    Some((prefix as u32, n))
+}
+
 fn render_prompt_tsv_from_bundle<'b, F>(
     bundle: &DomainPromptBundle,
     full_entities: &[&str],
@@ -1034,6 +1092,13 @@ where
             .iter()
             .map(|r| &r.teaching_expr)
             .collect();
+        let union_ctor_row_idxs: Vec<usize> = teaching_expr_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| is_union_ctor_teaching_surface_line(&r.expression))
+            .map(|(i, _)| i)
+            .collect();
+        let union_ctor_row_set: HashSet<usize> = union_ctor_row_idxs.iter().copied().collect();
         let identity_idx = compute_tsv_identity_row_index(&teaching_expr_rows);
         let projection_first_idx = teaching_expr_rows
             .iter()
@@ -1057,29 +1122,33 @@ where
         let projection_symbols = parse_projection_symbols(&proj);
         let projection_set: HashSet<&str> = projection_symbols.iter().map(|s| s.as_str()).collect();
         let mut field_gloss_by_symbol: HashMap<String, TeachingFieldGloss> = HashMap::new();
-        let mut value_sym_order: Vec<String> = Vec::new();
-        let mut seen_v: HashSet<String> = HashSet::new();
         for g in field_gloss_rows {
-            if g.symbol.starts_with('v') && seen_v.insert(g.symbol.clone()) {
-                value_sym_order.push(g.symbol.clone());
-            }
             field_gloss_by_symbol.insert(g.symbol.clone(), g.clone());
         }
-        for vs in &value_sym_order {
-            if let Some(gloss) = field_gloss_by_symbol.get(vs) {
-                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
+        // Phase A: `v#` field gloss except deferred synthetic union summaries (`is_inline_union_summary`).
+        let mut seen_v_phase_a: HashSet<String> = HashSet::new();
+        for g in field_gloss_rows {
+            if !g.symbol.starts_with('v') || g.is_inline_union_summary {
+                continue;
+            }
+            if seen_v_phase_a.insert(g.symbol.clone()) {
+                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
             }
         }
+        // Phase B: `p#` gloss — non-projection numeric order, then projection bracket tail.
         // `p#` slots for optional query params / invokes appear in DOMAIN gloss lines but are not part
-        // of the scalar projection bracket — emit them in compact-doc order before projection fields.
+        // of the scalar projection bracket — emit them in stable numeric `p#` order before projection fields.
+        let mut p_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
+            .iter()
+            .filter(|g| g.symbol.starts_with('p') && !projection_set.contains(g.symbol.as_str()))
+            .collect();
+        p_non_projection.sort_by(|a, b| {
+            let ka = opaque_pv_symbol_sort_key(&a.symbol);
+            let kb = opaque_pv_symbol_sort_key(&b.symbol);
+            ka.cmp(&kb).then_with(|| a.symbol.cmp(&b.symbol))
+        });
         let mut emitted_p_slot: HashSet<String> = HashSet::new();
-        for g in field_gloss_rows {
-            if !g.symbol.starts_with('p') {
-                continue;
-            }
-            if projection_set.contains(g.symbol.as_str()) {
-                continue;
-            }
+        for g in p_non_projection {
             if !emitted_p_slot.insert(g.symbol.clone()) {
                 continue;
             }
@@ -1095,12 +1164,38 @@ where
             }
         }
 
+        // Phase C: union constructor exemplars (`v101{p#=…}`) — before deferred union summary gloss.
+        for &row_idx in &union_ctor_row_idxs {
+            let row = teaching_expr_rows[row_idx];
+            let identity_returns_row = Some(row_idx) == identity_idx;
+            let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
+            write_domain_tsv_row(
+                &mut out,
+                DomainTsvRow::TeachingExpr {
+                    line: row,
+                    identity_returns_row,
+                    attach_entity_heading,
+                    heading,
+                },
+            );
+        }
+        // Phase D: deferred inline union summary (`union · v101 | …`).
+        for g in field_gloss_rows {
+            if g.is_inline_union_summary {
+                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+            }
+        }
+
+        // Phase E: remaining teaching expr rows (projection witnesses last).
         let mut emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
         emit_order.sort_by_key(|&i| {
             let is_proj = teaching_expr_rows[i].is_projection_teaching;
             (!is_proj, i)
         });
         for row_idx in emit_order {
+            if union_ctor_row_set.contains(&row_idx) {
+                continue;
+            }
             let row = teaching_expr_rows[row_idx];
             let identity_returns_row = Some(row_idx) == identity_idx;
             let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
@@ -1121,7 +1216,7 @@ where
 
 const TSV_MEANING_JOIN: &str = " · ";
 
-/// One logical DOMAIN TSV row before wire encoding ([`write_domain_tsv_row`]).
+/// One logical TSV row before wire encoding ([`write_domain_tsv_row`]).
 enum DomainTsvRow<'a> {
     TeachingExpr {
         line: &'a TeachingExprLine,
@@ -1406,8 +1501,11 @@ fn values_row_description_trimmed_for_ident(meta: &IdentMetadata, cgs: &CGS) -> 
     }
 }
 
-/// Compact `p#` Meaning (`v# · wire` / `v# · wire · prose`) when the slot shares a `values:` row;
-/// omit point-of-use prose when it duplicates that row's description.
+/// Compact `p#` Meaning when the slot shares a `values:` row.
+///
+/// Registry-backed slots use **`v# · wire`**: entity fields and top-level capability params use the
+/// wire name; nested capability inputs use the **leaf** key only (omit union path prefixes).
+/// Point-of-use prose appends as **` · …`** when it adds information beyond the shared `values:` row.
 fn compact_p_slot_registry_description(
     sym_m: &SymbolMap,
     p_sym: &str,
@@ -1416,8 +1514,8 @@ fn compact_p_slot_registry_description(
 ) -> Option<String> {
     let vsym = sym_m.value_sym_for_p_sym(p_sym)?;
     let nv_desc = values_row_description_trimmed_for_ident(meta, cgs);
-    let wire = meta.wire_name().to_string();
     let slot_norm = crate::symbol_tuning::trim_description_for_agent_gloss(meta.description());
+    let wire = crate::symbol_tuning::registry_backed_compact_wire_label(meta);
     let mut description = format!("{vsym} · {wire}");
     if !slot_norm.is_empty() && slot_norm != nv_desc.as_str() {
         let t = crate::symbol_tuning::gloss_description_truncated(meta.description());
@@ -1436,6 +1534,7 @@ fn push_teaching_field_gloss_row(
     symbol_map: Option<&SymbolMap>,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     cgs: Option<&CGS>,
+    is_inline_union_summary: bool,
 ) {
     let mut cs = symbol.chars();
     let first = match cs.next() {
@@ -1450,12 +1549,51 @@ fn push_teaching_field_gloss_row(
         .and_then(|m| m.resolve_ident(symbol.as_str()))
         .unwrap_or(symbol.as_str())
         .to_string();
-    let meta = ident_meta.and_then(|m| {
-        m.get(&(
-            catalog_entry_id.to_string(),
-            EntityName::from(canonical_entity.to_string()),
-            field_name.clone(),
-        ))
+    // Leaf expand keys (e.g. `blocks`) collide with relation wire names — prefer full capability path.
+    // `IdentMetaKey` is only `(catalog, entity, path)`; distinct capabilities can share the same path
+    // (e.g. two different `operations` arrays). When CGS is present, resolve via the full `(cap, path)` quad.
+    let meta = match (symbol_map, cgs) {
+        (Some(sym_m), Some(cgs_ref)) => sym_m
+            .capability_param_quad_for_p_sym(symbol.as_str())
+            .and_then(|(eid, dom, cap, path)| {
+                if !eid.is_empty() && eid.as_str() != catalog_entry_id {
+                    return None;
+                }
+                crate::symbol_tuning::ident_metadata_for_capability_input_path(
+                    cgs_ref,
+                    dom.as_str(),
+                    cap.as_str(),
+                    path.as_str(),
+                )
+            }),
+        _ => None,
+    }
+    .or_else(|| match (symbol_map, ident_meta) {
+        (Some(sym_m), Some(im)) => sym_m
+            .capability_param_quad_for_p_sym(symbol.as_str())
+            .and_then(|(eid, dom, _cap, path)| {
+                if !eid.is_empty() && eid.as_str() != catalog_entry_id {
+                    return None;
+                }
+                im.get(&(catalog_entry_id.to_string(), dom.clone(), path.clone()))
+                    .cloned()
+            })
+            .or_else(|| {
+                im.get(&(
+                    catalog_entry_id.to_string(),
+                    EntityName::from(canonical_entity.to_string()),
+                    field_name.clone(),
+                ))
+                .cloned()
+            }),
+        (_, Some(im)) => im
+            .get(&(
+                catalog_entry_id.to_string(),
+                EntityName::from(canonical_entity.to_string()),
+                field_name.clone(),
+            ))
+            .cloned(),
+        _ => None,
     });
     let legend = legend_rhs.trim();
     if first == 'v' {
@@ -1464,6 +1602,7 @@ fn push_teaching_field_gloss_row(
             field_type: String::new(),
             allowed_values: String::new(),
             description: legend.to_string(),
+            is_inline_union_summary,
         });
         return;
     }
@@ -1471,7 +1610,7 @@ fn push_teaching_field_gloss_row(
         if let Some(vsym) = sym_m.value_sym_for_p_sym(symbol.as_str()) {
             let wire = meta
                 .as_ref()
-                .map(|m| m.wire_name().to_string())
+                .map(crate::symbol_tuning::registry_backed_compact_wire_label)
                 .unwrap_or_else(|| field_name.clone());
             let description = if let (Some(m), Some(cgs_ref)) = (&meta, cgs) {
                 compact_p_slot_registry_description(sym_m, symbol.as_str(), m, cgs_ref)
@@ -1492,6 +1631,7 @@ fn push_teaching_field_gloss_row(
                 field_type: String::new(),
                 allowed_values: String::new(),
                 description,
+                is_inline_union_summary,
             });
             return;
         }
@@ -1501,12 +1641,12 @@ fn push_teaching_field_gloss_row(
             if let Some(vs) = sym.value_sym_for_p_sym(symbol.as_str()) {
                 sym.value_domain_gloss_for_v_sym(vs)
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| m.render_gloss(Some(sym)))
+                    .unwrap_or_else(|| m.render_gloss_with_cgs(Some(sym), cgs))
             } else {
-                m.render_gloss(Some(sym))
+                m.render_gloss_with_cgs(Some(sym), cgs)
             }
         }
-        (Some(m), None) => m.render_gloss(None),
+        (Some(m), None) => m.render_gloss_with_cgs(None, cgs),
         (None, _) => legend.to_string(),
     };
     let (mut field_type, legend_tail) = typing_gloss
@@ -1514,7 +1654,7 @@ fn push_teaching_field_gloss_row(
         .map(|(ty, tail)| (ty.trim().to_string(), tail.trim().to_string()))
         .unwrap_or_else(|| (typing_gloss.trim().to_string(), String::new()));
     if let Some(m) = &meta {
-        let g = m.render_gloss(symbol_map);
+        let g = m.render_gloss_with_cgs(symbol_map, cgs);
         field_type = g
             .split_once(" \u{00b7} ")
             .map(|(a, _)| a.trim().to_string())
@@ -1524,12 +1664,14 @@ fn push_teaching_field_gloss_row(
     let allowed_values = if is_enumish {
         legend_tail.clone()
     } else {
-        meta.and_then(|m| m.allowed_values())
+        meta.as_ref()
+            .and_then(|m| m.allowed_values())
             .filter(|vals| !vals.is_empty())
             .map(|vals: &Vec<String>| vals.join(", "))
             .unwrap_or_default()
     };
     let mut description = meta
+        .as_ref()
         .map(|m| m.description().trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_default();
@@ -1541,6 +1683,7 @@ fn push_teaching_field_gloss_row(
         field_type,
         allowed_values,
         description,
+        is_inline_union_summary,
     });
 }
 
@@ -1596,8 +1739,8 @@ fn tsv_expr_has_symbolic_method_call(expr: &str) -> bool {
     false
 }
 
-/// True when the expression is a symbolic **entity get** `e#(…)` / `e#($)` — not `e#.m#(…)` invoke
-/// and not an anchored chain like `e#($).m#(…)`.
+/// True when the expression is a symbolic **entity get** `e#(…)` (unary `e#($)` / `e#(p#)`, compound, …) —
+/// not `e#.m#(…)` invoke and not an anchored chain like `e#(…).m#(…)`.
 fn tsv_identity_expr_is_entity_get(expr: &str) -> bool {
     let t = expr.trim_start();
     if tsv_expr_has_symbolic_method_call(t) {
@@ -1770,8 +1913,7 @@ fn navigation_edge_count(cgs: &CGS, ent: &EntityDef) -> usize {
     let rel_names: HashSet<&str> = ent.relations.keys().map(|s| s.as_str()).collect();
     let mut n = ent.relations.len();
     for (fname, f) in &ent.fields {
-        if cgs
-            .named_value_for_slot(f)
+        if f.named_value(cgs)
             .ok()
             .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
             && !rel_names.contains(fname.as_str())
@@ -1851,7 +1993,7 @@ fn nav_receiver_candidates(
             }
         }
     }
-    let unary = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+    let unary = unary_entity_id_teaching_expr_line(es, ent, map);
     if seen.insert(unary.clone()) {
         out.push(unary);
     }
@@ -1954,7 +2096,7 @@ fn incoming_relation_nav_bases_to_entity(
             if rel_keys.contains(fname.as_str()) {
                 continue;
             }
-            let Ok(nv) = cgs.named_value_for_slot(f) else {
+            let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
             let FieldType::EntityRef { target } = &nv.field_type else {
@@ -2061,9 +2203,9 @@ fn try_push_projection_witness_row(
         }
     }
     // Unary identity get is omitted from projection attempts when list/query exists — teach
-    // `e#{{…}}[p#,…]` instead of `e#($)[p#,…]` (same policy as primary-get emission).
+    // `e#{{…}}[p#,…]` instead of unary `e#(p#)[p#,…]` / `e#($)[p#,…]` (same policy as primary-get emission).
     if query_caps.is_empty() {
-        let unary = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+        let unary = unary_entity_id_teaching_expr_line(es, ent, map);
         if seen_bases.insert(unary.clone()) {
             attempts.push((unary, primary_get_cap));
         }
@@ -2122,6 +2264,32 @@ fn truncate_inline_desc(s: &str, max: usize) -> String {
     crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(&t, max)
 }
 
+/// Strip authoring noise like ``(constructor `v101`)`` from variant descriptions before DOMAIN Meaning.
+fn strip_union_constructor_authoring_noise(raw: &str) -> String {
+    let mut s = raw.to_string();
+    while let Some(start) = s.find("(constructor ") {
+        let Some(close_rel) = s[start..].find(')') else {
+            break;
+        };
+        let close = start + close_rel;
+        let inner = s[start + "(constructor ".len()..close].trim();
+        let noise = inner.contains('v') && inner.chars().any(|c| c.is_ascii_digit());
+        if !noise {
+            break;
+        }
+        let before = s[..start].trim_end();
+        let after = s[close + 1..].trim_start();
+        s = if before.is_empty() {
+            after.to_string()
+        } else if after.is_empty() {
+            before.to_string()
+        } else {
+            format!("{before} {after}")
+        };
+    }
+    s.trim().to_string()
+}
+
 /// Receiver token for relation-nav teaching: symbolic leading `e#`, else canonical entity name before `(` / `{`.
 fn relation_receiver_teaching_hint(expr: &str, map: Option<&SymbolMap>) -> Option<String> {
     let t = expr.trim_start();
@@ -2154,12 +2322,12 @@ fn relation_nav_meaning_result_gloss(
 
 /// Compound `Entity(p#=$,…)` when the target has multiple `key_vars` (per-key placeholders are still the string `$`).
 ///
-/// Unary entity refs use the same `$` fill-in as scalars: `e#($)` in DOMAIN teaching (parseable; not a wire value).
+/// Unary entity refs use [`unary_entity_id_teaching_expr_line`] / `$` fallback like scalar identity GET teaching.
 fn entity_ref_id_example(cgs: &CGS, target: &str, map: Option<&SymbolMap>) -> String {
     let target_sym = ent_sym(map, target);
     let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
     let Some(ent) = cgs.get_entity(target) else {
-        return format!("{target_sym}($)");
+        return format!("{target_sym}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
     };
     if ent.key_vars.len() > 1 {
         let parts: Vec<String> = ent
@@ -2169,7 +2337,7 @@ fn entity_ref_id_example(cgs: &CGS, target: &str, map: Option<&SymbolMap>) -> St
             .collect();
         format!("{}({})", target_sym, parts.join(", "))
     } else {
-        format!("{target_sym}($)")
+        unary_entity_id_teaching_expr_line(&target_sym, ent, map)
     }
 }
 
@@ -2180,7 +2348,7 @@ fn query_param_slot_example(
     cgs: &CGS,
     map: Option<&SymbolMap>,
 ) -> String {
-    let Ok(nv) = cgs.named_value_for_slot(f) else {
+    let Ok(nv) = f.named_value(cgs) else {
         let n = id_sym_cap(map, cap, f.name.as_str());
         return format!("{n}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
     };
@@ -2248,7 +2416,7 @@ fn compound_get_expr_line(
     for kv in &ent.key_vars {
         let f = ent.fields.get(kv)?;
         let sym = id_sym_entity(map, ent.name.as_str(), kv.as_str());
-        let nv = cgs.named_value_for_slot(f).ok()?;
+        let nv = f.named_value(cgs).ok()?;
         match &nv.field_type {
             FieldType::Integer
             | FieldType::Number
@@ -2271,10 +2439,19 @@ fn compound_get_expr_line(
     Some(format!("{es}({})", parts.join(", ")))
 }
 
-/// Single-key GET exemplar `e#(p_id=$)` using the entity [`EntityDef::id_field`] symbol.
-fn simple_entity_id_get_expr_line(es: &str, ent: &EntityDef, map: Option<&SymbolMap>) -> String {
+/// Unary identity GET teaching: [`EntityDef::id_field`] as opaque **`p#`** (`e#(p…)`) when the field has an
+/// allocated DOMAIN ident symbol; otherwise **`e#($)`** (canonical / unresolved gloss).
+fn unary_entity_id_teaching_expr_line(
+    es: &str,
+    ent: &EntityDef,
+    map: Option<&SymbolMap>,
+) -> String {
     let sym = id_sym_entity(map, ent.name.as_str(), ent.id_field.as_str());
-    format!("{es}({sym}={})", DOMAIN_PARAM_VALUE_PLACEHOLDER)
+    if map.is_some_and(|m| m.resolve_ident(sym.as_str()).is_some()) {
+        format!("{es}({sym})")
+    } else {
+        format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER)
+    }
 }
 
 /// Scope predicates + all filter-like parameters (required + optional) with CGS-derived placeholders.
@@ -2420,7 +2597,7 @@ fn domain_line_execution_meta_from_validated(
             Expr::Get(_) => DomainLineKind::Get,
             Expr::Query(_) => DomainLineKind::Query,
             Expr::Create(_) | Expr::Delete(_) | Expr::Invoke(_) => DomainLineKind::Method,
-            Expr::Chain(_) | Expr::Page(_) => DomainLineKind::Other,
+            Expr::Chain(_) | Expr::Page(_) | Expr::TeachingValue { .. } => DomainLineKind::Other,
         };
         let cross_entity = if let Expr::Query(q) = expr {
             if let (Some(pred), Some(ent_def)) = (&q.predicate, cgs.get_entity(q.entity.as_str())) {
@@ -2573,8 +2750,8 @@ fn can_bind_create_from_anchor(cap: &crate::CapabilitySchema, anchor: &str) -> b
 }
 
 /// Omit path-bound scope keys from explicit dotted-call `(…)` when they are already supplied by the
-/// receiver: unary `Entity($)` injects `{entity}_id`, and compound `Entity(k1=$, k2=$)` injects each
-/// `key_vars` slot that also appears as a path template variable.
+/// receiver: unary `Entity($)` / symbolic unary `e#(p#)` identity injects `{entity}_id`, and compound
+/// `Entity(k1=$, k2=$)` injects each `key_vars` slot that also appears as a path template variable.
 fn field_omitted_from_path_inject(
     ent: &EntityDef,
     cap: &crate::CapabilitySchema,
@@ -2658,6 +2835,289 @@ fn capability_legend_for_domain(
     })
 }
 
+/// Structural invoke RHS inside union constructors (`v101{…}`): keyed by opaque `p#` when a
+/// [`SymbolMap`] is present (TSV DOMAIN); canonical [`RenderMode`] uses wire names.
+fn format_inline_structural_example_symbolic(
+    map: Option<&SymbolMap>,
+    domain: &str,
+    cap_name: &str,
+    path_prefix: &str,
+    ty: &crate::InputType,
+    _cgs: &CGS,
+) -> String {
+    match ty {
+        crate::InputType::None | crate::InputType::Value { .. } => {
+            DOMAIN_PARAM_VALUE_PLACEHOLDER.to_string()
+        }
+        crate::InputType::Object { fields, .. } => {
+            let mut has_optional = false;
+            for sf in fields {
+                if !sf.required {
+                    has_optional = true;
+                    break;
+                }
+            }
+            let mut parts = Vec::new();
+            for sf in fields {
+                if !sf.required {
+                    continue;
+                }
+                let seg = if path_prefix.is_empty() {
+                    sf.name.clone()
+                } else {
+                    format!("{path_prefix}.{}", sf.name)
+                };
+                match &sf.wire {
+                    crate::InputFieldWire::Inline(inner) => {
+                        let rhs = format_inline_structural_example_symbolic(
+                            map,
+                            domain,
+                            cap_name,
+                            &seg,
+                            inner.as_ref(),
+                            _cgs,
+                        );
+                        let lhs = map
+                            .map(|m| m.ident_sym_cap_param(domain, cap_name, &seg))
+                            .unwrap_or_else(|| sf.name.clone());
+                        parts.push(format!("{lhs}={rhs}"));
+                    }
+                    crate::InputFieldWire::Registry(_) => {
+                        let lhs = map
+                            .map(|m| m.ident_sym_cap_param(domain, cap_name, &seg))
+                            .unwrap_or_else(|| sf.name.clone());
+                        parts.push(format!("{lhs}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER));
+                    }
+                }
+            }
+            let inner = parts.join(",");
+            let body = if has_optional {
+                if inner.is_empty() {
+                    "..".to_string()
+                } else {
+                    format!("{inner},..")
+                }
+            } else {
+                inner
+            };
+            format!("{{{body}}}")
+        }
+        crate::InputType::Array { element_type, .. } => {
+            format!(
+                "[{}]",
+                format_inline_structural_example_symbolic(
+                    map,
+                    domain,
+                    cap_name,
+                    path_prefix,
+                    element_type.as_ref(),
+                    _cgs,
+                )
+            )
+        }
+        crate::InputType::Union { .. } => DOMAIN_PARAM_VALUE_PLACEHOLDER.to_string(),
+    }
+}
+
+fn format_union_constructor_invoke_example(
+    variant: &crate::schema::InputVariantSchema,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    domain: &str,
+    cap_name: &str,
+    operations_field: &str,
+) -> Option<String> {
+    let ctor = crate::schema::union_variant_constructor_symbol(variant)?;
+    let body_ty = crate::schema::input_variant_body_type(variant);
+    let prefix = format!("{}.{}", operations_field, variant.name);
+    Some(format!(
+        "{}{}",
+        ctor,
+        format_inline_structural_example_symbolic(map, domain, cap_name, &prefix, &body_ty, cgs)
+    ))
+}
+
+/// `v101`-row **Meaning** column: variant discriminator name + prose (not the symbolic ctor shape).
+fn format_union_constructor_gloss_legend(v: &crate::schema::InputVariantSchema) -> String {
+    const MAX_DESC: usize = 120;
+    let disc = v.name.as_str();
+    let raw =
+        strip_union_constructor_authoring_noise(v.description.as_deref().unwrap_or("").trim());
+    if raw.is_empty() {
+        return disc.to_string();
+    }
+    format!(
+        "{disc}{LEGEND_EM_DESC_SEP}{}",
+        truncate_inline_desc(&raw, MAX_DESC)
+    )
+}
+
+fn emit_union_array_constructor_teaching_gloss(
+    gs: &mut GlossScratch<'_>,
+    union_ty: &crate::InputType,
+) {
+    let crate::InputType::Union { variants } = union_ty else {
+        return;
+    };
+    if variants.is_empty()
+        || variants
+            .iter()
+            .any(|v| crate::schema::union_variant_constructor_symbol(v).is_none())
+    {
+        return;
+    }
+    let mut keys = BTreeSet::new();
+    crate::schema::collect_registry_keys_from_input_type(union_ty, &mut keys);
+    let cid = gs.catalog_entry_id;
+    for key in keys {
+        let fp = format!("{}|vr:{}", cid, key.as_str());
+        if let Some(vsym) = gs.map.value_domain_fp_to_sym.get(&fp) {
+            if let Some(vg) = gs.map.value_domain_gloss_for_v_sym(vsym) {
+                let Some(v_canon) = meaning_canonical_sym_for_emit(
+                    vg,
+                    vsym.as_str(),
+                    &mut gs.state.registry_value_gloss_canonical_v,
+                    &mut gs.state.registry_v_sym_alias,
+                ) else {
+                    continue;
+                };
+                if gs.state.defined_value_domains.insert(v_canon.clone()) {
+                    push_teaching_field_gloss_row(
+                        gs.field_gloss,
+                        v_canon,
+                        vg,
+                        gs.entity,
+                        cid,
+                        Some(gs.map),
+                        Some(gs.meta),
+                        Some(gs.cgs),
+                        false,
+                    );
+                }
+            }
+        }
+    }
+    let alts: Vec<&str> = variants
+        .iter()
+        .filter_map(crate::schema::union_variant_constructor_symbol)
+        .collect();
+    let union_summary = format!("union · {}", alts.join(" | "));
+    let summary_sym = crate::symbol_tuning::next_opaque_v_symbol_after_map_and_extra_syms(
+        gs.map,
+        gs.field_gloss.iter().map(|g| g.symbol.as_str()),
+    );
+    push_teaching_field_gloss_row(
+        gs.field_gloss,
+        summary_sym,
+        &union_summary,
+        gs.entity,
+        cid,
+        Some(gs.map),
+        Some(gs.meta),
+        Some(gs.cgs),
+        true,
+    );
+}
+
+fn emit_array_of_union_constructor_teaching_gloss(
+    gs: &mut GlossScratch<'_>,
+    cap: &crate::CapabilitySchema,
+) {
+    let Some(is) = cap.input_schema.as_ref() else {
+        return;
+    };
+    let crate::InputType::Object { fields, .. } = &is.input_type else {
+        return;
+    };
+    for field in fields {
+        let crate::InputFieldWire::Inline(ty) = &field.wire else {
+            continue;
+        };
+        let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
+            continue;
+        };
+        let el = element_type.as_ref();
+        let crate::InputType::Union { variants } = el else {
+            continue;
+        };
+        if variants.is_empty()
+            || variants
+                .iter()
+                .any(|v| crate::schema::union_variant_constructor_symbol(v).is_none())
+        {
+            continue;
+        }
+        emit_union_array_constructor_teaching_gloss(gs, el);
+        return;
+    }
+}
+
+/// One validated teaching row per union variant constructor (`v101{p#=$,…}`) before the dotted-call assembly line.
+#[allow(clippy::too_many_arguments)]
+fn try_push_union_constructor_teaching_expr_rows(
+    gloss_emit: &mut Option<GlossScratch<'_>>,
+    teaching_rows: &mut Vec<EntityTeachingExprRow>,
+    collect_meta: bool,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    cap: &crate::CapabilitySchema,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+) {
+    let Some(is) = cap.input_schema.as_ref() else {
+        return;
+    };
+    let crate::InputType::Object { fields, .. } = &is.input_type else {
+        return;
+    };
+    for field in fields {
+        let crate::InputFieldWire::Inline(ty) = &field.wire else {
+            continue;
+        };
+        let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
+            continue;
+        };
+        let el = element_type.as_ref();
+        let crate::InputType::Union { variants } = el else {
+            continue;
+        };
+        if variants.is_empty()
+            || variants
+                .iter()
+                .any(|v| crate::schema::union_variant_constructor_symbol(v).is_none())
+        {
+            return;
+        }
+        for v in variants {
+            let Some(expr_line) = format_union_constructor_invoke_example(
+                v,
+                cgs,
+                map,
+                cap.domain.as_str(),
+                cap.name.as_str(),
+                field.name.as_str(),
+            ) else {
+                continue;
+            };
+            let legend = format_union_constructor_gloss_legend(v);
+            let _ = try_push_teaching_example(
+                gloss_emit,
+                teaching_rows,
+                collect_meta,
+                cgs,
+                map,
+                &expr_line,
+                Some(legend),
+                None,
+                None,
+                Some(&cap.name),
+                false,
+                line_valid_cache,
+            );
+        }
+        return;
+    }
+}
+
 /// One `key=value` for dotted-call `method(k=v,…)` — equality/entity forms parse as invoke args (not query `>=` predicates).
 fn invoke_dotted_call_arg_example(
     f: &crate::InputFieldSchema,
@@ -2667,7 +3127,56 @@ fn invoke_dotted_call_arg_example(
 ) -> Option<String> {
     let n = id_sym_cap(map, cap, f.name.as_str());
     let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
-    let nv = cgs.named_value_for_slot(f).ok()?;
+    if let crate::InputFieldWire::Inline(ty) = &f.wire {
+        return Some(match ty.as_ref() {
+            crate::InputType::Array { element_type, .. } => {
+                if let crate::InputType::Union { variants } = element_type.as_ref() {
+                    if variants
+                        .iter()
+                        .all(|v| crate::schema::union_variant_constructor_symbol(v).is_some())
+                    {
+                        // Edit-v2-style ops use wire discriminator `op`; nested ctor RHS in dotted-call
+                        // teaching lines type-check end-to-end. Proof `/ops` comment batches (and similar)
+                        // discriminate with `type`; keep invoke exemplars placeholder-heavy — standalone
+                        // union ctor rows still teach each `vNNN{…}` branch.
+                        if variants.iter().all(|v| v.wire.field == "type") {
+                            return Some(format!("{n}=[{p}]"));
+                        }
+                        let a = format_union_constructor_invoke_example(
+                            variants.first()?,
+                            cgs,
+                            map,
+                            cap.domain.as_str(),
+                            cap.name.as_str(),
+                            f.name.as_str(),
+                        )?;
+                        // Pair `replace_block` with `insert_after` so the teaching line shows both a
+                        // flat `{markdown=$}` body and nested `[{markdown=$}]` blocks arrays.
+                        let b = variants
+                            .get(2)
+                            .and_then(|vx| {
+                                format_union_constructor_invoke_example(
+                                    vx,
+                                    cgs,
+                                    map,
+                                    cap.domain.as_str(),
+                                    cap.name.as_str(),
+                                    f.name.as_str(),
+                                )
+                            })
+                            .unwrap_or_else(|| a.clone());
+                        return Some(format!("{n}=[{a},{b}]"));
+                    }
+                }
+                format!("{n}=[{p}]")
+            }
+            _ => format!("{n}={p}"),
+        });
+    }
+    let nv = match f.named_value(cgs) {
+        Ok(nv) => nv,
+        Err(_) => return Some(format!("{n}={p}")),
+    };
     match &nv.field_type {
         FieldType::Boolean
         | FieldType::String
@@ -3231,7 +3740,7 @@ fn collect_entity_teaching_block(
         }
         // Unary identity get only when there is no query surface (compound already attempted above).
         if !emitted_primary_get && query_caps.is_empty() {
-            let line_base = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+            let line_base = unary_entity_id_teaching_expr_line(&es, ent, map);
             if try_push_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
@@ -3317,6 +3826,20 @@ fn collect_entity_teaching_block(
         collect_multi_arity_method_lines(cgs, ename, &es, map, surface_filter, catalog_entry_id)
     {
         let cap_ref = cgs.capabilities.get(&cap_name);
+        if let Some(cap) = cap_ref {
+            if let Some(gs) = gloss_emit.as_mut() {
+                emit_array_of_union_constructor_teaching_gloss(gs, cap);
+            }
+            try_push_union_constructor_teaching_expr_rows(
+                gloss_emit,
+                &mut teaching_rows,
+                collect_meta,
+                cgs,
+                map,
+                cap,
+                line_valid_cache,
+            );
+        }
         let cap_leg = cap_ref.and_then(|c| {
             capability_legend_for_domain(map, cgs, c, ename, ident_meta, catalog_entry_id)
         });
@@ -3419,14 +3942,14 @@ fn collect_entity_teaching_block(
         }
     }
 
-    // Keyed `e#(p_id=$)` after query lines when a list/query exists — avoids bare invalid `e#($)`.
+    // Unary `e#(p…)` / `e#($)` after query lines when primary GET was not emitted earlier.
     if primary_get_cap.is_some()
         && !only_singleton_gets
         && !emitted_primary_get
         && !query_caps.is_empty()
     {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        let keyed = simple_entity_id_get_expr_line(&es, ent, map);
+        let keyed = unary_entity_id_teaching_expr_line(&es, ent, map);
         let _ = try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
@@ -3484,8 +4007,7 @@ fn collect_entity_teaching_block(
     let rel_names: HashSet<&str> = ent.relations.keys().map(|s| s.as_str()).collect();
     for fname in ent.fields.keys() {
         if let Some(f) = ent.fields.get(fname) {
-            if cgs
-                .named_value_for_slot(f)
+            if f.named_value(cgs)
                 .ok()
                 .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
                 && !rel_names.contains(fname.as_str())
@@ -3521,7 +4043,7 @@ fn collect_entity_teaching_block(
                 ) {
                     continue;
                 }
-                match cgs.named_value_for_slot(f) {
+                match f.named_value(cgs) {
                     Ok(nv) => match &nv.field_type {
                         FieldType::EntityRef { target } => (target.clone(), false, None),
                         _ => continue,
@@ -3603,8 +4125,8 @@ fn collect_entity_teaching_block(
     }
 }
 
-/// Count of synthesized DOMAIN example lines for an entity (same pipeline as emission). Used by
-/// [`crate::cgs_expression_validate`] so `CGS::validate` fails if this is zero.
+/// Count of synthesized DOMAIN example lines for an entity (same pipeline as emission).
+#[cfg(test)]
 pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&SymbolMap>) -> usize {
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
@@ -3650,6 +4172,7 @@ pub(crate) fn domain_example_lines(
 
 /// Primary-get projection bracket for the DOMAIN entity heading (when enabled); test-only helper.
 #[cfg(test)]
+#[allow(dead_code)] // Retained for debugging / synthesis parity checks; tests prefer [`domain_projection_bracket_from_final_bundle`].
 fn domain_heading_projection_bracket(
     cgs: &CGS,
     ename: &str,
@@ -3678,6 +4201,7 @@ fn domain_heading_projection_bracket(
 
 /// Full scalar projection list `[p#,…]` from the projection teaching row or a legacy get suffix.
 #[cfg(test)]
+#[allow(dead_code)] // Superseded by [`domain_projection_bracket_from_final_bundle`] for prompt-aligned assertions.
 fn domain_projection_bracket_exemplar(
     cgs: &CGS,
     ename: &str,
@@ -3693,6 +4217,29 @@ fn domain_projection_bracket_exemplar(
         }
     }
     None
+}
+
+/// [`domain_projection_bracket_exemplar`] reads pre–post-pass teaching synthesis; this uses the same
+/// [`render_domain_prompt_bundle_for_exposure`] path as production prompts (opaque alias rewrite applied).
+#[cfg(test)]
+fn domain_projection_bracket_from_final_bundle(
+    cgs: &CGS,
+    exposure: &crate::symbol_tuning::DomainExposureSession,
+    config: RenderConfig<'_>,
+    ename: &str,
+) -> Option<String> {
+    let bundle = render_domain_prompt_bundle_for_exposure(cgs, config, exposure, None);
+    let refs: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
+    let focus = crate::symbol_tuning::FocusSpec::SeedsExact(&refs);
+    let (full_entities, _) = crate::symbol_tuning::entity_slices_for_render(cgs, focus);
+    let idx = full_entities.iter().position(|e| *e == ename)?;
+    let block = bundle.teaching_blocks.get(idx)?;
+    let lines: Vec<&TeachingExprLine> = block
+        .teaching_rows
+        .iter()
+        .map(|r| &r.teaching_expr)
+        .collect();
+    projection_bracket_from_teaching_rows(&lines)
 }
 
 /// Turn a DOMAIN scope variant into the **same shape as a path expression**: bare `e#` when unscoped,
@@ -3748,7 +4295,7 @@ fn cgs_slice_has_structured_string_semantics(cgs: &CGS, full_entities: &[&str]) 
     for &e in full_entities {
         if let Some(ent) = cgs.get_entity(e) {
             for f in ent.fields.values() {
-                let Ok(nv) = cgs.named_value_for_slot(f) else {
+                let Ok(nv) = f.named_value(cgs) else {
                     continue;
                 };
                 if matches!(nv.field_type, FieldType::Blob) {
@@ -3774,7 +4321,7 @@ fn cgs_slice_has_structured_string_semantics(cgs: &CGS, full_entities: &[&str]) 
             continue;
         };
         for f in fields {
-            let Ok(nv) = cgs.named_value_for_slot(f) else {
+            let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
             if matches!(nv.field_type, FieldType::Blob) {
@@ -3911,7 +4458,8 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
             "- `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.\n\
 - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.\n\
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
-- `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.\n\
+- Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.\n\
+- `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.\n\
 - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.\n\
 - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.\n\
 - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.\n",
@@ -4042,11 +4590,95 @@ fn skip_redundant_terminal_relation_sym_gloss(
     last_seg == sym
 }
 
+/// Returns [`None`] when `sym` is a synonym for an earlier opaque symbol with the same `meaning`:
+/// caller skips emitting a duplicate gloss row. Otherwise returns the canonical symbol for this meaning.
+fn meaning_canonical_sym_for_emit(
+    meaning: &str,
+    sym: &str,
+    meaning_to_canonical: &mut HashMap<String, String>,
+    sym_alias: &mut HashMap<String, String>,
+) -> Option<String> {
+    match meaning_to_canonical.entry(meaning.to_string()) {
+        Entry::Occupied(e) => {
+            let canonical = e.get().clone();
+            if canonical == sym {
+                Some(canonical)
+            } else {
+                sym_alias.insert(sym.to_string(), canonical);
+                None
+            }
+        }
+        Entry::Vacant(v) => {
+            v.insert(sym.to_string());
+            Some(sym.to_string())
+        }
+    }
+}
+
+fn merge_opaque_alias_maps(
+    p: &HashMap<String, String>,
+    v: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut rep = p.clone();
+    for (k, val) in v {
+        if let Some(existing) = rep.get(k) {
+            debug_assert_eq!(
+                existing, val,
+                "opaque alias collision for key {k:?}: p-map vs v-map disagree"
+            );
+        }
+        rep.insert(k.clone(), val.clone());
+    }
+    rep
+}
+
+fn teaching_expr_line_fingerprint(row: &TeachingExprLine) -> String {
+    format!(
+        "{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}",
+        row.expression,
+        row.result_type,
+        row.scope,
+        row.optional_params,
+        row.compact_args,
+        row.description,
+        row.is_projection_teaching as u8,
+    )
+}
+
+fn rewrite_teaching_expr_line_opaque_tokens(
+    row: &mut TeachingExprLine,
+    rep: &HashMap<String, String>,
+) {
+    row.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.expression, rep);
+    row.result_type = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.result_type, rep);
+    row.scope = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.scope, rep);
+    row.optional_params =
+        crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.optional_params, rep);
+    row.compact_args = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.compact_args, rep);
+    row.description = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.description, rep);
+}
+
+fn rewrite_field_gloss_opaque_tokens(g: &mut TeachingFieldGloss, rep: &HashMap<String, String>) {
+    g.symbol = crate::symbol_tuning::rewrite_opaque_ident_tokens(&g.symbol, rep);
+    g.field_type = crate::symbol_tuning::rewrite_opaque_ident_tokens(&g.field_type, rep);
+    g.allowed_values = crate::symbol_tuning::rewrite_opaque_ident_tokens(&g.allowed_values, rep);
+    g.description = crate::symbol_tuning::rewrite_opaque_ident_tokens(&g.description, rep);
+}
+
 /// Tracks `p#` / `v#` gloss lines emitted before DOMAIN example rows (first-use only).
 struct FieldGlossEmitState {
     /// Registry-backed opaque `p#`: compact `v# · wire` teaching string already emitted for this symbol.
     /// Slots that share one `p#` but differ in point-of-use description keep distinct strings and may re-teach.
     registry_p_slot_compact_gloss: HashMap<String, String>,
+    /// Composite slot key (compact Meaning + catalog + entity + wire/param path, after `v#` normalization)
+    /// → first opaque `p#` emitted for that teaching slot.
+    registry_compact_meaning_canonical_p: HashMap<String, String>,
+    /// Synonym `p#` → canonical `p#` when compact Meaning matches an earlier slot.
+    registry_p_sym_alias: HashMap<String, String>,
+    /// Full value-domain gloss body → first canonical `v#` for that Meaning.
+    registry_value_gloss_canonical_v: HashMap<String, String>,
+    /// Synonym `v#` → canonical `v#` when gloss body matches an earlier row.
+    registry_v_sym_alias: HashMap<String, String>,
     /// Relation edges and non-value-domain fallbacks: retain full metadata inequality for re-teach decisions.
     non_registry_slots: HashMap<String, IdentMetadata>,
     defined_value_domains: HashSet<String>,
@@ -4102,38 +4734,100 @@ fn emit_field_def_lines_before_example(
     let cid = catalog_entry_id.to_string();
     for sym in crate::symbol_tuning::field_syms_for_teaching_row(expr, result_gloss, cap_legend) {
         let field_name = map.resolve_ident(&sym).unwrap_or(&sym);
+        // Capability `p#` maps to a leaf expand key (e.g. `blocks`) that may equal a relation wire
+        // name on the same entity — resolve metadata from the full param path + CGS, not relation gloss.
         let meta = map
-            .capability_param_key_for_p_sym(&sym)
-            .as_ref()
-            .and_then(|(dom, w)| ident_meta.get(&(cid.clone(), dom.clone(), w.clone())))
-            .or_else(|| ident_meta.get(&(cid.clone(), en.clone(), field_name.to_string())));
+            .capability_param_quad_for_p_sym(sym.as_str())
+            .and_then(|(eid, dom, cap, path)| {
+                if !eid.is_empty() && eid.as_str() != catalog_entry_id {
+                    return None;
+                }
+                crate::symbol_tuning::ident_metadata_for_capability_input_path(
+                    cgs,
+                    dom.as_str(),
+                    cap.as_str(),
+                    path.as_str(),
+                )
+            })
+            .or_else(|| {
+                map.capability_param_key_for_p_sym(sym.as_str())
+                    .and_then(|(dom, w)| {
+                        ident_meta
+                            .get(&(cid.clone(), dom.clone(), w.clone()))
+                            .cloned()
+                    })
+            })
+            .or_else(|| {
+                ident_meta
+                    .get(&(cid.clone(), en.clone(), field_name.to_string()))
+                    .cloned()
+            });
 
-        // Registry-backed `value_ref` slots: `v#` once per value domain; `p#` once per distinct compact gloss.
-        if let (Some(m), Some(vs)) = (meta, map.value_sym_for_p_sym(sym.as_str())) {
+        // Registry-backed `value_ref` slots: dedupe `v#` by gloss body first, then `p#` by compact Meaning.
+        // Rewrite embedded `v#` in compact strings using [`registry_v_sym_alias`] before `p#` dedupe.
+        if let (Some(m), Some(vs)) = (&meta, map.value_sym_for_p_sym(sym.as_str())) {
             if let IdentMetadata::RegistryBacked { .. } = m {
                 if let Some(vg) = map.value_domain_gloss_for_v_sym(vs) {
-                    if state.defined_value_domains.insert(vs.to_string()) {
-                        push_teaching_field_gloss_row(
-                            out,
-                            vs.to_string(),
-                            vg,
-                            entity,
-                            catalog_entry_id,
-                            Some(map),
-                            Some(ident_meta),
-                            Some(cgs),
-                        );
+                    if let Some(v_canon) = meaning_canonical_sym_for_emit(
+                        vg,
+                        vs,
+                        &mut state.registry_value_gloss_canonical_v,
+                        &mut state.registry_v_sym_alias,
+                    ) {
+                        if state.defined_value_domains.insert(v_canon.clone()) {
+                            push_teaching_field_gloss_row(
+                                out,
+                                v_canon.clone(),
+                                vg,
+                                entity,
+                                catalog_entry_id,
+                                Some(map),
+                                Some(ident_meta),
+                                Some(cgs),
+                                false,
+                            );
+                        }
                     }
-                    let compact = compact_p_slot_registry_description(map, sym.as_str(), m, cgs)
-                        .unwrap_or_else(|| {
-                            let mut c = format!("{} · {}", vs, m.wire_name());
-                            let d = m.description().trim();
-                            if !d.is_empty() {
-                                let t = crate::symbol_tuning::gloss_description_truncated(d);
-                                c = format!("{} · {} · {}", vs, m.wire_name(), t);
-                            }
-                            c
-                        });
+                    let compact_raw =
+                        compact_p_slot_registry_description(map, sym.as_str(), m, cgs)
+                            .unwrap_or_else(|| {
+                                let w = crate::symbol_tuning::registry_backed_compact_wire_label(m);
+                                let mut c = format!("{} · {}", vs, w);
+                                let d = m.description().trim();
+                                if !d.is_empty() {
+                                    let t = crate::symbol_tuning::gloss_description_truncated(d);
+                                    c = format!("{} · {} · {}", vs, w, t);
+                                }
+                                c
+                            });
+                    let compact = crate::symbol_tuning::rewrite_opaque_ident_tokens(
+                        &compact_raw,
+                        &state.registry_v_sym_alias,
+                    );
+                    let path_key = map
+                        .capability_param_quad_for_p_sym(sym.as_str())
+                        .map(|(_, _, _, path)| path)
+                        .unwrap_or_else(|| m.wire_name().to_string());
+                    let p_meaning_key = format!(
+                        "{}\x1f{}\x1f{}\x1f{}",
+                        compact,
+                        m.catalog_entry_id(),
+                        m.entity().as_str(),
+                        path_key
+                    );
+                    if meaning_canonical_sym_for_emit(
+                        &p_meaning_key,
+                        sym.as_str(),
+                        &mut state.registry_compact_meaning_canonical_p,
+                        &mut state.registry_p_sym_alias,
+                    )
+                    .is_none()
+                    {
+                        state
+                            .registry_p_slot_compact_gloss
+                            .insert(sym.clone(), compact.clone());
+                        continue;
+                    }
                     if state
                         .registry_p_slot_compact_gloss
                         .get(&sym)
@@ -4153,13 +4847,14 @@ fn emit_field_def_lines_before_example(
                         Some(map),
                         Some(ident_meta),
                         Some(cgs),
+                        false,
                     );
                     continue;
                 }
             }
         }
 
-        let should_emit = match (meta, state.non_registry_slots.get(&sym)) {
+        let should_emit = match (&meta, state.non_registry_slots.get(&sym)) {
             (Some(m), None) => {
                 state.non_registry_slots.insert(sym.clone(), (*m).clone());
                 true
@@ -4190,7 +4885,7 @@ fn emit_field_def_lines_before_example(
                 }
             }
             let gloss = match meta {
-                Some(m) => m.render_gloss(Some(map)),
+                Some(m) => m.render_gloss_with_cgs(Some(map), Some(cgs)),
                 None => field_name.to_string(),
             };
             push_teaching_field_gloss_row(
@@ -4202,6 +4897,7 @@ fn emit_field_def_lines_before_example(
                 Some(map),
                 Some(ident_meta),
                 Some(cgs),
+                false,
             );
         }
     }
@@ -4240,6 +4936,10 @@ fn render_domain_table_resolved<'b, F>(
 
     let mut gloss_emit_state = FieldGlossEmitState {
         registry_p_slot_compact_gloss: HashMap::new(),
+        registry_compact_meaning_canonical_p: HashMap::new(),
+        registry_p_sym_alias: HashMap::new(),
+        registry_value_gloss_canonical_v: HashMap::new(),
+        registry_v_sym_alias: HashMap::new(),
         non_registry_slots: HashMap::new(),
         defined_value_domains: HashSet::new(),
     };
@@ -4310,6 +5010,62 @@ fn render_domain_table_resolved<'b, F>(
                 entity: ename.to_string(),
                 lines: emitted_metas,
             });
+        }
+    }
+
+    let rep = merge_opaque_alias_maps(
+        &gloss_emit_state.registry_p_sym_alias,
+        &gloss_emit_state.registry_v_sym_alias,
+    );
+    if !rep.is_empty() {
+        if fill_model {
+            debug_assert_eq!(
+                teaching_blocks_out.len(),
+                model_out.len(),
+                "model rows must stay aligned with teaching blocks"
+            );
+            for (block, prompt) in teaching_blocks_out.iter_mut().zip(model_out.iter_mut()) {
+                for g in &mut block.field_gloss_rows {
+                    rewrite_field_gloss_opaque_tokens(g, &rep);
+                }
+                for row in &mut block.teaching_rows {
+                    rewrite_teaching_expr_line_opaque_tokens(&mut row.teaching_expr, &rep);
+                    row.meta.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(
+                        &row.meta.expression,
+                        &rep,
+                    );
+                }
+                let mut seen = HashSet::new();
+                let mut new_rows = Vec::new();
+                let mut new_lines = Vec::new();
+                for (row, meta) in block.teaching_rows.drain(..).zip(prompt.lines.drain(..)) {
+                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
+                    if seen.insert(fp) {
+                        new_rows.push(row);
+                        new_lines.push(meta);
+                    }
+                }
+                block.teaching_rows = new_rows;
+                prompt.lines = new_lines;
+            }
+        } else {
+            for block in teaching_blocks_out.iter_mut() {
+                for g in &mut block.field_gloss_rows {
+                    rewrite_field_gloss_opaque_tokens(g, &rep);
+                }
+                for row in &mut block.teaching_rows {
+                    rewrite_teaching_expr_line_opaque_tokens(&mut row.teaching_expr, &rep);
+                    row.meta.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(
+                        &row.meta.expression,
+                        &rep,
+                    );
+                }
+                let mut seen = HashSet::new();
+                block.teaching_rows.retain(|row| {
+                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
+                    seen.insert(fp)
+                });
+            }
         }
     }
 }
@@ -4488,6 +5244,95 @@ mod tests {
     fn apis_dir(name: &str) -> std::path::PathBuf {
         repo_path(&["..", "..", "apis", name])
     }
+
+    /// Locks Proof `Document`-focused symbolic DOMAIN TSV (`apis/proof`): union ctor teaching rows,
+    /// value-domain gloss, and `document_edit_v2` witness line. Update with
+    /// `INSTA_UPDATE=1 cargo test -p plasm-core proof_document_domain_tsv_snapshot`.
+    #[test]
+    fn proof_document_domain_tsv_snapshot() {
+        let dir = apis_dir("proof");
+        if !dir.is_dir() {
+            eprintln!(
+                "skip: apis/proof not at {} (incomplete plasm-oss tree?)",
+                dir.display()
+            );
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!("proof_document_domain_tsv", tsv);
+        });
+    }
+
+    #[test]
+    fn proof_document_blocks_operation_params_are_not_relation_nav_gloss() {
+        let dir = apis_dir("proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
+        for sym in ["p1", "p2", "p4"] {
+            let needle = format!("{sym}\t=> Block ·");
+            assert!(
+                !tsv.contains(&needle),
+                "capability `blocks` ctor params must not reuse relation-style `=> Block` gloss (symbol {sym}); relation nav stays on `e1($).p6`-style rows.\n{tsv}"
+            );
+        }
+    }
+
+    #[test]
+    fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
+        let dir = apis_dir("proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
+        fn expr_cell(line: &str) -> Option<&str> {
+            line.split_once('\t').map(|(e, _)| e)
+        }
+        fn meaning_cell(line: &str) -> Option<&str> {
+            line.split_once('\t').map(|(_, m)| m)
+        }
+        let mut ctor_idxs = Vec::new();
+        let mut union_summary_idx = None;
+        let mut p7_idx = None;
+        for (i, line) in tsv.lines().enumerate() {
+            if line == "plasm_expr\tMeaning" {
+                continue;
+            }
+            let Some(expr) = expr_cell(line) else {
+                continue;
+            };
+            if expr == "p7" {
+                p7_idx = Some(i);
+            }
+            if is_union_ctor_teaching_surface_line(expr) {
+                ctor_idxs.push(i);
+            }
+            if meaning_cell(line).is_some_and(|m| m.trim_start().starts_with("union ·")) {
+                union_summary_idx = Some(i);
+            }
+        }
+        let Some(u) = union_summary_idx else {
+            panic!("expected union summary row with Meaning starting `union ·`");
+        };
+        let Some(p7) = p7_idx else {
+            panic!("expected p7 gloss row");
+        };
+        assert!(!ctor_idxs.is_empty(), "expected union ctor exemplar rows");
+        let first_ctor = *ctor_idxs.iter().min().expect("ctor rows");
+        assert!(
+            p7 < first_ctor,
+            "p7 gloss must precede union ctor exemplars; p7={p7} first_ctor={first_ctor}"
+        );
+        for &c in &ctor_idxs {
+            assert!(c < u, "union ctor at {c} must precede union summary at {u}");
+        }
+    }
+
     fn fixtures_schemas_dir(name: &str) -> std::path::PathBuf {
         repo_path(&["..", "..", "fixtures", "schemas", name])
     }
@@ -4496,7 +5341,14 @@ mod tests {
     /// `plasm/` virtual workspace, path remaps can make that resolve under a spurious
     /// `plasm-oss/plasm-oss/...` tree, so the committed `.snap` is not found. Anchor to
     /// [`CARGO_MANIFEST_DIR`], which is always the `plasm-core` crate root.
+    ///
+    /// Serialize snapshot reads/writes: parallel `cargo test` threads share Insta's global settings and
+    /// can otherwise flake snapshot comparisons.
     fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
+        static INSTA_SNAPSHOT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = INSTA_SNAPSHOT_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut settings = insta::Settings::clone_current();
         settings.set_snapshot_path(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"),
@@ -4638,8 +5490,10 @@ mod tests {
             "Issue primary get should expose many response fields for teaching; got {}",
             prefixes[0].len()
         );
-        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
-            .expect("Issue should carry a full projection bracket (heading or primary get)");
+        let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
+        let br = domain_projection_bracket_from_final_bundle(&cgs, &exposure, cfg, "Issue").expect(
+            "Issue should carry a full projection bracket (heading or primary get) after alias pass",
+        );
         assert!(
             br.starts_with('[') && br.contains('p'),
             "unexpected projection bracket: {br}"
@@ -4654,10 +5508,7 @@ mod tests {
             "expect exactly one DOMAIN example line with a full scalar projection list (bracket_lines={})",
             bracket_lines,
         );
-        let out = render_prompt_with_config(
-            &cgs,
-            RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
-        );
+        let out = render_prompt_with_config(&cgs, cfg);
         assert!(
             out.contains(br.as_str()),
             "full prompt should include the full projection list `{br}` (heading or primary get)"
@@ -4682,7 +5533,8 @@ mod tests {
             crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
         let surface = Some(&exposure.surface);
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
-        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
+        let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
+        let br = domain_projection_bracket_from_final_bundle(&cgs, &exposure, cfg, "Issue")
             .expect("Linear Issue should carry a full projection bracket (heading or primary get)");
         assert!(
             br.starts_with('[') && br.contains('p'),
@@ -4698,10 +5550,7 @@ mod tests {
             "expect exactly one DOMAIN example line with a full scalar projection list (bracket_lines={})",
             bracket_lines,
         );
-        let out = render_prompt_with_config(
-            &cgs,
-            RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
-        );
+        let out = render_prompt_with_config(&cgs, cfg);
         assert!(
             out.contains(br.as_str()),
             "full prompt should include the full projection list `{br}` (heading or primary get)"
@@ -4717,14 +5566,10 @@ mod tests {
         let cgs = load_schema_dir(&dir).unwrap();
         let exposure =
             crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
-        let surface = Some(&exposure.surface);
-        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
-        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
+        let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
+        let br = domain_projection_bracket_from_final_bundle(&cgs, &exposure, cfg, "Issue")
             .expect("Issue should carry a projection list");
-        let out = render_prompt_with_config(
-            &cgs,
-            RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
-        );
+        let out = render_prompt_with_config(&cgs, cfg);
         let lines: Vec<&str> = out.lines().collect();
         let use_idx = lines
             .iter()
@@ -5028,17 +5873,19 @@ mod tests {
             !body.contains(";;"),
             "2-column TSV surface should remove compact `;;` gloss separators"
         );
-        let owner_slot_rows: Vec<&str> = tsv
+        let p_owner = map.ident_sym_cap_param("Issue", "issue_sub_issue_query", "owner");
+        let owner_row = tsv
             .lines()
-            .filter(|l| {
-                l.split('\t').nth(1).is_some_and(|m| {
-                    m.contains("owner") && m.starts_with('v') && m.contains(" · owner")
-                })
-            })
-            .collect();
+            .find(|l| l.starts_with(&format!("{p_owner}\t")))
+            .unwrap_or_else(|| {
+                panic!("expected TSV gloss row for {p_owner} (Issue.issue_sub_issue_query.owner)")
+            });
+        let oc: Vec<&str> = owner_row.split('\t').collect();
+        assert_eq!(oc.len(), 2, "owner slot row should be 2-column TSV");
         assert!(
-            owner_slot_rows.iter().any(|row| row.starts_with('p')),
-            "expected a p# row `v# · owner` (value-domain symbol then wire), got {owner_slot_rows:?}"
+            oc[1].starts_with('v') && oc[1].contains(" · "),
+            "capability-param registry gloss should use `v# · wire` (and optional prose); got {:?}",
+            oc[1]
         );
         let issue_comment_create_row = tsv
             .lines()
@@ -5866,9 +6713,14 @@ mod tests {
                 && raw.contains("Team"),
             "expected Team→spaces relation line (chain materialization; receiver may be `Team($)` or query-scoped `Team{{…}}`)"
         );
+        let team_ent = cgs.get_entity("Team").expect("Team");
+        let p_team_identity = map.ident_sym_entity_field("Team", team_ent.id_field.as_str());
         assert!(
             sym.contains(&format!(".{spaces_rel}"))
                 || sym.contains(&format!("{team_sym}($).{spaces_rel}"))
+                || sym.contains(&format!(
+                    "{team_sym}({p_team_identity}).{spaces_rel}"
+                ))
                 || sym.contains(&format!("{team_sym}{{")),
             "expected symbol-tuned Team→spaces relation (`.{spaces_rel}` on a `{team_sym}` receiver)"
         );
@@ -5958,12 +6810,17 @@ mod tests {
         );
         let task_sym = map.entity_sym("Task");
         let p_team_id = map.ident_sym_cap_param("Task", "task_query", "team_id");
+        let team_ent = cgs.get_entity("Team").expect("Team");
+        let p_team_identity = map.ident_sym_entity_field("Team", team_ent.id_field.as_str());
         assert!(
             domain_block.contains(&format!(
+                "{}{{{}={}({})",
+                task_sym, p_team_id, team_sym, p_team_identity
+            )) || domain_block.contains(&format!(
                 "{}{{{}={}($)",
                 task_sym, p_team_id, team_sym
             )),
-            "workspace-scoped task query should teach scope with unary entity-ref fill-in (p#=e#($)), not bare team id literals"
+            "workspace-scoped task query should teach scope with unary entity-ref fill-in (p#=e#(id_slot) or e#($)), not bare team id literals"
         );
         assert!(
             !domain_block.contains("2000-01-01") && !domain_block.contains("p10>=\""),

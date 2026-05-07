@@ -2,8 +2,9 @@ use crate::commands::common;
 use indexmap::IndexMap;
 use plasm_compile::CmlRequest;
 use plasm_core::{
-    CapabilityKind, Cardinality, CreateExpr, DeleteExpr, Expr, FieldType, GetExpr, InputType,
-    InvokeExpr, Predicate, QueryExpr, QueryPagination, RelationMaterialization, Value, CGS,
+    CapabilityKind, Cardinality, CreateExpr, DeleteExpr, Expr, FieldType, GetExpr,
+    InputFieldSchema, InputFieldWire, InputType, InvokeExpr, Predicate, QueryExpr, QueryPagination,
+    RelationMaterialization, Value, CGS,
 };
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache, StreamConsumeOpts,
@@ -530,6 +531,54 @@ fn extract_var(msg: &str) -> String {
     trim_error(msg)
 }
 
+fn fake_value_for_input_field(f: &InputFieldSchema, cgs: &CGS) -> Option<Value> {
+    match &f.wire {
+        InputFieldWire::Registry(_) => {
+            let nv = f.named_value(cgs).ok()?;
+            Some(fake_value_for_type(
+                &nv.field_type,
+                nv.allowed_values.as_deref(),
+            ))
+        }
+        InputFieldWire::Inline(ty) => Some(fake_value_for_input_type(ty.as_ref(), cgs)),
+    }
+}
+
+fn fake_value_for_input_type(ty: &InputType, cgs: &CGS) -> Value {
+    match ty {
+        InputType::None => Value::Null,
+        InputType::Value {
+            field_type,
+            allowed_values,
+        } => fake_value_for_type(field_type, allowed_values.as_deref()),
+        InputType::Object { fields, .. } => {
+            let mut m = IndexMap::new();
+            for field in fields.iter().filter(|x| x.required) {
+                if let Some(v) = fake_value_for_input_field(field, cgs) {
+                    m.insert(field.name.clone(), v);
+                }
+            }
+            Value::Object(m)
+        }
+        InputType::Array { element_type, .. } => {
+            Value::Array(vec![fake_value_for_input_type(element_type.as_ref(), cgs)])
+        }
+        InputType::Union { variants } => {
+            let Some(v) = variants.first() else {
+                return Value::Null;
+            };
+            let mut m = IndexMap::new();
+            m.insert(v.wire.field.clone(), Value::String(v.wire.value.clone()));
+            for field in v.fields.iter().filter(|x| x.required) {
+                if let Some(val) = fake_value_for_input_field(field, cgs) {
+                    m.insert(field.name.clone(), val);
+                }
+            }
+            Value::Object(m)
+        }
+    }
+}
+
 fn build_required_predicate(
     cap: &plasm_core::CapabilitySchema,
     _entity: &plasm_core::EntityDef,
@@ -543,10 +592,9 @@ fn build_required_predicate(
     let comparisons: Vec<Predicate> = fields
         .iter()
         .filter(|f| f.required)
-        .map(|f| {
-            let nv = cgs.named_value_for_slot(f).expect("param value_ref");
-            let val = fake_value_for_type(&nv.field_type, nv.allowed_values.as_deref());
-            Predicate::eq(f.name.clone(), val)
+        .filter_map(|f| {
+            let val = fake_value_for_input_field(f, cgs)?;
+            Some(Predicate::eq(f.name.clone(), val))
         })
         .collect();
 
@@ -567,11 +615,9 @@ fn build_fake_input(cap: &plasm_core::CapabilitySchema, cgs: &plasm_core::CGS) -
 
     let mut obj = IndexMap::new();
     for f in fields.iter().filter(|f| f.required) {
-        let nv = cgs.named_value_for_slot(f).expect("param value_ref");
-        obj.insert(
-            f.name.clone(),
-            fake_value_for_type(&nv.field_type, nv.allowed_values.as_deref()),
-        );
+        if let Some(v) = fake_value_for_input_field(f, cgs) {
+            obj.insert(f.name.clone(), v);
+        }
     }
     if obj.is_empty() {
         Value::Null

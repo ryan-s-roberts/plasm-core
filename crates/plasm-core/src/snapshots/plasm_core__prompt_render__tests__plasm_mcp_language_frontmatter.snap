@@ -20,7 +20,8 @@ Symbol and fill rules:
 - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
 - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
-- `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
+- Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
+- `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.
 - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
 - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.

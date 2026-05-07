@@ -411,7 +411,7 @@ fn entry_matches_catalog_route(
     }
 
     let segments: Vec<&str> = entry_id
-        .split(|c| c == '_' || c == '-')
+        .split(|c| ['_', '-'].contains(&c))
         .filter(|s| !s.is_empty())
         .collect();
     if segments.len() >= 2 {

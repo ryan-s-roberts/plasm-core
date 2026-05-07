@@ -44,6 +44,7 @@ impl EntityRefPayload {
     /// Recognize the subset of [`Value`] used for `FieldType::EntityRef` after normalization.
     pub fn try_from_value(v: &Value) -> Result<Self, EntityRefValueError> {
         match v {
+            Value::UnionCtor { .. } => Err(EntityRefValueError::Unsupported),
             Value::PlasmInputRef(_) => Err(EntityRefValueError::Unsupported),
             Value::Null => Err(EntityRefValueError::Null),
             Value::Bool(b) => Ok(Self::Atom(EntityRefAtom::Bool(*b))),

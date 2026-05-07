@@ -874,13 +874,15 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "region".into(),
-                        kind: FieldValueKind::Registry(
+                        wire: InputFieldWire::Registry(
                             ValueDomainKey::new("cb_account_region").expect("key"),
                         ),
                         required: false,
                         description: Some("Filter by region".into()),
                         default: None,
                         role: None,
+                        wire_json_path: None,
+                        wire_array_element_key: None,
                 }],
                     additional_fields: false,
                 },
@@ -918,11 +920,13 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "role".into(),
-                        kind: FieldValueKind::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
+                        wire: InputFieldWire::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
                         required: false,
                         description: Some("Filter by role".into()),
                         default: None,
                         role: None,
+                        wire_json_path: None,
+                        wire_array_element_key: None,
                 }],
                     additional_fields: false,
                 },
@@ -1344,11 +1348,13 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "petId".into(),
-                        kind: FieldValueKind::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),
+                        wire: InputFieldWire::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),
                         required: false,
                         description: None,
                         default: None,
                         role: None,
+                        wire_json_path: None,
+                        wire_array_element_key: None,
                 }],
                     additional_fields: true,
                 },

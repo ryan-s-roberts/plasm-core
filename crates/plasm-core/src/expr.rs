@@ -37,6 +37,15 @@ pub enum Expr {
     /// Resume the next batch of a paginated query using an opaque host-minted handle (`page(pg1)` HTTP, `page(s0_pg1)` MCP).
     #[serde(rename = "page")]
     Page(PageExpr),
+
+    /// DOMAIN-only teaching literal (e.g. top-level union constructor `v101{p#=$,…}`).
+    ///
+    /// Parsed and type-checked for prompt validation; not executable — the runtime rejects execution.
+    #[serde(rename = "teaching_value")]
+    TeachingValue {
+        /// Typically [`Value::UnionCtor`] with `$` teaching placeholders.
+        value: Value,
+    },
 }
 
 /// Opaque pagination continuation issued by the execute host (not a CGS entity operation).
@@ -489,6 +498,7 @@ impl Expr {
             Expr::Invoke(i) => i.target.entity_type.as_str(),
             Expr::Chain(c) => c.source.primary_entity(),
             Expr::Page(_) => PAGE_EXPR_PRIMARY_ENTITY,
+            Expr::TeachingValue { .. } => "__teaching_value__",
         }
     }
 }
@@ -496,7 +506,11 @@ impl Expr {
 /// Replace raw invoke/create payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
 pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
     match expr {
-        Expr::Query(_) | Expr::Get(_) | Expr::Delete(_) | Expr::Page(_) => {}
+        Expr::Query(_)
+        | Expr::Get(_)
+        | Expr::Delete(_)
+        | Expr::Page(_)
+        | Expr::TeachingValue { .. } => {}
         Expr::Create(create) => {
             if let Some(cap) = cgs.get_capability(&create.capability) {
                 if let Some(schema) = &cap.input_schema {

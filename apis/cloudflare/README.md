@@ -15,9 +15,22 @@ Base URL: `https://api.cloudflare.com/client/v4`.
 
 ## Auth
 
-**API tokens (recommended for automation):** create an [API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) with at least **Zone → Zone → Read** and **Zone → WAF → Read** for read-only Phase 1 flows; add **Zone WAF Edit** if you use `ruleset_entrypoint_update`. Permission names align with Cloudflare’s [token permission reference](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
+Phase 1 uses **`Authorization: Bearer <API_TOKEN>`** (see `domain.yaml` `auth`). Global API keys are deprecated for new automation—use [API tokens](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
 
-**OAuth (demo / product UI):** `domain.yaml` declares `oauth.provider: cloudflare` with Plasm scope ids (`cloudflare.zone.read`, `cloudflare.zone.waf.read`, `cloudflare.zone.waf.edit`, …) mapped to capabilities via `requirements.capabilities`, plus `default_scope_sets` **`plasm_cloudflare_demo_readonly`** and **`plasm_cloudflare_demo_operator`**. Wire a real OAuth client through your control plane (Ops outbound OAuth app → agent link provider); scope strings must match what your Cloudflare OAuth app accepts—treat the YAML ids as **catalog-stable handles** you can map to provider grants.
+### API token permissions
+
+Grant the token access to the **zones** you need (specific zone IDs or all zones). Names below match Cloudflare’s [API token permission reference](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
+
+| Need | Permission |
+|------|------------|
+| Zones list/get | **Zone → Zone → Read** |
+| Zone rulesets list/get (`ruleset_query` / `ruleset_get`) | **Zone → Zone WAF → Read** (and **Edit** for writes where applicable) |
+| **Managed WAF** phase entrypoints (e.g. `http_request_firewall_managed`) — `ruleset_entrypoint_get` / `ruleset_entrypoint_update` | **Zone → Zone WAF → Read** / **Zone WAF Edit** |
+| **`ddos_l7`** phase entrypoint (`…/rulesets/phases/ddos_l7/entrypoint`) | **Zone → HTTP DDoS Managed Ruleset → Read** (and **Edit** for updates). **Not** covered by Zone WAF alone—a token with only WAF scopes often gets **`403` “request is not authorized”** on this path. |
+| **`ddos_l4`** phase entrypoint | **Zone → L4 DDoS Managed Ruleset → Read** (or **Write** for changes)—network-layer DDoS managed ruleset, separate from HTTP DDoS and from Zone WAF. |
+| `waf_package_query` | **Zone → Zone WAF → Read** |
+
+**OAuth:** `domain.yaml` also lists `oauth.provider: cloudflare` for hosted flows that map Plasm scope ids to a Cloudflare OAuth app. That path is separate from bearer **API tokens**; for REPL/CI/agents, configure **`CLOUDFLARE_API_TOKEN`** with the table above.
 
 ```bash
 export CLOUDFLARE_API_TOKEN='...'

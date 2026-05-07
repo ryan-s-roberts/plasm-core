@@ -26,6 +26,8 @@ pub enum TypedLiteral {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedLiteralError {
     UnsupportedPlasmHoleInCollection,
+    /// Surface union constructors (`v101{…}`) are not predicate literals.
+    UnionConstructor,
     EntityRef(EntityRefValueError),
 }
 
@@ -47,6 +49,7 @@ impl TypedLiteral {
     /// Lift from [`Value`] when the shape is a legal typed literal or entity_ref constructor.
     pub fn try_from_value(v: &Value) -> Result<Self, TypedLiteralError> {
         match v {
+            Value::UnionCtor { .. } => Err(TypedLiteralError::UnionConstructor),
             Value::PlasmInputRef(r) => Ok(TypedLiteral::InputRef(r.clone())),
             Value::Null => Ok(TypedLiteral::Null),
             Value::Bool(b) => Ok(TypedLiteral::Bool(*b)),

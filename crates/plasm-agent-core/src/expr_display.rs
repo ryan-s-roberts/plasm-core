@@ -32,6 +32,12 @@ pub fn expr_display(expr: &Expr) -> String {
             Some(l) => format!("page({} limit={l})", p.handle),
             None => format!("page({})", p.handle),
         },
+        Expr::TeachingValue { value } => match value {
+            plasm_core::Value::UnionCtor { ctor_label, .. } => {
+                format!("TeachingValue({ctor_label}{{…}})")
+            }
+            _ => "TeachingValue".to_string(),
+        },
     }
 }
 
@@ -61,6 +67,12 @@ pub fn expr_display_resolved(expr: &Expr, cgs: &CGS) -> String {
         Expr::Page(p) => match p.limit {
             Some(l) => format!("page({} limit={l})", p.handle),
             None => format!("page({})", p.handle),
+        },
+        Expr::TeachingValue { value } => match value {
+            plasm_core::Value::UnionCtor { ctor_label, .. } => {
+                format!("TeachingValue({ctor_label}{{…}})")
+            }
+            _ => "TeachingValue".to_string(),
         },
     }
 }
@@ -95,6 +107,12 @@ pub fn expr_display_resolved_federated(
         Expr::Page(p) => match p.limit {
             Some(l) => format!("page({} limit={l})", p.handle),
             None => format!("page({})", p.handle),
+        },
+        Expr::TeachingValue { value } => match value {
+            plasm_core::Value::UnionCtor { ctor_label, .. } => {
+                format!("TeachingValue({ctor_label}{{…}})")
+            }
+            _ => "TeachingValue".to_string(),
         },
     }
 }

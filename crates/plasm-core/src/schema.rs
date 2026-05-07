@@ -4,7 +4,9 @@ use crate::identity::{
 };
 use crate::{FieldType, SchemaError, ValueWireFormat};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as SerdeDeError;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
@@ -849,61 +851,309 @@ pub enum InputType {
 
     /// Union of multiple possible types
     #[serde(rename = "union")]
-    Union { variants: Vec<InputType> },
+    Union { variants: Vec<InputVariantSchema> },
+}
+
+/// Wire discriminator injected when lowering a union variant to HTTP/CML JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireVariantDiscriminator {
+    pub field: String,
+    pub value: String,
+}
+
+/// One branch of an [`InputType::Union`] — a record-shaped variant with an author-time label
+/// and a wire tag the runtime adds when materializing JSON bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InputVariantSchema {
+    /// Stable authoring name (snake_case); also the default constructor label when
+    /// [`Self::constructor_symbol`] is unset.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional DOMAIN / program constructor prefix (e.g. `v21` for `v21{p10=$,…}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constructor_symbol: Option<String>,
+    pub fields: Vec<InputFieldSchema>,
+    pub wire: WireVariantDiscriminator,
+}
+
+/// How an [`InputFieldSchema`] obtains its type: registry [`values:`] row or inline structural [`InputType`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputFieldWire {
+    Registry(ValueDomainKey),
+    Inline(Box<InputType>),
 }
 
 /// Field schema for object inputs
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InputFieldSchema {
     pub name: String,
-    /// Wire shape is defined under [`CGS::values`]; YAML key is `value_ref`.
-    #[serde(rename = "value_ref")]
-    pub kind: FieldValueKind,
-    #[serde(default)]
+    pub wire: InputFieldWire,
     pub required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Default value if not provided
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<crate::Value>,
     /// Semantic role of this parameter. Defaults to `filter`.
     /// Agents and LLM tooling use this to understand how the param affects results.
-    #[serde(default, skip_serializing_if = "is_default_role")]
     pub role: Option<ParameterRole>,
+    /// When set on a union variant body field: nest this field's JSON under these segments when
+    /// lowering [`crate::typed_invoke::TypedInvokeInput::Union`] (logical flat surface → nested wire).
+    pub wire_json_path: Option<Vec<String>>,
+    /// When set on an array field: each wire element is `{ key: item }` while Plasm uses a flat array
+    /// of element values (union variant lowering / lifting).
+    pub wire_array_element_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct InputFieldSchemaDeHelper {
+    name: String,
+    #[serde(default)]
+    value_ref: Option<ValueDomainKey>,
+    #[serde(default)]
+    input_type: Option<Box<InputType>>,
+    #[serde(default)]
+    required: bool,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    default: Option<crate::Value>,
+    #[serde(default)]
+    role: Option<ParameterRole>,
+    #[serde(default)]
+    wire_json_path: Option<Vec<String>>,
+    #[serde(default)]
+    wire_array_element_key: Option<String>,
+}
+
+impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
+    type Error = String;
+
+    fn try_from(h: InputFieldSchemaDeHelper) -> Result<Self, String> {
+        let wire = match (h.value_ref, h.input_type) {
+            (Some(k), None) => InputFieldWire::Registry(k),
+            (None, Some(ty)) => InputFieldWire::Inline(ty),
+            (Some(_), Some(_)) => {
+                return Err("parameter and object field `".to_string()
+                    + &h.name
+                    + "`: set exactly one of `value_ref` or `input_type`, not both");
+            }
+            (None, None) => {
+                return Err(format!(
+                    "parameter or field `{}`: missing `value_ref` and `input_type`",
+                    h.name
+                ));
+            }
+        };
+        Ok(InputFieldSchema {
+            name: h.name,
+            wire,
+            required: h.required,
+            description: h.description,
+            default: h.default,
+            role: h.role,
+            wire_json_path: h.wire_json_path,
+            wire_array_element_key: h.wire_array_element_key,
+        })
+    }
+}
+
+impl Serialize for InputFieldSchema {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("InputFieldSchema", 9)?;
+        state.serialize_field("name", &self.name)?;
+        match &self.wire {
+            InputFieldWire::Registry(k) => state.serialize_field("value_ref", k)?,
+            InputFieldWire::Inline(ty) => state.serialize_field("input_type", ty)?,
+        }
+        state.serialize_field("required", &self.required)?;
+        if self.description.is_some() {
+            state.serialize_field("description", &self.description)?;
+        }
+        if self.default.is_some() {
+            state.serialize_field("default", &self.default)?;
+        }
+        if !is_default_role(&self.role) {
+            state.serialize_field("role", &self.role)?;
+        }
+        if self.wire_json_path.is_some() {
+            state.serialize_field("wire_json_path", &self.wire_json_path)?;
+        }
+        if self.wire_array_element_key.is_some() {
+            state.serialize_field("wire_array_element_key", &self.wire_array_element_key)?;
+        }
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for InputFieldSchema {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let h = InputFieldSchemaDeHelper::deserialize(deserializer)?;
+        InputFieldSchema::try_from(h).map_err(SerdeDeError::custom)
+    }
 }
 
 fn is_default_role(r: &Option<ParameterRole>) -> bool {
     matches!(r, None | Some(ParameterRole::Filter))
 }
 
+fn effective_string_semantics_of_input_type(ty: &InputType, cgs: &CGS) -> StringSemantics {
+    match ty {
+        InputType::None | InputType::Value { .. } => StringSemantics::Short,
+        InputType::Object { fields, .. } => fields
+            .first()
+            .map(|f| f.effective_string_semantics(cgs))
+            .unwrap_or(StringSemantics::Short),
+        InputType::Array { element_type, .. } => {
+            effective_string_semantics_of_input_type(element_type.as_ref(), cgs)
+        }
+        InputType::Union { variants } => variants
+            .first()
+            .and_then(|v| v.fields.first())
+            .map(|f| f.effective_string_semantics(cgs))
+            .unwrap_or(StringSemantics::Short),
+    }
+}
+
+/// [`InputType::Object`] view of a union variant payload (no wire discriminator in the surface form).
+#[inline]
+pub fn input_variant_body_type(v: &InputVariantSchema) -> InputType {
+    InputType::Object {
+        fields: v.fields.clone(),
+        additional_fields: false,
+    }
+}
+
+/// DOMAIN constructor label for [`InputVariantSchema::constructor_symbol`] (`v101{…}`), when present.
+#[inline]
+pub fn union_variant_constructor_symbol(v: &InputVariantSchema) -> Option<&str> {
+    v.constructor_symbol.as_deref()
+}
+
+/// Resolve a dotted capability input path (`operations.replace_block.ref`) against `cap.input_schema`.
+pub(crate) fn resolve_capability_input_param_field<'a>(
+    cap: &'a CapabilitySchema,
+    path: &str,
+) -> Option<&'a InputFieldSchema> {
+    let is = cap.input_schema.as_ref()?;
+    let InputType::Object { fields, .. } = &is.input_type else {
+        return None;
+    };
+    if path.is_empty() {
+        return None;
+    }
+    let segments: Vec<&str> = path.split('.').collect();
+    resolve_input_fields_path(fields, segments.as_slice())
+}
+
+fn resolve_input_fields_path<'a>(
+    fields: &'a [InputFieldSchema],
+    segments: &[&str],
+) -> Option<&'a InputFieldSchema> {
+    let head = segments.first()?;
+    let field = fields.iter().find(|f| f.name.as_str() == *head)?;
+    if segments.len() == 1 {
+        return Some(field);
+    }
+    let tail = &segments[1..];
+    match &field.wire {
+        InputFieldWire::Inline(ty) => resolve_inline_input_type_path(ty, tail),
+        InputFieldWire::Registry(_) => None,
+    }
+}
+
+fn resolve_inline_input_type_path<'a>(
+    ty: &'a InputType,
+    segments: &[&str],
+) -> Option<&'a InputFieldSchema> {
+    match ty {
+        InputType::Object { fields, .. } => resolve_input_fields_path(fields, segments),
+        InputType::Array { element_type, .. } => {
+            resolve_inline_input_type_path(element_type.as_ref(), segments)
+        }
+        InputType::Union { variants } => {
+            let head = segments.first()?;
+            let variant = variants.iter().find(|v| v.name.as_str() == *head)?;
+            resolve_input_fields_path(&variant.fields, &segments[1..])
+        }
+        _ => None,
+    }
+}
+
+/// Every `values:` registry key referenced inside a structural [`InputType`] (stable order).
+pub fn collect_registry_keys_from_input_type(
+    ty: &InputType,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    match ty {
+        InputType::None | InputType::Value { .. } => {}
+        InputType::Object { fields, .. } => {
+            for f in fields {
+                collect_registry_keys_from_input_field(f, out);
+            }
+        }
+        InputType::Array { element_type, .. } => {
+            collect_registry_keys_from_input_type(element_type.as_ref(), out);
+        }
+        InputType::Union { variants } => {
+            for v in variants {
+                for f in &v.fields {
+                    collect_registry_keys_from_input_field(f, out);
+                }
+            }
+        }
+    }
+}
+
+fn collect_registry_keys_from_input_field(
+    f: &InputFieldSchema,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    match &f.wire {
+        InputFieldWire::Registry(k) => {
+            out.insert(k.as_str().to_string());
+        }
+        InputFieldWire::Inline(ty) => collect_registry_keys_from_input_type(ty.as_ref(), out),
+    }
+}
+
 impl InputFieldSchema {
     #[inline]
     pub fn named_value<'a>(&self, cgs: &'a CGS) -> Result<&'a NamedValueSchema, SchemaError> {
-        cgs.named_value_for_slot(self)
+        match &self.wire {
+            InputFieldWire::Registry(k) => {
+                cgs.values
+                    .get(k.as_str())
+                    .ok_or_else(|| SchemaError::UnknownValueDomain {
+                        key: k.as_str().to_string(),
+                        context: format!("input field `{}`", self.name),
+                    })
+            }
+            InputFieldWire::Inline(_) => Err(SchemaError::InlineStructuralInputField {
+                name: self.name.clone(),
+            }),
+        }
     }
 
     pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
-        match cgs.named_value_for_slot(self) {
-            Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
-            Err(_) => StringSemantics::Short,
+        match &self.wire {
+            InputFieldWire::Registry(_) => match self.named_value(cgs) {
+                Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
+                Err(_) => StringSemantics::Short,
+            },
+            InputFieldWire::Inline(ty) => {
+                effective_string_semantics_of_input_type(ty.as_ref(), cgs)
+            }
         }
     }
 
     pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
-        cgs.named_value_for_slot(self)
+        self.named_value(cgs)
             .ok()
             .and_then(|nv| nv.array_items.as_ref())
     }
 }
 
 impl ValueDomainSlot for FieldSchema {
-    #[inline]
-    fn value_domain_key(&self) -> &ValueDomainKey {
-        self.kind.registry_key()
-    }
-}
-
-impl ValueDomainSlot for InputFieldSchema {
     #[inline]
     fn value_domain_key(&self) -> &ValueDomainKey {
         self.kind.registry_key()
@@ -1593,8 +1843,12 @@ impl CGS {
         Ok(())
     }
 
-    /// Validate all cross-references in this schema.
+    /// Validate all cross-references in this schema (includes expression-teaching surface).
     pub fn validate(&self) -> Result<(), SchemaError> {
+        self.validate_core()
+    }
+
+    fn validate_core(&self) -> Result<(), SchemaError> {
         for (entity_name, entity) in &self.entities {
             if let Some(ref cap_id) = entity.primary_read {
                 let Some(cap) = self.capabilities.get(cap_id.as_str()) else {
@@ -1728,7 +1982,7 @@ impl CGS {
         // EntityRef targets on entity fields; typed arrays / multi_select
         for (entity_name, entity) in &self.entities {
             for (field_name, field) in &entity.fields {
-                let nv = self.named_value_for_slot(field)?;
+                let nv = field.named_value(self)?;
                 if matches!(nv.field_type, FieldType::Blob) && nv.string_semantics.is_some() {
                     return Err(SchemaError::StringSemanticsOnNonString {
                         entity: entity_name.to_string(),
@@ -1801,75 +2055,24 @@ impl CGS {
             let domain_entity = self.entities.get(&cap.domain);
 
             for param in fields {
-                let nv = self.named_value_for_slot(param)?;
-                if !matches!(nv.field_type, FieldType::String) && nv.string_semantics.is_some() {
-                    return Err(SchemaError::StringSemanticsOnNonStringParam {
-                        capability: cap_name.to_string(),
-                        param: param.name.clone(),
-                    });
-                }
-                if let FieldType::EntityRef { target } = &nv.field_type {
-                    if !self.entities.contains_key(target) {
-                        return Err(SchemaError::EntityRefUnknownTarget {
-                            target: target.to_string(),
-                            context: format!(
-                                "capability '{}', parameter '{}'",
-                                cap_name, param.name
-                            ),
-                        });
+                match &param.wire {
+                    InputFieldWire::Inline(ty) => {
+                        Self::validate_input_type_capability_param_shapes(
+                            self,
+                            cap_name,
+                            cap,
+                            ty.as_ref(),
+                            &param.name,
+                        )?;
                     }
-                }
-                if matches!(nv.field_type, FieldType::Array) && nv.array_items.is_none() {
-                    return Err(SchemaError::ArrayParamMissingItems {
-                        capability: cap_name.to_string(),
-                        param: param.name.clone(),
-                    });
-                }
-                if matches!(nv.field_type, FieldType::MultiSelect)
-                    && nv.allowed_values.as_ref().is_none_or(|v| v.is_empty())
-                {
-                    return Err(SchemaError::MultiSelectParamMissingAllowedValues {
-                        capability: cap_name.to_string(),
-                        param: param.name.clone(),
-                    });
-                }
-                if let Some(ai) = nv.array_items.as_ref() {
-                    if let FieldType::EntityRef { target } = &ai.field_type {
-                        if !self.entities.contains_key(target) {
-                            return Err(SchemaError::EntityRefUnknownTarget {
-                                target: target.to_string(),
-                                context: format!(
-                                    "capability '{}', parameter '{}', items",
-                                    cap_name, param.name
-                                ),
-                            });
-                        }
-                    }
-                }
-
-                if cap.kind == CapabilityKind::Query {
-                    if let FieldType::EntityRef {
-                        target: param_target,
-                    } = &nv.field_type
-                    {
-                        if let Some(ent) = domain_entity {
-                            if let Some(entity_field) = ent.fields.get(param.name.as_str()) {
-                                let field_nv = self.named_value_for_slot(entity_field)?;
-                                if let FieldType::EntityRef {
-                                    target: field_target,
-                                } = &field_nv.field_type
-                                {
-                                    if param_target != field_target {
-                                        return Err(SchemaError::EntityRefNameMismatch {
-                                            capability: cap_name.to_string(),
-                                            parameter: param.name.clone(),
-                                            param_target: param_target.to_string(),
-                                            field_target: field_target.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                        }
+                    InputFieldWire::Registry(_) => {
+                        Self::validate_registry_capability_param(
+                            self,
+                            cap_name,
+                            cap,
+                            param,
+                            domain_entity,
+                        )?;
                     }
                 }
             }
@@ -2045,6 +2248,44 @@ impl CGS {
         Ok(())
     }
 
+    fn for_each_registry_input_field_in_field(
+        cgs: &CGS,
+        field: &InputFieldSchema,
+        f: &mut impl FnMut(&InputFieldSchema),
+    ) {
+        match &field.wire {
+            InputFieldWire::Inline(ty) => {
+                Self::for_each_registry_input_field_in_type(cgs, ty.as_ref(), f);
+            }
+            InputFieldWire::Registry(_) => f(field),
+        }
+    }
+
+    fn for_each_registry_input_field_in_type(
+        cgs: &CGS,
+        input_type: &InputType,
+        f: &mut impl FnMut(&InputFieldSchema),
+    ) {
+        match input_type {
+            InputType::Object { fields, .. } => {
+                for field in fields {
+                    Self::for_each_registry_input_field_in_field(cgs, field, f);
+                }
+            }
+            InputType::Array { element_type, .. } => {
+                Self::for_each_registry_input_field_in_type(cgs, element_type.as_ref(), f);
+            }
+            InputType::Union { variants } => {
+                for v in variants {
+                    for field in &v.fields {
+                        Self::for_each_registry_input_field_in_field(cgs, field, f);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Violations when a `string` entity field or capability parameter omits `string_semantics` (required at load).
     pub fn string_semantics_violations(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -2066,16 +2307,15 @@ impl CGS {
             }
         }
         for (cap_name, cap) in &self.capabilities {
-            let Some(fields) = cap.object_params() else {
+            let Some(input) = cap.input_schema.as_ref() else {
                 continue;
             };
-            for param in fields {
-                let key = param.kind.registry_key().as_str();
-                let Some(nv) = self.values.get(key) else {
-                    continue;
+            Self::for_each_registry_input_field_in_type(self, &input.input_type, &mut |param| {
+                let Ok(nv) = param.named_value(self) else {
+                    return;
                 };
                 if !matches!(nv.field_type, FieldType::String) {
-                    continue;
+                    return;
                 }
                 if nv.string_semantics.is_none() {
                     out.push(format!(
@@ -2083,7 +2323,7 @@ impl CGS {
                         cap_name, param.name
                     ));
                 }
-            }
+            });
         }
         out
     }
@@ -2132,6 +2372,435 @@ impl CGS {
         Ok(())
     }
 
+    fn validate_input_type_closed_value_refs(
+        cgs: &CGS,
+        input_type: &InputType,
+        base_ctx: &str,
+        check_array_items: &impl Fn(&CGS, &ArrayItemsSchema, &str) -> Result<(), SchemaError>,
+    ) -> Result<(), SchemaError> {
+        match input_type {
+            InputType::None | InputType::Value { .. } => Ok(()),
+            InputType::Object { fields, .. } => {
+                for field in fields {
+                    Self::validate_input_field_closed_value_refs(
+                        cgs,
+                        field,
+                        base_ctx,
+                        check_array_items,
+                    )?;
+                }
+                Ok(())
+            }
+            InputType::Array { element_type, .. } => Self::validate_input_type_closed_value_refs(
+                cgs,
+                element_type.as_ref(),
+                base_ctx,
+                check_array_items,
+            ),
+            InputType::Union { variants } => {
+                for v in variants {
+                    let vctx = format!("{base_ctx} variant '{}'", v.name);
+                    for field in &v.fields {
+                        Self::validate_input_field_closed_value_refs(
+                            cgs,
+                            field,
+                            &vctx,
+                            check_array_items,
+                        )?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_input_field_closed_value_refs(
+        cgs: &CGS,
+        field: &InputFieldSchema,
+        base_ctx: &str,
+        check_array_items: &impl Fn(&CGS, &ArrayItemsSchema, &str) -> Result<(), SchemaError>,
+    ) -> Result<(), SchemaError> {
+        match &field.wire {
+            InputFieldWire::Registry(k) => {
+                let Some(nv) = cgs.values.get(k.as_str()) else {
+                    return Err(SchemaError::UnknownValueDomain {
+                        key: k.as_str().to_string(),
+                        context: format!("{base_ctx} parameter '{}'", field.name),
+                    });
+                };
+                if let Some(ref ai) = nv.array_items {
+                    check_array_items(
+                        cgs,
+                        ai,
+                        &format!("{base_ctx} parameter '{}' items", field.name),
+                    )?;
+                }
+                Ok(())
+            }
+            InputFieldWire::Inline(ty) => Self::validate_input_type_closed_value_refs(
+                cgs,
+                ty.as_ref(),
+                &format!("{base_ctx}.{}", field.name),
+                check_array_items,
+            ),
+        }
+    }
+
+    fn validate_input_type_registry_denormalization(
+        cgs: &CGS,
+        input_type: &InputType,
+        base_ctx: &str,
+        array_items_agree_with_values: &impl Fn(
+            &CGS,
+            &ArrayItemsSchema,
+            &str,
+        ) -> Result<(), SchemaError>,
+    ) -> Result<(), SchemaError> {
+        match input_type {
+            InputType::None | InputType::Value { .. } => Ok(()),
+            InputType::Object { fields, .. } => {
+                for field in fields {
+                    Self::validate_input_field_registry_denormalization(
+                        cgs,
+                        field,
+                        base_ctx,
+                        array_items_agree_with_values,
+                    )?;
+                }
+                Ok(())
+            }
+            InputType::Array { element_type, .. } => {
+                Self::validate_input_type_registry_denormalization(
+                    cgs,
+                    element_type.as_ref(),
+                    base_ctx,
+                    array_items_agree_with_values,
+                )
+            }
+            InputType::Union { variants } => {
+                for v in variants {
+                    let vctx = format!("{base_ctx} variant '{}'", v.name);
+                    for field in &v.fields {
+                        Self::validate_input_field_registry_denormalization(
+                            cgs,
+                            field,
+                            &vctx,
+                            array_items_agree_with_values,
+                        )?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_input_field_registry_denormalization(
+        cgs: &CGS,
+        field: &InputFieldSchema,
+        base_ctx: &str,
+        array_items_agree_with_values: &impl Fn(
+            &CGS,
+            &ArrayItemsSchema,
+            &str,
+        ) -> Result<(), SchemaError>,
+    ) -> Result<(), SchemaError> {
+        match &field.wire {
+            InputFieldWire::Registry(k) => {
+                let key = k.as_str();
+                let nv = cgs
+                    .values
+                    .get(key)
+                    .ok_or_else(|| SchemaError::UnknownValueDomain {
+                        key: key.to_string(),
+                        context: format!("{base_ctx} parameter '{}'", field.name),
+                    })?;
+                if let Some(a) = nv.array_items.as_ref() {
+                    array_items_agree_with_values(
+                        cgs,
+                        a,
+                        &format!("{base_ctx} parameter '{}'", field.name),
+                    )?;
+                }
+                Ok(())
+            }
+            InputFieldWire::Inline(ty) => Self::validate_input_type_registry_denormalization(
+                cgs,
+                ty.as_ref(),
+                &format!("{base_ctx}.{}", field.name),
+                array_items_agree_with_values,
+            ),
+        }
+    }
+
+    fn validate_input_type_temporal_params(
+        cgs: &CGS,
+        input_type: &InputType,
+        cap_name: &str,
+        path: &str,
+    ) -> Result<(), SchemaError> {
+        match input_type {
+            InputType::None | InputType::Value { .. } => Ok(()),
+            InputType::Object { fields, .. } => {
+                for field in fields {
+                    Self::validate_input_field_temporal_params(cgs, field, cap_name, path)?;
+                }
+                Ok(())
+            }
+            InputType::Array { element_type, .. } => Self::validate_input_type_temporal_params(
+                cgs,
+                element_type.as_ref(),
+                cap_name,
+                path,
+            ),
+            InputType::Union { variants } => {
+                for v in variants {
+                    let p = if path.is_empty() {
+                        format!("<{}>", v.name)
+                    } else {
+                        format!("{path}<{}>", v.name)
+                    };
+                    for field in &v.fields {
+                        Self::validate_input_field_temporal_params(cgs, field, cap_name, &p)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_input_field_temporal_params(
+        cgs: &CGS,
+        field: &InputFieldSchema,
+        cap_name: &str,
+        path: &str,
+    ) -> Result<(), SchemaError> {
+        let param_path = if path.is_empty() {
+            field.name.clone()
+        } else {
+            format!("{path}.{}", field.name)
+        };
+        match &field.wire {
+            InputFieldWire::Registry(_) => {
+                let nv = field.named_value(cgs)?;
+                match &nv.field_type {
+                    FieldType::Date => match &nv.value_format {
+                        Some(ValueWireFormat::Temporal(_)) => {}
+                        None => {
+                            return Err(SchemaError::DateParamMissingValueFormat {
+                                capability: cap_name.to_string(),
+                                param: param_path,
+                            });
+                        }
+                    },
+                    FieldType::Array => {
+                        if nv.value_format.is_some() {
+                            return Err(SchemaError::ValueFormatOnNonDateParam {
+                                capability: cap_name.to_string(),
+                                param: param_path.clone(),
+                            });
+                        }
+                        if let Some(ai) = nv.array_items.as_ref() {
+                            match &ai.field_type {
+                                FieldType::Date => match &ai.value_format {
+                                    Some(ValueWireFormat::Temporal(_)) => {}
+                                    None => {
+                                        return Err(SchemaError::DateParamMissingValueFormat {
+                                            capability: cap_name.to_string(),
+                                            param: format!("{param_path}.items"),
+                                        });
+                                    }
+                                },
+                                _ => {
+                                    if ai.value_format.is_some() {
+                                        return Err(SchemaError::ValueFormatOnNonDateParam {
+                                            capability: cap_name.to_string(),
+                                            param: format!("{param_path}.items"),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        if nv.value_format.is_some() {
+                            return Err(SchemaError::ValueFormatOnNonDateParam {
+                                capability: cap_name.to_string(),
+                                param: param_path,
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
+            InputFieldWire::Inline(ty) => {
+                Self::validate_input_type_temporal_params(cgs, ty.as_ref(), cap_name, &param_path)
+            }
+        }
+    }
+
+    fn validate_registry_capability_param(
+        cgs: &CGS,
+        cap_name: &str,
+        cap: &CapabilitySchema,
+        param: &InputFieldSchema,
+        domain_entity: Option<&EntityDef>,
+    ) -> Result<(), SchemaError> {
+        let nv = param.named_value(cgs)?;
+        if !matches!(nv.field_type, FieldType::String) && nv.string_semantics.is_some() {
+            return Err(SchemaError::StringSemanticsOnNonStringParam {
+                capability: cap_name.to_string(),
+                param: param.name.clone(),
+            });
+        }
+        if let FieldType::EntityRef { target } = &nv.field_type {
+            if !cgs.entities.contains_key(target) {
+                return Err(SchemaError::EntityRefUnknownTarget {
+                    target: target.to_string(),
+                    context: format!("capability '{}', parameter '{}'", cap_name, param.name),
+                });
+            }
+        }
+        if matches!(nv.field_type, FieldType::Array) && nv.array_items.is_none() {
+            return Err(SchemaError::ArrayParamMissingItems {
+                capability: cap_name.to_string(),
+                param: param.name.clone(),
+            });
+        }
+        if matches!(nv.field_type, FieldType::MultiSelect)
+            && nv.allowed_values.as_ref().is_none_or(|v| v.is_empty())
+        {
+            return Err(SchemaError::MultiSelectParamMissingAllowedValues {
+                capability: cap_name.to_string(),
+                param: param.name.clone(),
+            });
+        }
+        if let Some(ai) = nv.array_items.as_ref() {
+            if let FieldType::EntityRef { target } = &ai.field_type {
+                if !cgs.entities.contains_key(target) {
+                    return Err(SchemaError::EntityRefUnknownTarget {
+                        target: target.to_string(),
+                        context: format!(
+                            "capability '{}', parameter '{}', items",
+                            cap_name, param.name
+                        ),
+                    });
+                }
+            }
+        }
+
+        if cap.kind == CapabilityKind::Query {
+            if let FieldType::EntityRef {
+                target: param_target,
+            } = &nv.field_type
+            {
+                if let Some(ent) = domain_entity {
+                    if let Some(entity_field) = ent.fields.get(param.name.as_str()) {
+                        let field_nv = entity_field.named_value(cgs)?;
+                        if let FieldType::EntityRef {
+                            target: field_target,
+                        } = &field_nv.field_type
+                        {
+                            if param_target != field_target {
+                                return Err(SchemaError::EntityRefNameMismatch {
+                                    capability: cap_name.to_string(),
+                                    parameter: param.name.clone(),
+                                    param_target: param_target.to_string(),
+                                    field_target: field_target.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_input_type_capability_param_shapes(
+        cgs: &CGS,
+        cap_name: &str,
+        cap: &CapabilitySchema,
+        input_type: &InputType,
+        path: &str,
+    ) -> Result<(), SchemaError> {
+        let domain_entity = cgs.entities.get(&cap.domain);
+        match input_type {
+            InputType::Object { fields, .. } => {
+                for field in fields {
+                    let p = if path.is_empty() {
+                        field.name.clone()
+                    } else {
+                        format!("{path}.{}", field.name)
+                    };
+                    match &field.wire {
+                        InputFieldWire::Inline(ty) => {
+                            Self::validate_input_type_capability_param_shapes(
+                                cgs,
+                                cap_name,
+                                cap,
+                                ty.as_ref(),
+                                &p,
+                            )?;
+                        }
+                        InputFieldWire::Registry(_) => {
+                            Self::validate_registry_capability_param(
+                                cgs,
+                                cap_name,
+                                cap,
+                                field,
+                                domain_entity,
+                            )?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            InputType::Array { element_type, .. } => {
+                Self::validate_input_type_capability_param_shapes(
+                    cgs,
+                    cap_name,
+                    cap,
+                    element_type.as_ref(),
+                    path,
+                )
+            }
+            InputType::Union { variants } => {
+                for v in variants {
+                    let p = if path.is_empty() {
+                        format!("<{}>", v.name)
+                    } else {
+                        format!("{path}<{}>", v.name)
+                    };
+                    for field in &v.fields {
+                        let fp = format!("{p}.{}", field.name);
+                        match &field.wire {
+                            InputFieldWire::Inline(ty) => {
+                                Self::validate_input_type_capability_param_shapes(
+                                    cgs,
+                                    cap_name,
+                                    cap,
+                                    ty.as_ref(),
+                                    &fp,
+                                )?;
+                            }
+                            InputFieldWire::Registry(_) => {
+                                Self::validate_registry_capability_param(
+                                    cgs,
+                                    cap_name,
+                                    cap,
+                                    field,
+                                    domain_entity,
+                                )?;
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Every field / object-input slot / array element names a [`CGS::values`] entry (`value_ref`).
     fn validate_closed_value_domain_refs(&self) -> Result<(), SchemaError> {
         fn check_array_items(
@@ -2170,27 +2839,12 @@ impl CGS {
 
         for (cap_name, cap) in &self.capabilities {
             if let Some(ref is) = cap.input_schema {
-                if let InputType::Object { fields, .. } = &is.input_type {
-                    for p in fields {
-                        let k = p.kind.registry_key();
-                        let Some(nv) = self.values.get(k.as_str()) else {
-                            return Err(SchemaError::UnknownValueDomain {
-                                key: k.as_str().to_string(),
-                                context: format!(
-                                    "capability '{}' parameter '{}'",
-                                    cap_name, p.name
-                                ),
-                            });
-                        };
-                        if let Some(ref ai) = nv.array_items {
-                            check_array_items(
-                                self,
-                                ai,
-                                &format!("capability '{cap_name}' parameter '{}' items", p.name),
-                            )?;
-                        }
-                    }
-                }
+                Self::validate_input_type_closed_value_refs(
+                    self,
+                    &is.input_type,
+                    &format!("capability '{cap_name}'"),
+                    &check_array_items,
+                )?;
             }
         }
 
@@ -2267,24 +2921,12 @@ impl CGS {
 
         for (cap_name, cap) in &self.capabilities {
             if let Some(ref is) = cap.input_schema {
-                if let InputType::Object { fields, .. } = &is.input_type {
-                    for p in fields {
-                        let key = p.kind.registry_key().as_str();
-                        let nv = self.values.get(key).ok_or_else(|| {
-                            SchemaError::UnknownValueDomain {
-                                key: key.to_string(),
-                                context: format!("capability '{cap_name}' parameter '{}'", p.name),
-                            }
-                        })?;
-                        if let Some(a) = nv.array_items.as_ref() {
-                            array_items_agree_with_values(
-                                self,
-                                a,
-                                &format!("capability '{cap_name}' parameter '{}'", p.name),
-                            )?;
-                        }
-                    }
-                }
+                Self::validate_input_type_registry_denormalization(
+                    self,
+                    &is.input_type,
+                    &format!("capability '{cap_name}'"),
+                    &array_items_agree_with_values,
+                )?;
             }
         }
 
@@ -2300,7 +2942,7 @@ impl CGS {
     fn validate_temporal_value_formats(&self) -> Result<(), SchemaError> {
         for (entity_name, ent) in &self.entities {
             for (field_name, field) in &ent.fields {
-                let nv = self.named_value_for_slot(field)?;
+                let nv = field.named_value(self)?;
                 match &nv.field_type {
                     FieldType::Date => match &nv.value_format {
                         Some(ValueWireFormat::Temporal(_)) => {}
@@ -2356,59 +2998,7 @@ impl CGS {
             let Some(input) = cap.input_schema.as_ref() else {
                 continue;
             };
-            if let InputType::Object { fields, .. } = &input.input_type {
-                for param in fields {
-                    let nv = self.named_value_for_slot(param)?;
-                    match &nv.field_type {
-                        FieldType::Date => match &nv.value_format {
-                            Some(ValueWireFormat::Temporal(_)) => {}
-                            None => {
-                                return Err(SchemaError::DateParamMissingValueFormat {
-                                    capability: cap_name.to_string(),
-                                    param: param.name.clone(),
-                                });
-                            }
-                        },
-                        FieldType::Array => {
-                            if nv.value_format.is_some() {
-                                return Err(SchemaError::ValueFormatOnNonDateParam {
-                                    capability: cap_name.to_string(),
-                                    param: param.name.clone(),
-                                });
-                            }
-                            if let Some(ai) = nv.array_items.as_ref() {
-                                match &ai.field_type {
-                                    FieldType::Date => match &ai.value_format {
-                                        Some(ValueWireFormat::Temporal(_)) => {}
-                                        None => {
-                                            return Err(SchemaError::DateParamMissingValueFormat {
-                                                capability: cap_name.to_string(),
-                                                param: format!("{}.items", param.name),
-                                            });
-                                        }
-                                    },
-                                    _ => {
-                                        if ai.value_format.is_some() {
-                                            return Err(SchemaError::ValueFormatOnNonDateParam {
-                                                capability: cap_name.to_string(),
-                                                param: format!("{}.items", param.name),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            if nv.value_format.is_some() {
-                                return Err(SchemaError::ValueFormatOnNonDateParam {
-                                    capability: cap_name.to_string(),
-                                    param: param.name.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            Self::validate_input_type_temporal_params(self, &input.input_type, cap_name, "")?;
         }
 
         Ok(())
@@ -2467,7 +3057,7 @@ impl CGS {
 
             for rel_name in ent.relations.keys() {
                 if let Some(f) = ent.fields.get(rel_name.as_str()) {
-                    if let Ok(nv) = self.named_value_for_slot(f) {
+                    if let Ok(nv) = f.named_value(self) {
                         if !matches!(&nv.field_type, FieldType::EntityRef { .. }) {
                             continue;
                         }
@@ -2500,7 +3090,7 @@ impl CGS {
                 continue;
             };
             for p in fields {
-                let Ok(nv) = self.named_value_for_slot(p) else {
+                let Ok(nv) = p.named_value(self) else {
                     continue;
                 };
                 if let FieldType::EntityRef { target } = &nv.field_type {
@@ -2521,7 +3111,7 @@ impl CGS {
         ent.fields
             .values()
             .filter_map(|f| {
-                let nv = self.named_value_for_slot(f).ok()?;
+                let nv = f.named_value(self).ok()?;
                 if let FieldType::EntityRef { target } = &nv.field_type {
                     Some((f, target.as_str()))
                 } else {
@@ -3051,7 +3641,8 @@ impl Default for CGS {
 #[cfg(test)]
 pub mod registry_test_util {
     use super::{
-        FieldSchema, FieldValueKind, InputFieldSchema, NamedValueSchema, ValueDomainKey, CGS,
+        FieldSchema, FieldValueKind, InputFieldSchema, InputFieldWire, NamedValueSchema,
+        ValueDomainKey, CGS,
     };
     use crate::identity::EntityFieldName;
 
@@ -3091,11 +3682,13 @@ pub mod registry_test_util {
         let _ = nv_or_panic(cgs, values_key);
         InputFieldSchema {
             name: param_name.to_string(),
-            kind: FieldValueKind::Registry(ValueDomainKey::new(values_key).expect("values key")),
+            wire: InputFieldWire::Registry(ValueDomainKey::new(values_key).expect("values key")),
             required,
             description: None,
             default: None,
             role: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         }
     }
 }

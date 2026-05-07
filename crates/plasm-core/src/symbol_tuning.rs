@@ -28,8 +28,9 @@ use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
 };
 use crate::schema::{
-    capability_method_label_kebab, ArrayItemsSchema, CapabilitySchema, InputFieldSchema, InputType,
-    ParameterRole, StringSemantics, ValueDomainKey, CGS,
+    capability_method_label_kebab, input_variant_body_type, resolve_capability_input_param_field,
+    union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
+    InputFieldWire, InputType, ParameterRole, StringSemantics, ValueDomainKey, CGS,
 };
 use crate::CapabilityKind;
 use crate::FieldType;
@@ -109,6 +110,17 @@ pub enum IdentMetadata {
         catalog_entry_id: String,
         entity: EntityName,
         wire_name: String,
+        description: String,
+    },
+    /// Inline capability input schema node (`operations`, `operations.replace_block.block`, …).
+    /// [`SymbolMap`] maps dotted [`Self::param_path`] for [`SymbolMap::ident_sym_cap_param`]; teaching
+    /// expansion uses the **leaf** segment so union ctor bodies type-check as `{ref=$,…}` after
+    /// [`expand_path_symbols`].
+    CapabilityStructuralSlot {
+        catalog_entry_id: String,
+        entity: EntityName,
+        capability: CapabilityName,
+        param_path: String,
         description: String,
     },
 }
@@ -209,6 +221,66 @@ impl ExposureSurface {
     }
 }
 
+fn leaf_capability_param_expand_key(full_path: &str) -> String {
+    full_path
+        .rsplit_once('.')
+        .map(|(_, leaf)| leaf.to_string())
+        .unwrap_or_else(|| full_path.to_string())
+}
+
+/// Wire fragment shown after **`v# ·`** in compact registry-backed **`p#`** DOMAIN gloss.
+///
+/// Nested capability params store full dotted paths (`operations.replace_range.fromRef`, …). Union /
+/// variant prefixes are CGL input shape, not user-facing “types”; teach the **leaf** expand key only,
+/// aligned with [`registry_backed_allocation_wire_key`] / [`slot_symbol_allocation_fingerprint`].
+pub(crate) fn registry_backed_compact_wire_label(meta: &IdentMetadata) -> String {
+    match meta {
+        IdentMetadata::RegistryBacked {
+            role: IdentRegistryRole::CapabilityParam { .. },
+            wire_name,
+            ..
+        } if wire_name.contains('.') => leaf_capability_param_expand_key(wire_name.as_str()),
+        _ => meta.wire_name().to_string(),
+    }
+}
+
+fn insert_capability_param_paths(
+    field: &InputFieldSchema,
+    prefix: &str,
+    out: &mut BTreeSet<String>,
+) {
+    let path = if prefix.is_empty() {
+        field.name.clone()
+    } else {
+        format!("{prefix}.{}", field.name)
+    };
+    out.insert(path.clone());
+    if let InputFieldWire::Inline(ty) = &field.wire {
+        walk_inline_capability_param_paths(ty, &path, out);
+    }
+}
+
+fn walk_inline_capability_param_paths(ty: &InputType, prefix: &str, out: &mut BTreeSet<String>) {
+    match ty {
+        InputType::Object { fields, .. } => {
+            for f in fields {
+                insert_capability_param_paths(f, prefix, out);
+            }
+        }
+        InputType::Array { element_type, .. } => {
+            walk_inline_capability_param_paths(element_type.as_ref(), prefix, out);
+        }
+        InputType::Union { variants } => {
+            for v in variants {
+                let vprefix = format!("{prefix}.{}", v.name);
+                let body = input_variant_body_type(v);
+                walk_inline_capability_param_paths(&body, &vprefix, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Full per-entity closure (legacy HTTP execute / REPL paths): every field, relation, capability, and param.
 ///
 /// Declared relation **targets** are also inserted into [`ExposureSurface::entities`] so
@@ -273,10 +345,14 @@ pub fn legacy_exposure_surface_for_entities(
                 let InputType::Object { fields, .. } = &is.input_type else {
                     continue;
                 };
+                let mut paths = BTreeSet::new();
                 for f in fields {
+                    insert_capability_param_paths(f, "", &mut paths);
+                }
+                for path in paths {
                     out.slots.insert(ExposureSlotKey::CapabilityParam {
                         capability: ckey.clone(),
-                        param: CapabilityParamName::new(f.name.clone()),
+                        param: CapabilityParamName::new(path),
                     });
                 }
             }
@@ -311,9 +387,7 @@ pub(crate) fn collect_slot_metas_for_surface(
                 let Some(f) = ent.fields.get(field) else {
                     continue;
                 };
-                let nv = cgs
-                    .named_value_for_slot(f)
-                    .expect("values row for entity field");
+                let nv = f.named_value(cgs).expect("values row for entity field");
                 let en = entity.entity.clone();
                 let cid = entity.entry_id.clone();
                 out.push(IdentMetadata::RegistryBacked {
@@ -354,36 +428,89 @@ pub(crate) fn collect_slot_metas_for_surface(
                 let Some(cap) = cgs.capabilities.get(&capability.capability) else {
                     continue;
                 };
-                let Some(is) = &cap.input_schema else {
+                let path = param.as_str();
+                let Some(f) = resolve_capability_input_param_field(cap, path) else {
                     continue;
                 };
-                let InputType::Object { fields, .. } = &is.input_type else {
-                    continue;
-                };
-                let Some(f) = fields.iter().find(|x| x.name == param.as_str()) else {
-                    continue;
-                };
-                let nv = cgs
-                    .named_value_for_slot(f)
-                    .expect("values row for capability param");
-                out.push(IdentMetadata::RegistryBacked {
-                    catalog_entry_id: capability.entry_id.clone(),
-                    entity: capability.domain.clone(),
-                    role: IdentRegistryRole::CapabilityParam {
-                        capability: cap.name.clone(),
-                    },
-                    value_registry_key: f.kind.registry_key().clone(),
-                    field_type: nv.field_type.clone(),
-                    string_semantics: nv.string_semantics,
-                    array_items: nv.array_items.clone(),
-                    allowed_values: nv.allowed_values.clone(),
-                    wire_name: param.as_str().to_string(),
-                    description: f.description.clone().unwrap_or_default(),
-                });
+                match &f.wire {
+                    InputFieldWire::Registry(k) => {
+                        let nv = match f.named_value(cgs) {
+                            Ok(nv) => nv,
+                            Err(_) => continue,
+                        };
+                        out.push(IdentMetadata::RegistryBacked {
+                            catalog_entry_id: capability.entry_id.clone(),
+                            entity: capability.domain.clone(),
+                            role: IdentRegistryRole::CapabilityParam {
+                                capability: cap.name.clone(),
+                            },
+                            value_registry_key: k.clone(),
+                            field_type: nv.field_type.clone(),
+                            string_semantics: nv.string_semantics,
+                            array_items: nv.array_items.clone(),
+                            allowed_values: nv.allowed_values.clone(),
+                            wire_name: path.to_string(),
+                            description: f.description.clone().unwrap_or_default(),
+                        });
+                    }
+                    InputFieldWire::Inline(_) => {
+                        out.push(IdentMetadata::CapabilityStructuralSlot {
+                            catalog_entry_id: capability.entry_id.clone(),
+                            entity: capability.domain.clone(),
+                            capability: cap.name.clone(),
+                            param_path: path.to_string(),
+                            description: f.description.clone().unwrap_or_default(),
+                        });
+                    }
+                }
             }
         }
     }
     out
+}
+
+/// Build [`IdentMetadata`] for a nested or top-level capability input path using live [`CGS`] rows.
+///
+/// Used by DOMAIN gloss emission when the opaque `p#` maps to a capability slot whose **leaf**
+/// expand key collides with an entity relation wire name (e.g. param `…blocks` vs relation `blocks`).
+pub(crate) fn ident_metadata_for_capability_input_path(
+    cgs: &CGS,
+    domain_entity: &str,
+    cap_name: &str,
+    param_path: &str,
+) -> Option<IdentMetadata> {
+    let cap = cgs.capabilities.get(&CapabilityName::from(cap_name))?;
+    if cap.domain.as_str() != domain_entity {
+        return None;
+    }
+    let f = resolve_capability_input_param_field(cap, param_path)?;
+    let cid = cgs.entry_id.clone().unwrap_or_default();
+    match &f.wire {
+        InputFieldWire::Registry(k) => {
+            let nv = f.named_value(cgs).ok()?;
+            Some(IdentMetadata::RegistryBacked {
+                catalog_entry_id: cid,
+                entity: cap.domain.clone(),
+                role: IdentRegistryRole::CapabilityParam {
+                    capability: cap.name.clone(),
+                },
+                value_registry_key: k.clone(),
+                field_type: nv.field_type.clone(),
+                string_semantics: nv.string_semantics,
+                array_items: nv.array_items.clone(),
+                allowed_values: nv.allowed_values.clone(),
+                wire_name: param_path.to_string(),
+                description: f.description.clone().unwrap_or_default(),
+            })
+        }
+        InputFieldWire::Inline(_) => Some(IdentMetadata::CapabilityStructuralSlot {
+            catalog_entry_id: cid,
+            entity: cap.domain.clone(),
+            capability: cap.name.clone(),
+            param_path: param_path.to_string(),
+            description: f.description.clone().unwrap_or_default(),
+        }),
+    }
 }
 
 /// Same 2-hop focus neighbourhood as prompt rendering: `Some(set)` when focus is set.
@@ -415,7 +542,7 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     s.insert(f);
     if let Some(ent) = cgs.get_entity(f) {
         for field in ent.fields.values() {
-            if let Ok(nv) = cgs.named_value_for_slot(field) {
+            if let Ok(nv) = field.named_value(cgs) {
                 if let FieldType::EntityRef { target } = &nv.field_type {
                     s.insert(target.as_str());
                 }
@@ -427,7 +554,7 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     }
     for (ename, ent) in &cgs.entities {
         for field in ent.fields.values() {
-            if let Ok(nv) = cgs.named_value_for_slot(field) {
+            if let Ok(nv) = field.named_value(cgs) {
                 if let FieldType::EntityRef { target } = &nv.field_type {
                     if target.as_str() == f {
                         s.insert(ename.as_str());
@@ -644,6 +771,27 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
                 description.trim(),
             )
         }
+        IdentMetadata::CapabilityStructuralSlot {
+            catalog_entry_id,
+            entity,
+            capability,
+            param_path,
+            description,
+        } => {
+            let role_tag = format!("capstruct:{}|{}", entity.as_str(), capability.as_str());
+            (
+                role_tag,
+                serde_json::to_string(&FieldType::Json).unwrap_or_else(|_| "\"?\"".to_string()),
+                "null".to_string(),
+                "null".to_string(),
+                "null".to_string(),
+                "",
+                catalog_entry_id.as_str(),
+                entity.as_str(),
+                param_path.as_str(),
+                description.trim(),
+            )
+        }
         IdentMetadata::SyntheticUnknown {
             catalog_entry_id,
             entity,
@@ -668,19 +816,48 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
 /// Fingerprint for **allocating** opaque `p#` symbols on registry-backed slots.
 ///
 /// Slots that share the same CGS `values:` row ([`IdentMetadata::value_domain_allocation_fp`]) and
-/// the same wire name receive **one** `p#`—matching compact DOMAIN teaching where `v# · wire` is
-/// identical. Occurrence lookups (`entity_field_to_sym`, `cap_param_to_sym`) still bind every
-/// `(entity, slot)` / `(cap, param)` to that shared symbol.
+/// the same allocation wire key receive **one** `p#`. Occurrence lookups (`entity_field_to_sym`,
+/// `cap_param_to_sym`) still bind every `(entity, slot)` / `(cap, param)` to that shared symbol.
+///
+/// **Capability parameters** whose wire path is dotted (nested input / union-variant bodies) key on
+/// `(domain entity, capability, leaf)` instead of the full path so logically identical slots—same
+/// `values:` row and leaf field name after variant pruning—share one opaque symbol (e.g. every
+/// `…​.ref` block anchor under `document_edit_v2`). Top-level capability params keep the plain wire
+/// name so they still merge with entity fields when those fields reuse the same registry row and
+/// column name.
 ///
 /// Relations and synthetic unknown slots keep fully scoped fingerprints via
 /// [`slot_allocation_fingerprint`].
 pub(crate) fn slot_symbol_allocation_fingerprint(meta: &IdentMetadata) -> String {
+    if matches!(meta, IdentMetadata::CapabilityStructuralSlot { .. }) {
+        return slot_allocation_fingerprint(meta);
+    }
     if let IdentMetadata::RegistryBacked { .. } = meta {
         if let Some(vfp) = meta.value_domain_allocation_fp() {
-            return format!("{vfp}|w:{}", meta.wire_name());
+            let wkey = registry_backed_allocation_wire_key(meta);
+            return format!("{vfp}|w:{wkey}");
         }
     }
     slot_allocation_fingerprint(meta)
+}
+
+#[inline]
+fn registry_backed_allocation_wire_key(meta: &IdentMetadata) -> String {
+    match meta {
+        IdentMetadata::RegistryBacked {
+            role: IdentRegistryRole::CapabilityParam { capability },
+            entity,
+            wire_name,
+            ..
+        } if wire_name.contains('.') => format!(
+            "{}|{}|{}",
+            entity.as_str(),
+            capability.as_str(),
+            leaf_capability_param_expand_key(wire_name.as_str())
+        ),
+        IdentMetadata::RegistryBacked { wire_name, .. } => wire_name.clone(),
+        _ => meta.wire_name().to_string(),
+    }
 }
 
 /// Stable key for one concrete slot occurrence (entity field, relation, or capability param).
@@ -723,6 +900,19 @@ fn slot_occurrence_key(meta: &IdentMetadata) -> String {
             wire_name,
             target.as_str()
         ),
+        IdentMetadata::CapabilityStructuralSlot {
+            catalog_entry_id,
+            entity,
+            capability,
+            param_path,
+            ..
+        } => format!(
+            "capstruct|{}|{}|{}|{}",
+            catalog_entry_id.as_str(),
+            entity.as_str(),
+            capability.as_str(),
+            param_path
+        ),
         IdentMetadata::SyntheticUnknown {
             catalog_entry_id,
             entity,
@@ -753,9 +943,7 @@ pub(crate) fn build_ident_metadata(
         };
         let en = EntityName::from(ename.to_string());
         for (fname, f) in &ent.fields {
-            let nv = cgs
-                .named_value_for_slot(f)
-                .expect("values row for entity field");
+            let nv = f.named_value(cgs).expect("values row for entity field");
             out.entry((cid.clone(), en.clone(), fname.as_str().to_string()))
                 .or_insert_with(|| IdentMetadata::RegistryBacked {
                     catalog_entry_id: cid.clone(),
@@ -797,9 +985,12 @@ pub(crate) fn build_ident_metadata(
             };
             let en = cap.domain.clone();
             for f in fields {
-                let nv = cgs
-                    .named_value_for_slot(f)
-                    .expect("values row for capability param");
+                let Ok(nv) = f.named_value(cgs) else {
+                    continue;
+                };
+                let crate::InputFieldWire::Registry(ref k) = &f.wire else {
+                    continue;
+                };
                 out.entry((cid.clone(), en.clone(), f.name.clone()))
                     .or_insert_with(|| IdentMetadata::RegistryBacked {
                         catalog_entry_id: cid.clone(),
@@ -807,7 +998,7 @@ pub(crate) fn build_ident_metadata(
                         role: IdentRegistryRole::CapabilityParam {
                             capability: cap.name.clone(),
                         },
-                        value_registry_key: f.kind.registry_key().clone(),
+                        value_registry_key: k.clone(),
                         field_type: nv.field_type.clone(),
                         string_semantics: nv.string_semantics,
                         array_items: nv.array_items.clone(),
@@ -836,6 +1027,11 @@ impl IdentMetadata {
                 target: target.clone(),
             },
             IdentMetadata::SyntheticUnknown { .. } => IdentRole::EntityField,
+            IdentMetadata::CapabilityStructuralSlot { capability, .. } => {
+                IdentRole::CapabilityParam {
+                    capability: capability.clone(),
+                }
+            }
         }
     }
 
@@ -850,6 +1046,9 @@ impl IdentMetadata {
             }
             | IdentMetadata::SyntheticUnknown {
                 catalog_entry_id, ..
+            }
+            | IdentMetadata::CapabilityStructuralSlot {
+                catalog_entry_id, ..
             } => catalog_entry_id.as_str(),
         }
     }
@@ -859,7 +1058,8 @@ impl IdentMetadata {
         match self {
             IdentMetadata::RegistryBacked { entity, .. }
             | IdentMetadata::Relation { entity, .. }
-            | IdentMetadata::SyntheticUnknown { entity, .. } => entity,
+            | IdentMetadata::SyntheticUnknown { entity, .. }
+            | IdentMetadata::CapabilityStructuralSlot { entity, .. } => entity,
         }
     }
 
@@ -869,6 +1069,23 @@ impl IdentMetadata {
             IdentMetadata::RegistryBacked { wire_name, .. }
             | IdentMetadata::Relation { wire_name, .. }
             | IdentMetadata::SyntheticUnknown { wire_name, .. } => wire_name.as_str(),
+            IdentMetadata::CapabilityStructuralSlot { param_path, .. } => param_path.as_str(),
+        }
+    }
+
+    /// Leaf wire key used after [`expand_path_symbols`] for capability input paths (`a.b.ref` → `ref`).
+    #[inline]
+    pub(crate) fn symbolic_expand_target(&self) -> String {
+        match self {
+            IdentMetadata::RegistryBacked {
+                role: IdentRegistryRole::CapabilityParam { .. },
+                wire_name,
+                ..
+            } => leaf_capability_param_expand_key(wire_name.as_str()),
+            IdentMetadata::CapabilityStructuralSlot { param_path, .. } => {
+                leaf_capability_param_expand_key(param_path.as_str())
+            }
+            _ => self.wire_name().to_string(),
         }
     }
 
@@ -876,7 +1093,8 @@ impl IdentMetadata {
         match self {
             IdentMetadata::RegistryBacked { description, .. }
             | IdentMetadata::Relation { description, .. }
-            | IdentMetadata::SyntheticUnknown { description, .. } => description.trim(),
+            | IdentMetadata::SyntheticUnknown { description, .. }
+            | IdentMetadata::CapabilityStructuralSlot { description, .. } => description.trim(),
         }
     }
 
@@ -885,7 +1103,8 @@ impl IdentMetadata {
         match self {
             IdentMetadata::RegistryBacked { description, .. }
             | IdentMetadata::Relation { description, .. }
-            | IdentMetadata::SyntheticUnknown { description, .. } => description.as_str(),
+            | IdentMetadata::SyntheticUnknown { description, .. }
+            | IdentMetadata::CapabilityStructuralSlot { description, .. } => description.as_str(),
         }
     }
 
@@ -893,13 +1112,21 @@ impl IdentMetadata {
     pub fn allowed_values(&self) -> Option<&Vec<String>> {
         match self {
             IdentMetadata::RegistryBacked { allowed_values, .. } => allowed_values.as_ref(),
-            IdentMetadata::Relation { .. } | IdentMetadata::SyntheticUnknown { .. } => None,
+            IdentMetadata::Relation { .. }
+            | IdentMetadata::SyntheticUnknown { .. }
+            | IdentMetadata::CapabilityStructuralSlot { .. } => None,
         }
     }
 
     /// Render the gloss line content (after `p#  ;;  `). The `map` is used to resolve
     /// entity-ref targets to their `e#` symbol when symbol tuning is active.
     pub fn render_gloss(&self, map: Option<&SymbolMap>) -> String {
+        self.render_gloss_with_cgs(map, None)
+    }
+
+    /// Like [`Self::render_gloss`], but resolves [`IdentMetadata::CapabilityStructuralSlot`] typing
+    /// from live [`CGS`] inline [`InputType`] (e.g. `array[union · v101 | …]`) instead of `json`.
+    pub fn render_gloss_with_cgs(&self, map: Option<&SymbolMap>, cgs: Option<&CGS>) -> String {
         match self {
             IdentMetadata::Relation {
                 target,
@@ -923,12 +1150,35 @@ impl IdentMetadata {
                 let type_label = array_or_scalar_gloss_label(&FieldType::String, &None, None, map);
                 format!("{type_label} \u{00b7} {}", wire_name)
             }
+            IdentMetadata::CapabilityStructuralSlot {
+                entity,
+                capability,
+                param_path,
+                ..
+            } => {
+                let leaf = leaf_capability_param_expand_key(param_path.as_str());
+                let type_label = cgs
+                    .and_then(|c| {
+                        capability_structural_slot_type_prefix(
+                            c,
+                            entity.as_str(),
+                            capability,
+                            param_path.as_str(),
+                            map,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        array_or_scalar_gloss_label(&FieldType::Json, &None, None, map)
+                    });
+                format!("{type_label} \u{00b7} {}", leaf)
+            }
             IdentMetadata::RegistryBacked {
                 field_type,
                 array_items,
                 string_semantics,
                 allowed_values,
                 wire_name,
+                role,
                 ..
             } => {
                 let type_label =
@@ -942,6 +1192,14 @@ impl IdentMetadata {
                     }
                 }
                 let desc = self.description_trimmed();
+                let cap_param = matches!(role, IdentRegistryRole::CapabilityParam { .. });
+                if cap_param {
+                    if desc.is_empty() {
+                        return type_label;
+                    }
+                    let truncated = truncate_desc(desc, 100);
+                    return format!("{type_label} \u{00b7} {truncated}");
+                }
                 if desc.is_empty() {
                     format!("{type_label} \u{00b7} {}", wire_name)
                 } else {
@@ -965,7 +1223,9 @@ impl IdentMetadata {
                 catalog_entry_id.as_str(),
                 value_registry_key.as_str()
             )),
-            IdentMetadata::Relation { .. } | IdentMetadata::SyntheticUnknown { .. } => None,
+            IdentMetadata::Relation { .. }
+            | IdentMetadata::SyntheticUnknown { .. }
+            | IdentMetadata::CapabilityStructuralSlot { .. } => None,
         }
     }
 
@@ -1027,7 +1287,7 @@ pub(crate) fn entity_ref_value_domain_row_gloss(
     let prim = cgs.and_then(|c| {
         let ent = c.get_entity(target.as_str())?;
         let f = ent.fields.get(ent.id_field.as_str())?;
-        let nv = c.named_value_for_slot(f).ok()?;
+        let nv = f.named_value(c).ok()?;
         match &nv.field_type {
             FieldType::EntityRef { .. } => None,
             FieldType::String => Some(string_semantics_gloss_label(nv.string_semantics)),
@@ -1085,6 +1345,67 @@ fn array_element_gloss_label(ai: &ArrayItemsSchema, map: Option<&SymbolMap>) -> 
     }
 }
 
+/// Label for inline capability input shapes (`operations`, nested union bodies) — avoids labeling
+/// typed `array[union]` batches as bare `json` in DOMAIN gloss.
+fn structural_inline_input_type_label(ty: &InputType, map: Option<&SymbolMap>) -> Option<String> {
+    match ty {
+        InputType::Array { element_type, .. } => {
+            if let InputType::Union { variants } = element_type.as_ref() {
+                if variants
+                    .iter()
+                    .all(|v| union_variant_constructor_symbol(v).is_some())
+                {
+                    let alts: Vec<&str> = variants
+                        .iter()
+                        .filter_map(union_variant_constructor_symbol)
+                        .collect();
+                    return Some(format!("union · {}", alts.join(" | ")));
+                }
+            }
+            structural_inline_input_type_label(element_type.as_ref(), map)
+                .map(|inner| format!("array[{inner}]"))
+        }
+        InputType::Union { variants } => {
+            if variants
+                .iter()
+                .all(|v| union_variant_constructor_symbol(v).is_some())
+            {
+                let alts: Vec<&str> = variants
+                    .iter()
+                    .filter_map(union_variant_constructor_symbol)
+                    .collect();
+                return Some(format!("union · {}", alts.join(" | ")));
+            }
+            None
+        }
+        InputType::Object { .. } => Some("object".to_string()),
+        InputType::None => Some("none".to_string()),
+        InputType::Value {
+            field_type,
+            allowed_values: _,
+        } => Some(array_or_scalar_gloss_label(field_type, &None, None, map)),
+    }
+}
+
+#[inline]
+fn capability_structural_slot_type_prefix(
+    cgs: &CGS,
+    entity: &str,
+    capability: &CapabilityName,
+    param_path: &str,
+    map: Option<&SymbolMap>,
+) -> Option<String> {
+    let cap = cgs.capabilities.get(capability)?;
+    if cap.domain.as_str() != entity {
+        return None;
+    }
+    let f = resolve_capability_input_param_field(cap, param_path)?;
+    let InputFieldWire::Inline(ty) = &f.wire else {
+        return None;
+    };
+    structural_inline_input_type_label(ty.as_ref(), map)
+}
+
 /// Type prefix for `p#  ;;  …` lines: `array[inner]` when element typing is known, else `array`.
 fn array_or_scalar_gloss_label(
     ft: &FieldType,
@@ -1130,7 +1451,7 @@ fn resolve_ident_type_string(
         };
         for f in fields {
             if f.name == name {
-                let nv = cgs.named_value_for_slot(f).ok()?;
+                let nv = f.named_value(cgs).ok()?;
                 let sem = nv.string_semantics;
                 return Some(match nv.field_type {
                     FieldType::String => string_semantics_gloss_label(sem),
@@ -1143,7 +1464,7 @@ fn resolve_ident_type_string(
     for e in full_entities {
         if let Some(ent) = cgs.get_entity(e) {
             if let Some(f) = ent.fields.get(name) {
-                let nv = cgs.named_value_for_slot(f).ok()?;
+                let nv = f.named_value(cgs).ok()?;
                 let sem = nv.string_semantics;
                 return Some(match nv.field_type {
                     FieldType::String => string_semantics_gloss_label(sem),
@@ -1214,6 +1535,41 @@ pub struct SymbolMap {
     pub(crate) p_sym_to_value_sym: HashMap<String, String>,
     /// Pre-rendered `v#  ;;  …` gloss bodies (DOMAIN teaching only; not used by [`expand_path_symbols`]).
     value_sym_gloss: IndexMap<String, String>,
+}
+
+#[inline]
+fn opaque_v_symbol_display_index(sym: &str) -> u32 {
+    sym.strip_prefix('v')
+        .and_then(|rest| rest.parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+/// Highest numeric suffix among opaque `vN` tokens seen in [`SymbolMap`] (value domains and any `v#` in `sym_to_ident`).
+fn max_opaque_v_symbol_index(map: &SymbolMap) -> u32 {
+    let mut max_n = 0u32;
+    for sym in map.value_sym_to_fp.keys() {
+        max_n = max_n.max(opaque_v_symbol_display_index(sym));
+    }
+    for sym in map.sym_to_ident.keys() {
+        max_n = max_n.max(opaque_v_symbol_display_index(sym));
+    }
+    for vs in map.p_sym_to_value_sym.values() {
+        max_n = max_n.max(opaque_v_symbol_display_index(vs));
+    }
+    max_n
+}
+
+/// Next unused `vN` after [`SymbolMap`] plus optional extra tokens (e.g. pending field gloss rows).
+pub(crate) fn next_opaque_v_symbol_after_map_and_extra_syms<'a>(
+    map: &SymbolMap,
+    extra: impl Iterator<Item = &'a str>,
+) -> String {
+    let mut max_n = max_opaque_v_symbol_index(map);
+    for s in extra {
+        max_n = max_n.max(opaque_v_symbol_display_index(s));
+    }
+    let n = max_n.saturating_add(1);
+    format!("v{n}")
 }
 
 impl SymbolMap {
@@ -1441,14 +1797,42 @@ impl SymbolMap {
         self.value_sym_to_fp.get(v_sym).map(|s| s.as_str())
     }
 
-    /// If `sym` maps a capability input parameter, return the `(capability domain entity, param wire)`.
-    pub fn capability_param_key_for_p_sym(&self, sym: &str) -> Option<(EntityName, String)> {
-        for ((_eid, dom, _cap, pname), s) in &self.cap_param_to_sym {
-            if s == sym {
-                return Some((EntityName::from(dom.as_str()), pname.clone()));
+    /// If `sym` maps a capability input parameter, return
+    /// `(catalog entry id, domain entity, capability name, full param path)`.
+    ///
+    /// Registry-backed nested params may share one `p#` across multiple full paths (same value domain +
+    /// leaf wire key); choose the **lexicographically smallest** quad so prompts and tests stay stable
+    /// regardless of `HashMap` iteration order.
+    pub fn capability_param_quad_for_p_sym(
+        &self,
+        sym: &str,
+    ) -> Option<(String, EntityName, CapabilityName, String)> {
+        let mut best_key: Option<&(String, String, String, String)> = None;
+        for (key, s) in &self.cap_param_to_sym {
+            if s.as_str() != sym {
+                continue;
             }
+            best_key = Some(match best_key {
+                None => key,
+                Some(prev) => key.min(prev),
+            });
         }
-        None
+        best_key.map(|(eid, dom, cap, pname)| {
+            (
+                eid.clone(),
+                EntityName::from(dom.as_str()),
+                CapabilityName::from(cap.as_str()),
+                pname.clone(),
+            )
+        })
+    }
+
+    /// If `sym` maps a capability input parameter, return the `(capability domain entity, param path)`.
+    ///
+    /// `param path` is the full dotted path for nested union fields (e.g. `operations.insert_before.blocks`).
+    pub fn capability_param_key_for_p_sym(&self, sym: &str) -> Option<(EntityName, String)> {
+        self.capability_param_quad_for_p_sym(sym)
+            .map(|(_, dom, _, path)| (dom, path))
     }
 
     /// Rewrite canonical entity and field names in a short snippet into opaque `e#` / `p#` tokens for
@@ -1528,7 +1912,7 @@ impl SymbolMap {
             if !matches!(f.role, Some(ParameterRole::Scope)) {
                 continue;
             }
-            let Ok(nv) = cgs.named_value_for_slot(f) else {
+            let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
             if let FieldType::EntityRef { target } = &nv.field_type {
@@ -2048,6 +2432,25 @@ fn scan_replace(
     out
 }
 
+/// Rewrite opaque `letter+digits` tokens (e.g. `p12`, `v3`) using [`scan_replace`] boundary rules
+/// (respects quoted spans). Keys are matched **longest-first** so `p12` is not split by `p1`.
+pub(crate) fn rewrite_opaque_ident_tokens(
+    input: &str,
+    replacements: &HashMap<String, String>,
+) -> String {
+    if replacements.is_empty() {
+        return input.to_string();
+    }
+    let mut syms: Vec<String> = replacements.keys().cloned().collect();
+    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
+    scan_replace(input, &syms, |sym| {
+        replacements
+            .get(sym)
+            .cloned()
+            .unwrap_or_else(|| sym.to_string())
+    })
+}
+
 fn ident_boundary_left(s: &str, i: usize) -> bool {
     if i == 0 {
         return true;
@@ -2472,10 +2875,10 @@ impl DomainExposureSession {
             let Some(sym) = self.slot_fingerprint_to_sym.get(&fp) else {
                 continue;
             };
-            self.sym_to_ident
-                .insert(sym.clone(), meta.wire_name().to_string());
+            let expand_tgt = meta.symbolic_expand_target();
+            self.sym_to_ident.insert(sym.clone(), expand_tgt.clone());
             self.ident_to_sym
-                .entry(meta.wire_name().to_string())
+                .entry(expand_tgt)
                 .or_insert_with(|| sym.clone());
             match meta.allocation_ident_role() {
                 IdentRole::EntityField => {
@@ -2617,7 +3020,7 @@ impl DomainExposureSession {
                 if req.len() != 1 {
                     continue;
                 }
-                let Ok(nv) = cgs.named_value_for_slot(req[0]) else {
+                let Ok(nv) = req[0].named_value(cgs) else {
                     continue;
                 };
                 if nv.field_type != FieldType::String {
@@ -3010,6 +3413,18 @@ mod tests {
     use crate::CapabilityKind;
 
     #[test]
+    fn rewrite_opaque_ident_tokens_prefers_longest_symbol_match() {
+        let mut m = HashMap::new();
+        m.insert("p1".into(), "pz".into());
+        m.insert("p12".into(), "px".into());
+        assert_eq!(rewrite_opaque_ident_tokens("p12+p1+p123", &m), "px+pz+p123");
+        let mut v = HashMap::new();
+        v.insert("v10".into(), "va".into());
+        v.insert("v1".into(), "vb".into());
+        assert_eq!(rewrite_opaque_ident_tokens("v10.v1", &v), "va.vb");
+    }
+
+    #[test]
     fn slot_allocation_fingerprint_splits_same_wire_different_field_types() {
         let en = EntityName::from("N".to_string());
         let meta = |entity: EntityName, ft: FieldType, vr: &str| IdentMetadata::RegistryBacked {
@@ -3098,6 +3513,35 @@ mod tests {
             slot_symbol_allocation_fingerprint(&meta_ef("Zone")),
             slot_symbol_allocation_fingerprint(&other_vr),
             "distinct values: rows must not share a p# even with the same wire name"
+        );
+    }
+
+    #[test]
+    fn slot_symbol_allocation_fingerprint_merges_union_variant_params_with_same_leaf() {
+        let vr = "nv_merge_leaf_cap_test";
+        let mk = |path: &str| IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: EntityName::from("Document".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: "document_edit_v2".into(),
+            },
+            value_registry_key: ValueDomainKey::new(vr).expect("key"),
+            field_type: FieldType::String,
+            string_semantics: Some(StringSemantics::Short),
+            array_items: None,
+            allowed_values: None,
+            wire_name: path.into(),
+            description: String::new(),
+        };
+        assert_eq!(
+            slot_symbol_allocation_fingerprint(&mk("operations.replace_block.ref")),
+            slot_symbol_allocation_fingerprint(&mk("operations.insert_before.ref")),
+            "union-variant full paths differ but leaf + capability match"
+        );
+        assert_ne!(
+            slot_symbol_allocation_fingerprint(&mk("operations.replace_block.ref")),
+            slot_symbol_allocation_fingerprint(&mk("operations.replace_block.markdown")),
+            "distinct leaves under the same capability stay split"
         );
     }
 
@@ -3336,7 +3780,45 @@ mod tests {
     }
 
     #[test]
-    fn render_gloss_capability_param_uses_wire_name_without_description() {
+    fn registry_backed_compact_wire_label_nested_capability_param_is_leaf_only() {
+        let m = IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: EntityName::from("Doc".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: CapabilityName::from("document_edit_v2".to_string()),
+            },
+            value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
+            field_type: FieldType::String,
+            string_semantics: None,
+            array_items: None,
+            allowed_values: None,
+            wire_name: "operations.replace_range.fromRef".to_string(),
+            description: String::new(),
+        };
+        assert_eq!(registry_backed_compact_wire_label(&m), "fromRef");
+    }
+
+    #[test]
+    fn registry_backed_compact_wire_label_top_level_capability_param_unchanged() {
+        let m = IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: EntityName::from("Doc".to_string()),
+            role: IdentRegistryRole::CapabilityParam {
+                capability: CapabilityName::from("document_edit_v2".to_string()),
+            },
+            value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
+            field_type: FieldType::String,
+            string_semantics: None,
+            array_items: None,
+            allowed_values: None,
+            wire_name: "operations".to_string(),
+            description: String::new(),
+        };
+        assert_eq!(registry_backed_compact_wire_label(&m), "operations");
+    }
+
+    #[test]
+    fn render_gloss_capability_param_omits_wire_path_without_description() {
         let m = IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
             entity: EntityName::from("Order".to_string()),
@@ -3351,7 +3833,7 @@ mod tests {
             wire_name: "payment_method_id".to_string(),
             description: String::new(),
         };
-        assert_eq!(m.render_gloss(None), "str · payment_method_id");
+        assert_eq!(m.render_gloss(None), "str");
     }
 
     #[test]
@@ -3389,7 +3871,7 @@ mod tests {
             wire_name: "body".to_string(),
             description: String::new(),
         };
-        assert_eq!(m.render_gloss(None), "markdown · body");
+        assert_eq!(m.render_gloss(None), "markdown");
     }
 
     #[test]
@@ -3417,7 +3899,7 @@ mod tests {
             wire_name: "item_ids".to_string(),
             description: String::new(),
         };
-        assert_eq!(m.render_gloss(None), "array[ref:Variant] · item_ids");
+        assert_eq!(m.render_gloss(None), "array[ref:Variant]");
     }
 
     #[test]
@@ -3742,6 +4224,38 @@ mod tests {
         assert!(
             filtered.surface.capabilities.len() < legacy.surface.capabilities.len(),
             "expected fewer admitted capabilities than legacy full closure (prompt_run_create omitted)"
+        );
+    }
+
+    #[test]
+    fn proof_insert_before_blocks_slot_meta_is_structural_not_relation_collision() {
+        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("../../apis/proof");
+        if !p.is_dir() {
+            return;
+        }
+        let cgs = crate::loader::load_schema_dir(&p).unwrap();
+        let Some(map) = symbol_map_for_prompt(&cgs, FocusSpec::Single("Document"), true) else {
+            panic!("symbol map");
+        };
+        let sym = map.ident_sym_cap_param(
+            "Document",
+            "document_edit_v2",
+            "operations.insert_before.blocks",
+        );
+        let quad = map
+            .capability_param_quad_for_p_sym(sym.as_str())
+            .unwrap_or_else(|| panic!("no quad for {sym}"));
+        let meta = ident_metadata_for_capability_input_path(
+            &cgs,
+            "Document",
+            quad.2.as_str(),
+            quad.3.as_str(),
+        )
+        .unwrap_or_else(|| panic!("no meta for {quad:?}"));
+        assert!(
+            matches!(meta, IdentMetadata::RegistryBacked { .. }),
+            "expected registry-backed blocks array (flat logical surface), got {meta:?}"
         );
     }
 }

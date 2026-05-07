@@ -49,6 +49,7 @@
 //! - [`DeleteExpr`]: remove an entity by reference
 //! - [`InvokeExpr`]: call a capability on an entity (update, action, etc.)
 //! - [`ChainExpr`]: Kleisli composition via EntityRef field navigation
+//! - [`Expr::TeachingValue`]: DOMAIN-only literals (e.g. top-level union constructor `v101{…}`); validated, not executed
 //!
 //! All expressions are type-checked before execution via [`type_check_expr`].
 //!
@@ -174,6 +175,7 @@ pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,
 };
+pub use schema::input_variant_body_type;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names,
@@ -182,12 +184,12 @@ pub use schema::{
     CapabilityManifest, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
     CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, DiscoveryCapabilityHints,
     DiscoveryEntityHints, DiscoveryRelationHints, EntityDef, FieldDeriveRule, FieldSchema,
-    FieldValueKind, IdFormat, InputFieldSchema, InputSchema, InputType, InputValidation,
-    InvokePreflight, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet, OauthExtension,
-    OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
-    RelationMaterialization, RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy,
-    ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate, ValueDomainKey,
-    ValueDomainSlot, CGS, DEFAULT_HTTP_BACKEND,
+    FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType,
+    InputValidation, InputVariantSchema, InvokePreflight, JsonPathSegment, NamedValueSchema,
+    OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
+    OutputType, ParameterRole, RelationMaterialization, RelationSchema, ResourceSchema,
+    ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate,
+    ValueDomainKey, ValueDomainSlot, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;

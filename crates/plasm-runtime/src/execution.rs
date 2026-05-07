@@ -39,6 +39,21 @@ fn resolve_query_capability<'a>(
     })
 }
 
+/// Canonical HTTP execute session coordinates supplied by the host (`plasm-agent` HTTP/MCP).
+///
+/// These match `/execute/:prompt_hash/:session` path validation and must **not** be confused
+/// with MCP `logical_session_ref` slot aliases (`s0`, …), which are transport-local.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecuteSessionMaterial {
+    pub prompt_hash: String,
+    pub session_id: String,
+}
+
+/// Reserved CML env key: 64-char lowercase hex (rendered DOMAIN prompt digest for the row).
+pub const CML_ENV_PLASM_EXECUTE_PROMPT_HASH: &str = "plasm_execute_prompt_hash";
+/// Reserved CML env key: 32-char lowercase hex UUID (simple form) for the execute row.
+pub const CML_ENV_PLASM_EXECUTE_SESSION_ID: &str = "plasm_execute_session_id";
+
 /// DOMAIN prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
 fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeError> {
     let err = || {
@@ -103,6 +118,11 @@ fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeErr
             reject_domain_placeholder_in_executable(&ch.source)?;
             if let ChainStep::Explicit { expr: inner } = &ch.step {
                 reject_domain_placeholder_in_executable(inner)?;
+            }
+        }
+        Expr::TeachingValue { value } => {
+            if value.contains_domain_placeholder_deep() {
+                return Err(err());
             }
         }
         Expr::Query(_) => {}
@@ -316,8 +336,35 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
+    /// When [`ExecuteOptions::execute_session`] is set, [`merge_plasm_execute_session_env`] injects reserved keys.
+    static EXECUTION_EXECUTE_SESSION: Option<std::sync::Arc<ExecuteSessionMaterial>>;
+}
+
+tokio::task_local! {
     /// Entity name for the current HTTP op (matches [`plasm_core::FederationDispatch`] keys); selects backend when federated.
     static EXECUTION_DISPATCH_ENTITY: Option<String>;
+}
+
+/// Merge [`CML_ENV_PLASM_EXECUTE_PROMPT_HASH`] / [`CML_ENV_PLASM_EXECUTE_SESSION_ID`] when the
+/// host set [`ExecuteOptions::execute_session`] for this execute task (see task-local scope).
+///
+/// Call **after** `invoke_preflight` merges for invoke; for GET/create/delete, call after path
+/// env and splat so internal preflight GETs (which run with TLS unset or unchanged) omit this.
+pub fn merge_plasm_execute_session_env(env: &mut CmlEnv) {
+    let Ok(material) = EXECUTION_EXECUTE_SESSION.try_with(|s| s.clone()) else {
+        return;
+    };
+    let Some(m) = material else {
+        return;
+    };
+    env.insert(
+        CML_ENV_PLASM_EXECUTE_PROMPT_HASH.to_string(),
+        Value::String(m.prompt_hash.clone()),
+    );
+    env.insert(
+        CML_ENV_PLASM_EXECUTE_SESSION_ID.to_string(),
+        Value::String(m.session_id.clone()),
+    );
 }
 
 async fn with_dispatch_entity<Fut, T>(entity: Option<&str>, fut: Fut) -> T
@@ -419,6 +466,9 @@ pub struct ExecuteOptions {
     pub plugin_generation_id: Option<u64>,
     /// When set, typecheck and HTTP dispatch use per-entity owning [`plasm_core::CgsContext`].
     pub federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
+    /// When set, CML compilation for outbound HTTP sees reserved `plasm_execute_*` env keys
+    /// ([`merge_plasm_execute_session_env`]) for catalog-driven idempotency and hashing.
+    pub execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
 }
 
 impl std::fmt::Debug for ExecuteOptions {
@@ -437,6 +487,7 @@ impl std::fmt::Debug for ExecuteOptions {
             .field("compile_query_fn", &self.compile_query_fn.is_some())
             .field("plugin_generation_id", &self.plugin_generation_id)
             .field("federation", &self.federation.is_some())
+            .field("execute_session", &self.execute_session.is_some())
             .finish()
     }
 }
@@ -488,21 +539,26 @@ impl ExecutionEngine {
         plugin_hooks: PluginCompileHooks,
         request_fingerprint_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
         federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
+        execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
         fut: Fut,
     ) -> T
     where
         Fut: std::future::Future<Output = T> + Send,
         T: Send,
     {
-        EXECUTION_FEDERATION
-            .scope(federation, async move {
-                EXECUTION_FINGERPRINT_SINK
-                    .scope(request_fingerprint_sink, async move {
-                        EXECUTION_PLUGIN_HOOKS
-                            .scope(Some(plugin_hooks), async move {
-                                EXECUTION_AUTH_RESOLVER
-                                    .scope(auth_override, async move {
-                                        EXECUTION_HTTP_BASE.scope(base, fut).await
+        EXECUTION_EXECUTE_SESSION
+            .scope(execute_session, async move {
+                EXECUTION_FEDERATION
+                    .scope(federation, async move {
+                        EXECUTION_FINGERPRINT_SINK
+                            .scope(request_fingerprint_sink, async move {
+                                EXECUTION_PLUGIN_HOOKS
+                                    .scope(Some(plugin_hooks), async move {
+                                        EXECUTION_AUTH_RESOLVER
+                                            .scope(auth_override, async move {
+                                                EXECUTION_HTTP_BASE.scope(base, fut).await
+                                            })
+                                            .await
                                     })
                                     .await
                             })
@@ -728,12 +784,14 @@ impl ExecutionEngine {
             let plugin_hooks = PluginCompileHooks::snapshot_from_execute_options(&opts);
             let fp_sink = opts.request_fingerprint_sink.clone();
             let federation = opts.federation.clone();
+            let execute_session = opts.execute_session.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
                 plugin_hooks,
                 fp_sink.clone(),
                 federation,
+                execute_session,
                 async move {
                     let mut stream = self.execute_stream(expr, cgs, cache, mode, consume, opts)?;
                     collect_query_stream(&mut stream).await
@@ -844,6 +902,10 @@ impl ExecutionEngine {
                 });
                 Ok(stream)
             }
+            Expr::TeachingValue { .. } => Err(RuntimeError::ConfigurationError {
+                message: "`Expr::TeachingValue` is DOMAIN-only (prompt teaching); it cannot be executed"
+                    .to_string(),
+            }),
         }
     }
 
@@ -1352,12 +1414,14 @@ impl ExecutionEngine {
             let plugin_hooks = PluginCompileHooks::snapshot_from_execute_options(&opts);
             let fp_sink = opts.request_fingerprint_sink.clone();
             let federation = opts.federation.clone();
+            let execute_session = opts.execute_session.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
                 plugin_hooks,
                 fp_sink.clone(),
                 federation,
+                execute_session,
                 async move {
                     let mut stream = self.execute_pagination_resume_stream(
                         resume, cgs, cache, mode, consume, &opts,
@@ -1617,7 +1681,7 @@ impl ExecutionEngine {
             }
         }
 
-        let (cached, source) = self.fetch_get_decoded(get, cgs, mode, None).await?;
+        let (cached, source) = self.fetch_get_decoded(get, cgs, mode, None, true).await?;
         cache.insert(cached.clone())?;
 
         Ok(ExecutionResult {
@@ -1645,12 +1709,16 @@ impl ExecutionEngine {
     ///
     /// When `hydrate_capability` is `Some(name)`, use that named GET capability instead of the
     /// default per-entity `find_capability(.., Get)` (used by [`Self::apply_invoke_preflight`]).
+    ///
+    /// When `inject_execute_session_env` is true, reserved `plasm_execute_*` keys are merged for
+    /// user-facing GETs only — internal preflight/hydrate GETs pass `false`.
     async fn fetch_get_decoded(
         &self,
         get: &GetExpr,
         cgs: &CGS,
         mode: ExecutionMode,
         hydrate_capability: Option<&str>,
+        inject_execute_session_env: bool,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let capability: &CapabilitySchema = match hydrate_capability {
             Some(name) => {
@@ -1702,6 +1770,10 @@ impl ExecutionEngine {
                 message: e.to_string(),
             }
         })?;
+
+        if inject_execute_session_env {
+            merge_plasm_execute_session_env(&mut env);
+        }
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
         let (response, source) = with_dispatch_entity(
@@ -1779,7 +1851,13 @@ impl ExecutionEngine {
             path_vars: None,
         };
         let (cached, _source) = self
-            .fetch_get_decoded(&get, cgs, mode, Some(spec.hydrate_capability.as_str()))
+            .fetch_get_decoded(
+                &get,
+                cgs,
+                mode,
+                Some(spec.hydrate_capability.as_str()),
+                false,
+            )
             .await?;
         cache.insert(cached.clone())?;
         merge_preflight_fields_into_env(env, prefix, &cached.fields);
@@ -1829,7 +1907,7 @@ impl ExecutionEngine {
 
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
             let get = GetExpr::from_ref(reference.clone());
-            async move { self.fetch_get_decoded(&get, cgs, mode, None).await }
+            async move { self.fetch_get_decoded(&get, cgs, mode, None, false).await }
         }))
         .buffer_unordered(concurrency);
 
@@ -1904,6 +1982,8 @@ impl ExecutionEngine {
                 message: e.to_string(),
             }
         })?;
+
+        merge_plasm_execute_session_env(&mut env);
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
 
@@ -1999,6 +2079,8 @@ impl ExecutionEngine {
                 message: e.to_string(),
             }
         })?;
+
+        merge_plasm_execute_session_env(&mut env);
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
 
@@ -2098,6 +2180,8 @@ impl ExecutionEngine {
 
         self.apply_invoke_preflight(capability, cgs, cache, invoke, mode, &mut env)
             .await?;
+
+        merge_plasm_execute_session_env(&mut env);
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
 
@@ -2414,7 +2498,7 @@ impl ExecutionEngine {
             let concurrency = self.config.hydrate_concurrency.max(1);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let get = GetExpr::from_ref(reference.clone());
-                async move { self.fetch_get_decoded(&get, cgs, mode, None).await }
+                async move { self.fetch_get_decoded(&get, cgs, mode, None, false).await }
             }))
             .buffer_unordered(concurrency);
 
@@ -2840,7 +2924,7 @@ impl ExecutionEngine {
             let concurrency = self.config.hydrate_concurrency.max(1);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let get = GetExpr::from_ref(reference.clone());
-                async move { self.fetch_get_decoded(&get, cgs, mode, None).await }
+                async move { self.fetch_get_decoded(&get, cgs, mode, None, false).await }
             }))
             .buffer_unordered(concurrency);
 
@@ -2912,12 +2996,14 @@ impl ExecutionEngine {
         let plugin_hooks = PluginCompileHooks::snapshot_from_execute_options(&opts);
         let fp_sink = opts.request_fingerprint_sink.clone();
         let federation = opts.federation.clone();
+        let execute_session = opts.execute_session.clone();
         Self::run_in_execute_task_scopes(
             base,
             auth_override,
             plugin_hooks,
             fp_sink,
             federation,
+            execute_session,
             async {
                 use futures_util::stream::{self, StreamExt};
 
@@ -3209,8 +3295,8 @@ fn normalize_cml_env_scope_entity_refs(
         if !matches!(field.role, Some(ParameterRole::Scope)) {
             continue;
         }
-        let nv = cgs
-            .named_value_for_slot(field)
+        let nv = field
+            .named_value(cgs)
             .map_err(|e| RuntimeError::ConfigurationError {
                 message: format!("capability `{}`: {e}", capability.name),
             })?;
@@ -4419,7 +4505,7 @@ fn value_to_ambient_string(v: &Value) -> Option<String> {
         Value::Integer(i) => Some(i.to_string()),
         Value::Float(f) => Some(f.to_string()),
         Value::Bool(b) => Some(b.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) => None,
+        Value::Null | Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => None,
     }
 }
 
@@ -4669,8 +4755,8 @@ mod tests {
     use indexmap::IndexMap;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
-        FieldValueKind, GetExpr, InputFieldSchema, InputSchema, InputValidation, NamedValueSchema,
-        Ref, ResourceSchema, StringSemantics, ValueDomainKey,
+        FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, InputSchema, InputValidation,
+        NamedValueSchema, Ref, ResourceSchema, StringSemantics, ValueDomainKey,
     };
     use std::collections::BTreeMap;
 
@@ -4878,13 +4964,15 @@ mod tests {
                 input_type: InputType::Object {
                     fields: vec![InputFieldSchema {
                         name: "workspace_id".to_string(),
-                        kind: FieldValueKind::Registry(
+                        wire: InputFieldWire::Registry(
                             ValueDomainKey::new("rt_workspace_ref").expect("workspace ref key"),
                         ),
                         required: true,
                         description: None,
                         default: None,
                         role: Some(ParameterRole::Scope),
+                        wire_json_path: None,
+                        wire_array_element_key: None,
                     }],
                     additional_fields: false,
                 },

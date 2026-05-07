@@ -87,6 +87,7 @@ fn intent_inner(expr: &Expr, cgs: &CGS) -> String {
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
+        Expr::TeachingValue { .. } => "DOMAIN teaching literal".to_string(),
     }
 }
 
@@ -130,6 +131,7 @@ fn intent_inner_federated(expr: &Expr, fed: &FederationDispatch, fallback: &CGS)
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
+        Expr::TeachingValue { .. } => "DOMAIN teaching literal".to_string(),
     }
 }
 
@@ -221,6 +223,12 @@ pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
                 "step": step
             })
         }
+        Expr::TeachingValue { value } => {
+            json!({
+                "op": "teaching_value",
+                "value": value
+            })
+        }
     }
 }
 
@@ -248,7 +256,7 @@ fn primary_entity(expr: &Expr) -> Option<String> {
         Expr::Create(c) => Some(c.entity.to_string()),
         Expr::Delete(d) => Some(d.target.entity_type.to_string()),
         Expr::Invoke(i) => Some(i.target.entity_type.to_string()),
-        Expr::Page(_) => None,
+        Expr::Page(_) | Expr::TeachingValue { .. } => None,
     }
 }
 
@@ -262,6 +270,7 @@ fn operation_kind(expr: &Expr) -> Option<String> {
             Expr::Delete(_) => "delete",
             Expr::Invoke(_) => "invoke",
             Expr::Page(_) => "page",
+            Expr::TeachingValue { .. } => "teaching_value",
         }
         .to_string(),
     )
@@ -330,6 +339,7 @@ fn outcome_line(expr: &Expr, ctx: &OutcomeContext, cgs: &CGS) -> String {
                 )
             }
         }
+        Expr::TeachingValue { .. } => format!("Teaching literal ({stats})"),
     }
 }
 
@@ -385,6 +395,7 @@ fn comp_op_str(op: CompOp) -> &'static str {
 
 fn value_short(v: &Value) -> String {
     match v {
+        Value::UnionCtor { ctor_label, .. } => format!("<union_ctor {ctor_label}>"),
         Value::PlasmInputRef(_) => "<plasm_input_ref>".to_string(),
         Value::String(s) => format!("{s:?}"),
         Value::Integer(i) => i.to_string(),

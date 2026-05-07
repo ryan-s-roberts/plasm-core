@@ -1,7 +1,9 @@
 //! Shared clap construction and ArgMatches extraction for `InputType::Object` capability params.
 
 use clap::{builder::PossibleValuesParser, Arg, ArgAction, ArgMatches};
-use plasm_core::{CapabilitySchema, CompOp, FieldType, InputFieldSchema, Predicate, Value, CGS};
+use plasm_core::{
+    CapabilitySchema, CompOp, FieldType, InputFieldSchema, InputFieldWire, Predicate, Value, CGS,
+};
 
 use crate::subcommand_util::leak;
 
@@ -16,25 +18,35 @@ pub(crate) fn arg_for_input_field(field: &InputFieldSchema, help: FieldArgHelp, 
     let name: &'static str = leak(field.name.clone());
     let mut arg = Arg::new(name).long(name);
 
-    let nv = cgs
-        .named_value_for_slot(field)
-        .expect("input field value_ref must resolve for CLI");
-
-    arg = match nv.field_type {
-        FieldType::Number => arg.value_parser(clap::value_parser!(f64)),
-        FieldType::Integer => arg.value_parser(clap::value_parser!(i64)),
-        FieldType::Boolean => arg.action(ArgAction::SetTrue),
-        FieldType::Select => {
-            if let Some(ref allowed) = nv.allowed_values {
-                let vals: Vec<&'static str> = allowed.iter().map(|s| leak(s.clone())).collect();
-                arg.value_parser(PossibleValuesParser::new(vals))
-            } else {
-                arg
-            }
+    match &field.wire {
+        InputFieldWire::Inline(_) => {
+            arg = arg
+                .value_parser(clap::value_parser!(String))
+                .help("structured parameter (JSON)");
         }
-        FieldType::MultiSelect | FieldType::Array => arg.action(ArgAction::Append),
-        _ => arg,
-    };
+        InputFieldWire::Registry(_) => {
+            let nv = field
+                .named_value(cgs)
+                .expect("input field value_ref must resolve for CLI");
+
+            arg = match nv.field_type {
+                FieldType::Number => arg.value_parser(clap::value_parser!(f64)),
+                FieldType::Integer => arg.value_parser(clap::value_parser!(i64)),
+                FieldType::Boolean => arg.action(ArgAction::SetTrue),
+                FieldType::Select => {
+                    if let Some(ref allowed) = nv.allowed_values {
+                        let vals: Vec<&'static str> =
+                            allowed.iter().map(|s| leak(s.clone())).collect();
+                        arg.value_parser(PossibleValuesParser::new(vals))
+                    } else {
+                        arg
+                    }
+                }
+                FieldType::MultiSelect | FieldType::Array => arg.action(ArgAction::Append),
+                _ => arg,
+            };
+        }
+    }
 
     if field.required {
         arg = arg.required(true);
@@ -49,7 +61,8 @@ pub(crate) fn arg_for_input_field(field: &InputFieldSchema, help: FieldArgHelp, 
         FieldArgHelp::Query => {
             if let Some(ref desc) = field.description {
                 arg = arg.help(desc.clone());
-            } else {
+            } else if matches!(&field.wire, InputFieldWire::Registry(_)) {
+                let nv = field.named_value(cgs).expect("input field value_ref");
                 let h = match nv.field_type {
                     FieldType::Select => {
                         if let Some(ref av) = nv.allowed_values {
@@ -88,29 +101,37 @@ pub(crate) fn field_value_for_invoke(
     field: &InputFieldSchema,
     cgs: &CGS,
 ) -> Option<Value> {
-    let nv = cgs.named_value_for_slot(field).ok()?;
-    match nv.field_type {
-        FieldType::Number => matches
-            .get_one::<f64>(&field.name)
-            .copied()
-            .map(Value::Float),
-        FieldType::Integer => matches
-            .get_one::<i64>(&field.name)
-            .copied()
-            .map(Value::Integer),
-        FieldType::Boolean => {
-            if matches.get_flag(&field.name) {
-                Some(Value::Bool(true))
-            } else {
-                None
+    match &field.wire {
+        InputFieldWire::Inline(_) => {
+            let s = matches.get_one::<String>(&field.name)?;
+            serde_json::from_str::<Value>(s).ok()
+        }
+        InputFieldWire::Registry(_) => {
+            let nv = field.named_value(cgs).ok()?;
+            match nv.field_type {
+                FieldType::Number => matches
+                    .get_one::<f64>(&field.name)
+                    .copied()
+                    .map(Value::Float),
+                FieldType::Integer => matches
+                    .get_one::<i64>(&field.name)
+                    .copied()
+                    .map(Value::Integer),
+                FieldType::Boolean => {
+                    if matches.get_flag(&field.name) {
+                        Some(Value::Bool(true))
+                    } else {
+                        None
+                    }
+                }
+                FieldType::MultiSelect | FieldType::Array => matches
+                    .get_many::<String>(&field.name)
+                    .map(|vals| Value::Array(vals.map(|v| Value::String(v.clone())).collect())),
+                _ => matches
+                    .get_one::<String>(&field.name)
+                    .map(|s| Value::String(s.clone())),
             }
         }
-        FieldType::MultiSelect | FieldType::Array => matches
-            .get_many::<String>(&field.name)
-            .map(|vals| Value::Array(vals.map(|v| Value::String(v.clone())).collect())),
-        _ => matches
-            .get_one::<String>(&field.name)
-            .map(|s| Value::String(s.clone())),
     }
 }
 
@@ -121,7 +142,16 @@ pub(crate) fn extend_query_predicates_for_field(
     out: &mut Vec<Predicate>,
     cgs: &CGS,
 ) {
-    let Ok(nv) = cgs.named_value_for_slot(field) else {
+    match &field.wire {
+        InputFieldWire::Inline(_) => {
+            if let Some(val) = matches.get_one::<String>(&field.name) {
+                out.push(Predicate::eq(&field.name, val.as_str()));
+            }
+            return;
+        }
+        InputFieldWire::Registry(_) => {}
+    }
+    let Ok(nv) = field.named_value(cgs) else {
         return;
     };
     match nv.field_type {
