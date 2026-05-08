@@ -5423,6 +5423,32 @@ mod tests {
     }
 
     #[test]
+    fn proof_bug_report_capabilities_require_report_parameter() {
+        let dir = apis_dir("proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        for cap_name in ["bug_report_submit", "document_bug_report_submit"] {
+            let cap = cgs
+                .get_capability(cap_name)
+                .unwrap_or_else(|| panic!("missing capability {cap_name}"));
+            assert!(
+                cap.has_any_required_param(),
+                "{cap_name}: expected at least one required parameter so DOMAIN cannot teach a no-arg bug report"
+            );
+            let fields = cap.object_params().unwrap_or_else(|| {
+                panic!("{cap_name}: expected merged object input schema from parameters:")
+            });
+            let report = fields
+                .iter()
+                .find(|f| f.name == "report")
+                .unwrap_or_else(|| panic!("{cap_name}: missing `report` parameter"));
+            assert!(report.required, "{cap_name}: `report` must be required");
+        }
+    }
+
+    #[test]
     fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
         let dir = apis_dir("proof");
         if !dir.is_dir() {

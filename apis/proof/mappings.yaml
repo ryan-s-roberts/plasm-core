@@ -839,7 +839,10 @@ bug_report_submit:
         value: application/json
   body:
     type: object
-    fields: []
+    fields:
+    - - report
+      - type: var
+        name: report
   response:
     single: true
 collaboration_event_ack:
@@ -982,6 +985,9 @@ document_bug_report_submit:
     - - slug
       - type: var
         name: slug
+    - - report
+      - type: var
+        name: report
   response:
     single: true
 document_edit_v2:

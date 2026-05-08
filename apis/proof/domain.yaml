@@ -1,4 +1,4 @@
-version: 25
+version: 26
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -842,30 +842,24 @@ capabilities:
     description: Report a bug in Proof itself—not about editing this document.
     kind: create
     entity: BugReport
-    input_schema:
-      input_type:
-        type: object
-        additional_fields: true
-        fields: []
-      validation:
-        allow_null: false
-      description: Send any JSON fields Proof support asks for.
+    parameters:
+      - name: report
+        value_ref: nv_proof_markdown
+        required: true
+        description: Full bug report (steps, expected vs actual, errors, request ids, environment).
 
   document_bug_report_submit:
     description: Report a bug and include this document as context.
     kind: action
     entity: Document
+    parameters:
+      - name: report
+        value_ref: nv_proof_markdown
+        required: true
+        description: Full bug report (steps, expected vs actual, errors, request ids, environment).
     output:
       type: side_effect
       description: Sends diagnostics only; does not change the document.
-    input_schema:
-      input_type:
-        type: object
-        additional_fields: true
-        fields: []
-      validation:
-        allow_null: false
-      description: Include logs, steps, and environment details Proof support needs.
     provides:
       - status
       - fixer_brief

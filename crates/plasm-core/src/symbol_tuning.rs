@@ -3402,16 +3402,19 @@ pub fn expand_expr_for_domain_session(
     session: &DomainExposureSession,
     symbol_tuning: bool,
 ) -> String {
-    let stripped = strip_prompt_expression_annotations(input);
+    let input = input.trim();
     if !symbol_tuning {
-        return stripped;
+        return input.to_string();
     }
     let map = session.symbol_map_arc();
-    expand_path_symbols(&stripped, map.as_ref())
+    expand_path_symbols(input, map.as_ref())
 }
 
 /// Strip human-only suffixes from pasted prompt examples (`;;` comment may include `=>` result type,
 /// legacy `=>` before `;;`, `->` relation target hint).
+///
+/// This is only for prompt-render/eval diagnostics that inspect historical teaching rows. The
+/// expression/program parser path must consume the documented Plasm surface directly.
 pub fn strip_prompt_expression_annotations(input: &str) -> String {
     let trimmed = input.trim();
     // Expression is always before the first `;;` (result type now lives inside the comment).
@@ -3421,11 +3424,10 @@ pub fn strip_prompt_expression_annotations(input: &str) -> String {
         .rsplit_once("  =>  ")
         .map(|(a, _)| a.trim())
         .unwrap_or(no_cap);
-    let no_or = no_gloss.split(" or ").next().unwrap_or(no_gloss).trim();
-    let expr_only = no_or
+    let expr_only = no_gloss
         .split_once(" -> ")
         .map(|(a, _)| a.trim())
-        .unwrap_or(no_or);
+        .unwrap_or(no_gloss);
     expr_only.to_string()
 }
 
@@ -3436,12 +3438,12 @@ pub fn expand_expr_for_parse(
     focus: FocusSpec<'_>,
     symbol_tuning: bool,
 ) -> String {
-    let stripped = strip_prompt_expression_annotations(input);
+    let input = input.trim();
     if !symbol_tuning {
-        return stripped;
+        return input.to_string();
     }
     let exposure = domain_exposure_session_from_focus(cgs, focus);
-    expand_expr_for_domain_session(&stripped, &exposure, true)
+    expand_expr_for_domain_session(input, &exposure, true)
 }
 
 #[cfg(test)]
@@ -3793,6 +3795,47 @@ mod tests {
         assert_eq!(
             strip_prompt_expression_annotations("e1  =>  [e1]  ;;  List all accessible workspaces"),
             "e1"
+        );
+    }
+
+    #[test]
+    fn strip_prompt_annotations_preserves_or_inside_tagged_heredoc() {
+        let src = concat!(
+            "x = m(p=<<T\n",
+            "If GET state or equivalent state returns\n",
+            "T)\n",
+            "x",
+        );
+        let stripped = strip_prompt_expression_annotations(src);
+        assert!(
+            stripped.contains("state or equivalent"),
+            "expected prose `or` to survive inside heredoc; got {:?}",
+            stripped
+        );
+    }
+
+    #[test]
+    fn strip_prompt_annotations_no_longer_strips_or_alternatives() {
+        assert_eq!(
+            strip_prompt_expression_annotations("e1.m1() or e1.m2()"),
+            "e1.m1() or e1.m2()"
+        );
+    }
+
+    #[test]
+    fn expand_expr_for_parse_does_not_strip_prompt_annotation_tails() {
+        let cgs = CGS::new();
+        assert_eq!(
+            expand_expr_for_parse("e1  ;;  old hint", &cgs, FocusSpec::All, false),
+            "e1  ;;  old hint"
+        );
+        assert_eq!(
+            expand_expr_for_parse("e1  =>  [e1]", &cgs, FocusSpec::All, false),
+            "e1  =>  [e1]"
+        );
+        assert_eq!(
+            expand_expr_for_parse("e1.m1() or e1.m2()", &cgs, FocusSpec::All, false),
+            "e1.m1() or e1.m2()"
         );
     }
 

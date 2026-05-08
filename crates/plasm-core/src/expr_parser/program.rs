@@ -114,4 +114,22 @@ mod tests {
         assert_eq!(p.roots.len(), 1);
         assert_eq!(p.roots[0].primary, "body");
     }
+
+    /// Regression: heredoc bodies must stay opaque — prose starting with `If` must not break
+    /// statement joining or surface parsing (phrase/value confusion).
+    #[test]
+    fn multiline_heredoc_body_with_if_line_joins_and_parses_shape() {
+        let src = concat!(
+            "report_doc = e3.m19(p12=<<BUG10\n",
+            "# Proof Bug Report\n",
+            "Proof side:\n",
+            "If GET state or equivalent state returns\n",
+            "old baseToken while block ref has new mt1.\n",
+            "BUG10)\n",
+            "report_doc",
+        );
+        let stmts = collect_program_statement_lines(src).expect("collect statements");
+        assert_eq!(stmts.len(), 2, "expected binding + roots; got {:?}", stmts);
+        parse_program_shape(src).expect("program shape");
+    }
 }

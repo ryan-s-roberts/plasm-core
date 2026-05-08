@@ -95,22 +95,23 @@ p20	v10 · markdown
 p21	v10 · replace
 p22	v10 · content
 p24	v10 · quote
-p25	v10 · text
-p27	v12 · mark_id
-p29	v12 · by
-p30	v12 · mark_id
-p31	v12 · presence_status
-p32	v12 · share_token
-p33	v12 · share_url
-p34	v12 · status
-p36	v13 · idempotency_key
+p25	v10 · report · Full bug report
+p26	v10 · text
+p28	v12 · mark_id
+p30	v12 · by
+p31	v12 · mark_id
+p32	v12 · presence_status
+p33	v12 · share_token
+p34	v12 · share_url
+p35	v12 · status
+p37	v13 · idempotency_key
 p12	v5 · slug
 p23	v10 · markdown
-p35	v12 · title
+p36	v12 · title
 p17	v9 · links · SDK link bundle (state, ops, docs). Wire key _links
 p16	v9 · agent_auth · Auth hints from share JSON agent.auth (token source, header names)
-v211{p27=$}	returns comment_resolve — Resolve a thread; keep history
-v212{p27=$}	returns comment_unresolve — Unresolve a thread for more replies
+v211{p28=$}	returns comment_resolve — Resolve a thread; keep history
+v212{p28=$}	returns comment_unresolve — Unresolve a thread for more replies
 v101{p8=$,p20=$}	returns replace_block — Replace one block’s markdown
 v102{p8=$,p14=$}	returns insert_before — Insert blocks before the anchor block
 v103{p8=$,p14=$}	returns insert_after — Insert blocks after the anchor block
@@ -118,23 +119,23 @@ v104{p8=$}	returns delete_block — Delete one block
 v105{p7=$,p9=$,p14=$}	returns replace_range — Replace a range of blocks with new blocks
 v14	union · v210 | v211 | v212
 v15	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1(p12)[p12,p23,p35,p17,p16]	returns e1 · projection · Read or edit a shared Proof document
+e1(p12)[p12,p23,p36,p17,p16]	returns e1 · projection · Read or edit a shared Proof document
 e1(p12)	returns e1
-e1.m11()	returns e1 · Report a bug and include this document as context
-e1(p12).m17()	returns e1 · optional params: p33, p32 · Bind this session to a share URL or token for this slug. Later calls reuse stored credentials. Cl…
-e1(p12).m1(p5=$, p29=$, p24=$, p25=$,..)	returns e1 · optional params: p6, p32 · Start a comment thread on quoted text from the document
-e1(p12).m2(p5=$, p29=$, p1=[$],..)	returns e1 · optional params: p32, p6 · Apply several comment updates in one request
-e1(p12).m3(p5=$, p29=$, p30=$, p25=$,..)	returns e1 · optional params: p11, p6, p32 · Reply in a thread; optionally mark it resolved in the same step
-e1(p12).m4(p5=$, p29=$, p30=$,..)	returns e1 · optional params: p6, p32 · Mark a thread resolved; history stays visible
-e1(p12).m5(p5=$, p29=$, p30=$,..)	returns e1 · optional params: p6, p32 · Open a resolved thread for more discussion
-e1(p12).m6(p5=$, p29=$, p30=$,..)	returns e1 · optional params: p6, p32 · Accept a pending suggestion and apply it to the document
-e1(p12).m7(p5=$, p29=$, p24=$,..)	returns e1 · optional params: p6, p36, p32, p34 · Propose deleting a quoted passage for a human to accept or reject
-e1(p12).m8(p5=$, p29=$, p24=$, p22=$,..)	returns e1 · optional params: p6, p36, p32, p34 · Propose inserting text after a quoted passage for a human to accept or reject
-e1(p12).m9(p5=$, p29=$, p30=$,..)	returns e1 · optional params: p6, p32 · Reject a pending suggestion without changing the document body
-e1(p12).m10(p5=$, p29=$, p24=$, p22=$,..)	returns e1 · optional params: p6, p36, p32, p34 · Propose replacing a quoted passage with new content for a human to accept or reject
-e1(p12).m12(p5=$, p13=$, p29=$,..)	returns e1 · optional params: p32 · Tell the server how far you read the collaboration event stream
-e1(p12).m13(p5=$, p29=$, p15=$, p2=[v101{p8=$,p20=$},v103{p8=$,p14=$}],..)	returns e1 · optional params: p36, p32 · Apply one batch of block edits. Use base_revision from your latest snapshot (integer—not baseTo…
-e1(p12).m16(p5=$,..)	returns e1 · optional params: p31 · You MUST announce presence before you edit or comment—call this once per document after share b…
+e1(p12).m17()	returns e1 · optional params: p34, p33 · Bind this session to a share URL or token for this slug. Later calls reuse stored credentials. Cl…
+e1(p12).m1(p5=$, p30=$, p24=$, p26=$,..)	returns e1 · optional params: p6, p33 · Start a comment thread on quoted text from the document
+e1(p12).m2(p5=$, p30=$, p1=[$],..)	returns e1 · optional params: p33, p6 · Apply several comment updates in one request
+e1(p12).m3(p5=$, p30=$, p31=$, p26=$,..)	returns e1 · optional params: p11, p6, p33 · Reply in a thread; optionally mark it resolved in the same step
+e1(p12).m4(p5=$, p30=$, p31=$,..)	returns e1 · optional params: p6, p33 · Mark a thread resolved; history stays visible
+e1(p12).m5(p5=$, p30=$, p31=$,..)	returns e1 · optional params: p6, p33 · Open a resolved thread for more discussion
+e1(p12).m6(p5=$, p30=$, p31=$,..)	returns e1 · optional params: p6, p33 · Accept a pending suggestion and apply it to the document
+e1(p12).m7(p5=$, p30=$, p24=$,..)	returns e1 · optional params: p6, p37, p33, p35 · Propose deleting a quoted passage for a human to accept or reject
+e1(p12).m8(p5=$, p30=$, p24=$, p22=$,..)	returns e1 · optional params: p6, p37, p33, p35 · Propose inserting text after a quoted passage for a human to accept or reject
+e1(p12).m9(p5=$, p30=$, p31=$,..)	returns e1 · optional params: p6, p33 · Reject a pending suggestion without changing the document body
+e1(p12).m10(p5=$, p30=$, p24=$, p22=$,..)	returns e1 · optional params: p6, p37, p33, p35 · Propose replacing a quoted passage with new content for a human to accept or reject
+e1(p12).m12(p5=$, p13=$, p30=$,..)	returns e1 · optional params: p33 · Tell the server how far you read the collaboration event stream
+e1(p12).m11(p25=$)	returns e1 · Report a bug and include this document as context
+e1(p12).m13(p5=$, p30=$, p15=$, p2=[v101{p8=$,p20=$},v103{p8=$,p14=$}],..)	returns e1 · optional params: p37, p33 · Apply one batch of block edits. Use base_revision from your latest snapshot (integer—not baseTo…
+e1(p12).m16(p5=$,..)	returns e1 · optional params: p32 · You MUST announce presence before you edit or comment—call this once per document after share b…
 e1(p12).p3	relation e1 => [Block] · Blocks from the latest snapshot—use for edits that need stable block ids
 e1(p12).p4	relation e1 => [CollaborationEvent] · Recent collaboration updates you have not acknowledged yet
 e1(p12).p12	relation e1 => e1 · Document slug or id this API uses
