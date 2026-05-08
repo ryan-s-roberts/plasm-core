@@ -134,7 +134,7 @@ e1(p12).m9(p5=$, p29=$, p30=$,..)	returns e1 · optional params: p6, p32 · Reje
 e1(p12).m10(p5=$, p29=$, p24=$, p22=$,..)	returns e1 · optional params: p6, p36, p32, p34 · Propose replacing a quoted passage with new content for a human to accept or reject
 e1(p12).m12(p5=$, p13=$, p29=$,..)	returns e1 · optional params: p32 · Tell the server how far you read the collaboration event stream
 e1(p12).m13(p5=$, p29=$, p15=$, p2=[v101{p8=$,p20=$},v103{p8=$,p14=$}],..)	returns e1 · optional params: p36, p32 · Apply one batch of block edits. Use base_revision from your latest snapshot (integer—not baseTo…
-e1(p12).m16(p5=$,..)	returns e1 · optional params: p31 · Update your presence so collaborators see what you are doing
+e1(p12).m16(p5=$,..)	returns e1 · optional params: p31 · Announce presence before you edit or comment—call this once per document after share binding (a…
 e1(p12).p3	relation e1 => [Block] · Blocks from the latest snapshot—use for edits that need stable block ids
 e1(p12).p4	relation e1 => [CollaborationEvent] · Recent collaboration updates you have not acknowledged yet
 e1(p12).p12	relation e1 => e1 · Document slug or id this API uses

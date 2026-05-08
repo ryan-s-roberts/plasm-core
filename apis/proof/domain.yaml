@@ -1,4 +1,4 @@
-version: 23
+version: 24
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -780,7 +780,9 @@ capabilities:
       description: Records how far you processed events for later polls.
 
   presence_update:
-    description: Update your presence so collaborators see what you are doing.
+    description: >
+      Announce presence before you edit or comment—call this once per document after share binding
+      (and again after long idle) so collaborators and collab rules see an active agent.
     kind: action
     entity: Document
     parameters:
@@ -792,7 +794,7 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Updates what collaborators see for your agent.
+      description: Shows this agent as active in the document session for collaborators.
 
   share_link_create:
     description: Create a new shared document from markdown.
