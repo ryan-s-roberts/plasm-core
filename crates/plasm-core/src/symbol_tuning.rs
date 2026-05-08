@@ -1584,7 +1584,8 @@ impl SymbolMap {
     /// This is a thin wrapper around [`DomainExposureSession::new`] + [`DomainExposureSession::to_symbol_map`]:
     /// one code path for `m#` / `p#` assignment and dotted-call alias metadata (execute / REPL / canonical DOMAIN).
     pub fn build(cgs: &CGS, full_entities: &[&str]) -> Self {
-        DomainExposureSession::new(cgs, "", full_entities).to_symbol_map()
+        let cid = cgs.entry_id.as_deref().unwrap_or("");
+        DomainExposureSession::new(cgs, cid, full_entities).to_symbol_map()
     }
 
     /// Structured DOMAIN token when `canonical` is in this map.
@@ -2469,10 +2470,17 @@ fn ident_continue(c: char) -> bool {
 /// This keeps REPL and execute symbol indices aligned when the same seed set is used (`Single(s)`
 /// ≡ one seed, `Seeds` ≡ sorted list). Use multiple seeds or incremental exposure if you need more
 /// entities in DOMAIN.
+///
+/// The session’s `catalog_entry_id` argument is taken from [`CGS::entry_id`] when set (packed plugins,
+/// registry rows) so [`ExposureSurface`] keys and [`DomainExposureSession::catalog_cgs`] agree — using
+/// `""` when the graph id is unset (YAML fixtures).
 pub fn domain_exposure_session_from_focus(
     cgs: &CGS,
     focus: FocusSpec<'_>,
 ) -> DomainExposureSession {
+    // Registry row id for this graph: align with `CGS::entry_id` (packed plugins use the API dir name)
+    // so `ExposureSurface` keys and `catalog_cgs` lookups stay consistent.
+    let catalog_key = cgs.entry_id.as_deref().unwrap_or("");
     match focus {
         FocusSpec::All => {
             let mut names: Vec<&str> = cgs
@@ -2482,9 +2490,9 @@ pub fn domain_exposure_session_from_focus(
                 .map(|(n, _)| n.as_str())
                 .collect();
             names.sort();
-            DomainExposureSession::new(cgs, "", &names)
+            DomainExposureSession::new(cgs, catalog_key, &names)
         }
-        FocusSpec::Single(s) => DomainExposureSession::new(cgs, "", &[s]),
+        FocusSpec::Single(s) => DomainExposureSession::new(cgs, catalog_key, &[s]),
         FocusSpec::Seeds(seeds) => {
             if seeds.is_empty() {
                 return domain_exposure_session_from_focus(cgs, FocusSpec::All);
@@ -2492,7 +2500,7 @@ pub fn domain_exposure_session_from_focus(
             let mut v: Vec<&str> = seeds.to_vec();
             v.sort();
             v.dedup();
-            DomainExposureSession::new(cgs, "", &v)
+            DomainExposureSession::new(cgs, catalog_key, &v)
         }
         FocusSpec::SeedsExact(seeds) => {
             if seeds.is_empty() {
@@ -2501,7 +2509,7 @@ pub fn domain_exposure_session_from_focus(
             let mut v: Vec<&str> = seeds.to_vec();
             v.sort();
             v.dedup();
-            DomainExposureSession::new(cgs, "", &v)
+            DomainExposureSession::new(cgs, catalog_key, &v)
         }
     }
 }

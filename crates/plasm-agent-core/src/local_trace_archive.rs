@@ -218,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_trace_round_trip() {
-        let root = std::env::temp_dir().join("plasm_trace_arch_test");
+        let root = std::env::temp_dir().join(format!("plasm_trace_arch_test_{}", Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&root);
         let arch = LocalTraceArchive::new(root.clone()).unwrap();
         let d = TraceDetailDto {

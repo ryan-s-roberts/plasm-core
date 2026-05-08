@@ -330,4 +330,18 @@ mod tests {
             "Teaching bundle should witness every capability: {missing:?}"
         );
     }
+
+    /// Packed plugins set [`CGS::entry_id`] to the directory name; exposure keys must stay aligned.
+    #[test]
+    fn proof_expression_surface_validate_with_packed_entry_id() {
+        let p = Path::new("../../apis/proof");
+        if !p.exists() {
+            return;
+        }
+        let mut cgs = load_schema_dir(p).expect("proof");
+        cgs.entry_id = Some("proof".to_string());
+        validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {
+            panic!("validate_cgs_expression_surface(proof, entry_id=proof): {e}");
+        });
+    }
 }
