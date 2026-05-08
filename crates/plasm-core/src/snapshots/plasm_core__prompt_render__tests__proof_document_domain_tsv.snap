@@ -71,11 +71,10 @@ v9	str · Short free-text bucket for opaque ids, titles, tokens, filters, and si
 v6	json · Structured bundles such as navigation hints, auth guidance, collaboration payloads, or raw slices
 v1	str · Stable label for this automation actor on mutating flows so attribution and locks stay consistent
 v3	bool · Simple toggles carried on mutations such as resolving discussion threads
-v10	select · insert, delete, replace
+v10	uuid · Optional uniqueness token so identical edit batches can be retried safely
 v2	str · Identifier for one block in a specific snapshot; reuse only with the snapshot it came from, then …
 v5	array[str] · New blocks to splice next to an anchor, in top-to-bottom order
 v8	select · first, all
-v11	uuid · Optional uniqueness token so identical edit batches can be retried safely
 p1	union · v210 | v211 | v212 · operations
 p2	union · v101 | v102 | v103 | v104 | v105 | v106 | v107 · operations
 p5	v1 · agent_id
@@ -100,8 +99,7 @@ p30	v9 · share_token
 p31	v9 · share_url
 p32	v9 · status
 p34	v9 · up_to_id
-p35	v10 · suggestion_kind
-p36	v11 · idempotency_key
+p35	v10 · idempotency_key
 p11	v4 · slug
 p20	v7 · markdown
 p33	v9 · title
@@ -109,12 +107,16 @@ p14	v6 · links · Related URLs or endpoints surfaced with this read (navigation
 p13	v6 · agent_auth · When present, how authenticated automation should call mutating flows for this document
 v211{p24=$}	returns comment_resolve — Close a thread as addressed while keeping history
 v212{p24=$}	returns comment_unresolve — Re-open a resolved thread for further discussion
+v111{p5=$,p27=$,p21=$,p19=$}	returns suggestion_insert — Suggest inserting new text anchored on an exact quoted passage
+v112{p5=$,p27=$,p21=$}	returns suggestion_delete — Suggest removing the quoted passage
+v113{p5=$,p27=$,p21=$,p19=$}	returns suggestion_replace — Suggest replacing the quoted passage with new content
 v101{p7=$,p17=$}	returns replace_block — Replace the markdown body of one existing block
 v102{p7=$,p12=$}	returns insert_before — Insert new blocks immediately before a chosen anchor block
 v103{p7=$,p12=$}	returns insert_after — Insert new blocks immediately after a chosen anchor block
 v104{p7=$}	returns delete_block — Remove one block from the structure
 v105{p6=$,p8=$,p12=$}	returns replace_range — Replace every block from one anchor through another with new blocks
-v12	union · v210 | v211 | v212
+v11	union · v210 | v211 | v212
+v12	union · v111 | v112 | v113
 v13	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
 e1(p11)[p11,p20,p33,p14,p13]	returns e1 · projection · Shared document the user sees in Proof: body, title, and hints for follow-up reads or edits
 e1(p11)	returns e1
@@ -127,10 +129,10 @@ e1(p11).m3(p5=$, p27=$, p28=$, p22=$,..)	returns e1 · optional params: p10, p30
 e1(p11).m4(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Close a comment thread as addressed while keeping history visible
 e1(p11).m5(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Bring a resolved thread back to active discussion
 e1(p11).m6(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Apply a pending suggestion so its proposed change becomes real content
-e1(p11).m7(p5=$, p27=$, p35=$, p21=$,..)	returns e1 · optional params: p19, p32, p30 · Propose an insert, removal, or replacement anchored on quoted text for human acceptance
+e1(p11).m7(v111{p5=$,p27=$,p21=$,p19=$})	returns e1 · optional params: p30, p32, p35 · Propose an insert, removal, or replacement anchored on quoted text for human acceptance
 e1(p11).m8(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Discard a pending suggestion without changing the document body
 e1(p11).m10(p5=$, p34=$, p27=$)	returns e1 · Confirm how far this client has consumed collaboration events so the host can trim history
-e1(p11).m11(p5=$, p27=$, p26=$, p2=[v101{p7=$,p17=$},v103{p7=$,p12=$}],..)	returns e1 · optional params: p36, p30 · Apply one batch of structural edits against the revision token from the latest snapshot. Combine …
+e1(p11).m11(p5=$, p27=$, p26=$, p2=[v101{p7=$,p17=$},v103{p7=$,p12=$}],..)	returns e1 · optional params: p35, p30 · Apply one batch of structural edits against the revision token from the latest snapshot. Combine …
 e1(p11).m16(p33=$)	returns e1 · Change the document title shown to readers and collaborators
 e1(p11).m14(p5=$,..)	returns e1 · optional params: p29 · Signal whether this automation session is actively viewing or editing the document
 e1(p11).p3	relation e1 => [Block] · Structural slices of the snapshot used for precise insert, replace, or delete edits

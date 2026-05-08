@@ -281,8 +281,8 @@ m["annotation_suggestion_add"] = {
     "query": query_token_optional(),
     "headers": headers_agent_mutations(
         _host_idempotency_else(
-            "plasm:{ph}:{sid}:{slug}:suggestion_add:{sk}",
-            {"sk": VAR("suggestion_kind")},
+            "plasm:{ph}:{sid}:{slug}:suggestion_add:{k}",
+            {"k": VAR("kind")},
         ),
     ),
     "body": {
@@ -290,7 +290,7 @@ m["annotation_suggestion_add"] = {
         "fields": [
             ["type", {"type": "const", "value": "suggestion.add"}],
             ["by", VAR("by")],
-            ["kind", VAR("suggestion_kind")],
+            ["kind", VAR("kind")],
             ["quote", VAR("quote")],
             ["content", if_var("content")],
             ["status", if_var("status")],

@@ -48,6 +48,30 @@ fn is_v_numeric_union_ctor_label(name: &str) -> bool {
     !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
 }
 
+/// After `(`, true when the argument list begins with a root `v#{{…}}` union constructor.
+pub(super) fn peek_starts_v_numeric_union_ctor_arg(input: &str, pos: usize) -> bool {
+    let bytes = input.as_bytes();
+    let mut i = pos;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if bytes.get(i) != Some(&b'v') {
+        return false;
+    }
+    i += 1;
+    let digit_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digit_start {
+        return false;
+    }
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    bytes.get(i) == Some(&b'{')
+}
+
 #[derive(Clone, Copy, Debug)]
 enum PhraseClose {
     Predicate,

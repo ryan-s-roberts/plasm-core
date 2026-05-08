@@ -2919,6 +2919,63 @@ fn format_inline_structural_example_symbolic(
     }
 }
 
+/// Like [`format_inline_structural_example_symbolic`] for an object body, but **only required** fields
+/// and **no** `,..` optional tail — union constructor payloads inside `{…}` must parse as plain `k=v` pairs.
+fn format_inline_structural_example_symbolic_required_only(
+    map: Option<&SymbolMap>,
+    domain: &str,
+    cap_name: &str,
+    path_prefix: &str,
+    ty: &crate::InputType,
+    cgs: &CGS,
+) -> String {
+    let crate::InputType::Object { fields, .. } = ty else {
+        return format_inline_structural_example_symbolic(
+            map,
+            domain,
+            cap_name,
+            path_prefix,
+            ty,
+            cgs,
+        );
+    };
+    let mut parts = Vec::new();
+    for sf in fields {
+        if !sf.required {
+            continue;
+        }
+        let seg = if path_prefix.is_empty() {
+            sf.name.clone()
+        } else {
+            format!("{path_prefix}.{}", sf.name)
+        };
+        match &sf.wire {
+            crate::InputFieldWire::Inline(inner) => {
+                let rhs = format_inline_structural_example_symbolic_required_only(
+                    map,
+                    domain,
+                    cap_name,
+                    &seg,
+                    inner.as_ref(),
+                    cgs,
+                );
+                let lhs = map
+                    .map(|m| m.ident_sym_cap_param(domain, cap_name, &seg))
+                    .unwrap_or_else(|| sf.name.clone());
+                parts.push(format!("{lhs}={rhs}"));
+            }
+            crate::InputFieldWire::Registry(_) => {
+                let lhs = map
+                    .map(|m| m.ident_sym_cap_param(domain, cap_name, &seg))
+                    .unwrap_or_else(|| sf.name.clone());
+                parts.push(format!("{lhs}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER));
+            }
+        }
+    }
+    let inner = parts.join(",");
+    format!("{{{inner}}}")
+}
+
 fn format_union_constructor_invoke_example(
     variant: &crate::schema::InputVariantSchema,
     cgs: &CGS,
@@ -2934,6 +2991,25 @@ fn format_union_constructor_invoke_example(
         "{}{}",
         ctor,
         format_inline_structural_example_symbolic(map, domain, cap_name, &prefix, &body_ty, cgs)
+    ))
+}
+
+/// Root-level invoke union (`input_schema.type: union`): ctor body uses flat param paths (`p5`, …).
+fn format_root_union_constructor_invoke_example(
+    variant: &crate::schema::InputVariantSchema,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    domain: &str,
+    cap_name: &str,
+) -> Option<String> {
+    let ctor = crate::schema::union_variant_constructor_symbol(variant)?;
+    let body_ty = crate::schema::input_variant_body_type(variant);
+    Some(format!(
+        "{}{}",
+        ctor,
+        format_inline_structural_example_symbolic_required_only(
+            map, domain, cap_name, "", &body_ty, cgs
+        )
     ))
 }
 
@@ -3026,6 +3102,17 @@ fn emit_array_of_union_constructor_teaching_gloss(
     let Some(is) = cap.input_schema.as_ref() else {
         return;
     };
+    if let crate::InputType::Union { variants } = &is.input_type {
+        if variants.is_empty()
+            || variants
+                .iter()
+                .any(|v| crate::schema::union_variant_constructor_symbol(v).is_none())
+        {
+            return;
+        }
+        emit_union_array_constructor_teaching_gloss(gs, &is.input_type);
+        return;
+    }
     let crate::InputType::Object { fields, .. } = &is.input_type else {
         return;
     };
@@ -3066,6 +3153,42 @@ fn try_push_union_constructor_teaching_expr_rows(
     let Some(is) = cap.input_schema.as_ref() else {
         return;
     };
+    if let crate::InputType::Union { variants } = &is.input_type {
+        if variants.is_empty()
+            || variants
+                .iter()
+                .any(|v| crate::schema::union_variant_constructor_symbol(v).is_none())
+        {
+            return;
+        }
+        for v in variants {
+            let Some(expr_line) = format_root_union_constructor_invoke_example(
+                v,
+                cgs,
+                map,
+                cap.domain.as_str(),
+                cap.name.as_str(),
+            ) else {
+                continue;
+            };
+            let legend = format_union_constructor_gloss_legend(v);
+            let _ = try_push_teaching_example(
+                gloss_emit,
+                teaching_rows,
+                collect_meta,
+                cgs,
+                map,
+                &expr_line,
+                Some(legend),
+                None,
+                None,
+                Some(&cap.name),
+                false,
+                line_valid_cache,
+            );
+        }
+        return;
+    }
     let crate::InputType::Object { fields, .. } = &is.input_type else {
         return;
     };
@@ -3213,6 +3336,23 @@ fn build_dotted_call_paren_args(
 ) -> Option<String> {
     let ent = cgs.get_entity(anchor_entity)?;
     let is = cap.input_schema.as_ref()?;
+    if let InputType::Union { variants } = &is.input_type {
+        if variants.is_empty()
+            || variants
+                .iter()
+                .any(|v| crate::schema::union_variant_constructor_symbol(v).is_none())
+        {
+            return None;
+        }
+        let v = variants.first()?;
+        return format_root_union_constructor_invoke_example(
+            v,
+            cgs,
+            map,
+            anchor_entity,
+            cap.name.as_str(),
+        );
+    }
     let InputType::Object { fields, .. } = &is.input_type else {
         return None;
     };

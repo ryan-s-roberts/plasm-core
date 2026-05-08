@@ -23,6 +23,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 | [cloudflare](cloudflare/)           | Cloudflare REST v4 (Phase 1: zones, rulesets, phase entrypoints, WAF packages; extend here; Bearer token; Hermit slice in-tree) |
 | [dnd5e](dnd5e/)                     | D&D 5e SRD public API                                                                                                           |
 | [evm-erc20](evm-erc20/)             | EVM ERC-20 reads (on-chain, not REST)                                                                                           |
+| [flightaware-aeroapi](flightaware-aeroapi/) | FlightAware AeroAPI v4 (`x-apikey`; airborne search + ident flight summaries; OpenAPI from FlightAware)                         |
 | [github](github/)                   | GitHub REST (repos, issues, PRs, commits, branches, reviews, files—see README)                                                  |
 | [graphqlzero](graphqlzero/)         | GraphQLZero public GraphQL (full JSONPlaceholder slice; `transport: graphql`, pagination, post mutations)                       |
 | [hackernews](hackernews/)           | Hacker News Firebase + Algolia search (feeds, maxitem, updates, search, items, users, polls; no auth)                           |

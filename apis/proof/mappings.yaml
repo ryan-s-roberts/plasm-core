@@ -378,7 +378,7 @@ annotation_suggestion_add:
             var: plasm_execute_prompt_hash
           then_expr:
             type: format
-            template: plasm:{ph}:{sid}:{slug}:suggestion_add:{sk}
+            template: plasm:{ph}:{sid}:{slug}:suggestion_add:{k}
             vars:
               ph:
                 type: var
@@ -389,9 +389,9 @@ annotation_suggestion_add:
               slug:
                 type: var
                 name: slug
-              sk:
+              k:
                 type: var
-                name: suggestion_kind
+                name: kind
           else_expr:
             type: const
             value: null
@@ -406,7 +406,7 @@ annotation_suggestion_add:
         name: by
     - - kind
       - type: var
-        name: suggestion_kind
+        name: kind
     - - quote
       - type: var
         name: quote

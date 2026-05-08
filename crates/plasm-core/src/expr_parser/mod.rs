@@ -15,8 +15,10 @@
 //!
 //! pipeline   = "." field_name                  — ChainExpr (EntityRef follow) or relation nav
 //!            | "." method "()"                  — zero-arity pipeline: DeleteExpr or InvokeExpr (by capability kind)
-//!            | "." method "(" dotted_call_args ")" — dotted-call alias: Create / Update / Action / Delete with args (see DOMAIN)
+//!            | "." method "(" method_args ")"   — dotted-call alias: Create / Update / Action / Delete with args (see DOMAIN)
+//!              method_args = dotted_call_args | union_ctor_payload
 //!              dotted_call_args = ε | ".." | key=value ("," key=value)* ["," ".."]
+//!              union_ctor_payload = `v` DIGITS `{` … `}` (sole contents of `( )` when capability root input is `InputType::Union`)
 //!            | "." method                       — same as `method()` when schema disallows name clashes
 //!            | ".^" Entity                      — reverse traversal query
 //!            | ".^" Entity "{" preds "}"        — reverse traversal with filter
@@ -82,9 +84,9 @@ use crate::schema::{
 };
 use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
 use crate::{
-    ArrayItemsSchema, CapabilityKind, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
-    EntityKey, Expr, FieldType, GetExpr, InputType, InvokeExpr, PageExpr, ParameterRole, Predicate,
-    QueryExpr, Ref, Value, ValueWireFormat, CGS,
+    ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr,
+    EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, PageExpr,
+    ParameterRole, Predicate, QueryExpr, Ref, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1258,12 +1260,63 @@ impl<'a> Parser<'a> {
         self.inject_path_vars_from_get(cap, &source, &mut map);
         self.coerce_object_input_for_cap(cap, &mut map)?;
         let input = Value::Object(map);
-        match cap.kind {
-            CapabilityKind::Create => Ok(Expr::Create(CreateExpr::new(
-                cap.name.clone(),
-                cap.domain.clone(),
-                input,
-            ))),
+        self.finish_dotted_call_with_payload_value_inner(
+            source,
+            cap.name.clone(),
+            cap.domain.clone(),
+            cap.kind,
+            input,
+        )
+    }
+
+    /// Dotted call whose payload is already a single [`Value`] (e.g. root `input_schema` union `v#{{…}}`).
+    fn finish_dotted_call_with_payload_value(
+        &mut self,
+        source: Expr,
+        field_raw: String,
+        mut value: Value,
+    ) -> Result<Expr, ParseError> {
+        let label = self.normalize_method_symbol_label(&field_raw);
+        let cap = self.resolve_dotted_call_capability(&label, &source)?;
+        let Some(is) = &cap.input_schema else {
+            return Err(self.err(ParseErrorKind::Other {
+                message: "this capability has no input schema — use `key=value` arguments".into(),
+            }));
+        };
+        if !matches!(&is.input_type, crate::InputType::Union { .. }) {
+            return Err(self.err(ParseErrorKind::Other {
+                message: "this capability expects `key=value` arguments, not a sole `v#{{…}}` constructor"
+                    .into(),
+            }));
+        }
+        if let Value::UnionCtor { ctor_fields, .. } = &mut value {
+            self.inject_path_vars_from_get(cap, &source, ctor_fields);
+        } else {
+            return Err(self.err(ParseErrorKind::Other {
+                message: "expected `v#{{…}}` union constructor for this invoke".into(),
+            }));
+        }
+        self.finish_dotted_call_with_payload_value_inner(
+            source,
+            cap.name.clone(),
+            cap.domain.clone(),
+            cap.kind,
+            value,
+        )
+    }
+
+    fn finish_dotted_call_with_payload_value_inner(
+        &mut self,
+        source: Expr,
+        cap_name: CapabilityName,
+        cap_domain: EntityName,
+        cap_kind: CapabilityKind,
+        input: Value,
+    ) -> Result<Expr, ParseError> {
+        match cap_kind {
+            CapabilityKind::Create => {
+                Ok(Expr::Create(CreateExpr::new(cap_name, cap_domain, input)))
+            }
             CapabilityKind::Update | CapabilityKind::Action | CapabilityKind::Delete => {
                 let Expr::Get(g) = &source else {
                     return Err(self.err(ParseErrorKind::Other {
@@ -1271,7 +1324,7 @@ impl<'a> Parser<'a> {
                     }));
                 };
                 Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-                    cap.name.clone(),
+                    cap_name,
                     g.reference.clone(),
                     Some(input),
                     g.path_vars.clone(),
@@ -1289,6 +1342,34 @@ impl<'a> Parser<'a> {
         source: Expr,
         label: String,
     ) -> Result<Expr, ParseError> {
+        self.skip_ws();
+        let label_norm = self.normalize_method_symbol_label(&label);
+        let cap = self.resolve_dotted_call_capability(&label_norm, &source)?;
+        let root_union = cap
+            .input_schema
+            .as_ref()
+            .is_some_and(|is| matches!(&is.input_type, InputType::Union { .. }));
+        let starts_union_ctor = value::peek_starts_v_numeric_union_ctor_arg(self.input, self.pos);
+
+        if starts_union_ctor {
+            if !root_union {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: "`v` + digits + `{…}` is only allowed as the sole `(…)` payload when the capability root input is a tagged union — use `key=value` arguments"
+                        .into(),
+                }));
+            }
+            let val = self.parse_dotted_call_arg_value_rhs()?;
+            self.skip_ws();
+            if self.peek_char() == Some(',') {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: "union constructor payload must be the only parenthesized argument (no `,` after `v#{{…}}`)"
+                        .into(),
+                }));
+            }
+            self.expect_char(')')?;
+            return self.finish_dotted_call_with_payload_value(source, label, val);
+        }
+
         let map = self.parse_paren_object_arg_list()?;
         self.expect_char(')')?;
         self.finish_dotted_call_with_payload(source, label, map)
@@ -2932,6 +3013,54 @@ mod tests {
             assert!(!obj.contains_key("due_date"));
         }
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    /// Root `input_schema` union: sole `vN{{…}}` in dotted-call parentheses parses and type-checks.
+    #[test]
+    fn parse_proof_root_union_ctor_invoke_typechecks() {
+        let dir = std::path::Path::new("../../apis/proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let cap = cgs
+            .get_capability("annotation_suggestion_add")
+            .expect("annotation_suggestion_add");
+        let label = capability_method_label_kebab(cap);
+        let line =
+            format!("Document(demo-slug).{label}(v111{{agent_id=$,by=$,quote=$,content=$}})");
+        let r = parse(&line, &cgs).unwrap();
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        assert_eq!(inv.capability.as_str(), "annotation_suggestion_add");
+        let inp = inv.input.as_ref().expect("input").to_value();
+        let crate::Value::UnionCtor { ctor_fields, .. } = &inp else {
+            panic!("expected UnionCtor invoke input, got {inp:?}");
+        };
+        assert!(ctor_fields.contains_key("agent_id"));
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    /// Sole `vN{{…}}` is rejected when the capability root input is an object, not a union.
+    #[test]
+    fn parse_proof_rejects_root_union_ctor_on_object_input_capability() {
+        let dir = std::path::Path::new("../../apis/proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let cap = cgs
+            .get_capability("annotation_comment_add")
+            .expect("annotation_comment_add");
+        let label = capability_method_label_kebab(cap);
+        let line = format!("Document(x).{label}(v111{{agent_id=$,by=$,quote=$,text=$}})");
+        let e = parse(&line, &cgs).expect_err("expected parse error");
+        assert!(
+            e.message().contains("tagged union") || e.message().contains("key=value"),
+            "{}",
+            e.message()
+        );
     }
 
     #[test]

@@ -66,3 +66,40 @@
   covers: [create]
   expect:
     entities_any: [BugReport]
+
+- id: proof-09-suggestion-insert
+  schema: proof
+  goal: >
+    On shared document iota, as automation user plasm-bot, propose an insert suggestion: anchor on
+    the exact quoted phrase 'Status' in the body and suggest inserting the line 'Status: green'
+    for human review (do not apply yet).
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(iota).annotation-suggestion-add(v111{agent_id="plasm-bot",by="plasm-bot",quote="Status",content="Status: green"})
+  expect:
+    entities_any: [Document]
+
+- id: proof-10-suggestion-delete
+  schema: proof
+  goal: >
+    For document kappa, propose a delete suggestion anchored on the quoted passage 'Draft watermark'
+    so collaborators can accept or reject removing that text.
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(kappa).annotation-suggestion-add(v112{agent_id="plasm-bot",by="plasm-bot",quote="Draft watermark"})
+  expect:
+    entities_any: [Document]
+
+- id: proof-11-suggestion-accept
+  schema: proof
+  goal: >
+    Apply the pending suggestion mark sug-42 on document lambda as user plasm-bot so the proposed
+    edit becomes real document content.
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(lambda).annotation-suggestion-accept(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-42")
+  expect:
+    entities_any: [Document]

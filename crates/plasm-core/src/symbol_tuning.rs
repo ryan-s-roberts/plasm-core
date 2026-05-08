@@ -342,12 +342,20 @@ pub fn legacy_exposure_surface_for_entities(
             };
             out.capabilities.insert(ckey.clone());
             if let Some(is) = &cap.input_schema {
-                let InputType::Object { fields, .. } = &is.input_type else {
-                    continue;
-                };
                 let mut paths = BTreeSet::new();
-                for f in fields {
-                    insert_capability_param_paths(f, "", &mut paths);
+                match &is.input_type {
+                    InputType::Object { fields, .. } => {
+                        for f in fields {
+                            insert_capability_param_paths(f, "", &mut paths);
+                        }
+                    }
+                    InputType::Union { variants } => {
+                        for v in variants {
+                            let body = input_variant_body_type(v);
+                            walk_inline_capability_param_paths(&body, "", &mut paths);
+                        }
+                    }
+                    _ => {}
                 }
                 for path in paths {
                     out.slots.insert(ExposureSlotKey::CapabilityParam {
@@ -1943,25 +1951,51 @@ impl SymbolMap {
         let Some(is) = &cap.input_schema else {
             return String::new();
         };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return String::new();
-        };
         let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
         let mut optional_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
-        for f in fields {
-            if matches!(f.role, Some(ParameterRole::Scope)) {
-                continue;
+        match &is.input_type {
+            InputType::Object { fields, .. } => {
+                for f in fields {
+                    if matches!(f.role, Some(ParameterRole::Scope)) {
+                        continue;
+                    }
+                    if !field_is_filter_like_gloss(f) {
+                        continue;
+                    }
+                    let sym = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
+                    if f.required {
+                        continue;
+                    }
+                    optional_parts.push(sym);
+                }
             }
-            if !field_is_filter_like_gloss(f) {
-                continue;
+            InputType::Union { variants } => {
+                let mut seen: BTreeSet<String> = BTreeSet::new();
+                for v in variants {
+                    for f in &v.fields {
+                        if matches!(f.role, Some(ParameterRole::Scope)) {
+                            continue;
+                        }
+                        if !field_is_filter_like_gloss(f) {
+                            continue;
+                        }
+                        if f.required {
+                            continue;
+                        }
+                        if seen.insert(f.name.clone()) {
+                            optional_parts.push(self.ident_sym_cap_param(
+                                domain,
+                                cap_name,
+                                f.name.as_str(),
+                            ));
+                        }
+                    }
+                }
+                optional_parts.sort();
             }
-            let sym = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
-            if f.required {
-                continue;
-            }
-            optional_parts.push(sym);
+            _ => {}
         }
         if !optional_parts.is_empty() {
             if !scope_s.is_empty() {

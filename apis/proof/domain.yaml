@@ -1,4 +1,4 @@
-version: 15
+version: 16
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -512,28 +512,96 @@ capabilities:
     description: Propose an insert, removal, or replacement anchored on quoted text for human acceptance.
     kind: action
     entity: Document
-    parameters:
-      - name: agent_id
-        value_ref: nv_proof_agent_id
-        required: true
-      - name: by
-        value_ref: nv_proof_str
-        required: true
-      - name: suggestion_kind
-        value_ref: nv_proof_suggestion_kind
-        required: true
-      - name: quote
-        value_ref: nv_proof_markdown
-        required: true
-      - name: content
-        value_ref: nv_proof_markdown
-        required: false
-      - name: status
-        value_ref: nv_proof_str
-        required: false
-      - name: share_token
-        value_ref: nv_proof_str
-        required: false
+    input_schema:
+      description: >
+        Who is acting, optional share/idempotency context, and exactly one suggestion shape (insert,
+        delete, or replace) so required fields match the Proof ops payload.
+      input_type:
+        type: union
+        variants:
+          - name: suggestion_insert
+            constructor_symbol: v111
+            description: Suggest inserting new text anchored on an exact quoted passage.
+            wire:
+              field: kind
+              value: insert
+            fields:
+              - name: agent_id
+                value_ref: nv_proof_agent_id
+                required: true
+              - name: idempotency_key
+                value_ref: nv_proof_uuid
+                required: false
+              - name: share_token
+                value_ref: nv_proof_str
+                required: false
+              - name: by
+                value_ref: nv_proof_str
+                required: true
+              - name: quote
+                value_ref: nv_proof_markdown
+                required: true
+              - name: content
+                value_ref: nv_proof_markdown
+                required: true
+              - name: status
+                value_ref: nv_proof_str
+                required: false
+          - name: suggestion_delete
+            constructor_symbol: v112
+            description: Suggest removing the quoted passage.
+            wire:
+              field: kind
+              value: delete
+            fields:
+              - name: agent_id
+                value_ref: nv_proof_agent_id
+                required: true
+              - name: idempotency_key
+                value_ref: nv_proof_uuid
+                required: false
+              - name: share_token
+                value_ref: nv_proof_str
+                required: false
+              - name: by
+                value_ref: nv_proof_str
+                required: true
+              - name: quote
+                value_ref: nv_proof_markdown
+                required: true
+              - name: status
+                value_ref: nv_proof_str
+                required: false
+          - name: suggestion_replace
+            constructor_symbol: v113
+            description: Suggest replacing the quoted passage with new content.
+            wire:
+              field: kind
+              value: replace
+            fields:
+              - name: agent_id
+                value_ref: nv_proof_agent_id
+                required: true
+              - name: idempotency_key
+                value_ref: nv_proof_uuid
+                required: false
+              - name: share_token
+                value_ref: nv_proof_str
+                required: false
+              - name: by
+                value_ref: nv_proof_str
+                required: true
+              - name: quote
+                value_ref: nv_proof_markdown
+                required: true
+              - name: content
+                value_ref: nv_proof_markdown
+                required: true
+              - name: status
+                value_ref: nv_proof_str
+                required: false
+      validation:
+        allow_null: false
     output:
       type: side_effect
       description: Document shows a pending suggestion collaborators can accept or reject.
@@ -786,11 +854,6 @@ values:
     type: select
     allowed_values: [first, all]
     description: Whether find/replace touches the first match only or every match in scope.
-
-  nv_proof_suggestion_kind:
-    type: select
-    allowed_values: [insert, delete, replace]
-    description: Shape of a tracked suggestion—add text, remove quoted text, or swap quoted text for new content.
 
   nv_proof_insert_blocks_markdown:
     type: array

@@ -1035,14 +1035,22 @@ pub(crate) fn resolve_capability_input_param_field<'a>(
     path: &str,
 ) -> Option<&'a InputFieldSchema> {
     let is = cap.input_schema.as_ref()?;
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
     if path.is_empty() {
         return None;
     }
     let segments: Vec<&str> = path.split('.').collect();
-    resolve_input_fields_path(fields, segments.as_slice())
+    match &is.input_type {
+        InputType::Object { fields, .. } => resolve_input_fields_path(fields, segments.as_slice()),
+        InputType::Union { variants } => {
+            for v in variants {
+                if let Some(f) = resolve_input_fields_path(&v.fields, segments.as_slice()) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 fn resolve_input_fields_path<'a>(
