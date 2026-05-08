@@ -3015,31 +3015,39 @@ mod tests {
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
-    /// Root `input_schema` union: sole `vN{{…}}` in dotted-call parentheses parses and type-checks.
     #[test]
-    fn parse_proof_root_union_ctor_invoke_typechecks() {
+    fn parse_proof_suggestion_insert_invoke_typechecks() {
         let dir = std::path::Path::new("../../apis/proof");
         if !dir.is_dir() {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
         let cap = cgs
-            .get_capability("annotation_suggestion_add")
-            .expect("annotation_suggestion_add");
+            .get_capability("annotation_suggestion_insert")
+            .expect("annotation_suggestion_insert");
         let label = capability_method_label_kebab(cap);
-        let line =
-            format!("Document(demo-slug).{label}(v111{{agent_id=$,by=$,quote=$,content=$}})");
+        let line = format!(
+            "Document(demo-slug).{label}(agent_id=\"bot\",by=\"bot\",quote=\"Status\",content=\"Status: green\")"
+        );
         let r = parse(&line, &cgs).unwrap();
         let Expr::Invoke(inv) = &r.expr else {
             panic!("expected Invoke, got {:?}", r.expr);
         };
-        assert_eq!(inv.capability.as_str(), "annotation_suggestion_add");
-        let inp = inv.input.as_ref().expect("input").to_value();
-        let crate::Value::UnionCtor { ctor_fields, .. } = &inp else {
-            panic!("expected UnionCtor invoke input, got {inp:?}");
-        };
-        assert!(ctor_fields.contains_key("agent_id"));
+        assert_eq!(inv.capability.as_str(), "annotation_suggestion_insert");
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    #[test]
+    fn proof_document_get_markdown_capability_is_get_kind() {
+        let dir = std::path::Path::new("../../apis/proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let cap = cgs
+            .get_capability("document_get_markdown")
+            .expect("document_get_markdown");
+        assert_eq!(cap.kind, CapabilityKind::Get);
     }
 
     /// Sole `vN{{…}}` is rejected when the capability root input is an object, not a union.

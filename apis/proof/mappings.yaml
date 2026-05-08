@@ -99,6 +99,17 @@ annotation_comment_batch_apply:
     - - by
       - type: var
         name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
     - - operations
       - type: var
         name: operations
@@ -265,6 +276,17 @@ annotation_comment_unresolve:
     - - by
       - type: var
         name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
     - - markId
       - type: var
         name: mark_id
@@ -342,12 +364,23 @@ annotation_suggestion_accept:
     - - by
       - type: var
         name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
     - - markId
       - type: var
         name: mark_id
   response:
     single: true
-annotation_suggestion_add:
+annotation_suggestion_insert:
   method: POST
   path:
   - type: literal
@@ -393,7 +426,7 @@ annotation_suggestion_add:
             var: plasm_execute_prompt_hash
           then_expr:
             type: format
-            template: plasm:{ph}:{sid}:{slug}:suggestion_add:{k}
+            template: plasm:{ph}:{sid}:{slug}:suggestion_insert:{bt}
             vars:
               ph:
                 type: var
@@ -404,9 +437,9 @@ annotation_suggestion_add:
               slug:
                 type: var
                 name: slug
-              k:
+              bt:
                 type: var
-                name: kind
+                name: base_token
           else_expr:
             type: const
             value: null
@@ -420,19 +453,229 @@ annotation_suggestion_add:
       - type: var
         name: by
     - - kind
-      - type: var
-        name: kind
+      - type: const
+        value: insert
     - - quote
       - type: var
         name: quote
     - - content
+      - type: var
+        name: content
+    - - baseToken
       - type: if
         condition:
           type: exists
-          var: content
+          var: base_token
         then_expr:
           type: var
-          name: content
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_suggestion_delete:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_delete:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_token
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.add
+    - - by
+      - type: var
+        name: by
+    - - kind
+      - type: const
+        value: delete
+    - - quote
+      - type: var
+        name: quote
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_suggestion_replace:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_replace:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_token
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.add
+    - - by
+      - type: var
+        name: by
+    - - kind
+      - type: const
+        value: replace
+    - - quote
+      - type: var
+        name: quote
+    - - content
+      - type: var
+        name: content
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
         else_expr:
           type: const
           value: null
@@ -521,6 +764,17 @@ annotation_suggestion_reject:
     - - by
       - type: var
         name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
     - - markId
       - type: var
         name: mark_id
@@ -783,7 +1037,7 @@ document_edit_v2:
                 name: slug
               bt:
                 type: var
-                name: base_token
+                name: base_revision
           else_expr:
             type: const
             value: null
@@ -793,9 +1047,9 @@ document_edit_v2:
     - - by
       - type: var
         name: by
-    - - baseToken
+    - - baseRevision
       - type: var
-        name: base_token
+        name: base_revision
     - - operations
       - type: var
         name: operations

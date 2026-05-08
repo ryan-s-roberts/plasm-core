@@ -2659,6 +2659,49 @@ fn parse_proof_share_link_url(raw: &str) -> Result<(String, Option<String>), Run
     Ok((slug.to_string(), token))
 }
 
+fn proof_catalog_exec_session(
+    sess: &crate::execute_session::ExecuteSession,
+    exec_cgs: &CGS,
+) -> bool {
+    sess.entry_id.as_str() == "proof"
+        || exec_cgs.entry_id.as_deref().is_some_and(|id| id == "proof")
+}
+
+fn proof_base_token_from_execution_result(result: &ExecutionResult) -> Option<String> {
+    let entity = result.entities.first()?;
+    let tfv = entity.fields.get("base_token")?;
+    match tfv.to_value() {
+        plasm_core::Value::String(s) => {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// After a successful `editor_state_get`, persist `baseToken` for CML (`merge_plasm_execute_session_proof_base_token_env`).
+async fn maybe_proof_refresh_session_base_token(
+    sess: &crate::execute_session::ExecuteSession,
+    exec_cgs: &CGS,
+    parsed: &ParsedExpr,
+    result: &ExecutionResult,
+) {
+    if !proof_catalog_exec_session(sess, exec_cgs) {
+        return;
+    }
+    let plasm_core::Expr::Get(get) = &parsed.expr else {
+        return;
+    };
+    if get.reference.entity_type.as_str() != "EditorState" {
+        return;
+    }
+    let Some(tok) = proof_base_token_from_execution_result(result) else {
+        return;
+    };
+    let mut slot = sess.session_proof_base_token.write().await;
+    *slot = Some(tok);
+}
+
 /// Proof-only session bind: stores share token on [`ExecuteSession`] (no HTTP) when invoked via agent execute.
 async fn try_proof_document_share_bind(
     sess: &ExecuteSession,
@@ -2722,6 +2765,10 @@ async fn try_proof_document_share_bind(
     {
         let mut slot = sess.session_share_token.write().await;
         *slot = Some(token);
+    }
+    {
+        let mut bt = sess.session_proof_base_token.write().await;
+        *bt = None;
     }
 
     Ok(Some(ExecutionResult {
@@ -2897,6 +2944,7 @@ async fn run_parsed_plasm_line(
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
 
     let bound_share = sess.session_share_token.read().await.clone();
+    let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
 
     let exec_opts = ExecuteOptions {
         request_fingerprint_sink: Some(fp_sink.clone()),
@@ -2915,6 +2963,7 @@ async fn run_parsed_plasm_line(
             prompt_hash: sess.prompt_hash.clone(),
             session_id: session_id.to_string(),
             share_token: bound_share.clone(),
+            proof_base_token: bound_proof_base_token.clone(),
         })),
     };
 
@@ -3059,6 +3108,8 @@ async fn run_parsed_plasm_line(
             apply_projection(&mut result, fields);
         }
     }
+
+    maybe_proof_refresh_session_base_token(sess, exec_cgs, &parsed, &result).await;
 
     result.request_fingerprints = fp_sink.lock().unwrap_or_else(|e| e.into_inner()).clone();
 

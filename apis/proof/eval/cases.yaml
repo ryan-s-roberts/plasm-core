@@ -35,13 +35,14 @@
   expect:
     entities_any: [ShareLink]
 
-- id: proof-05-rename-title
+- id: proof-05-read-title
   schema: proof
-  goal: "Update the document title for slug delta to 'Q2 planning'."
-  tags: [update]
-  covers: [update]
+  goal: "Load document delta with document_get and read its title for the sprint header."
+  tags: [get, projection]
+  covers: [get, projection]
   expect:
     entities_any: [Document]
+    projection_contains: [title]
 
 - id: proof-06-pending-events
   schema: proof
@@ -76,7 +77,7 @@
   tags: [invoke, suggestion]
   covers: [invoke]
   reference_expr: >
-    Document(iota).annotation-suggestion-add(v111{agent_id="plasm-bot",by="plasm-bot",quote="Status",content="Status: green"})
+    Document(iota).annotation-suggestion-insert(agent_id="plasm-bot",by="plasm-bot",quote="Status",content="Status: green")
   expect:
     entities_any: [Document]
 
@@ -88,7 +89,7 @@
   tags: [invoke, suggestion]
   covers: [invoke]
   reference_expr: >
-    Document(kappa).annotation-suggestion-add(v112{agent_id="plasm-bot",by="plasm-bot",quote="Draft watermark"})
+    Document(kappa).annotation-suggestion-delete(agent_id="plasm-bot",by="plasm-bot",quote="Draft watermark")
   expect:
     entities_any: [Document]
 
@@ -101,5 +102,27 @@
   covers: [invoke]
   reference_expr: >
     Document(lambda).annotation-suggestion-accept(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-42")
+  expect:
+    entities_any: [Document]
+
+- id: proof-12-state-then-ops
+  schema: proof
+  goal: >
+    Bind the share link for document mu, call editor_state_get so the session picks up baseToken,
+    then add a comment on quoted text without passing base_token on the invoke line.
+  tags: [agent, session, invoke]
+  covers: [multi_step, get, invoke]
+  expect:
+    entities_any: [Document, EditorState]
+
+- id: proof-13-base-token-override
+  schema: proof
+  goal: >
+    On document nu, call annotation-suggestion-reject with an explicit base_token=\"tok-override-9\"
+    to force that precondition for one request.
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(nu).annotation-suggestion-reject(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-1",base_token="tok-override-9")
   expect:
     entities_any: [Document]

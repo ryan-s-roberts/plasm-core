@@ -380,6 +380,8 @@ pub struct ExecuteSession {
     pub ranked_capabilities: Option<Vec<String>>,
     /// Share-link / instance token bound once per execute session (Bearer + optional `share_token` CML env).
     pub session_share_token: Arc<RwLock<Option<String>>>,
+    /// Proof: `baseToken` from the latest successful `editor_state_get`; merged as `base_token` CML env for `/ops`.
+    pub session_proof_base_token: Arc<RwLock<Option<String>>>,
     /// Per-session materialized graph; isolated from other execute sessions.
     pub graph_cache: Arc<MutexGraphCacheSession>,
     /// Unified in-session graph/artifact state.
@@ -431,6 +433,7 @@ impl ExecuteSession {
             context_intent,
             ranked_capabilities,
             session_share_token: Arc::new(RwLock::new(None)),
+            session_proof_base_token: Arc::new(RwLock::new(None)),
             graph_cache: core.graph_cache(),
             core,
             run_resource_next: Arc::new(AtomicU64::new(0)),

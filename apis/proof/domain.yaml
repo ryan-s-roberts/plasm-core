@@ -1,4 +1,4 @@
-version: 18
+version: 20
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -49,7 +49,7 @@ entities:
 
   EditorState:
     id_field: slug
-    description: Fetch before editing with others—revision, comments, suggestions, collaboration rules.
+    description: Fetch before editing with others—includes snapshot revision, baseToken precondition, marks, and collaboration rules.
     domain_projection_examples: false
     fields:
       slug:
@@ -71,6 +71,12 @@ entities:
       revision:
         value_ref: nv_proof_int
         required: false
+        description: Snapshot revision number—send as base_revision on edit/v2 only (not as an event cursor).
+      base_token:
+        value_ref: nv_proof_base_token
+        required: false
+        path: baseToken
+        description: Precondition token from state—the execute host stores it for /ops after each editor_state_get.
       collab:
         value_ref: nv_proof_json
         required: false
@@ -106,7 +112,7 @@ entities:
     domain_projection_examples: false
     fields:
       id:
-        value_ref: nv_proof_str
+        value_ref: nv_proof_event_id
         required: true
       kind:
         value_ref: nv_proof_str
@@ -171,7 +177,7 @@ capabilities:
 
   document_get_markdown:
     description: Get the document body as markdown only.
-    kind: action
+    kind: get
     entity: Document
     parameters:
       - name: share_token
@@ -184,6 +190,7 @@ capabilities:
   document_share_bind:
     description: >
       Bind this session to a share URL or token for this slug. Later calls reuse stored credentials.
+      Clears any stored mutation precondition token—call editor_state_get again before /ops writes.
       Pass share_token again only when you need to override the stored value.
     kind: action
     entity: Document
@@ -199,7 +206,9 @@ capabilities:
       description: Session stores share credentials for later Proof requests.
 
   editor_state_get:
-    description: Get revision, marks, and collaboration rules before you edit with others.
+    description: >
+      Read editor state before collaborating; the host remembers baseToken for later /ops mutations
+      (override with base_token= on a call if you must).
     kind: get
     entity: EditorState
     parameters:
@@ -213,6 +222,7 @@ capabilities:
       - contract
       - connected_clients
       - revision
+      - base_token
       - collab
 
   block_query:
@@ -240,7 +250,7 @@ capabilities:
         required: true
         role: scope
       - name: after
-        value_ref: nv_proof_str
+        value_ref: nv_proof_event_id
         required: false
       - name: limit
         value_ref: nv_proof_int
@@ -249,8 +259,8 @@ capabilities:
 
   document_edit_v2:
     description: >
-      Apply one batch of block edits. Use the revision from your latest snapshot. Combine replace, insert,
-      delete, range replace, and find/replace steps in a single request when you need to.
+      Apply one batch of block edits. Use base_revision from your latest snapshot (integer—not baseToken).
+      Combine replace, insert, delete, range replace, and find/replace steps in one request when needed.
     kind: action
     entity: Document
     parameters:
@@ -265,7 +275,7 @@ capabilities:
         required: false
     input_schema:
       description: >
-        Send author id, snapshot revision, and an ordered list of edit operations.
+        Send author id, snapshot base_revision, and an ordered list of edit operations.
       input_type:
         type: object
         additional_fields: false
@@ -273,8 +283,8 @@ capabilities:
           - name: by
             value_ref: nv_proof_str
             required: true
-          - name: base_token
-            value_ref: nv_proof_str
+          - name: base_revision
+            value_ref: nv_proof_int
             required: true
           - name: operations
             required: true
@@ -402,7 +412,7 @@ capabilities:
         allow_null: false
     output:
       type: side_effect
-      description: Updates document content when the revision matches.
+      description: Updates document content when base_revision matches the server snapshot.
 
   annotation_comment_add:
     description: Start a comment thread on quoted text from the document.
@@ -490,6 +500,9 @@ capabilities:
       - name: mark_id
         value_ref: nv_proof_str
         required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
       - name: share_token
         value_ref: nv_proof_str
         required: false
@@ -497,102 +510,101 @@ capabilities:
       type: side_effect
       description: Marks the thread open again.
 
-  annotation_suggestion_add:
-    description: Propose an insert, delete, or replace on quoted text for a human to accept or reject.
+  annotation_suggestion_insert:
+    description: Propose inserting text after a quoted passage for a human to accept or reject.
     kind: action
     entity: Document
-    input_schema:
-      description: >
-        Pick one shape (insert, delete, or replace). Include author id, quote, and fields for that shape.
-      input_type:
-        type: union
-        variants:
-          - name: suggestion_insert
-            constructor_symbol: v111
-            description: Suggest inserting text after the quote.
-            wire:
-              field: kind
-              value: insert
-            fields:
-              - name: agent_id
-                value_ref: nv_proof_agent_id
-                required: true
-              - name: idempotency_key
-                value_ref: nv_proof_uuid
-                required: false
-              - name: share_token
-                value_ref: nv_proof_str
-                required: false
-              - name: by
-                value_ref: nv_proof_str
-                required: true
-              - name: quote
-                value_ref: nv_proof_markdown
-                required: true
-              - name: content
-                value_ref: nv_proof_markdown
-                required: true
-              - name: status
-                value_ref: nv_proof_str
-                required: false
-          - name: suggestion_delete
-            constructor_symbol: v112
-            description: Suggest deleting the quoted text.
-            wire:
-              field: kind
-              value: delete
-            fields:
-              - name: agent_id
-                value_ref: nv_proof_agent_id
-                required: true
-              - name: idempotency_key
-                value_ref: nv_proof_uuid
-                required: false
-              - name: share_token
-                value_ref: nv_proof_str
-                required: false
-              - name: by
-                value_ref: nv_proof_str
-                required: true
-              - name: quote
-                value_ref: nv_proof_markdown
-                required: true
-              - name: status
-                value_ref: nv_proof_str
-                required: false
-          - name: suggestion_replace
-            constructor_symbol: v113
-            description: Suggest replacing the quoted text with new content.
-            wire:
-              field: kind
-              value: replace
-            fields:
-              - name: agent_id
-                value_ref: nv_proof_agent_id
-                required: true
-              - name: idempotency_key
-                value_ref: nv_proof_uuid
-                required: false
-              - name: share_token
-                value_ref: nv_proof_str
-                required: false
-              - name: by
-                value_ref: nv_proof_str
-                required: true
-              - name: quote
-                value_ref: nv_proof_markdown
-                required: true
-              - name: content
-                value_ref: nv_proof_markdown
-                required: true
-              - name: status
-                value_ref: nv_proof_str
-                required: false
-      validation:
-        allow_null: false
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: quote
+        value_ref: nv_proof_markdown
+        required: true
+      - name: content
+        value_ref: nv_proof_markdown
+        required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
+      - name: idempotency_key
+        value_ref: nv_proof_uuid
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+      - name: status
+        value_ref: nv_proof_str
+        required: false
     output:
       type: side_effect
-      description: Creates a pending suggestion others can accept or reject.
+      description: Creates a pending insert suggestion others can accept or reject.
+
+  annotation_suggestion_delete:
+    description: Propose deleting a quoted passage for a human to accept or reject.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: quote
+        value_ref: nv_proof_markdown
+        required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
+      - name: idempotency_key
+        value_ref: nv_proof_uuid
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+      - name: status
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Creates a pending delete suggestion others can accept or reject.
+
+  annotation_suggestion_replace:
+    description: Propose replacing a quoted passage with new content for a human to accept or reject.
+    kind: action
+    entity: Document
+    parameters:
+      - name: agent_id
+        value_ref: nv_proof_agent_id
+        required: true
+      - name: by
+        value_ref: nv_proof_str
+        required: true
+      - name: quote
+        value_ref: nv_proof_markdown
+        required: true
+      - name: content
+        value_ref: nv_proof_markdown
+        required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
+      - name: idempotency_key
+        value_ref: nv_proof_uuid
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+      - name: status
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Creates a pending replace suggestion others can accept or reject.
 
   annotation_suggestion_accept:
     description: Accept a pending suggestion and apply it to the document.
@@ -608,6 +620,9 @@ capabilities:
       - name: mark_id
         value_ref: nv_proof_str
         required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
       - name: share_token
         value_ref: nv_proof_str
         required: false
@@ -629,6 +644,9 @@ capabilities:
       - name: mark_id
         value_ref: nv_proof_str
         required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
       - name: share_token
         value_ref: nv_proof_str
         required: false
@@ -649,6 +667,9 @@ capabilities:
         required: true
       - name: share_token
         value_ref: nv_proof_str
+        required: false
+      - name: base_token
+        value_ref: nv_proof_base_token
         required: false
     input_schema:
       input_type:
@@ -711,15 +732,6 @@ capabilities:
       type: side_effect
       description: Applies every step or applies none, per server rules.
 
-  document_title_update:
-    description: Set the document title.
-    kind: update
-    entity: Document
-    parameters:
-      - name: title
-        value_ref: nv_proof_str
-        required: true
-
   collaboration_event_ack:
     description: Tell the server how far you read the collaboration event stream.
     kind: action
@@ -729,11 +741,14 @@ capabilities:
         value_ref: nv_proof_agent_id
         required: true
       - name: up_to_id
-        value_ref: nv_proof_str
+        value_ref: nv_proof_event_id
         required: true
       - name: by
         value_ref: nv_proof_str
         required: true
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
     output:
       type: side_effect
       description: Records how far you processed events for later polls.
@@ -800,6 +815,16 @@ values:
     type: entity_ref
     target: Document
     description: Document slug or id this API uses.
+
+  nv_proof_event_id:
+    type: string
+    string_semantics: short
+    description: Event id from the pending collaboration stream—use for after= and ack up_to_id only.
+
+  nv_proof_base_token:
+    type: string
+    string_semantics: short
+    description: Precondition token from EditorState; host stores it in the execute session after editor_state_get—pass only to override.
 
   nv_proof_block_ref:
     type: string
