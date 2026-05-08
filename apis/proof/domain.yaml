@@ -1,4 +1,4 @@
-version: 24
+version: 25
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -125,12 +125,29 @@ entities:
       kind:
         value_ref: nv_proof_str
         required: false
+        path: type
+        description: Server event type string (wire `type`).
       at:
         value_ref: nv_proof_str
         required: false
+        path: createdAt
       payload:
         value_ref: nv_proof_json
         required: false
+        path: data
+        description: Parsed event body—comment/mark/thread details live here (wire `data`).
+      actor:
+        value_ref: nv_proof_str
+        required: false
+        path: actor
+      acked_at:
+        value_ref: nv_proof_str
+        required: false
+        path: ackedAt
+      acked_by:
+        value_ref: nv_proof_str
+        required: false
+        path: ackedBy
 
   ShareLink:
     id_field: slug
@@ -282,6 +299,14 @@ capabilities:
         value_ref: nv_proof_int
         required: false
         role: response_control
+    provides:
+      - id
+      - kind
+      - at
+      - payload
+      - actor
+      - acked_at
+      - acked_by
 
   document_edit_v2:
     description: >
@@ -457,6 +482,9 @@ capabilities:
       - name: text
         value_ref: nv_proof_markdown
         required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
       - name: share_token
         value_ref: nv_proof_str
         required: false
@@ -484,6 +512,9 @@ capabilities:
       - name: resolve
         value_ref: nv_proof_bool
         required: false
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
       - name: share_token
         value_ref: nv_proof_str
         required: false
@@ -505,6 +536,9 @@ capabilities:
       - name: mark_id
         value_ref: nv_proof_str
         required: true
+      - name: base_token
+        value_ref: nv_proof_base_token
+        required: false
       - name: share_token
         value_ref: nv_proof_str
         required: false
@@ -781,8 +815,7 @@ capabilities:
 
   presence_update:
     description: >
-      Announce presence before you edit or comment—call this once per document after share binding
-      (and again after long idle) so collaborators and collab rules see an active agent.
+      You MUST announce presence before you edit or comment—call this once per document after share binding
     kind: action
     entity: Document
     parameters:

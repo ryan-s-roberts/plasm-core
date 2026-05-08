@@ -13,9 +13,7 @@ annotation_comment_add:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
-    value: comments
+    value: ops
   query:
     type: object
     fields:
@@ -36,18 +34,12 @@ annotation_comment_add:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
-      - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
   body:
     type: object
     fields:
+    - - type
+      - type: const
+        value: comment.add
     - - by
       - type: var
         name: by
@@ -57,6 +49,17 @@ annotation_comment_add:
     - - text
       - type: var
         name: text
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
 annotation_comment_batch_apply:
@@ -125,11 +128,7 @@ annotation_comment_reply:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
-    value: comments
-  - type: literal
-    value: reply
+    value: ops
   query:
     type: object
     fields:
@@ -150,18 +149,12 @@ annotation_comment_reply:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
-      - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
   body:
     type: object
     fields:
+    - - type
+      - type: const
+        value: comment.reply
     - - markId
       - type: var
         name: mark_id
@@ -182,6 +175,17 @@ annotation_comment_reply:
         else_expr:
           type: const
           value: null
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
 annotation_comment_resolve:
@@ -194,11 +198,7 @@ annotation_comment_resolve:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
-    value: comments
-  - type: literal
-    value: resolve
+    value: ops
   query:
     type: object
     fields:
@@ -219,21 +219,29 @@ annotation_comment_resolve:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
-      - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
   body:
     type: object
     fields:
+    - - type
+      - type: const
+        value: comment.resolve
+    - - by
+      - type: var
+        name: by
     - - markId
       - type: var
         name: mark_id
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
 annotation_comment_unresolve:
