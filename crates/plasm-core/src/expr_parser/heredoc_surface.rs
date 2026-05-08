@@ -7,7 +7,9 @@ pub enum HeredocCloseLineKind {
     GluedSuffix,
 }
 
-/// Tagged heredoc close: trim matches `TAG` alone, or `TAG` + optional ASCII ws + one of `)` `,` `}`.
+/// Tagged heredoc close: trim matches `TAG` alone, or `TAG` followed by optional ASCII ws and
+/// one or more parser-owned delimiters (`)`, `]`, `}`, `,`). The heredoc recognizer closes the
+/// string at `TAG` and leaves the delimiter tail for the enclosing parser to validate.
 pub fn tagged_heredoc_close_kind(
     line_slice: &str,
     tag: &str,
@@ -20,13 +22,20 @@ pub fn tagged_heredoc_close_kind(
     if !t.starts_with(tag) {
         return None;
     }
-    let after = &t[tag.len()..];
-    let after = after.trim_start();
-    if after.len() == 1 {
-        let b = after.as_bytes()[0];
-        if matches!(b, b')' | b',' | b'}') {
-            return Some((HeredocCloseLineKind::GluedSuffix, leading_ws));
+    let after = t[tag.len()..].trim_start();
+    let mut saw_delimiter = false;
+    for b in after.bytes() {
+        if b.is_ascii_whitespace() {
+            continue;
         }
+        if matches!(b, b')' | b']' | b'}' | b',') {
+            saw_delimiter = true;
+            continue;
+        }
+        return None;
+    }
+    if saw_delimiter {
+        return Some((HeredocCloseLineKind::GluedSuffix, leading_ws));
     }
     None
 }
@@ -153,11 +162,14 @@ mod tests {
             tagged_heredoc_close_kind("TAG", "TAG"),
             Some((HeredocCloseLineKind::LineOnly, _))
         ));
-        assert!(matches!(
-            tagged_heredoc_close_kind("TAG)", "TAG"),
-            Some((HeredocCloseLineKind::GluedSuffix, _))
-        ));
+        for line in ["TAG)", "TAG})", "TAG ],", "TAG } )"] {
+            assert!(matches!(
+                tagged_heredoc_close_kind(line, "TAG"),
+                Some((HeredocCloseLineKind::GluedSuffix, _))
+            ));
+        }
         assert!(tagged_heredoc_close_kind("WRONG", "TAG").is_none());
+        assert!(tagged_heredoc_close_kind("TAGfoo", "TAG").is_none());
     }
 
     #[test]

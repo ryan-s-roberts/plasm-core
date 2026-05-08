@@ -19,6 +19,7 @@ pub fn strip_line_comment(line: &str) -> &str {
 pub enum PhysicalLineStmtState {
     Complete,
     AwaitingHeredocClose { tag: String },
+    AwaitingDelimiterClose,
 }
 
 pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState, String> {
@@ -58,7 +59,10 @@ pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState
                 .to_string(),
         );
     }
-    if depth != 0 {
+    if depth > 0 {
+        return Ok(PhysicalLineStmtState::AwaitingDelimiterClose);
+    }
+    if depth < 0 {
         return Err(format!(
             "unbalanced delimiters in Plasm program line `{line}`"
         ));
@@ -71,19 +75,44 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut pending_tag: Option<String> = None;
+    let mut pending_delimiters = false;
+    let mut heredoc_seen_in_cur = false;
 
     for raw in src.lines() {
         let w = strip_line_comment(raw);
-        if pending_tag.is_some() {
+        if pending_tag.is_some() || pending_delimiters {
             if !cur.is_empty() {
                 cur.push('\n');
             }
             cur.push_str(w);
-            let last = cur.lines().last().unwrap_or("");
-            if tagged_heredoc_close_kind(last, pending_tag.as_deref().unwrap()).is_some() {
-                out.push(cur.trim_end().to_string());
-                cur.clear();
+            if let Some(tag) = pending_tag.as_deref() {
+                let last = cur.lines().last().unwrap_or("");
+                if tagged_heredoc_close_kind(last, tag).is_none() {
+                    continue;
+                }
                 pending_tag = None;
+                heredoc_seen_in_cur = true;
+            }
+            match scan_physical_line_stmt_state(&cur)? {
+                PhysicalLineStmtState::Complete => {
+                    out.push(cur.trim_end().to_string());
+                    cur.clear();
+                    pending_delimiters = false;
+                    heredoc_seen_in_cur = false;
+                }
+                PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
+                    pending_tag = Some(tag);
+                    pending_delimiters = false;
+                    heredoc_seen_in_cur = true;
+                }
+                PhysicalLineStmtState::AwaitingDelimiterClose if heredoc_seen_in_cur => {
+                    pending_delimiters = true;
+                }
+                PhysicalLineStmtState::AwaitingDelimiterClose => {
+                    return Err(format!(
+                        "unbalanced delimiters in Plasm program line `{cur}`"
+                    ));
+                }
             }
         } else {
             if w.trim().is_empty() {
@@ -98,6 +127,12 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
                 }
                 PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
                     pending_tag = Some(tag);
+                    heredoc_seen_in_cur = true;
+                }
+                PhysicalLineStmtState::AwaitingDelimiterClose => {
+                    return Err(format!(
+                        "unbalanced delimiters in Plasm program line `{cur}`"
+                    ));
                 }
             }
         }
@@ -106,6 +141,12 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
     if pending_tag.is_some() {
         return Err(
             "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)".into(),
+        );
+    }
+    if pending_delimiters {
+        return Err(
+            "unterminated Plasm program statement (unbalanced delimiters after heredoc close)"
+                .into(),
         );
     }
     if !cur.is_empty() {
@@ -269,10 +310,17 @@ mod tests {
 
     #[test]
     fn collect_program_statement_lines_glued_heredoc_close() {
-        let stmts = collect_program_statement_lines("x = <<H\none\nH)").expect("parse");
+        let stmts = collect_program_statement_lines("x = m(<<H\none\nH)").expect("parse");
         assert_eq!(stmts.len(), 1);
         assert!(stmts[0].contains("<<H"));
         assert!(stmts[0].contains("one"));
+    }
+
+    #[test]
+    fn collect_program_statement_lines_waits_for_delimiters_after_heredoc_close() {
+        let src = "x = m(v111{content=<<H\none\nH\n})\nx";
+        let stmts = collect_program_statement_lines(src).expect("parse");
+        assert_eq!(stmts, vec!["x = m(v111{content=<<H\none\nH\n})", "x"]);
     }
 
     #[test]

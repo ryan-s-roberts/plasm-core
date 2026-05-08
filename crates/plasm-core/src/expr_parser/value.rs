@@ -121,7 +121,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Structured heredoc: `<<TAG\n` … `\nTAG` (tagged only). No escapes inside the body.
-    /// Close line: trimmed `TAG`, or `TAG` plus optional ASCII whitespace and a single `)` / `,` / `}` on the same line.
+    /// Close line: trimmed `TAG`, or `TAG` plus optional ASCII whitespace and parser-owned
+    /// delimiter tail such as `)`, `}`, `,`, or `})` on the same line.
     pub(super) fn parse_structured_heredoc(&mut self) -> Result<Value, ParseError> {
         let bytes = self.input.as_bytes();
         debug_assert!(self.structured_heredoc_starts_here());

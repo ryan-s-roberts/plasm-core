@@ -32,7 +32,8 @@
 //!            | in `{{…}}` predicates and `method(k=v,…)` args: unquoted **phrase** (spaces OK) to `,` or closing `}}` / `)`
 //!
 //! structured_heredoc = `<<` TAG `\n` payload `\n` TAG (tagged heredoc only; TAG matches `[A-Za-z_][A-Za-z0-9_]*`).
-//! The close line may be exactly `TAG`, or `TAG` immediately followed by optional ASCII whitespace and a single `)` / `,` / `}` on that line (e.g. `TAG)` after the body line).
+//! The close line may be exactly `TAG`, or `TAG` immediately followed by optional ASCII whitespace and
+//! parser-owned delimiters such as `)`, `}`, `,`, or `})` on that line (e.g. `TAG})` after the body line).
 //! DOMAIN gloss and diagnostics emphasize heredocs for non-`short` string semantics.
 //!
 //! projection = "[" field ("," field)* "]"
@@ -2284,7 +2285,9 @@ mod tests {
     use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
     use crate::{
         loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
-        EntityKey, FieldType, PlasmInputRef, RelationSchema, ResourceSchema, CGS,
+        EntityKey, FieldType, InputFieldSchema, InputFieldWire, InputSchema, InputType,
+        InputVariantSchema, OutputSchema, OutputType, PlasmInputRef, RelationSchema,
+        ResourceSchema, WireVariantDiscriminator, CGS,
     };
     use indexmap::IndexMap;
     use std::collections::BTreeMap;
@@ -2590,6 +2593,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_structured_heredoc_tagged_glued_close_nested_delimiters_fragment() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let input = "<<X\nx\nX})";
+        let mut p = Parser::new(input, &cgs);
+        assert!(p.structured_heredoc_starts_here());
+        let v = p.parse_structured_heredoc().unwrap();
+        assert_eq!(v, Value::String("x\n".into()));
+        assert_eq!(&p.input[p.pos..], "})");
+    }
+
+    #[test]
     fn parse_structured_heredoc_predicate_tagged_glued_close_brace() {
         if !has_petstore() {
             return;
@@ -2653,6 +2670,114 @@ mod tests {
         }
         let cgs = petstore_cgs();
         assert!(parse("Pet{status=<<X\nx\nXfoo}", &cgs).is_err());
+    }
+
+    fn root_union_heredoc_fixture_cgs() -> CGS {
+        let mut cgs = CGS::new();
+        seed_fx_str(&mut cgs);
+        cgs.add_resource(ResourceSchema {
+            name: "Document".into(),
+            description: String::new(),
+            id_field: "slug".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![registry_test_util::entity_field_from_values(
+                &cgs, "fx_str", "slug", true, "",
+            )],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            discovery: None,
+        })
+        .unwrap();
+        cgs.add_capability(CapabilitySchema {
+            name: "document_suggest".into(),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: "Document".into(),
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "POST",
+                    "path": [
+                        {"type": "literal", "value": "documents"},
+                        {"type": "var", "name": "slug"},
+                        {"type": "literal", "value": "ops"}
+                    ],
+                    "body": {"type": "var", "name": "input"}
+                })
+                .into(),
+            },
+            input_schema: Some(InputSchema {
+                input_type: InputType::Union {
+                    variants: vec![InputVariantSchema {
+                        name: "insert".into(),
+                        description: None,
+                        constructor_symbol: Some("v111".into()),
+                        fields: vec![InputFieldSchema {
+                            name: "content".into(),
+                            wire: InputFieldWire::Registry(
+                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                            ),
+                            required: true,
+                            description: None,
+                            default: None,
+                            role: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
+                        }],
+                        wire: WireVariantDiscriminator {
+                            field: "kind".into(),
+                            value: "insert".into(),
+                        },
+                    }],
+                },
+                validation: Default::default(),
+                description: None,
+                examples: vec![],
+            }),
+            output_schema: Some(OutputSchema {
+                output_type: OutputType::SideEffect {
+                    description: "adds a suggestion".into(),
+                },
+                decoder: serde_json::json!({}),
+                idempotent: false,
+            }),
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            invoke_preflight: None,
+            discovery: None,
+        })
+        .unwrap();
+        cgs.validate().unwrap();
+        cgs
+    }
+
+    #[test]
+    fn parse_root_union_ctor_heredoc_with_nested_close_delimiters() {
+        let cgs = root_union_heredoc_fixture_cgs();
+        let cap = cgs.get_capability("document_suggest").unwrap();
+        let label = capability_method_label_kebab(cap);
+        let r = parse(
+            &format!("Document(doc).{label}(v111{{content=<<TXT\nhello\nTXT}})"),
+            &cgs,
+        )
+        .unwrap();
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        let inp = inv.input.as_ref().expect("input").to_value();
+        let Value::UnionCtor { ctor_fields, .. } = inp else {
+            panic!("expected union ctor, got {inp:?}");
+        };
+        assert_eq!(
+            ctor_fields.get("content"),
+            Some(&Value::String("hello\n".into()))
+        );
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
