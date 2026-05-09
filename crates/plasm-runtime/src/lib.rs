@@ -118,6 +118,7 @@ pub mod runtime_error_render;
 pub mod session_graph_cache;
 
 mod view_execution;
+mod view_typestate;
 
 mod runtime_metrics;
 mod spans;

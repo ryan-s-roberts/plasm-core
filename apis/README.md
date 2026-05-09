@@ -20,7 +20,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 | Directory                           | Role                                                                                                                            |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | [clickup](clickup/)                 | ClickUp REST v2 (workspaces, tasks, lists, …)                                                                                   |
-| [cloudflare](cloudflare/)           | Cloudflare REST v4 (Phase 1: zones, rulesets, phase entrypoints, WAF packages; **CGS `views:`** — `SecurityOverview` / `security_overview_query`; Bearer token; Hermit slice in-tree) |
+| [cloudflare](cloudflare/)           | Cloudflare REST v4 (Phase 1: zones, **`Zone → security_overview`** view + rulesets, phase entrypoints, WAF packages; Bearer token; Hermit slice in-tree) |
 | [dnd5e](dnd5e/)                     | D&D 5e SRD public API                                                                                                           |
 | [evm-erc20](evm-erc20/)             | EVM ERC-20 reads (on-chain, not REST)                                                                                           |
 | [flightaware-aeroapi](flightaware-aeroapi/) | FlightAware AeroAPI v4 (`x-apikey`; airborne search + ident flight summaries; OpenAPI from FlightAware)                         |

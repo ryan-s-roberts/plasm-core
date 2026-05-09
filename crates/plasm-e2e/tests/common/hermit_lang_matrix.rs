@@ -22,6 +22,9 @@ fn language_matrix_spec_path() -> std::path::PathBuf {
 }
 
 async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
+    // Hermit's schema faker may emit sparse objects; `for_each` templates read row JSON (`_.id`).
+    // Prefer declared OpenAPI `example` payloads so list GETs return stable primary keys (i1, i2, …).
+    beavuck_hermit::resource_generator::set_use_examples(true);
     let spec = beavuck_hermit::spec_loader::load(spec_path);
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
     let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);

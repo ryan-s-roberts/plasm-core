@@ -322,6 +322,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
                     let cap = cgs.get_capability(capability.as_str());
                     (cap, keys)
                 }
+                Some(RelationMaterialization::GetScopedBindings { .. }) => (None, vec![]),
                 _ => (
                     cgs.find_capability(rel_schema.target_resource.as_str(), CapabilityKind::Query),
                     vec![],

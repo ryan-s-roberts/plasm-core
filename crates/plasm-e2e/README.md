@@ -8,7 +8,7 @@ Plasm is a **general-purpose language and runtime for API mapping** (schema, exp
 
 Catalog behavior belongs in `**apis/<name>/`**, fixtures, and optional **plugins**—expressed as data and schema-driven rules. Code here stays **agnostic**, driven only by loaded CGS and generic IR/types.
 
-Plasm **surface language + DAG semantics** for real multi-line programs live in `[tests/plasm_language_matrix.rs](tests/plasm_language_matrix.rs)` (Hermit-backed live runs against `[fixtures/schemas/plasm_language_matrix](../../fixtures/schemas/plasm_language_matrix)` / `[fixtures/real_openapi_specs/plasm_language_matrix.yaml](../../fixtures/real_openapi_specs/plasm_language_matrix.yaml)`). Prefer extending that matrix over adding scattered story-style compiler tests elsewhere.
+Plasm **surface language + DAG semantics** for real multi-line programs live in `[tests/plasm_language_matrix.rs](tests/plasm_language_matrix.rs)` (Hermit-backed live runs against `[fixtures/schemas/plasm_language_matrix](../../fixtures/schemas/plasm_language_matrix)` / `[fixtures/real_openapi_specs/plasm_language_matrix.yaml](../../fixtures/real_openapi_specs/plasm_language_matrix.yaml)`). **`plasm_language_matrix_views`** (`--test plasm_language_matrix_views`) covers views, relation-driven outputs, and scoped bindings on `[fixtures/schemas/plasm_language_matrix_views](../../fixtures/schemas/plasm_language_matrix_views)`. Prefer extending those matrices over adding scattered story-style compiler tests elsewhere. **`fixtures/schemas/plasm_prompt_matrix`** is the snapshot CGS for prompt/teaching regressions in `plasm-core`—do not wire those unit tests to mutable **`apis/<vendor>/`** paths when a fixture row suffices.
 
 ### Where other tests belong
 

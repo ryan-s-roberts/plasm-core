@@ -2098,6 +2098,18 @@ impl<'a> Parser<'a> {
                                 let chain = ChainExpr::auto_get(source, field);
                                 return Ok(Expr::Chain(chain));
                             }
+                            crate::RelationMaterialization::GetScopedBindings { .. } => {
+                                return Err(ParseError {
+                                    kind: ParseErrorKind::ManyRelationUnmaterialized {
+                                        entity: source_entity.clone(),
+                                        relation: field.clone(),
+                                        target: target.to_string(),
+                                        span_start,
+                                        span_end,
+                                    },
+                                    offset: span_start,
+                                });
+                            }
                             crate::RelationMaterialization::Unavailable => {
                                 return Err(ParseError {
                                     kind: ParseErrorKind::ManyRelationUnmaterialized {

@@ -348,6 +348,30 @@ fn build_relation_expr(
             }
             return Ok((Expr::Query(query), consume));
         }
+        RelationMaterialization::GetScopedBindings {
+            capability,
+            bindings,
+        } => {
+            cgs.get_capability(capability.as_str()).ok_or_else(|| {
+                AgentError::Argument(format!(
+                    "Unknown materialize capability '{}' (relation '{}')",
+                    capability, relation_name
+                ))
+            })?;
+            let mut bound: IndexMap<String, String> = IndexMap::new();
+            for (cap_param, parent_field) in bindings.iter() {
+                bound.insert(
+                    cap_param.to_string(),
+                    relation_binding_field_value(entity, source_ref, parent_field),
+                );
+            }
+            let target_ent = cgs.get_entity(target.as_str()).ok_or_else(|| {
+                AgentError::Argument(format!("Unknown target entity '{}'", target))
+            })?;
+            let reference = ref_from_get_materialize_bindings(target_ent, &bound)?;
+            let get = GetExpr::from_ref(reference);
+            return Ok((Expr::Get(get), StreamConsumeOpts::default()));
+        }
         _ => {}
     }
 
@@ -663,6 +687,37 @@ fn relation_scope_string(entity: &EntityDef, source_ref: &Ref) -> String {
             .simple_id()
             .map(|s| s.to_string())
             .unwrap_or_else(|| source_ref.primary_slot_str()),
+    }
+}
+
+fn ref_from_get_materialize_bindings(
+    target_ent: &EntityDef,
+    binding_values: &IndexMap<String, String>,
+) -> Result<Ref, AgentError> {
+    use std::collections::BTreeMap;
+
+    if !target_ent.key_vars.is_empty() {
+        let mut parts = BTreeMap::new();
+        for kv in &target_ent.key_vars {
+            let s = binding_values.get(kv.as_str()).ok_or_else(|| {
+                AgentError::Argument(format!(
+                    "get_scoped_bindings missing bound value for `{}` on {}",
+                    kv, target_ent.name
+                ))
+            })?;
+            parts.insert(kv.to_string(), s.clone());
+        }
+        Ok(Ref::compound(target_ent.name.clone(), parts))
+    } else {
+        let id = binding_values
+            .get(target_ent.id_field.as_str())
+            .ok_or_else(|| {
+                AgentError::Argument(format!(
+                    "get_scoped_bindings missing bound value for `{}` on {}",
+                    target_ent.id_field, target_ent.name
+                ))
+            })?;
+        Ok(Ref::new(target_ent.name.clone(), id.clone()))
     }
 }
 

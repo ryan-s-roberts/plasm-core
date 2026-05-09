@@ -70,3 +70,11 @@
   covers: [query_filtered, page_next, projection]
   expect:
     entities_any: [Ruleset]
+
+- id: cf-edge-10
+  schema: cloudflare
+  goal: "From a zone, open security_overview for typed posture fields and relation-first next hops (managed WAF, DDoS L7 ruleset, custom rules, legacy packages) before deep ruleset listing"
+  tags: [query, relation]
+  covers: [query_filtered, chain, projection]
+  expect:
+    entities_any: [SecurityOverview]

@@ -517,6 +517,7 @@ pub enum RelationMaterializationSummary {
     FromParentGet,
     QueryScoped,
     QueryScopedBindings,
+    GetScopedBindings,
 }
 
 impl From<&RelationMaterialization> for RelationMaterializationSummary {
@@ -526,6 +527,7 @@ impl From<&RelationMaterialization> for RelationMaterializationSummary {
             RelationMaterialization::FromParentGet { .. } => Self::FromParentGet,
             RelationMaterialization::QueryScoped { .. } => Self::QueryScoped,
             RelationMaterialization::QueryScopedBindings { .. } => Self::QueryScopedBindings,
+            RelationMaterialization::GetScopedBindings { .. } => Self::GetScopedBindings,
         }
     }
 }
@@ -5825,10 +5827,7 @@ mod tests {
 
     #[test]
     fn rendered_domain_tsv_teaching_rows_single_tab_separator() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let (_, body) = split_tsv_domain_contract_and_table(&tsv);
@@ -6156,11 +6155,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_zone_domain_no_unary_placeholder_relation_or_fake_projection_meaning() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_zone_domain_no_unary_placeholder_relation_or_fake_projection_meaning() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let lines = domain_example_lines(&cgs, "Zone", Some(&map), None);
@@ -6224,11 +6220,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_symbolic_prompt_avoids_raw_zone_id_navigation_suffix() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_symbolic_prompt_avoids_raw_zone_id_navigation_suffix() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         for line in prompt.lines() {
@@ -6251,11 +6244,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let p = map.ident_sym_entity_field("Ruleset", "zone_id");
@@ -6273,10 +6263,7 @@ mod tests {
 
     #[test]
     fn exposure_surface_omits_entity_ref_nav_when_target_entity_not_exposed() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let entry = cgs.entry_id.clone().unwrap_or_default();
         let delta = crate::discovery::derive_intent_exposure_surface_batch(
@@ -6365,10 +6352,7 @@ mod tests {
 
     #[test]
     fn incoming_relation_nav_bases_respect_exposure_surface_parent_and_slots() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let entry = cgs.entry_id.clone().unwrap_or_default();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
@@ -6409,11 +6393,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_zone_id_p_slot_gloss_omits_duplicate_values_row_prose() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_zone_id_p_slot_gloss_omits_duplicate_values_row_prose() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let p = map.ident_sym_entity_field("Ruleset", "zone_id");
@@ -6435,11 +6416,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_zone_projection_tsv_row_has_exactly_one_machine_tab() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_zone_projection_tsv_row_has_exactly_one_machine_tab() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let mut line_valid_cache = HashMap::new();
@@ -6480,18 +6458,15 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_ruleset_tsv_teaching_semantics() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_ruleset_tsv_teaching_semantics() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
             !prompt.contains("List rulesets on a zone"),
             "ruleset_query capability prose must not leak into TSV Meaning"
         );
-        let desc = "Rules that control traffic handling for a Cloudflare zone";
+        let desc = "Rules configuration this row represents";
         assert_eq!(
             prompt.matches(desc).count(),
             1,
@@ -6543,11 +6518,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_waf_package_query_projection_witness_row() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_waf_package_query_projection_witness_row() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let mut line_valid_cache = HashMap::new();
@@ -6621,11 +6593,8 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_duplicate_registry_p_slot_gloss_suppressed() {
-        let dir = apis_dir("cloudflare");
-        if !dir.exists() {
-            return;
-        }
+    fn prompt_matrix_duplicate_registry_p_slot_gloss_suppressed() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {

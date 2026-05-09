@@ -23,7 +23,7 @@ use plasm_core::{
     Ref, RelationMaterialization, RelationSchema, TypeError, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1778,7 +1778,84 @@ impl ExecutionEngine {
             }
         }
 
-        let (cached, source) = self.fetch_get_decoded(get, cgs, mode, None, true).await?;
+        let (cached, source) = self
+            .fetch_get_decoded(get, cgs, mode, None, true, Some(cache))
+            .await?;
+        cache.insert(cached.clone())?;
+
+        Ok(ExecutionResult {
+            entities: vec![cached],
+            count: 1,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source,
+            stats: ExecutionStats {
+                duration_ms: 0,
+                network_requests: if source == ExecutionSource::Live {
+                    1
+                } else {
+                    0
+                },
+                cache_hits: 0,
+                cache_misses: 1,
+            },
+            request_fingerprints: Vec::new(),
+        })
+    }
+
+    /// Like [`Self::execute_get`] for HTTP-backed GET capabilities used **inside** a composed `views:` DAG.
+    pub(crate) async fn execute_get_for_view_dag(
+        &self,
+        get: &GetExpr,
+        cgs: &CGS,
+        cache: &mut GraphCache,
+        mode: ExecutionMode,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        if let Some(entity) = cache.get(&get.reference) {
+            if entity.completeness == EntityCompleteness::Complete {
+                return Ok(ExecutionResult {
+                    entities: vec![entity.clone()],
+                    count: 1,
+                    has_more: false,
+                    pagination_resume: None,
+                    paging_handle: None,
+                    source: ExecutionSource::Cache,
+                    stats: ExecutionStats {
+                        duration_ms: 0,
+                        network_requests: 0,
+                        cache_hits: 1,
+                        cache_misses: 0,
+                    },
+                    request_fingerprints: Vec::new(),
+                });
+            }
+        }
+
+        let capability = cgs
+            .find_capability(&get.reference.entity_type, plasm_core::CapabilityKind::Get)
+            .ok_or_else(|| RuntimeError::CapabilityNotFound {
+                capability: "get".to_string(),
+                entity: get.reference.entity_type.to_string(),
+            })?;
+        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        if matches!(capability_template, CapabilityTemplate::View(_)) {
+            return Err(RuntimeError::ConfigurationError {
+                message:
+                    "composed-view GET transport cannot nest as an inner node inside another views: DAG"
+                        .into(),
+            });
+        }
+        let (cached, source) = self
+            .fetch_http_transport_get_decoded(
+                get,
+                cgs,
+                mode,
+                capability,
+                &capability_template,
+                true,
+            )
+            .await?;
         cache.insert(cached.clone())?;
 
         Ok(ExecutionResult {
@@ -1868,6 +1945,86 @@ impl ExecutionEngine {
         Ok(serde_json::Value::Object(primary_obj))
     }
 
+    /// HTTP(S)/GraphQL GET path only — never dispatches composed [`CapabilityTemplate::View`].
+    async fn fetch_http_transport_get_decoded(
+        &self,
+        get: &GetExpr,
+        cgs: &CGS,
+        mode: ExecutionMode,
+        capability: &CapabilitySchema,
+        capability_template: &CapabilityTemplate,
+        inject_execute_session_env: bool,
+    ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
+        let mut env = CmlEnv::new();
+        if inject_execute_session_env {
+            merge_plasm_execute_session_share_token_env(&mut env);
+            merge_plasm_execute_session_proof_base_token_env(&mut env);
+        }
+        populate_template_path_env(
+            &mut env,
+            capability_template,
+            &get.reference,
+            get.path_vars.as_ref(),
+            None,
+        );
+        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
+
+        if inject_execute_session_env {
+            merge_plasm_execute_session_env(&mut env);
+        }
+
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
+        let (response, source) = with_dispatch_entity(
+            Some(get.reference.entity_type.as_str()),
+            self.execute_with_replay(&compiled, mode),
+        )
+        .await?;
+        let response = self
+            .apply_auxiliary_http_merge_response(
+                capability_template,
+                &env,
+                mode,
+                response,
+                Some(get.reference.entity_type.as_str()),
+            )
+            .await?;
+        let response =
+            narrow_http_graphql_response_for_entity_decode(capability_template, response)?;
+        let rid = cgs
+            .get_entity(&get.reference.entity_type)
+            .filter(|e| e.implicit_request_identity)
+            .and_then(|_| get.reference.simple_id().map(|id| id.as_str()));
+        let decoder = create_entity_decoder(
+            &get.reference.entity_type,
+            cgs,
+            None,
+            rid,
+            Some(&ref_to_identity_ambient(&get.reference)),
+        );
+        let decoded_entities = decode_entities(&decoder, &response)?;
+
+        let decoded = decoded_entities
+            .first()
+            .ok_or_else(|| RuntimeError::CacheError {
+                message: format!("Entity not found: {}", get.reference),
+            })?;
+
+        let timestamp = current_timestamp();
+        let cached = CachedEntity::from_decoded(
+            decoded.reference.clone(),
+            decoded.fields.clone(),
+            decoded.relations.clone(),
+            timestamp,
+            EntityCompleteness::Complete,
+        );
+        Ok((cached, source))
+    }
+
     /// Run GET + decode without consulting the graph cache (used for query hydration and cache refresh).
     ///
     /// When `hydrate_capability` is `Some(name)`, use that named GET capability instead of the
@@ -1882,6 +2039,7 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         hydrate_capability: Option<&str>,
         inject_execute_session_env: bool,
+        cache: Option<&mut GraphCache>,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let capability: &CapabilitySchema = match hydrate_capability {
             Some(name) => {
@@ -1919,74 +2077,37 @@ impl ExecutionEngine {
 
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
-        let mut env = CmlEnv::new();
-        if inject_execute_session_env {
-            merge_plasm_execute_session_share_token_env(&mut env);
-            merge_plasm_execute_session_proof_base_token_env(&mut env);
-        }
-        populate_template_path_env(
-            &mut env,
-            &capability_template,
-            &get.reference,
-            get.path_vars.as_ref(),
-            None,
-        );
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
-
-        if inject_execute_session_env {
-            merge_plasm_execute_session_env(&mut env);
-        }
-
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
-        let (response, source) = with_dispatch_entity(
-            Some(get.reference.entity_type.as_str()),
-            self.execute_with_replay(&compiled, mode),
-        )
-        .await?;
-        let response = self
-            .apply_auxiliary_http_merge_response(
-                &capability_template,
-                &env,
+        if let CapabilityTemplate::View(vt) = &capability_template {
+            let mut ephemeral = GraphCache::new();
+            let cache_ref = cache.unwrap_or(&mut ephemeral);
+            let res = crate::view_execution::execute_view_get(
+                self,
+                vt.view.as_str(),
+                get,
+                cgs,
+                cache_ref,
                 mode,
-                response,
-                Some(get.reference.entity_type.as_str()),
             )
             .await?;
-        let response =
-            narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
-        let rid = cgs
-            .get_entity(&get.reference.entity_type)
-            .filter(|e| e.implicit_request_identity)
-            .and_then(|_| get.reference.simple_id().map(|id| id.as_str()));
-        let decoder = create_entity_decoder(
-            &get.reference.entity_type,
+            let cached = res
+                .entities
+                .first()
+                .cloned()
+                .ok_or_else(|| RuntimeError::CacheError {
+                    message: format!("composed view `{}` returned no entity row", vt.view),
+                })?;
+            return Ok((cached, res.source));
+        }
+
+        self.fetch_http_transport_get_decoded(
+            get,
             cgs,
-            None,
-            rid,
-            Some(&ref_to_identity_ambient(&get.reference)),
-        );
-        let decoded_entities = decode_entities(&decoder, &response)?;
-
-        let decoded = decoded_entities
-            .first()
-            .ok_or_else(|| RuntimeError::CacheError {
-                message: format!("Entity not found: {}", get.reference),
-            })?;
-
-        let timestamp = current_timestamp();
-        let cached = CachedEntity::from_decoded(
-            decoded.reference.clone(),
-            decoded.fields.clone(),
-            decoded.relations.clone(),
-            timestamp,
-            EntityCompleteness::Complete,
-        );
-        Ok((cached, source))
+            mode,
+            capability,
+            &capability_template,
+            inject_execute_session_env,
+        )
+        .await
     }
 
     /// When [`CapabilitySchema::invoke_preflight`] is set, load the invoke target row (cache or GET)
@@ -2033,6 +2154,7 @@ impl ExecutionEngine {
                 mode,
                 Some(spec.hydrate_capability.as_str()),
                 false,
+                Some(cache),
             )
             .await?;
         cache.insert(cached.clone())?;
@@ -2083,7 +2205,10 @@ impl ExecutionEngine {
 
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
             let get = GetExpr::from_ref(reference.clone());
-            async move { self.fetch_get_decoded(&get, cgs, mode, None, false).await }
+            async move {
+                self.fetch_get_decoded(&get, cgs, mode, None, false, None)
+                    .await
+            }
         }))
         .buffer_unordered(concurrency);
 
@@ -2500,66 +2625,152 @@ impl ExecutionEngine {
                 }
             }
         } else if let Some(rel) = source_entity.relations.get(chain.selector.as_str()) {
-            let mat = rel
-                .materialize
-                .as_ref()
-                .unwrap_or(&RelationMaterialization::Unavailable);
             match rel.cardinality {
-                plasm_core::Cardinality::Many => match mat {
-                    RelationMaterialization::QueryScoped { capability, param } => {
-                        return self
-                            .execute_chain_via_param(
-                                &source_result,
-                                rel.target_resource.clone(),
-                                capability,
-                                param,
-                                cgs,
-                                cache,
-                                mode,
-                            )
-                            .await;
+                plasm_core::Cardinality::Many => {
+                    let mat = rel
+                        .materialize
+                        .as_ref()
+                        .unwrap_or(&RelationMaterialization::Unavailable);
+                    match mat {
+                        RelationMaterialization::QueryScoped { capability, param } => {
+                            return self
+                                .execute_chain_via_param(
+                                    &source_result,
+                                    rel.target_resource.clone(),
+                                    capability,
+                                    param,
+                                    cgs,
+                                    cache,
+                                    mode,
+                                )
+                                .await;
+                        }
+                        RelationMaterialization::QueryScopedBindings {
+                            capability,
+                            bindings,
+                        } => {
+                            return self
+                                .execute_chain_via_bindings(
+                                    &source_result,
+                                    source_entity,
+                                    rel.target_resource.clone(),
+                                    capability,
+                                    bindings,
+                                    cgs,
+                                    cache,
+                                    mode,
+                                )
+                                .await;
+                        }
+                        RelationMaterialization::FromParentGet { .. } => {
+                            return self
+                                .execute_chain_from_embedded_relations(
+                                    &source_result,
+                                    rel,
+                                    cgs,
+                                    cache,
+                                    mode,
+                                    &chain.step,
+                                    consume.clone(),
+                                    opts.clone(),
+                                )
+                                .await;
+                        }
+                        RelationMaterialization::Unavailable => {
+                            if chain_relation_refs_present(&source_result, chain.selector.as_str())
+                            {
+                                return self
+                                    .execute_chain_from_embedded_relations(
+                                        &source_result,
+                                        rel,
+                                        cgs,
+                                        cache,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                            return Err(RuntimeError::ConfigurationError {
+                                message: format!(
+                                    "Relation '{}.{}' is not configured for chain traversal (materialize unavailable)",
+                                    source_entity_name, chain.selector
+                                ),
+                            });
+                        }
+                        RelationMaterialization::GetScopedBindings { .. } => {
+                            return Err(RuntimeError::ConfigurationError {
+                                message: format!(
+                                    "Relation '{}.{}': get_scoped_bindings requires cardinality one",
+                                    source_entity_name, chain.selector
+                                ),
+                            });
+                        }
                     }
-                    RelationMaterialization::QueryScopedBindings {
-                        capability,
-                        bindings,
-                    } => {
-                        return self
-                            .execute_chain_via_bindings(
-                                &source_result,
-                                source_entity,
-                                rel.target_resource.clone(),
-                                capability,
-                                bindings,
-                                cgs,
-                                cache,
-                                mode,
-                            )
-                            .await;
+                }
+                plasm_core::Cardinality::One => {
+                    match rel.materialize.as_ref() {
+                        Some(RelationMaterialization::GetScopedBindings {
+                            capability,
+                            bindings,
+                        }) => {
+                            return self
+                                .execute_chain_via_get_bindings(
+                                    &source_result,
+                                    source_entity,
+                                    rel.target_resource.clone(),
+                                    capability,
+                                    bindings,
+                                    cgs,
+                                    cache,
+                                    mode,
+                                )
+                                .await;
+                        }
+                        Some(RelationMaterialization::FromParentGet { .. }) => {
+                            return self
+                                .execute_chain_from_embedded_relations(
+                                    &source_result,
+                                    rel,
+                                    cgs,
+                                    cache,
+                                    mode,
+                                    &chain.step,
+                                    consume.clone(),
+                                    opts.clone(),
+                                )
+                                .await;
+                        }
+                        Some(RelationMaterialization::QueryScoped { .. })
+                        | Some(RelationMaterialization::QueryScopedBindings { .. }) => {
+                            return Err(RuntimeError::ConfigurationError {
+                                message: format!(
+                                    "Relation '{}.{}': query-scoped materialization is invalid for cardinality one",
+                                    source_entity_name, chain.selector
+                                ),
+                            });
+                        }
+                        Some(RelationMaterialization::Unavailable) | None => {
+                            if chain_relation_refs_present(&source_result, chain.selector.as_str())
+                            {
+                                return self
+                                    .execute_chain_from_embedded_relations(
+                                        &source_result,
+                                        rel,
+                                        cgs,
+                                        cache,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                        }
                     }
-                    RelationMaterialization::Unavailable => {
-                        return Err(RuntimeError::ConfigurationError {
-                            message: format!(
-                                "Relation '{}.{}' is not configured for chain traversal (materialize unavailable)",
-                                source_entity_name, chain.selector
-                            ),
-                        });
-                    }
-                    RelationMaterialization::FromParentGet { .. } => {
-                        return self
-                            .execute_chain_from_embedded_relations(
-                                &source_result,
-                                rel,
-                                cgs,
-                                cache,
-                                mode,
-                                &chain.step,
-                                consume.clone(),
-                                opts.clone(),
-                            )
-                            .await;
-                    }
-                },
-                plasm_core::Cardinality::One => rel.target_resource.to_string(),
+                    rel.target_resource.to_string()
+                }
             }
         } else {
             return Err(RuntimeError::ConfigurationError {
@@ -2680,7 +2891,10 @@ impl ExecutionEngine {
             let concurrency = self.config.hydrate_concurrency.max(1);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let get = GetExpr::from_ref(reference.clone());
-                async move { self.fetch_get_decoded(&get, cgs, mode, None, false).await }
+                async move {
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, None)
+                        .await
+                }
             }))
             .buffer_unordered(concurrency);
 
@@ -2981,6 +3195,123 @@ impl ExecutionEngine {
         })
     }
 
+    /// Chain on `get_scoped_bindings`: synthesize a [`GetExpr`] per parent row from binding keys.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_chain_via_get_bindings(
+        &self,
+        source_result: &ExecutionResult,
+        parent_entity_def: &EntityDef,
+        target_entity: EntityName,
+        capability: &plasm_core::CapabilityName,
+        bindings: &IndexMap<CapabilityParamName, EntityFieldName>,
+        cgs: &CGS,
+        cache: &mut GraphCache,
+        mode: ExecutionMode,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        use futures_util::stream::{self, StreamExt};
+
+        let target_key = target_entity.as_str();
+        let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!(
+                    "Chain materialize: unknown capability '{}' (target entity '{}')",
+                    capability, target_key
+                ),
+            }
+        })?;
+        if cap.domain.as_str() != target_key {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "Chain materialize: capability '{}' domain '{}' does not match target '{}'",
+                    capability, cap.domain, target_key
+                ),
+            });
+        }
+
+        let target_ent =
+            cgs.get_entity(target_key)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!("Chain materialize: unknown target entity '{target_key}'"),
+                })?;
+
+        let mut gets: Vec<GetExpr> = Vec::new();
+        for entity in &source_result.entities {
+            let mut bound: IndexMap<String, String> = IndexMap::new();
+            for (cap_param, parent_field) in bindings.iter() {
+                bound.insert(
+                    cap_param.to_string(),
+                    chain_binding_value(entity, parent_entity_def, parent_field),
+                );
+            }
+            let reference = ref_from_materialize_bindings_for_get_chain(target_ent, &bound)?;
+            gets.push(GetExpr::from_ref(reference));
+        }
+
+        if gets.is_empty() {
+            return Ok(ExecutionResult {
+                entities: vec![],
+                count: 0,
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: source_result.source,
+                stats: source_result.stats.clone(),
+                request_fingerprints: source_result.request_fingerprints.clone(),
+            });
+        }
+
+        let concurrency = self.config.hydrate_concurrency.max(1);
+        let mut all_entities: Vec<CachedEntity> = Vec::new();
+        let total_network = source_result.stats.network_requests;
+        let total_cache_hits = source_result.stats.cache_hits;
+        let mut any_live = source_result.source == ExecutionSource::Live;
+
+        let cap_named = capability.clone();
+        let mut stream = stream::iter(gets.into_iter().map(move |get| {
+            let c = cap_named.clone();
+            async move {
+                self.fetch_get_decoded(&get, cgs, mode, Some(c.as_str()), false, None)
+                    .await
+            }
+        }))
+        .buffer_unordered(concurrency);
+
+        let mut extra_network = 0usize;
+        let mut extra_cache_hits = 0usize;
+        while let Some(res) = stream.next().await {
+            let (entity, source) = res?;
+            if source == ExecutionSource::Live {
+                any_live = true;
+                extra_network += 1;
+            } else {
+                extra_cache_hits += 1;
+            }
+            all_entities.push(entity);
+        }
+
+        cache.merge(all_entities.clone())?;
+        let count = all_entities.len();
+        Ok(ExecutionResult {
+            entities: all_entities,
+            count,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: if any_live {
+                ExecutionSource::Live
+            } else {
+                ExecutionSource::Cache
+            },
+            stats: ExecutionStats {
+                duration_ms: 0,
+                network_requests: total_network + extra_network,
+                cache_hits: total_cache_hits + extra_cache_hits,
+                cache_misses: count,
+            },
+            request_fingerprints: Vec::new(),
+        })
+    }
+
     /// Chain on `FromParentGet`: refs already on `CachedEntity.relations[relation.name]`.
     #[allow(clippy::too_many_arguments)] // cache + mode + step + consume mirror `execute_chain` helpers
     async fn execute_chain_from_embedded_relations(
@@ -3106,7 +3437,10 @@ impl ExecutionEngine {
             let concurrency = self.config.hydrate_concurrency.max(1);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let get = GetExpr::from_ref(reference.clone());
-                async move { self.fetch_get_decoded(&get, cgs, mode, None, false).await }
+                async move {
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, None)
+                        .await
+                }
             }))
             .buffer_unordered(concurrency);
 
@@ -4240,6 +4574,46 @@ fn extract_ref_id(entity: &CachedEntity, selector: &str) -> Option<String> {
     }
 }
 
+fn chain_relation_refs_present(source_result: &ExecutionResult, selector: &str) -> bool {
+    source_result.entities.iter().any(|e| {
+        e.relations
+            .get(selector)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    })
+}
+
+fn ref_from_materialize_bindings_for_get_chain(
+    target_ent: &EntityDef,
+    binding_values: &IndexMap<String, String>,
+) -> Result<Ref, RuntimeError> {
+    if !target_ent.key_vars.is_empty() {
+        let mut parts = BTreeMap::new();
+        for kv in &target_ent.key_vars {
+            let s = binding_values.get(kv.as_str()).ok_or_else(|| {
+                RuntimeError::ConfigurationError {
+                    message: format!(
+                        "get_scoped_bindings missing bound value for `{}` on entity `{}`",
+                        kv, target_ent.name
+                    ),
+                }
+            })?;
+            parts.insert(kv.to_string(), s.clone());
+        }
+        Ok(Ref::compound(target_ent.name.clone(), parts))
+    } else {
+        let id = binding_values
+            .get(target_ent.id_field.as_str())
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!(
+                    "get_scoped_bindings missing bound value for id field `{}` on entity `{}`",
+                    target_ent.id_field, target_ent.name
+                ),
+            })?;
+        Ok(Ref::new(target_ent.name.clone(), id.clone()))
+    }
+}
+
 /// Value for a `query_scoped_bindings` param from a parent cached row / ref.
 fn chain_binding_value(
     entity: &CachedEntity,
@@ -5331,10 +5705,10 @@ mod tests {
     /// Regression: Cloudflare v4 list envelopes use `result: [...]`; paginated queries skip
     /// `prepare_http_query_response` and must still decode rows with scalar `id`.
     #[test]
-    fn cloudflare_ruleset_query_decodes_v4_envelope_list() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
-        let cgs = plasm_core::load_schema(&dir).expect("load apis/cloudflare");
+    fn matrix_fixture_ruleset_query_decodes_v4_envelope_list() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = plasm_core::load_schema(&dir).expect("load plasm_prompt_matrix fixture");
         let cap = cgs
             .get_capability("ruleset_query")
             .expect("ruleset_query capability");
@@ -5390,10 +5764,10 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_ruleset_get_narrowing_decodes_inner_result_object() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
-        let cgs = plasm_core::load_schema(&dir).expect("load apis/cloudflare");
+    fn matrix_fixture_ruleset_get_narrowing_decodes_inner_result_object() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = plasm_core::load_schema(&dir).expect("load plasm_prompt_matrix fixture");
         let cap = cgs
             .get_capability("ruleset_get")
             .expect("ruleset_get capability");

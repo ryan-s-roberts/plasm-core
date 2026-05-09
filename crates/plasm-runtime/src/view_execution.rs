@@ -1,9 +1,14 @@
 //! CGS `views:` execution — composed reads without dedicated HTTP mappings.
+//!
+//! Execution phases follow the internal [`crate::view_typestate`] sketch: bind scope → run nodes →
+//! materialize agent-facing row + relation refs (no `node_*` vocabulary in prompts).
 
 use std::collections::{BTreeMap, HashSet};
 
 use indexmap::IndexMap;
-use plasm_core::schema::{EntityDef, ViewOutputBinding, ViewParamBinding};
+use plasm_compile::DecodedRelation;
+use plasm_core::expr::EntityKey;
+use plasm_core::schema::{EntityDef, ViewOutputBinding, ViewParamBinding, ViewRelationBinding};
 use plasm_core::{CapabilityKind, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness, GraphCache};
@@ -94,6 +99,50 @@ fn collect_predicate_vars(predicate: &Predicate, acc: &mut IndexMap<String, Vec<
     }
 }
 
+fn scope_from_get_reference(
+    view_ent: &EntityDef,
+    get: &GetExpr,
+) -> Result<IndexMap<String, Value>, RuntimeError> {
+    let mut scope = IndexMap::new();
+    match &get.reference.key {
+        EntityKey::Simple(id) => {
+            scope.insert(
+                view_ent.id_field.to_string(),
+                Value::String(id.as_str().to_string()),
+            );
+        }
+        EntityKey::Compound(parts) => {
+            for (k, v) in parts {
+                scope.insert(k.clone(), Value::String(v.clone()));
+            }
+        }
+    }
+    Ok(scope)
+}
+
+fn validate_expected_scope(
+    view_name: &str,
+    view: &plasm_core::schema::ViewDefinition,
+    scope: &IndexMap<String, Value>,
+) -> Result<(), RuntimeError> {
+    let mut expected_scope = HashSet::new();
+    for s in &view.scope {
+        expected_scope.insert(s.name.as_str());
+    }
+    if !expected_scope.is_empty() {
+        for name in &expected_scope {
+            if !scope.contains_key(*name) {
+                return Err(RuntimeError::ConfigurationError {
+                    message: format!(
+                        "view `{view_name}` requires identity/scope field `{name}` (declared under views.scope)"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 fn resolve_binding(
     binding: &ViewParamBinding,
     scope: &IndexMap<String, Value>,
@@ -104,7 +153,7 @@ fn resolve_binding(
                 .get(param)
                 .cloned()
                 .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view scope missing `{param}` (from predicate)"),
+                    message: format!("view scope missing `{param}`"),
                 })
         }
         ViewParamBinding::Literal { value } => Ok(json_to_plasm_value(value)),
@@ -125,6 +174,11 @@ fn binds_to_predicate(
     } else {
         Predicate::And { args }
     })
+}
+
+fn values_semantically_equal(row_val: &Value, expected_json: &serde_json::Value) -> bool {
+    let expected = json_to_plasm_value(expected_json);
+    row_val == &expected
 }
 
 fn resolve_output_binding(
@@ -164,6 +218,34 @@ fn resolve_output_binding(
                     message: format!("view output references unknown node `{node}`"),
                 })?;
             Ok(field_histogram_json(&r.entities, field.as_str()))
+        }
+        ViewOutputBinding::NodeAnyRowFieldEquals {
+            node,
+            field,
+            equals,
+        } => {
+            let r = node_results
+                .get(node)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!("view output references unknown node `{node}`"),
+                })?;
+            let hit = r.entities.iter().any(|row| {
+                let v = row
+                    .fields
+                    .get(field)
+                    .map(TypedFieldValue::to_value)
+                    .unwrap_or(Value::Null);
+                values_semantically_equal(&v, equals)
+            });
+            Ok(Value::Bool(hit))
+        }
+        ViewOutputBinding::NodeRowCountPositive { node } => {
+            let r = node_results
+                .get(node)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!("view output references unknown node `{node}`"),
+                })?;
+            Ok(Value::Bool(r.count > 0))
         }
     }
 }
@@ -234,11 +316,211 @@ fn build_view_row_reference(
     }
 }
 
-/// Run a `views:` composition for an outer [`QueryExpr`] (must target the view entity).
-pub(crate) async fn execute_view_query(
+fn ref_from_get_bind_params(
+    target_ent: &EntityDef,
+    bound_param_to_string: &BTreeMap<String, String>,
+) -> Result<Ref, RuntimeError> {
+    if !target_ent.key_vars.is_empty() {
+        let mut parts = BTreeMap::new();
+        for kv in &target_ent.key_vars {
+            let s = bound_param_to_string.get(kv.as_str()).ok_or_else(|| {
+                RuntimeError::ConfigurationError {
+                    message: format!(
+                        "view Get node: missing binding for parameter `{}` (needed for `{}` key_vars)",
+                        kv, target_ent.name
+                    ),
+                }
+            })?;
+            parts.insert(kv.to_string(), s.clone());
+        }
+        Ok(Ref::compound(target_ent.name.clone(), parts))
+    } else {
+        let id = bound_param_to_string
+            .get(target_ent.id_field.as_str())
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!(
+                    "view Get node: missing binding for id parameter `{}`",
+                    target_ent.id_field
+                ),
+            })?;
+        Ok(Ref::new(target_ent.name.clone(), id.clone()))
+    }
+}
+
+fn cached_row_to_target_ref(
+    target_ent: &EntityDef,
+    row: &CachedEntity,
+) -> Result<Ref, RuntimeError> {
+    let mut parts = BTreeMap::new();
+    if !target_ent.key_vars.is_empty() {
+        for kv in &target_ent.key_vars {
+            let v = row
+                .fields
+                .get(kv.as_str())
+                .map(TypedFieldValue::to_value)
+                .unwrap_or(Value::Null);
+            parts.insert(kv.to_string(), scalar_string_from_value(&v)?);
+        }
+        Ok(Ref::compound(target_ent.name.clone(), parts))
+    } else {
+        let v = row
+            .fields
+            .get(target_ent.id_field.as_str())
+            .map(TypedFieldValue::to_value)
+            .unwrap_or(Value::Null);
+        Ok(Ref::new(
+            target_ent.name.clone(),
+            scalar_string_from_value(&v)?,
+        ))
+    }
+}
+
+fn rows_for_binding<'a>(
+    binding: &'a ViewRelationBinding,
+    node_results: &'a IndexMap<String, ExecutionResult>,
+) -> Result<Vec<&'a CachedEntity>, RuntimeError> {
+    match binding {
+        ViewRelationBinding::FirstNodeRowWhere {
+            node,
+            where_field,
+            equals,
+        }
+        | ViewRelationBinding::NodeRowsWhere {
+            node,
+            where_field,
+            equals,
+        } => {
+            let r = node_results
+                .get(node)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!("view relation_output references unknown node `{node}`"),
+                })?;
+            let matched: Vec<&CachedEntity> = r
+                .entities
+                .iter()
+                .filter(|row| {
+                    let v = row
+                        .fields
+                        .get(where_field.as_str())
+                        .map(TypedFieldValue::to_value)
+                        .unwrap_or(Value::Null);
+                    values_semantically_equal(&v, equals)
+                })
+                .collect();
+            Ok(matched)
+        }
+        ViewRelationBinding::NodeAllRows { node } => {
+            let r = node_results
+                .get(node)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!("view relation_output references unknown node `{node}`"),
+                })?;
+            Ok(r.entities.iter().collect())
+        }
+        ViewRelationBinding::NodeSingleRow { node } => {
+            let r = node_results
+                .get(node)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!("view relation_output references unknown node `{node}`"),
+                })?;
+            Ok(r.entities.iter().collect::<Vec<_>>())
+        }
+    }
+}
+
+fn resolve_view_relation_maps(
+    view: &plasm_core::schema::ViewDefinition,
+    node_results: &IndexMap<String, ExecutionResult>,
+    cgs: &CGS,
+) -> Result<IndexMap<String, DecodedRelation>, RuntimeError> {
+    let mut out: IndexMap<String, DecodedRelation> = IndexMap::new();
+    for spec in &view.relation_outputs {
+        let target_ent = cgs.get_entity(spec.target.as_str()).ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!(
+                    "view relation_output references unknown target entity `{}`",
+                    spec.target
+                ),
+            }
+        })?;
+        let refs: Vec<Ref> = match &spec.binding {
+            ViewRelationBinding::FirstNodeRowWhere { .. } => {
+                let rows = rows_for_binding(&spec.binding, node_results)?;
+                if let Some(row) = rows.first() {
+                    vec![cached_row_to_target_ref(target_ent, row)?]
+                } else {
+                    Vec::new()
+                }
+            }
+            ViewRelationBinding::NodeRowsWhere { .. } | ViewRelationBinding::NodeAllRows { .. } => {
+                let rows = rows_for_binding(&spec.binding, node_results)?;
+                rows.into_iter()
+                    .map(|row| cached_row_to_target_ref(target_ent, row))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            ViewRelationBinding::NodeSingleRow { node } => {
+                let r = node_results
+                    .get(node)
+                    .ok_or_else(|| RuntimeError::ConfigurationError {
+                        message: format!("view relation_output references unknown node `{node}`"),
+                    })?;
+                if r.count != 1 {
+                    return Err(RuntimeError::ConfigurationError {
+                        message: format!(
+                            "view relation_output node_single_row `{node}` expected exactly one entity (got {})",
+                            r.count
+                        ),
+                    });
+                }
+                let row = r
+                    .entities
+                    .first()
+                    .ok_or_else(|| RuntimeError::ConfigurationError {
+                        message: format!("view relation_output node `{node}` missing row"),
+                    })?;
+                vec![cached_row_to_target_ref(target_ent, row)?]
+            }
+        };
+        if !refs.is_empty() {
+            out.insert(spec.relation.to_string(), DecodedRelation::Specified(refs));
+        }
+    }
+    Ok(out)
+}
+
+/// Derive compact posture summary label for Cloudflare `SecurityOverview` (internal; not `node_*` wiring).
+fn derive_security_surface_status(fields_plain: &IndexMap<String, Value>) -> Value {
+    let b = |name: &str| -> bool {
+        fields_plain
+            .get(name)
+            .map(|v| matches!(v, Value::Bool(true)))
+            .unwrap_or(false)
+    };
+    let legacy = b("legacy_waf_present");
+    let custom = b("custom_rules_configured");
+    let managed = b("managed_waf_configured");
+    let ddos = b("ddos_l7_configured");
+
+    let label = if legacy && !managed {
+        "legacy_heavy"
+    } else if custom && managed {
+        "managed_and_custom"
+    } else if managed || ddos {
+        "managed_surface"
+    } else if custom {
+        "custom_heavy"
+    } else if legacy {
+        "legacy_only"
+    } else {
+        "minimal"
+    };
+    Value::String(label.to_string())
+}
+
+async fn execute_view_scoped(
     engine: &ExecutionEngine,
     view_name: &str,
-    query: &QueryExpr,
+    scope: IndexMap<String, Value>,
     cgs: &CGS,
     cache: &mut GraphCache,
     mode: ExecutionMode,
@@ -258,42 +540,7 @@ pub(crate) async fn execute_view_query(
                 ),
             })?;
 
-    if query.entity.as_str() != view.entity.as_str() {
-        return Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{view_name}` targets entity {} but query was for {}",
-                view.entity.as_str(),
-                query.entity.as_str()
-            ),
-        });
-    }
-
-    let pred = query
-        .predicate
-        .as_ref()
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{view_name}` requires a query predicate supplying scope parameters"
-            ),
-        })?;
-
-    let scope = predicate_scope_map(pred)?;
-
-    let mut expected_scope = HashSet::new();
-    for s in &view.scope {
-        expected_scope.insert(s.name.as_str());
-    }
-    if !expected_scope.is_empty() {
-        for name in &expected_scope {
-            if !scope.contains_key(*name) {
-                return Err(RuntimeError::ConfigurationError {
-                    message: format!(
-                        "view `{view_name}` requires predicate field `{name}` (declared under views.scope)"
-                    ),
-                });
-            }
-        }
-    }
+    validate_expected_scope(view_name, view, &scope)?;
 
     let mut node_results: IndexMap<String, ExecutionResult> = IndexMap::new();
     let mut stats = ExecutionStats {
@@ -303,13 +550,14 @@ pub(crate) async fn execute_view_query(
         cache_misses: 0,
     };
     let mut fingerprints: Vec<String> = Vec::new();
+    let mut any_live = false;
 
     for node in &view.nodes {
         let cap = cgs
             .get_capability(node.capability.as_str())
             .ok_or_else(|| RuntimeError::CapabilityNotFound {
                 capability: node.capability.clone(),
-                entity: query.entity.to_string(),
+                entity: view.entity.to_string(),
             })?;
 
         match cap.kind {
@@ -319,6 +567,9 @@ pub(crate) async fn execute_view_query(
                 let res = engine
                     .execute_query(&q, cgs, cache, mode, StreamConsumeOpts::default())
                     .await?;
+                if res.source == ExecutionSource::Live {
+                    any_live = true;
+                }
                 stats.network_requests += res.stats.network_requests;
                 stats.cache_hits += res.stats.cache_hits;
                 stats.cache_misses += res.stats.cache_misses;
@@ -326,31 +577,27 @@ pub(crate) async fn execute_view_query(
                 node_results.insert(node.id.clone(), res);
             }
             CapabilityKind::Get => {
-                let id_val = if node.bind.len() == 1 {
-                    let (_k, b) = node.bind.iter().next().expect("one bind");
-                    resolve_binding(b, &scope)?
-                } else {
-                    return Err(RuntimeError::ConfigurationError {
+                let mut bound = BTreeMap::new();
+                for (param, bspec) in &node.bind {
+                    let v = resolve_binding(bspec, &scope)?;
+                    bound.insert(param.clone(), scalar_string_from_value(&v)?);
+                }
+                let target_ent = cgs.get_entity(cap.domain.as_str()).ok_or_else(|| {
+                    RuntimeError::ConfigurationError {
                         message: format!(
-                            "view node `{}`: Get capability `{}` expects exactly one binding (the id)",
-                            node.id, node.capability
+                            "view node `{}`: unknown entity domain `{}`",
+                            node.id, cap.domain
                         ),
-                    });
-                };
-                let id_str = match id_val {
-                    Value::String(s) => s,
-                    Value::Integer(i) => i.to_string(),
-                    other => {
-                        return Err(RuntimeError::ConfigurationError {
-                            message: format!(
-                                "view node `{}`: Get id must be string-like, got {:?}",
-                                node.id, other
-                            ),
-                        });
                     }
-                };
-                let get = GetExpr::new(cap.domain.clone(), id_str);
-                let res = engine.execute_get(&get, cgs, cache, mode).await?;
+                })?;
+                let reference = ref_from_get_bind_params(target_ent, &bound)?;
+                let get = GetExpr::from_ref(reference);
+                let res = engine
+                    .execute_get_for_view_dag(&get, cgs, cache, mode)
+                    .await?;
+                if res.source == ExecutionSource::Live {
+                    any_live = true;
+                }
                 stats.network_requests += res.stats.network_requests;
                 stats.cache_hits += res.stats.cache_hits;
                 stats.cache_misses += res.stats.cache_misses;
@@ -374,13 +621,21 @@ pub(crate) async fn execute_view_query(
         fields_plain.insert(fname.clone(), v);
     }
 
+    if view_entity.name.as_str() == "SecurityOverview" {
+        fields_plain.insert(
+            "security_surface_status".to_string(),
+            derive_security_surface_status(&fields_plain),
+        );
+    }
+
     let reference = build_view_row_reference(view_entity, &fields_plain)?;
 
+    let relation_decoded = resolve_view_relation_maps(view, &node_results, cgs)?;
     let ts = crate::execution::current_timestamp();
     let cached = CachedEntity::from_decoded(
         reference,
         fields_plain,
-        IndexMap::new(),
+        relation_decoded,
         ts,
         EntityCompleteness::Complete,
     );
@@ -391,8 +646,88 @@ pub(crate) async fn execute_view_query(
         has_more: false,
         pagination_resume: None,
         paging_handle: None,
-        source: ExecutionSource::Live,
+        source: if any_live {
+            ExecutionSource::Live
+        } else {
+            ExecutionSource::Cache
+        },
         stats,
         request_fingerprints: fingerprints,
     })
+}
+
+/// Run a `views:` composition for an outer [`QueryExpr`] (must target the view entity).
+pub(crate) async fn execute_view_query(
+    engine: &ExecutionEngine,
+    view_name: &str,
+    query: &QueryExpr,
+    cgs: &CGS,
+    cache: &mut GraphCache,
+    mode: ExecutionMode,
+) -> Result<ExecutionResult, RuntimeError> {
+    let Some(view) = cgs.views.get(view_name) else {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!("unknown composed view `{view_name}`"),
+        });
+    };
+
+    if query.entity.as_str() != view.entity.as_str() {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "view `{view_name}` targets entity {} but query was for {}",
+                view.entity.as_str(),
+                query.entity.as_str()
+            ),
+        });
+    }
+
+    let pred = query
+        .predicate
+        .as_ref()
+        .ok_or_else(|| RuntimeError::ConfigurationError {
+            message: format!(
+                "view `{view_name}` requires a query predicate supplying scope parameters"
+            ),
+        })?;
+
+    let scope = predicate_scope_map(pred)?;
+    execute_view_scoped(engine, view_name, scope, cgs, cache, mode).await
+}
+
+/// Run a `views:` composition for an outer [`GetExpr`] on the view entity.
+pub(crate) async fn execute_view_get(
+    engine: &ExecutionEngine,
+    view_name: &str,
+    get: &GetExpr,
+    cgs: &CGS,
+    cache: &mut GraphCache,
+    mode: ExecutionMode,
+) -> Result<ExecutionResult, RuntimeError> {
+    let Some(view) = cgs.views.get(view_name) else {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!("unknown composed view `{view_name}`"),
+        });
+    };
+
+    if get.reference.entity_type.as_str() != view.entity.as_str() {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "view `{view_name}` targets entity {} but get ref was for {}",
+                view.entity.as_str(),
+                get.reference.entity_type
+            ),
+        });
+    }
+
+    let view_entity =
+        cgs.get_entity(&view.entity)
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!(
+                    "view `{}` targets unknown entity {}",
+                    view_name, view.entity
+                ),
+            })?;
+
+    let scope = scope_from_get_reference(view_entity, get)?;
+    execute_view_scoped(engine, view_name, scope, cgs, cache, mode).await
 }

@@ -3,7 +3,7 @@
 use crate::cgs_context::{CgsContext, Prefix};
 use crate::domain_lexicon;
 use crate::identity::{CapabilityParamName, EntityFieldName, EntityName};
-use crate::schema::{CapabilityKind, CapabilitySchema, InputType, CGS};
+use crate::schema::{CapabilityKind, CapabilitySchema, InputType, RelationSchema, CGS};
 use crate::symbol_tuning::{
     build_focus_set_union, ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey,
     ExposureSurface, ExposureSurfaceDelta,
@@ -515,10 +515,49 @@ pub(crate) fn score_capability(
         let (s, mut r) = score_token_hits(query, &ent.description);
         total += s;
         reasons.append(&mut r);
+        if let Some(h) = &ent.discovery {
+            for phrase in &h.names {
+                let (s, mut r) = score_token_hits(query, phrase.as_str());
+                total += s;
+                reasons.append(&mut r);
+            }
+            for phrase in &h.qualifier_names {
+                let (s, mut r) = score_token_hits(query, phrase.as_str());
+                total += s;
+                reasons.append(&mut r);
+            }
+        }
+    }
+    if let Some(h) = &cap.discovery {
+        for phrase in &h.operation_terms {
+            let (s, mut r) = score_token_hits(query, phrase.as_str());
+            total += s;
+            reasons.append(&mut r);
+        }
+        for phrase in &h.target_terms {
+            let (s, mut r) = score_token_hits(query, phrase.as_str());
+            total += s;
+            reasons.append(&mut r);
+        }
     }
     reasons.sort();
     reasons.dedup();
     (total, reasons)
+}
+
+/// Non-zero when `rel.discovery.qualifier_terms` is empty (always admit) or intent overlaps a term.
+fn score_relation_against_intent(query_tokens: &HashSet<String>, rel: &RelationSchema) -> u32 {
+    let Some(h) = &rel.discovery else {
+        return 1;
+    };
+    if h.qualifier_terms.is_empty() {
+        return 1;
+    }
+    let mut total = 0u32;
+    for term in &h.qualifier_terms {
+        total = total.saturating_add(score_token_hits(query_tokens, term.as_str()).0);
+    }
+    total
 }
 
 fn entity_hint_matches(hints: &[String], domain: &str) -> bool {
@@ -940,7 +979,9 @@ pub fn derive_intent_exposure_surface_batch(
         }
 
         for (rname, rel) in &ent.relations {
-            if relation_set.contains(rel.target_resource.as_str()) {
+            if relation_set.contains(rel.target_resource.as_str())
+                && score_relation_against_intent(&query_tokens, rel) > 0
+            {
                 surface.slots.insert(ExposureSlotKey::Relation {
                     source: ekey.clone(),
                     relation: rname.clone(),
@@ -1058,9 +1099,6 @@ mod tests {
     fn intent_surface_omits_relation_until_relation_target_in_scope() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let endpoints = vec!["Profile".to_string()];
         let delta = derive_intent_exposure_surface_batch(
@@ -1085,9 +1123,6 @@ mod tests {
     fn intent_surface_includes_profile_relation_when_recorded_content_in_scope() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let mut endpoints = vec!["Profile".to_string(), "RecordedContent".to_string()];
         endpoints.sort_unstable();
@@ -1113,9 +1148,6 @@ mod tests {
     fn intent_surface_drops_unscored_mutations_on_prompt_run() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let endpoints = vec!["PromptRun".to_string()];
         let delta = derive_intent_exposure_surface_batch(
@@ -1140,9 +1172,6 @@ mod tests {
     fn intent_surface_drops_unscored_reads_when_intent_targets_other_entity() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let mut endpoints = vec!["Meeting".to_string(), "Profile".to_string()];
         endpoints.sort_unstable();
@@ -1175,9 +1204,6 @@ mod tests {
     fn intent_surface_ranked_gate_excludes_scored_mutation_not_in_list() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let endpoints = vec!["PromptRun".to_string()];
         let ranked = vec!["__not_prompt_run_create__".to_string()];
@@ -1200,16 +1226,13 @@ mod tests {
     }
 
     #[test]
-    fn discover_catalog_route_cloudflare_long_intent() {
+    fn discover_catalog_route_vendor_brand_long_intent() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             (
-                "cloudflare".into(),
+                "vendor_firewall".into(),
                 "Cloudflare".into(),
                 vec![],
                 cgs.clone(),
@@ -1225,21 +1248,21 @@ mod tests {
         };
         let r = reg.discover(&q).expect("discover");
         assert!(
-            r.candidates.iter().all(|c| c.entry_id == "cloudflare"),
-            "expected only cloudflare candidates; got {:?}",
+            r.candidates.iter().all(|c| c.entry_id == "vendor_firewall"),
+            "expected only vendor_firewall candidates; got {:?}",
             r.candidates.iter().map(|c| &c.entry_id).collect::<Vec<_>>()
         );
         assert!(
             r.schema_neighborhoods
                 .iter()
-                .all(|n| n.entry_id == "cloudflare"),
-            "expected neighborhoods only for cloudflare"
+                .all(|n| n.entry_id == "vendor_firewall"),
+            "expected neighborhoods only for vendor_firewall"
         );
         assert!(
-            r.contexts
-                .iter()
-                .all(|ctx| { matches!(&ctx.prefix, Prefix::Entry { id } if id == "cloudflare") }),
-            "expected single cloudflare context"
+            r.contexts.iter().all(|ctx| {
+                matches!(&ctx.prefix, Prefix::Entry { id } if id == "vendor_firewall")
+            }),
+            "expected single vendor_firewall context"
         );
     }
 
@@ -1247,9 +1270,6 @@ mod tests {
     fn discover_catalog_route_google_sheets_phrase() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             ("github".into(), "GitHub".into(), vec![], cgs.clone()),
@@ -1272,13 +1292,10 @@ mod tests {
     fn discover_explicit_entry_ids_overrides_catalog_route() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             (
-                "cloudflare".into(),
+                "vendor_firewall".into(),
                 "Cloudflare".into(),
                 vec![],
                 cgs.clone(),
@@ -1298,13 +1315,10 @@ mod tests {
     fn discover_pick_entry_overrides_catalog_route_inference() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             (
-                "cloudflare".into(),
+                "vendor_firewall".into(),
                 "Cloudflare".into(),
                 vec![],
                 cgs.clone(),
@@ -1324,9 +1338,6 @@ mod tests {
     fn discover_generic_intent_scans_all_catalogs() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             ("alpha".into(), "Alpha".into(), vec![], cgs.clone()),
@@ -1349,13 +1360,10 @@ mod tests {
     fn discover_catalog_route_union_when_two_apis_named() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             (
-                "cloudflare".into(),
+                "vendor_firewall".into(),
                 "Cloudflare".into(),
                 vec![],
                 cgs.clone(),
@@ -1372,8 +1380,10 @@ mod tests {
         let r = reg.discover(&q).expect("discover");
         let eids: HashSet<_> = r.candidates.iter().map(|c| c.entry_id.as_str()).collect();
         assert!(
-            eids.contains("cloudflare") && eids.contains("github") && !eids.contains("clickup"),
-            "expected cloudflare+github only; got {:?}",
+            eids.contains("vendor_firewall")
+                && eids.contains("github")
+                && !eids.contains("clickup"),
+            "expected vendor_firewall+github only; got {:?}",
             eids
         );
     }
@@ -1383,9 +1393,6 @@ mod tests {
     fn intent_surface_ranked_gate_keeps_mutation_on_list() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        if !dir.exists() {
-            return;
-        }
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let endpoints = vec!["PromptRun".to_string()];
         let ranked = vec!["prompt_run_create".to_string()];

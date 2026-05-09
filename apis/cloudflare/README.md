@@ -4,16 +4,14 @@ Plasm CGS/CML for Cloudflare REST v4. **Phase 1** covers **zone-scoped** flows: 
 
 ### Agent playbook (CGS)
 
-- Default graph: **`Zone → rulesets`** is the **hub** for firewall / WAF inspection — not legacy packages.
+- Default graph: **`Zone → security_overview`** gives a **one-row** composed snapshot (counts + ruleset kind mix + legacy packages); **`Zone → rulesets`** is the full Ruleset Engine inventory — legacy **`WafPackage`** stays off this edge until seeded.
 - **`ruleset_query`** returns a **mixed** inventory; use **`ruleset_get`** with ids from that list as the primary “inspect one ruleset” path.
 - **`ruleset_entrypoint_get`** is a **phase shortcut** — **404 / 10003** when the entrypoint is **not provisioned** is **normal** and does **not** mean “no WAF.”
 - **`WafPackage`** / **`waf_package_query`** map only the **legacy** **`…/firewall/waf/packages`** API (often empty on modern zones). There is **no** default **`Zone`** relation to **`WafPackage`** — seed **`WafPackage`** (or name the capability) when an agent must audit that API.
 
 ### `SecurityOverview` (composed read via CGS `views:`)
 
-The catalog implements **`SecurityOverview`** as an **`abstract: true`** entity with **`security_overview_query`** (**`kind: query`**) backed by **`views.security_overview`**. The DAG runs **`zone_get`**, **`ruleset_query`**, and **`waf_package_query`** (legacy packages), then shapes one row (zone name, ruleset counts, **`kind`** histogram JSON, legacy package count). **`mappings.yaml`** wires **`security_overview_query`** with **`transport: view`** / **`view: security_overview`** — no dedicated Cloudflare path.
-
-**Seeding:** EXPRESSION teaching skips **`abstract`** domains unless seeded — callers must include **`SecurityOverview`** in **`plasm_context`** seeds (or name **`security_overview_query`**) when they want this composed surface.
+**`SecurityOverview`** is a **first-class** entity on the default graph: **`Zone → security_overview`** materializes **`security_overview_query`** (**`kind: query`**) backed by **`views.security_overview`**. The DAG runs **`zone_get`**, **`ruleset_query`**, and **`waf_package_query`** (legacy packages), then shapes one row (zone name, ruleset counts, **`kind`** histogram JSON, legacy package count). **`mappings.yaml`** wires **`security_overview_query`** with **`transport: view`** / **`view: security_overview`** — no dedicated Cloudflare path. **`dump_prompt`** and default DOMAIN teaching include **`SecurityOverview`** alongside **`Zone`** / **`Ruleset`**.
 
 Validate after edits:
 
@@ -59,7 +57,8 @@ cargo run -p plasm-cli --bin plasm -- validate --spec apis/cloudflare/openapi.he
 
 ## Scope (Phase 1)
 
-- **Zone** — list (`GET /zones`) and get (`GET /zones/{zone_id}`).
+- **Zone** — list (`GET /zones`) and get (`GET /zones/{zone_id}`); relation **`security_overview`** (composed view) and **`rulesets`**.
+- **SecurityOverview** — composed **`security_overview_query`** row per zone (default graph).
 - **Ruleset** — list for a zone, get one ruleset (includes rules when the API returns them).
 - **RulesetEntrypoint** — get/update the managed entrypoint for a **phase** (`…/rulesets/phases/{phase}/entrypoint`).
 - **WafPackage** (**abstract**) — legacy **`waf_package_query`** only; explicit seeding, not default **`Zone`** traversal.

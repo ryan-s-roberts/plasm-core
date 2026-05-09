@@ -190,7 +190,8 @@ pub use schema::{
     OutputType, ParameterRole, RelationMaterialization, RelationSchema, ResourceSchema,
     ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate,
     ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding,
-    ViewParamBinding, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec, ViewScopeParam,
+    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;

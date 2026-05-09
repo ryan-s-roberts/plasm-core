@@ -452,7 +452,7 @@ fn type_label_from_parts(
     }
 }
 
-fn input_type_tool_label(ty: &InputType, cgs: &CGS) -> String {
+fn input_type_tool_label(ty: &InputType, _cgs: &CGS) -> String {
     match ty {
         InputType::None => "none".into(),
         InputType::Value {
@@ -466,7 +466,7 @@ fn input_type_tool_label(ty: &InputType, cgs: &CGS) -> String {
         ),
         InputType::Object { .. } => "object".into(),
         InputType::Array { element_type, .. } => {
-            format!("array[{}]", input_type_tool_label(element_type, cgs))
+            format!("array[{}]", input_type_tool_label(element_type, _cgs))
         }
         InputType::Union { variants } => {
             let labels: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
@@ -922,6 +922,15 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             bindings,
         } => ExplorerRelationMaterialization {
             kind: "query_scoped_bindings",
+            capability: Some(capability.to_string()),
+            param: None,
+            binding_keys: Some(bindings.keys().map(|k| k.to_string()).collect()),
+        },
+        RelationMaterialization::GetScopedBindings {
+            capability,
+            bindings,
+        } => ExplorerRelationMaterialization {
+            kind: "get_scoped_bindings",
             capability: Some(capability.to_string()),
             param: None,
             binding_keys: Some(bindings.keys().map(|k| k.to_string()).collect()),
@@ -1451,7 +1460,8 @@ fn relation_scope_meta(
     let mat = rel_schema.materialize.as_ref().map(materialization_view);
     let skip = match rel_schema.materialize.as_ref() {
         Some(RelationMaterialization::QueryScoped { param, .. }) => vec![param.to_string()],
-        Some(RelationMaterialization::QueryScopedBindings { bindings, .. }) => {
+        Some(RelationMaterialization::QueryScopedBindings { bindings, .. })
+        | Some(RelationMaterialization::GetScopedBindings { bindings, .. }) => {
             bindings.keys().map(|k| k.to_string()).collect()
         }
         _ => Vec::new(),

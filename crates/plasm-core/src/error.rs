@@ -268,9 +268,14 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' relation '{relation}' has cardinality one — only `materialize: from_parent_get` is allowed when the child is not a top-level `{relation}.name` ref (query-scoped materialization is for many-relations)"
+        "Entity '{entity}' relation '{relation}' has cardinality one — `materialize: from_parent_get`, `get_scoped_bindings`, or omit materialization when refs are populated by decode/views"
     )]
     RelationOneWithDisallowedMaterialize { entity: String, relation: String },
+
+    #[error(
+        "Entity '{entity}' relation '{relation}': `materialize.kind: get_scoped_bindings` is only valid for cardinality `one`"
+    )]
+    RelationGetScopedBindingsRequiresCardinalityOne { entity: String, relation: String },
 
     #[error(
         "Entity '{entity}' relation '{relation}': materialize references unknown parent field '{field}'"
@@ -423,6 +428,35 @@ pub enum SchemaError {
         node: String,
         capability: String,
         kind: String,
+    },
+
+    #[error(
+        "View '{view}': relation_outputs references unknown relation '{relation}' on entity '{entity}'"
+    )]
+    ViewRelationOutputUnknownRelation {
+        view: String,
+        relation: String,
+        entity: String,
+    },
+
+    #[error(
+        "View '{view}': relation_outputs.{relation} target mismatch (CGS relation targets '{expected}', got '{got}')"
+    )]
+    ViewRelationOutputTargetMismatch {
+        view: String,
+        relation: String,
+        expected: String,
+        got: String,
+    },
+
+    #[error(
+        "View '{view}': relation_outputs.{relation} cardinality mismatch (CGS relation is {expected}, got {got})"
+    )]
+    ViewRelationOutputCardinalityMismatch {
+        view: String,
+        relation: String,
+        expected: String,
+        got: String,
     },
 }
 

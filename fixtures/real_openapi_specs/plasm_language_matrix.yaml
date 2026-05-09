@@ -254,6 +254,11 @@ components:
     LangItem:
       type: object
       required: [id, title]
+      example:
+        id: "i1"
+        title: "Alpha"
+        score: 10
+        owner: "alice"
       properties:
         id:
           type: string

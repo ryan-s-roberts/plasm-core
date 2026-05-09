@@ -1,6 +1,10 @@
 //! `plasm-agent` library: HTTP/MCP SaaS core and schema CLI — built as **`plasm-mcp`** and **`plasm-cgs`**.
 //! Interactive REPL (`plasm-repl`) lives in **`plasm-repl`** (depends on `plasm-eval` / BAML). Integration tests live under `tests/*.rs`.
 
+// Large MCP tool async stacks + `#[async_trait]` boxing can exceed the default trait solver recursion
+// budget when proving nested HTTP/hyper futures are `Send` (rustc 1.87+).
+#![recursion_limit = "512"]
+
 pub mod appliance_mcp_defaults;
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;

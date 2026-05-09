@@ -39,7 +39,7 @@ use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
-use plasm_core::{CapabilityKind, EntityName, Expr, Ref, TypedFieldValue, Value};
+use plasm_core::{CapabilityKind, EntityKey, EntityName, Expr, Ref, TypedFieldValue, Value};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
@@ -81,6 +81,51 @@ pub fn symbol_map_for_plasm_surface_parse(
         let (full, _) = entity_slices_for_render(session.cgs.as_ref(), FocusSpec::All);
         SymbolMap::build(session.cgs.as_ref(), &full)
     }
+}
+
+/// Row-shaped JSON for plan evaluation (`for_each` templates, derive scopes, …).
+///
+/// [`CachedEntity::payload_to_json`] serializes decoded fields only. Some transports omit the primary
+/// key on list-shaped summaries even when [`Ref`] carries identity — merge so `_.id` (and compound
+/// slots) resolve consistently.
+fn cached_entity_row_json(entity: &CachedEntity, cgs: &CGS) -> serde_json::Value {
+    let mut v = entity.payload_to_json();
+    let Some(obj) = v.as_object_mut() else {
+        return v;
+    };
+    let slot = entity.reference.primary_slot_str();
+    if slot.is_empty() {
+        return v;
+    }
+    fn slot_needed(existing: Option<&serde_json::Value>) -> bool {
+        match existing {
+            None | Some(serde_json::Value::Null) => true,
+            Some(serde_json::Value::String(s)) => s.is_empty(),
+            _ => false,
+        }
+    }
+    match &entity.reference.key {
+        EntityKey::Simple(_) => {
+            let id_name = cgs
+                .get_entity(entity.reference.entity_type.as_str())
+                .map(|e| e.id_field.as_str().to_string())
+                .unwrap_or_else(|| "id".to_string());
+            if slot_needed(obj.get(&id_name)) {
+                obj.insert(id_name, serde_json::Value::String(slot));
+            }
+        }
+        EntityKey::Compound(parts) => {
+            for (k, val) in parts {
+                if val.is_empty() {
+                    continue;
+                }
+                if slot_needed(obj.get(k.as_str())) {
+                    obj.insert(k.clone(), serde_json::Value::String(val.clone()));
+                }
+            }
+        }
+    }
+    v
 }
 
 /// Parse one Plasm surface line: strip DOMAIN gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
@@ -2086,7 +2131,7 @@ async fn run_validated_plan_phased(
                     rows: result
                         .entities
                         .iter()
-                        .map(CachedEntity::payload_to_json)
+                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
                         .collect(),
                     result,
                     artifact,
@@ -2187,7 +2232,7 @@ async fn run_validated_plan_phased(
                     rows: result
                         .entities
                         .iter()
-                        .map(CachedEntity::payload_to_json)
+                        .map(|e| cached_entity_row_json(e, es.cgs.as_ref()))
                         .collect(),
                     result,
                     artifact,
@@ -2796,7 +2841,7 @@ async fn materialize_for_each_node(
         rows: result
             .entities
             .iter()
-            .map(CachedEntity::payload_to_json)
+            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
             .collect(),
         result,
         artifact: Some(artifact),

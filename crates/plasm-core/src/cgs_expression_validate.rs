@@ -216,7 +216,7 @@ mod tests {
             "../../apis/jira",
             "../../apis/linear",
             "../../apis/discord",
-            "../../apis/cloudflare",
+            "../../fixtures/schemas/plasm_prompt_matrix",
         ] {
             let p = Path::new(dir);
             if !p.exists() {

@@ -507,6 +507,13 @@ pub enum RelationMaterialization {
         capability: CapabilityName,
         bindings: IndexMap<CapabilityParamName, EntityFieldName>,
     },
+    /// Map parent fields into a target **`get`** capability's scope/path env (cardinality **one**).
+    ///
+    /// Used when each parent row yields exactly one related row via GET (e.g. composed view rows).
+    GetScopedBindings {
+        capability: CapabilityName,
+        bindings: IndexMap<CapabilityParamName, EntityFieldName>,
+    },
 }
 
 /// Definition of a relation (graph edge) between resources.
@@ -1624,6 +1631,47 @@ pub enum ViewOutputBinding {
         node: String,
         field: String,
     },
+    /// True when any row on `node` has `field` equal to `equals` (scalar compare via [`crate::Value`]).
+    NodeAnyRowFieldEquals {
+        node: String,
+        field: String,
+        equals: serde_json::Value,
+    },
+    /// True when `node`'s row count is strictly positive.
+    NodeRowCountPositive {
+        node: String,
+    },
+}
+
+/// Materialize outbound relations on a view entity row from composed node results (agent-facing refs).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewRelationOutputSpec {
+    pub relation: RelationName,
+    pub target: EntityName,
+    pub cardinality: Cardinality,
+    pub binding: ViewRelationBinding,
+}
+
+/// Select rows from a view node to expose as relation targets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ViewRelationBinding {
+    /// First query row where `field` equals `equals`.
+    FirstNodeRowWhere {
+        node: String,
+        where_field: String,
+        equals: serde_json::Value,
+    },
+    /// All query rows where `where_field` equals `equals`.
+    NodeRowsWhere {
+        node: String,
+        where_field: String,
+        equals: serde_json::Value,
+    },
+    /// Every row returned by a query node.
+    NodeAllRows { node: String },
+    /// The single row from a GET node (exactly one entity in the node's execution result).
+    NodeSingleRow { node: String },
 }
 
 /// Declared scope slot for a view (documentation + validation hooks).
@@ -1646,6 +1694,9 @@ pub struct ViewDefinition {
     pub nodes: Vec<ViewNodeSpec>,
     #[serde(default)]
     pub output: IndexMap<String, ViewOutputBinding>,
+    /// Optional outbound relation refs synthesized from node results (not taught as scalar ids).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relation_outputs: Vec<ViewRelationOutputSpec>,
 }
 
 /// Default HTTP origin when constructing an empty [`CGS`] in tests or programmatically.
@@ -2052,7 +2103,9 @@ impl CGS {
                         }
                     }
                     ViewOutputBinding::NodeField { node, .. }
-                    | ViewOutputBinding::NodeFieldHistogramJson { node, .. } => {
+                    | ViewOutputBinding::NodeFieldHistogramJson { node, .. }
+                    | ViewOutputBinding::NodeAnyRowFieldEquals { node, .. }
+                    | ViewOutputBinding::NodeRowCountPositive { node } => {
                         if !view.nodes.iter().any(|n| n.id == *node) {
                             return Err(SchemaError::ViewOutputUnknownNode {
                                 view: view_key.clone(),
@@ -2063,6 +2116,79 @@ impl CGS {
                     }
                     ViewOutputBinding::Scope { .. } => {}
                 }
+            }
+
+            for ro in &view.relation_outputs {
+                let rel = ent.relations.get(ro.relation.as_str()).ok_or_else(|| {
+                    SchemaError::ViewRelationOutputUnknownRelation {
+                        view: view_key.clone(),
+                        relation: ro.relation.to_string(),
+                        entity: view.entity.to_string(),
+                    }
+                })?;
+                if rel.target_resource != ro.target {
+                    return Err(SchemaError::ViewRelationOutputTargetMismatch {
+                        view: view_key.clone(),
+                        relation: ro.relation.to_string(),
+                        expected: rel.target_resource.to_string(),
+                        got: ro.target.to_string(),
+                    });
+                }
+                if rel.cardinality != ro.cardinality {
+                    return Err(SchemaError::ViewRelationOutputCardinalityMismatch {
+                        view: view_key.clone(),
+                        relation: ro.relation.to_string(),
+                        expected: format!("{:?}", rel.cardinality),
+                        got: format!("{:?}", ro.cardinality),
+                    });
+                }
+                let node_ok = |node_id: &str| view.nodes.iter().any(|n| n.id == node_id);
+                match &ro.binding {
+                    ViewRelationBinding::FirstNodeRowWhere { node, .. }
+                    | ViewRelationBinding::NodeRowsWhere { node, .. }
+                    | ViewRelationBinding::NodeAllRows { node }
+                    | ViewRelationBinding::NodeSingleRow { node } => {
+                        if !node_ok(node) {
+                            return Err(SchemaError::ViewOutputUnknownNode {
+                                view: view_key.clone(),
+                                field: format!("relation_outputs.{}", ro.relation),
+                                node: node.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Every capability with `transport: view` must reference an existing view and match its entity domain.
+        for (cap_name, cap) in &self.capabilities {
+            let template = &cap.mapping.template.0;
+            if template.get("transport").and_then(|x| x.as_str()) != Some("view") {
+                continue;
+            }
+            let Some(view_key) = template.get("view").and_then(|x| x.as_str()) else {
+                return Err(SchemaError::ViewCapabilityMappingInvalid {
+                    view: cap_name.to_string(),
+                    capability: cap_name.to_string(),
+                    detail: "transport `view` requires string `view` key".into(),
+                });
+            };
+            let Some(view_def) = self.views.get(view_key) else {
+                return Err(SchemaError::ViewCapabilityMappingInvalid {
+                    view: view_key.to_string(),
+                    capability: cap_name.to_string(),
+                    detail: format!("unknown views key `{view_key}`"),
+                });
+            };
+            if cap.domain != view_def.entity {
+                return Err(SchemaError::ViewCapabilityMappingInvalid {
+                    view: view_key.to_string(),
+                    capability: cap_name.to_string(),
+                    detail: format!(
+                        "capability domain `{}` must match view entity `{}`",
+                        cap.domain, view_def.entity
+                    ),
+                });
             }
         }
         Ok(())
@@ -2183,11 +2309,55 @@ impl CGS {
                                     }
                                 }
                             }
+                            RelationMaterialization::GetScopedBindings { .. } => {
+                                return Err(
+                                    SchemaError::RelationGetScopedBindingsRequiresCardinalityOne {
+                                        entity: entity_name.to_string(),
+                                        relation: relation_name.to_string(),
+                                    },
+                                );
+                            }
                         }
                     }
                     Cardinality::One => match &relation.materialize {
                         None => {}
                         Some(RelationMaterialization::FromParentGet { .. }) => {}
+                        Some(RelationMaterialization::GetScopedBindings {
+                            capability,
+                            bindings,
+                        }) => {
+                            if bindings.is_empty() {
+                                return Err(SchemaError::RelationMaterializeEmptyBindings {
+                                    entity: entity_name.to_string(),
+                                    relation: relation_name.to_string(),
+                                });
+                            }
+                            let keys: Vec<&str> = bindings.keys().map(|k| k.as_str()).collect();
+                            self.validate_chain_materialize_get_capability(
+                                entity_name.as_str(),
+                                relation_name.as_str(),
+                                relation.target_resource.as_str(),
+                                capability,
+                                &keys,
+                            )?;
+                            for parent_field in bindings.values() {
+                                let ok = parent_field.as_str() == entity.id_field.as_str()
+                                    || entity.fields.contains_key(parent_field.as_str())
+                                    || entity
+                                        .key_vars
+                                        .iter()
+                                        .any(|k| k.as_str() == parent_field.as_str());
+                                if !ok {
+                                    return Err(
+                                        SchemaError::RelationMaterializeUnknownParentField {
+                                            entity: entity_name.to_string(),
+                                            relation: relation_name.to_string(),
+                                            field: parent_field.as_str().to_string(),
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         Some(_) => {
                             return Err(SchemaError::RelationOneWithDisallowedMaterialize {
                                 entity: entity_name.to_string(),
@@ -3691,6 +3861,54 @@ impl CGS {
         Ok(())
     }
 
+    /// Validates [`RelationMaterialization::GetScopedBindings`]: `capability` must resolve to a `get`
+    /// capability whose [`CapabilitySchema::domain`] equals `target_entity` and whose object input
+    /// declares every name in `required_param_names`.
+    pub fn validate_chain_materialize_get_capability(
+        &self,
+        parent_entity: &str,
+        relation: &str,
+        target_entity: &str,
+        capability: &CapabilityName,
+        required_param_names: &[&str],
+    ) -> Result<(), SchemaError> {
+        let err = |detail: String| {
+            Err(SchemaError::RelationMaterializeCapabilityInvalid {
+                entity: parent_entity.to_string(),
+                relation: relation.to_string(),
+                target: target_entity.to_string(),
+                capability: capability.to_string(),
+                detail,
+            })
+        };
+        let Some(cap) = self.get_capability(capability.as_str()) else {
+            return err("no such capability name".into());
+        };
+        if cap.domain.as_str() != target_entity {
+            return err(format!(
+                "capability is declared on entity '{}' but relation targets '{}'",
+                cap.domain, target_entity
+            ));
+        }
+        if cap.kind != CapabilityKind::Get {
+            return err(format!("capability kind must be get (got {:?})", cap.kind));
+        }
+        let Some(fields) = cap.object_params() else {
+            return err(
+                "capability has no object-typed input parameters; get_scoped_bindings requires them"
+                    .into(),
+            );
+        };
+        for name in required_param_names {
+            if !fields.iter().any(|f| f.name == *name) {
+                return err(format!(
+                    "object input does not declare materialize parameter `{name}`"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Find the first query or search capability for `entity` that declares a parameter
     /// named `param_name`. Used for heuristics outside chain materialization (e.g. reverse
     /// traversal discovery). Chain edges must use explicit [`RelationMaterialization::QueryScoped::capability`].
@@ -3986,11 +4204,8 @@ mod capability_index_tests {
 
     #[test]
     fn domain_projection_teaching_wire_fields_falls_back_to_query_when_no_get() {
-        let p = Path::new("../../apis/cloudflare");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("cloudflare");
+        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix fixture");
         let Some(ent) = cgs.get_entity("WafPackage") else {
             panic!("missing WafPackage");
         };
