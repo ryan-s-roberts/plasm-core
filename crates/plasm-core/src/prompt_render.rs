@@ -596,7 +596,7 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     render_domain_table(
         cgs,
         &full_entities,
-        map_opt.as_ref(),
+        map_opt.as_deref(),
         &mut teaching_blocks,
         &mut entities_buf,
         fill_model,
@@ -5505,6 +5505,20 @@ mod tests {
         repo_path(&["..", "..", "fixtures", "schemas", name])
     }
 
+    /// Upper bound for [`prompt_matrix_full_tsv_synthesis_benchmark`] (best-of-three wall time after warmup).
+    ///
+    /// Override for slow CI hosts or local profiling: `PLASM_PROMPT_MATRIX_SYNTH_MAX_MS` (milliseconds).
+    fn prompt_matrix_synthesis_time_limit() -> std::time::Duration {
+        const DEFAULT_MS: u64 = 3000;
+        match std::env::var("PLASM_PROMPT_MATRIX_SYNTH_MAX_MS") {
+            Ok(s) => s
+                .parse::<u64>()
+                .map(std::time::Duration::from_millis)
+                .unwrap_or_else(|_| std::time::Duration::from_millis(DEFAULT_MS)),
+            Err(_) => std::time::Duration::from_millis(DEFAULT_MS),
+        }
+    }
+
     /// Insta resolves the default `snapshots/` path from `file!()`. In the parent
     /// `plasm/` virtual workspace, path remaps can make that resolve under a spurious
     /// `plasm-oss/plasm-oss/...` tree, so the committed `.snap` is not found. Anchor to
@@ -5598,7 +5612,7 @@ mod tests {
             let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
             let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
             for ename in &full {
-                let n = domain_example_line_count(&cgs, ename, map.as_ref());
+                let n = domain_example_line_count(&cgs, ename, map.as_deref());
                 assert!(
                     n > 0,
                     "{}: entity `{ename}` is in full_entities but collect_entity_teaching_block emitted no teaching rows",
@@ -5666,7 +5680,7 @@ mod tests {
             br.starts_with('[') && br.contains('p'),
             "unexpected projection bracket: {br}"
         );
-        let lines = domain_example_lines(&cgs, "Issue", map.as_ref(), surface);
+        let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
         let bracket_lines = lines
             .iter()
             .filter(|l| l.contains("[p") && l.contains(']'))
@@ -5708,7 +5722,7 @@ mod tests {
             br.starts_with('[') && br.contains('p'),
             "unexpected projection bracket: {br}"
         );
-        let lines = domain_example_lines(&cgs, "Issue", map.as_ref(), surface);
+        let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
         let bracket_lines = lines
             .iter()
             .filter(|l| l.contains("[p") && l.contains(']'))
@@ -5833,6 +5847,49 @@ mod tests {
         let (_, body) = split_tsv_domain_contract_and_table(&tsv);
         validate_domain_tsv_teaching_table(&body)
             .expect("every teaching row must be expr\\tMeaning");
+    }
+
+    /// Regression guard: full symbolic TSV prompt synthesis for [`fixtures/schemas/plasm_prompt_matrix`]
+    /// must stay within a fixed wall-time budget (best of three timed runs after warmup).
+    ///
+    /// Calibrated for **small** matrix fixtures (~tens of ms on a laptop); failures usually mean
+    /// accidental quadratic work or extra clones on the prompt path. Relax only with cause:
+    /// `PLASM_PROMPT_MATRIX_SYNTH_MAX_MS`.
+    #[test]
+    fn prompt_matrix_full_tsv_synthesis_benchmark() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let config = RenderConfig::for_eval(None);
+
+        let warmup = render_prompt_tsv_with_config(&cgs, config);
+        assert!(
+            warmup.contains(TSV_DOMAIN_TABLE_HEADER.trim_end()),
+            "warmup must emit TSV DOMAIN header"
+        );
+
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let t0 = Instant::now();
+            let tsv = render_prompt_tsv_with_config(&cgs, config);
+            best = best.min(t0.elapsed());
+            assert!(
+                tsv.len() > 2000,
+                "sanity: symbolic prompt should be substantial (got {} chars)",
+                tsv.len()
+            );
+        }
+
+        let limit = prompt_matrix_synthesis_time_limit();
+        assert!(
+            best <= limit,
+            "plasm_prompt_matrix TSV synthesis too slow: best-of-3 {:?} > limit {:?}. \
+             Set PLASM_PROMPT_MATRIX_SYNTH_MAX_MS to raise the cap (milliseconds).",
+            best,
+            limit
+        );
     }
 
     /// Regression: TSV `p#` gloss rows must use [`IdentMetadata`] for the entity owning the DOMAIN
@@ -6159,7 +6216,7 @@ mod tests {
         let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
-        let lines = domain_example_lines(&cgs, "Zone", Some(&map), None);
+        let lines = domain_example_lines(&cgs, "Zone", Some(map.as_ref()), None);
         for line in &lines {
             let head = line.trim();
             assert!(
@@ -6172,7 +6229,7 @@ mod tests {
         let block = collect_entity_teaching_block(
             &cgs,
             "Zone",
-            Some(&map),
+            Some(map.as_ref()),
             None,
             false,
             &mut line_valid_cache,
@@ -6195,7 +6252,7 @@ mod tests {
         ))
         .as_str()
         .to_owned();
-        let work = domain_line_work_string(expr, Some(&map));
+        let work = domain_line_work_string(expr, Some(map.as_ref()));
         assert!(
             domain_line_valid_work(&cgs, &work),
             "projection witness must parse+typecheck: {expr}"
@@ -6298,7 +6355,7 @@ mod tests {
         let block = collect_entity_teaching_block(
             &cgs,
             "Ruleset",
-            Some(&map),
+            Some(map.as_ref()),
             None,
             false,
             &mut line_valid_cache,
@@ -6329,7 +6386,7 @@ mod tests {
         let block2 = collect_entity_teaching_block(
             &cgs,
             "Ruleset",
-            Some(&map),
+            Some(map.as_ref()),
             None,
             false,
             &mut line_valid_cache2,
@@ -6360,7 +6417,7 @@ mod tests {
         let unfiltered = super::incoming_relation_nav_bases_to_entity(
             &cgs,
             "Ruleset",
-            Some(&map),
+            Some(map.as_ref()),
             None,
             entry.as_str(),
         );
@@ -6380,7 +6437,7 @@ mod tests {
         let filtered = super::incoming_relation_nav_bases_to_entity(
             &cgs,
             "Ruleset",
-            Some(&map),
+            Some(map.as_ref()),
             Some(&delta.required),
             entry.as_str(),
         );
@@ -6425,7 +6482,7 @@ mod tests {
         let block = collect_entity_teaching_block(
             &cgs,
             "Zone",
-            Some(&map),
+            Some(map.as_ref()),
             None,
             false,
             &mut line_valid_cache,
@@ -6527,7 +6584,7 @@ mod tests {
         let block = collect_entity_teaching_block(
             &cgs,
             "WafPackage",
-            Some(&map),
+            Some(map.as_ref()),
             None,
             false,
             &mut line_valid_cache,
@@ -7305,7 +7362,7 @@ mod tests {
         );
         for expr in &exprs {
             let work = map
-                .as_ref()
+                .as_deref()
                 .map(|m| crate::symbol_tuning::expand_path_symbols(expr, m))
                 .unwrap_or_else(|| expr.clone());
             let mut r = crate::expr_parser::parse(&work, &cgs).unwrap_or_else(|e| {

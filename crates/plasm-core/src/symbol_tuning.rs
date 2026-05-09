@@ -1589,11 +1589,13 @@ impl SymbolMap {
 
     /// Build maps for all entities in `full_entities` (slice order defines `e1`, `e2`, …).
     ///
-    /// This is a thin wrapper around [`DomainExposureSession::new`] + [`DomainExposureSession::to_symbol_map`]:
+    /// This is a thin wrapper around [`DomainExposureSession::new`] + the session’s shared [`SymbolMap`]:
     /// one code path for `m#` / `p#` assignment and dotted-call alias metadata (execute / REPL / canonical DOMAIN).
+    /// Uniquely owns the memoized map when no other `Arc` handles remain (avoids a full map clone on the hot path).
     pub fn build(cgs: &CGS, full_entities: &[&str]) -> Self {
         let cid = cgs.entry_id.as_deref().unwrap_or("");
-        DomainExposureSession::new(cgs, cid, full_entities).to_symbol_map()
+        let arc = DomainExposureSession::new(cgs, cid, full_entities).to_symbol_map();
+        Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone())
     }
 
     /// Structured DOMAIN token when `canonical` is in this map.
@@ -2553,11 +2555,11 @@ pub fn symbol_map_for_prompt(
     cgs: &CGS,
     focus: FocusSpec<'_>,
     symbol_tuning: bool,
-) -> Option<SymbolMap> {
+) -> Option<Arc<SymbolMap>> {
     if !symbol_tuning {
         return None;
     }
-    Some(domain_exposure_session_from_focus(cgs, focus).to_symbol_map())
+    Some(domain_exposure_session_from_focus(cgs, focus).symbol_map_arc())
 }
 
 /// Owned entity names for prompt surface metrics and DOMAIN line counts, plus optional
@@ -3217,9 +3219,9 @@ impl DomainExposureSession {
         (built, lru_hit)
     }
 
-    /// Snapshot for [`expand_path_symbols`] — matches DOMAIN lines for this session.
-    pub fn to_symbol_map(&self) -> SymbolMap {
-        (*self.symbol_map_arc()).clone()
+    /// Snapshot for [`expand_path_symbols`] — matches DOMAIN lines for this session (same `Arc` as [`Self::symbol_map_arc`]).
+    pub fn to_symbol_map(&self) -> Arc<SymbolMap> {
+        self.symbol_map_arc()
     }
 
     /// Owning `(catalog entry id, CGS entity name)` for an exposed **entity name** (aligned with

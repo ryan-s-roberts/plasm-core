@@ -203,11 +203,11 @@ pub async fn run_repl(
                         let sym_map = pipeline.with_focus_spec(prompt_focus.as_deref(), |focus| {
                             symbol_map_for_prompt(cgs.as_ref(), focus, pipeline.uses_symbols())
                         });
-                        let feedback = match sym_map.as_ref() {
+                        let feedback = match sym_map.as_deref() {
                             Some(m) => FeedbackStyle::SymbolicLlm { map: m },
                             None => FeedbackStyle::CanonicalDev,
                         };
-                        let correction_head = match sym_map.as_ref() {
+                        let correction_head = match sym_map.as_deref() {
                             Some(_) => line.as_str(),
                             None => work.as_str(),
                         };

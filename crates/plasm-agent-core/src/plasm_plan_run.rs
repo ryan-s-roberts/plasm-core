@@ -18,6 +18,8 @@ use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
+use std::sync::Arc;
+
 use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
@@ -64,7 +66,7 @@ pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
 pub fn symbol_map_for_plasm_surface_parse(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-) -> SymbolMap {
+) -> Arc<SymbolMap> {
     let layers = session_cgs_layers(session);
     if let Some(e) = session.domain_exposure.as_ref() {
         let key = if symbol_map_cross_cache.is_some() {
@@ -76,10 +78,10 @@ pub fn symbol_map_for_plasm_surface_parse(
         } else {
             None
         };
-        (*e.symbol_map_arc_cross(symbol_map_cross_cache, key).0).clone()
+        Arc::clone(&e.symbol_map_arc_cross(symbol_map_cross_cache, key).0)
     } else {
         let (full, _) = entity_slices_for_render(session.cgs.as_ref(), FocusSpec::All);
-        SymbolMap::build(session.cgs.as_ref(), &full)
+        Arc::new(SymbolMap::build(session.cgs.as_ref(), &full))
     }
 }
 

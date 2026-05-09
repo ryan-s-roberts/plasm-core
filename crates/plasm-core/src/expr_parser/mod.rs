@@ -92,6 +92,7 @@ use crate::{
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 /// Structured reason for a [`ParseError`] — drives [`crate::error_render::render_parse_error`]
 /// without substring matching on ad hoc messages.
@@ -451,11 +452,11 @@ pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
 }
 
 /// Parse against multiple disjoint [`CGS`] graphs (federated execute). Caller supplies the session
-/// [`crate::symbol_tuning::SymbolMap`] (e.g. from [`crate::symbol_tuning::DomainExposureSession::to_symbol_map`]).
+/// [`crate::symbol_tuning::SymbolMap`] behind [`Arc`] (e.g. [`DomainExposureSession::symbol_map_arc`](crate::symbol_tuning::DomainExposureSession::symbol_map_arc)).
 pub fn parse_with_cgs_layers(
     input: &str,
     layers: &[&CGS],
-    sym_map: SymbolMap,
+    sym_map: Arc<SymbolMap>,
 ) -> Result<ParsedExpr, ParseError> {
     parse_with_cgs_layers_program(input, layers, sym_map, None, false)
 }
@@ -467,7 +468,7 @@ pub fn parse_with_cgs_layers(
 pub fn parse_with_cgs_layers_program(
     input: &str,
     layers: &[&CGS],
-    sym_map: SymbolMap,
+    sym_map: Arc<SymbolMap>,
     program_nodes: Option<&BTreeSet<String>>,
     for_each_row_context: bool,
 ) -> Result<ParsedExpr, ParseError> {
@@ -508,7 +509,7 @@ pub(super) struct Parser<'a> {
     pub(super) pos: usize,
     layers: ParserLayers<'a>,
     /// Same `m#` → kebab table as the SYMBOL MAP bundle (forgiving when expansion did not run).
-    sym_map: SymbolMap,
+    sym_map: Arc<SymbolMap>,
     /// When set, bare `id` / `id.path` in dotted-call args, predicates, and array literals refer
     /// to program nodes with those ids (typed [`crate::value::PlasmInputRef`]).
     pub(super) program_nodes: Option<&'a BTreeSet<String>>,
@@ -519,11 +520,11 @@ pub(super) struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn new(input: &'a str, cgs: &'a CGS) -> Self {
         let (full, _) = entity_slices_for_render(cgs, FocusSpec::All);
-        let sym_map = SymbolMap::build(cgs, &full);
+        let sym_map = Arc::new(SymbolMap::build(cgs, &full));
         Self::new_with_sym_map(input, ParserLayers::Single([cgs]), sym_map)
     }
 
-    fn new_with_sym_map(input: &'a str, layers: ParserLayers<'a>, sym_map: SymbolMap) -> Self {
+    fn new_with_sym_map(input: &'a str, layers: ParserLayers<'a>, sym_map: Arc<SymbolMap>) -> Self {
         assert!(!layers.as_slice().is_empty());
         let mut p = Self {
             input,
@@ -3847,7 +3848,7 @@ mod tests {
     fn program_parse_compound_get_maps_binding_slot_to_path_vars() {
         let cgs = compound_get_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = SymbolMap::build(&cgs, &full);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
         let mut refs = BTreeSet::new();
         refs.insert("zone".into());
@@ -4141,7 +4142,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = SymbolMap::build(&cgs, &full);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("report".into());
@@ -4180,7 +4181,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = SymbolMap::build(&cgs, &full);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("not_report".into());

@@ -284,7 +284,7 @@ pub fn validate_plan_steps_with_lexicon_detailed(
     });
 
     for (i, text) in step_texts.iter().enumerate() {
-        let feedback = match symbol_map.as_ref() {
+        let feedback = match symbol_map.as_deref() {
             Some(m) => FeedbackStyle::SymbolicLlm { map: m },
             None => FeedbackStyle::CanonicalDev,
         };
