@@ -314,6 +314,7 @@ mod tests {
     fn sample_handle() -> RunArtifactHandle {
         RunArtifactHandle {
             run_id: Uuid::nil(),
+            resource_index: 1,
             plasm_uri: "plasm://r/1".into(),
             canonical_plasm_uri: "plasm://execute/a/b/run/00000000-0000-0000-0000-000000000000"
                 .into(),
@@ -347,6 +348,7 @@ mod tests {
         let rid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
         let h = RunArtifactHandle {
             run_id: rid,
+            resource_index: 3,
             plasm_uri: "plasm://r/3".into(),
             canonical_plasm_uri: "plasm://execute/ph/sess/run/550e8400-e29b-41d4-a716-446655440000"
                 .into(),
@@ -369,6 +371,7 @@ mod tests {
         let rid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
         let h = RunArtifactHandle {
             run_id: rid,
+            resource_index: 2,
             plasm_uri: "plasm://r/2".into(),
             canonical_plasm_uri: "plasm://execute/ph/sess/run/550e8400-e29b-41d4-a716-446655440000"
                 .into(),

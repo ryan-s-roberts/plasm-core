@@ -6,11 +6,14 @@ use async_trait::async_trait;
 
 mod decompose;
 mod embedder;
+pub mod embedding_store;
 mod engine;
-mod index;
+pub mod index;
 mod metrics;
 mod types;
 
+pub use embedder::{BlockingEmbedder, DEFAULT_EMBEDDING_MODEL_ID, DEFAULT_EMBEDDING_VECTOR_DIM};
+pub use embedding_store::CatalogEmbeddingLineKey;
 pub use engine::TypedDiscovery;
 pub use types::*;
 

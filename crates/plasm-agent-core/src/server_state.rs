@@ -9,6 +9,7 @@
 //! [`PlasmOssHostState`] so OSS HTTP can expose the same routes without pulling in Phoenix.
 
 use crate::catalog_runtime::CatalogRuntime;
+use crate::discovery_embedding_repository::DiscoveryEmbeddingRepository;
 use crate::execute_session::ExecuteSessionStore;
 use crate::incoming_auth::IncomingAuthVerifier;
 use crate::local_trace_archive::LocalTraceArchive;
@@ -23,6 +24,7 @@ use crate::trace_hub::{TraceHub, TraceHubConfig};
 use crate::trace_sink_emit::TraceIngestClient;
 use auth_framework::storage::AuthStorage;
 use auth_framework::AuthFramework;
+use plasm_discovery::embedding_store::CatalogEmbeddingStore;
 use plasm_plugin_host::PluginManager;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
 use std::collections::HashMap;
@@ -73,6 +75,8 @@ pub struct PlasmOssHostState {
     pub oauth_link_catalog: Option<Arc<OauthLinkCatalog>>,
     /// Hosted KV + catalog outbound resolver for `hosted_kv` in CGS.
     pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
+    /// Optional Postgres-backed typed-discovery embeddings (CGS `catalog_cgs_hash` rows).
+    pub discovery_embedding: Option<Arc<DiscoveryEmbeddingRepository>>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -138,6 +142,14 @@ impl PlasmHostState {
     /// Hosted KV + catalog outbound resolver; absent when not wired.
     pub fn outbound_secret_provider(&self) -> Option<&Arc<dyn SecretProvider>> {
         self.oss.outbound_secret_provider.as_ref()
+    }
+
+    /// Typed-discovery embedding lookup when [`PlasmOssHostState::discovery_embedding`] is wired.
+    pub fn discovery_embedding_store(&self) -> Option<Arc<dyn CatalogEmbeddingStore>> {
+        self.oss
+            .discovery_embedding
+            .clone()
+            .map(|r| r as Arc<dyn CatalogEmbeddingStore>)
     }
 
     /// Outbound HTTP credentials: [`PlasmOssHostState::outbound_secret_provider`] when wired; otherwise [`EnvSecretProvider`].

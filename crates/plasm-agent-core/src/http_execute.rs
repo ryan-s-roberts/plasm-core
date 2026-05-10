@@ -7,9 +7,9 @@
 
 use axum::body::Bytes;
 use axum::extract::rejection::PathRejection;
-use axum::extract::{Extension, FromRequestParts, Path};
+use axum::extract::{Extension, FromRequestParts, Path, Query};
 use axum::http::header::{ACCEPT, CONTENT_TYPE, LOCATION};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -134,7 +134,7 @@ where
 }
 
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
-use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey};
+use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey, SessionRunSummary};
 use crate::execute_staging::{
     build_execute_stages, line_may_share_parallel_query_stage, ExecuteStage,
 };
@@ -371,7 +371,7 @@ fn build_mcp_tool_meta(
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateExecuteSessionBody {
     pub entry_id: String,
     pub entities: Vec<String>,
@@ -413,7 +413,7 @@ pub struct CreateExecuteSessionResponse {
     pub principal: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CapabilityWaveOutcome {
     pub mode: String,
     pub entry_id: String,
@@ -423,7 +423,7 @@ pub struct CapabilityWaveOutcome {
     pub domain_prompt_chars_added: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ApplyCapabilitySeedsOutcome {
     pub prompt_hash: String,
     pub session_id: String,
@@ -449,9 +449,144 @@ enum ExecResponseKind {
     Toon,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct ExecuteRunQuery {
+    /// When `plan` (case-insensitive), compile/type-check only — no live HTTP side effects (see also `X-Plasm-Run-Mode`).
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ExecuteSessionContextBody {
+    /// Optional; when opening intent-scoped DOMAIN via MCP this is required — HTTP expand may omit when session already has intent.
+    #[serde(default)]
+    pub intent: Option<String>,
+    pub seeds: Vec<CapabilitySeed>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecuteSessionSymbolsResponse {
+    pub prompt_hash: String,
+    pub session_id: String,
+    pub domain_revision: u32,
+    pub entry_id: String,
+    pub entities: Vec<String>,
+    pub loaded_catalogs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_intent: Option<String>,
+    pub entity_symbols: Vec<plasm_core::ExposedEntitySymbolRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecuteSessionStatusResponse {
+    pub alive: bool,
+    pub prompt_hash: String,
+    pub session_id: String,
+    pub domain_revision: u32,
+    pub entry_id: String,
+    pub entities: Vec<String>,
+    pub loaded_catalogs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_intent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecuteSessionRunsResponse {
+    pub prompt_hash: String,
+    pub session_id: String,
+    /// Runs currently retained in the session hot cache (FIFO); older runs may still be on disk/`RunArtifactStore`.
+    pub runs: Vec<SessionRunSummary>,
+}
+
 #[derive(Debug)]
 enum AcceptNegotiationError {
     NoSupportedMediaType,
+}
+
+fn run_mode_is_plan(headers: &HeaderMap, query: &ExecuteRunQuery) -> bool {
+    if let Some(raw) = headers
+        .get("x-plasm-run-mode")
+        .and_then(|v| v.to_str().ok())
+    {
+        if raw.trim().eq_ignore_ascii_case("plan") {
+            return true;
+        }
+    }
+    query
+        .mode
+        .as_deref()
+        .is_some_and(|m| m.trim().eq_ignore_ascii_case("plan"))
+}
+
+fn attach_plasm_run_headers(res: Response, artifact: Option<&RunArtifactHandle>) -> Response {
+    let Some(h) = artifact else {
+        return res;
+    };
+    let (mut parts, body) = res.into_parts();
+    let hdr = &mut parts.headers;
+    if let Ok(v) = HeaderValue::from_str(&h.run_id.to_string()) {
+        hdr.insert(HeaderName::from_static("x-plasm-run-id"), v);
+    }
+    if let Ok(v) = HeaderValue::from_str(h.http_path.as_str()) {
+        hdr.insert(HeaderName::from_static("x-plasm-artifact-path"), v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&h.resource_index.to_string()) {
+        hdr.insert(HeaderName::from_static("x-plasm-resource-index"), v);
+    }
+    Response::from_parts(parts, body)
+}
+
+fn respond_plan_payload(kind: ExecResponseKind, preview: serde_json::Value) -> Response {
+    match kind {
+        ExecResponseKind::Json => (
+            StatusCode::OK,
+            [(CONTENT_TYPE, "application/json; charset=utf-8")],
+            Json(preview),
+        )
+            .into_response(),
+        ExecResponseKind::Ndjson => {
+            let line = match serde_json::to_string(&preview) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = %e, "plan preview serialization failed");
+                    return problem_response(
+                        Problem::custom(
+                            ProblemStatus::INTERNAL_SERVER_ERROR,
+                            Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                        )
+                        .with_title("Internal Server Error")
+                        .with_detail(e.to_string()),
+                    );
+                }
+            };
+            (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "application/x-ndjson; charset=utf-8")],
+                line + "\n",
+            )
+                .into_response()
+        }
+        ExecResponseKind::Toon => {
+            let s = toon::encode(&preview, None);
+            (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "text/toon; charset=utf-8")],
+                s,
+            )
+                .into_response()
+        }
+        ExecResponseKind::Table => {
+            let text = format!("{:#}", preview);
+            (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "text/plain; charset=utf-8")],
+                text,
+            )
+                .into_response()
+        }
+    }
 }
 
 fn negotiate_accept(raw: Option<&str>) -> Result<ExecResponseKind, AcceptNegotiationError> {
@@ -2157,6 +2292,7 @@ pub async fn archive_plasm_result_snapshot(
         .unwrap_or_else(|| plasm_short_resource_uri(resource_index));
     Ok(RunArtifactHandle {
         run_id,
+        resource_index,
         plasm_uri,
         canonical_plasm_uri,
         http_path: artifact_http_path(sess.prompt_hash.as_str(), session_id, &run_id),
@@ -2891,6 +3027,7 @@ async fn run_parsed_plasm_line(
                 .unwrap_or_else(|| plasm_short_resource_uri(resource_index));
             let artifact = Some(RunArtifactHandle {
                 run_id,
+                resource_index,
                 plasm_uri,
                 canonical_plasm_uri,
                 http_path: artifact_http_path(sess.prompt_hash.as_str(), session_id, &run_id),
@@ -3210,6 +3347,7 @@ async fn run_parsed_plasm_line(
         let http_path = artifact_http_path(sess.prompt_hash.as_str(), session_id, &run_id);
         Some(RunArtifactHandle {
             run_id,
+            resource_index,
             plasm_uri,
             canonical_plasm_uri,
             http_path,
@@ -3448,8 +3586,9 @@ fn respond_execute_result(
     result: &ExecutionResult,
     response_meta: Option<serde_json::Map<String, serde_json::Value>>,
     cgs: Option<&CGS>,
+    artifact: Option<&RunArtifactHandle>,
 ) -> Response {
-    match kind {
+    let res = match kind {
         ExecResponseKind::Json => {
             let body = if let Some(meta) = response_meta {
                 serde_json::json!({
@@ -3506,7 +3645,8 @@ fn respond_execute_result(
             )
                 .into_response()
         }
-    }
+    };
+    attach_plasm_run_headers(res, artifact)
 }
 
 fn respond_staged_lines_execute_result(
@@ -3514,8 +3654,9 @@ fn respond_staged_lines_execute_result(
     step_values: Vec<serde_json::Value>,
     step_tables: Option<Vec<String>>,
     response_meta: Option<serde_json::Map<String, serde_json::Value>>,
+    artifact: Option<&RunArtifactHandle>,
 ) -> Response {
-    match kind {
+    let res = match kind {
         ExecResponseKind::Json => {
             let body = if let Some(meta) = response_meta {
                 serde_json::json!({
@@ -3586,7 +3727,8 @@ fn respond_staged_lines_execute_result(
             )
                 .into_response()
         }
-    }
+    };
+    attach_plasm_run_headers(res, artifact)
 }
 
 fn execution_failed_response(
@@ -3660,16 +3802,212 @@ fn plasm_line_step_bad_request(
     )
 }
 
+async fn post_execute_session_context(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
+    ExecutePath {
+        prompt_hash,
+        session_id,
+    }: ExecutePath,
+    Json(body): Json<ExecuteSessionContextBody>,
+) -> Response {
+    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_SESSION),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown or expired execute session"),
+        );
+    };
+    if !session_allows_principal(&sess, principal.as_ref()) {
+        return incoming_auth_problem(
+            crate::incoming_auth::IncomingAuthFailure::Invalid(
+                "execute session tenant does not match caller".into(),
+            ),
+            true,
+        );
+    }
+    let principal_stored = sess.principal.clone();
+    let intent_owned = body.intent.unwrap_or_default();
+    let intent_ref = intent_owned.trim();
+    match apply_capability_seeds(
+        &st,
+        principal.as_ref(),
+        Some((prompt_hash.as_str(), session_id.as_str())),
+        body.seeds,
+        principal_stored,
+        None,
+        None,
+        intent_ref,
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    {
+        Ok(out) => Json(out).into_response(),
+        Err(msg) => problem_response(
+            Problem::custom(
+                ProblemStatus::BAD_REQUEST,
+                Uri::from_static(problem_types::EXECUTE_REGISTRY_ERROR),
+            )
+            .with_title("Bad Request")
+            .with_detail(msg),
+        ),
+    }
+}
+
+async fn get_execute_session_symbols(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
+    ExecutePath {
+        prompt_hash,
+        session_id,
+    }: ExecutePath,
+) -> Response {
+    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_SESSION),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown or expired execute session"),
+        );
+    };
+    if !session_allows_principal(&sess, principal.as_ref()) {
+        return incoming_auth_problem(
+            crate::incoming_auth::IncomingAuthFailure::Invalid(
+                "execute session tenant does not match caller".into(),
+            ),
+            true,
+        );
+    }
+    let loaded_catalogs: Vec<String> = sess.contexts_by_entry.keys().cloned().collect();
+    let entity_symbols = sess
+        .domain_exposure
+        .as_ref()
+        .map(|ex| ex.symbol_map_arc().exposed_entity_symbol_rows())
+        .unwrap_or_default();
+    Json(ExecuteSessionSymbolsResponse {
+        prompt_hash: sess.prompt_hash.clone(),
+        session_id: session_id.to_string(),
+        domain_revision: sess.domain_revision,
+        entry_id: sess.entry_id.clone(),
+        entities: sess.entities.clone(),
+        loaded_catalogs,
+        context_intent: sess.context_intent.clone(),
+        entity_symbols,
+    })
+    .into_response()
+}
+
+async fn get_execute_session_status(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
+    ExecutePath {
+        prompt_hash,
+        session_id,
+    }: ExecutePath,
+) -> Response {
+    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+        return Json(ExecuteSessionStatusResponse {
+            alive: false,
+            prompt_hash: prompt_hash.to_string(),
+            session_id: session_id.to_string(),
+            domain_revision: 0,
+            entry_id: String::new(),
+            entities: vec![],
+            loaded_catalogs: vec![],
+            context_intent: None,
+            principal: None,
+        })
+        .into_response();
+    };
+    if !session_allows_principal(&sess, principal.as_ref()) {
+        return incoming_auth_problem(
+            crate::incoming_auth::IncomingAuthFailure::Invalid(
+                "execute session tenant does not match caller".into(),
+            ),
+            true,
+        );
+    }
+    let loaded_catalogs: Vec<String> = sess.contexts_by_entry.keys().cloned().collect();
+    Json(ExecuteSessionStatusResponse {
+        alive: true,
+        prompt_hash: sess.prompt_hash.clone(),
+        session_id: session_id.to_string(),
+        domain_revision: sess.domain_revision,
+        entry_id: sess.entry_id.clone(),
+        entities: sess.entities.clone(),
+        loaded_catalogs,
+        context_intent: sess.context_intent.clone(),
+        principal: sess.principal.clone(),
+    })
+    .into_response()
+}
+
+async fn get_execute_session_runs(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
+    ExecutePath {
+        prompt_hash,
+        session_id,
+    }: ExecutePath,
+) -> Response {
+    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_SESSION),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown or expired execute session"),
+        );
+    };
+    if !session_allows_principal(&sess, principal.as_ref()) {
+        return incoming_auth_problem(
+            crate::incoming_auth::IncomingAuthFailure::Invalid(
+                "execute session tenant does not match caller".into(),
+            ),
+            true,
+        );
+    }
+    let runs = sess.core.list_run_summaries().await;
+    Json(ExecuteSessionRunsResponse {
+        prompt_hash: sess.prompt_hash.clone(),
+        session_id: session_id.to_string(),
+        runs,
+    })
+    .into_response()
+}
+
 pub fn execute_routes() -> Router {
     Router::new()
         .route("/execute", post(post_create_execute_session))
         .route(
-            "/execute/{prompt_hash}/{session_id}",
-            get(get_execute_session).post(post_run_execute_session),
-        )
-        .route(
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
             get(get_execute_run_artifact),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/runs",
+            get(get_execute_session_runs),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/symbols",
+            get(get_execute_session_symbols),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/status",
+            get(get_execute_session_status),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/context",
+            post(post_execute_session_context),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}",
+            get(get_execute_session).post(post_run_execute_session),
         )
 }
 
@@ -3901,6 +4239,7 @@ async fn post_run_execute_session(
         prompt_hash,
         session_id,
     }: ExecutePath,
+    Query(run_q): Query<ExecuteRunQuery>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -4006,6 +4345,144 @@ async fn post_run_execute_session(
         logical_session_ref: None,
     };
 
+    let plan_only = run_mode_is_plan(&headers, &run_q);
+    if plan_only {
+        if multiple_lines {
+            let total = expressions.len();
+            let mut lines_out = Vec::with_capacity(total);
+            for (idx, line) in expressions.iter().enumerate() {
+                let parsed = match parse_plasm_line(line.as_str(), &sess, &st) {
+                    Ok(p) => p,
+                    Err(RunLineError::Parse(d)) => {
+                        return plasm_line_step_bad_request(idx, total, line, d);
+                    }
+                    Err(RunLineError::Normalize(d)) => {
+                        return plasm_line_step_bad_request(idx, total, line, d);
+                    }
+                    Err(RunLineError::Projection(d)) => {
+                        return plasm_line_step_bad_request(idx, total, line, d);
+                    }
+                    Err(RunLineError::Runtime(e, _)) => {
+                        return plasm_line_step_bad_request(idx, total, line, e.to_string());
+                    }
+                    Err(RunLineError::ArtifactSerialization(e)) => {
+                        return plasm_line_step_bad_request(idx, total, line, e.to_string());
+                    }
+                    Err(RunLineError::ArtifactPersist(d)) => {
+                        return plasm_line_step_bad_request(idx, total, line, d);
+                    }
+                };
+                if let Err(te) = crate::plasm_plan_run::typecheck_parsed_for_session(&sess, &parsed)
+                {
+                    return plasm_line_step_bad_request(
+                        idx,
+                        total,
+                        line,
+                        format!("type check: {te}"),
+                    );
+                }
+                let (intent, il, bindings) =
+                    crate::plasm_plan_run::dry_run_simulation_for_session(&sess, &parsed);
+                lines_out.push(serde_json::json!({
+                    "index": idx + 1,
+                    "source": line,
+                    "intent": intent,
+                    "il": il,
+                    "bindings": bindings,
+                    "expression": crate::expr_display::expr_display(&parsed.expr),
+                }));
+            }
+            let preview = serde_json::json!({ "plan": true, "lines": lines_out });
+            return respond_plan_payload(kind, preview);
+        }
+        let line = expressions[0].as_str();
+        let parsed = match parse_plasm_line(line, &sess, &st) {
+            Ok(p) => p,
+            Err(RunLineError::Parse(d)) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::BAD_REQUEST,
+                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                    )
+                    .with_title("Bad Request")
+                    .with_detail(d),
+                );
+            }
+            Err(RunLineError::Normalize(d)) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::BAD_REQUEST,
+                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                    )
+                    .with_title("Bad Request")
+                    .with_detail(d),
+                );
+            }
+            Err(RunLineError::Projection(d)) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::INTERNAL_SERVER_ERROR,
+                        Uri::from_static(problem_types::EXECUTE_PROJECTION_ENRICHMENT_FAILED),
+                    )
+                    .with_title("Internal Server Error")
+                    .with_detail(d),
+                );
+            }
+            Err(RunLineError::Runtime(e, _src)) => {
+                return execution_failed_response(
+                    &e,
+                    line,
+                    &sess,
+                    &prompt_hash,
+                    &session_id,
+                    None,
+                    1,
+                );
+            }
+            Err(RunLineError::ArtifactSerialization(e)) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::INTERNAL_SERVER_ERROR,
+                        Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                    )
+                    .with_title("Internal Server Error")
+                    .with_detail(format!("artifact serialization failed: {e}")),
+                );
+            }
+            Err(RunLineError::ArtifactPersist(d)) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::INTERNAL_SERVER_ERROR,
+                        Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                    )
+                    .with_title("Internal Server Error")
+                    .with_detail(format!("run artifact persist failed: {d}")),
+                );
+            }
+        };
+        if let Err(te) = crate::plasm_plan_run::typecheck_parsed_for_session(&sess, &parsed) {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(format!("type check: {te}")),
+            );
+        }
+        let (intent, il, bindings) =
+            crate::plasm_plan_run::dry_run_simulation_for_session(&sess, &parsed);
+        let preview = serde_json::json!({
+            "plan": true,
+            "intent": intent,
+            "il": il,
+            "bindings": bindings,
+            "expression": crate::expr_display::expr_display(&parsed.expr),
+            "source": line,
+        });
+        return respond_plan_payload(kind, preview);
+    }
+
     if !multiple_lines {
         let line = expressions[0].as_str();
         let mut cache = sess.graph_cache.lock().await;
@@ -4034,6 +4511,7 @@ async fn post_run_execute_session(
                     &result,
                     response_meta,
                     Some(sess.cgs.as_ref()),
+                    artifact.as_ref(),
                 )
             }
             Err(RunLineError::Parse(d)) => problem_response(
@@ -4120,7 +4598,14 @@ async fn post_run_execute_session(
     }
     let omitted_vec: Vec<String> = omitted_union.into_iter().collect();
     let steps_response_meta = tool_meta_from_handles(&step_artifacts, &omitted_vec);
-    respond_staged_lines_execute_result(kind, step_values, step_tables, steps_response_meta)
+    let last_artifact = step_artifacts.last();
+    respond_staged_lines_execute_result(
+        kind,
+        step_values,
+        step_tables,
+        steps_response_meta,
+        last_artifact,
+    )
 }
 
 #[cfg(test)]
@@ -4369,6 +4854,7 @@ mod tests {
             vec![serde_json::json!([]), serde_json::json!([1, 2])],
             Some(vec!["first_table".to_string(), "second_table".to_string()]),
             None,
+            None,
         );
         assert_eq!(res.status(), StatusCode::OK);
         let ct = res
@@ -4395,6 +4881,7 @@ mod tests {
         let res = respond_staged_lines_execute_result(
             ExecResponseKind::Toon,
             vec![serde_json::json!(["a"]), serde_json::json!([])],
+            None,
             None,
             None,
         );

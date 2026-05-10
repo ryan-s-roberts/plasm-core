@@ -22,6 +22,7 @@ use tokio::time::{sleep, Duration as TokioDuration};
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::run_artifacts::{ArtifactPayload, RunArtifactStore};
 use crate::session_graph_persistence::SessionGraphPersistence;
+use serde::Serialize;
 use uuid::Uuid;
 
 /// Default time-to-live for a session (lazy expiry on lookup).
@@ -191,6 +192,19 @@ impl RunArtifactHotCache {
             let _ = self.evict_for_limits();
         }
     }
+
+    fn list_ordered_summaries(&self) -> Vec<SessionRunSummary> {
+        self.order
+            .iter()
+            .filter_map(|id| {
+                self.map.get(id).map(|a| SessionRunSummary {
+                    run_id: a.run_id,
+                    resource_index: a.resource_index,
+                    delta_seq: a.seq.0,
+                })
+            })
+            .collect()
+    }
 }
 
 /// Key for deduplicating execute sessions: same registry `entry_id`, same entity seed set, and
@@ -241,6 +255,14 @@ pub struct SessionRunArtifact {
     pub seq: DeltaSeq,
     pub epoch: GraphEpoch,
     pub payload: ArtifactPayload,
+}
+
+/// In-memory run index row (`GET /execute/.../runs` hot cache; evicted runs may still exist in [`RunArtifactStore`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionRunSummary {
+    pub run_id: Uuid,
+    pub resource_index: u64,
+    pub delta_seq: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -343,6 +365,12 @@ impl SessionCore {
     pub async fn tip_seq(&self) -> DeltaSeq {
         let g = self.state.lock().await;
         g.seq
+    }
+
+    /// Ordered run snapshots currently retained in the session hot cache (newest last).
+    pub async fn list_run_summaries(&self) -> Vec<SessionRunSummary> {
+        let g = self.state.lock().await;
+        g.run_artifacts.list_ordered_summaries()
     }
 }
 

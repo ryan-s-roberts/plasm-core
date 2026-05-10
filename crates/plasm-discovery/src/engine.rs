@@ -10,8 +10,11 @@ use plasm_core::schema::{CapabilityKind, CGS};
 use tracing::{debug_span, info_span, Instrument};
 
 use crate::decompose::{decompose, tokenize};
-use crate::embedder::{cosine_sim, BlockingEmbedder};
-use crate::index::{qualifier_supported, CatalogIndex, PhraseHit, PhraseSource};
+use crate::embedder::{cosine_sim, BlockingEmbedder, DEFAULT_EMBEDDING_MODEL_ID};
+use crate::embedding_store::{CatalogEmbeddingLineKey, CatalogEmbeddingStore};
+use crate::index::{
+    discovery_embed_line_text, qualifier_supported, CatalogIndex, PhraseHit, PhraseSource,
+};
 use crate::metrics;
 use crate::types::{
     evidence_codes, ClarificationAnswer, ClarificationDimension, ClarificationOption,
@@ -141,12 +144,17 @@ fn apply_relation_intent_boosts(
 pub struct TypedDiscovery {
     indexes: Vec<CatalogIndex>,
     embedder: Option<Arc<BlockingEmbedder>>,
+    embedding_store: Option<Arc<dyn CatalogEmbeddingStore>>,
     /// Max clarification / ready options per response.
     pub max_options: usize,
 }
 
 impl TypedDiscovery {
-    pub fn from_cgs_entries(entries: Vec<(String, Arc<CGS>)>, enable_embeddings: bool) -> Self {
+    pub fn from_cgs_entries(
+        entries: Vec<(String, Arc<CGS>)>,
+        enable_embeddings: bool,
+        embedding_store: Option<Arc<dyn CatalogEmbeddingStore>>,
+    ) -> Self {
         let t0 = Instant::now();
         let mut indexes = Vec::new();
         let mut total_ent = 0i64;
@@ -172,6 +180,7 @@ impl TypedDiscovery {
         Self {
             indexes,
             embedder,
+            embedding_store,
             max_options: 8,
         }
     }
@@ -190,6 +199,13 @@ impl TypedDiscovery {
             .iter()
             .find(|i| i.entry_id == entry_id)
             .map(|i| i.cgs.as_ref())
+    }
+
+    fn catalog_hash_for_entry(&self, entry_id: &str) -> Option<&str> {
+        self.indexes
+            .iter()
+            .find(|i| i.entry_id == entry_id)
+            .map(|i| i.catalog_hash.as_str())
     }
 
     fn score_hit(hit: &PhraseHit) -> f64 {
@@ -416,16 +432,98 @@ impl TypedDiscovery {
             metrics::record_embed_cache("miss");
             let lines: Vec<String> = hypotheses
                 .iter()
-                .map(|h| format!("{} {} {}", h.entry_id, h.entity, h.matched_phrase))
+                .map(|h| {
+                    discovery_embed_line_text(
+                        h.entry_id.as_str(),
+                        h.entity.as_str(),
+                        h.matched_phrase.as_str(),
+                    )
+                })
                 .collect();
-            let mut all_texts = vec![utterance.to_string()];
-            all_texts.extend(lines.iter().cloned());
+
+            let lookup_keys: Vec<Option<CatalogEmbeddingLineKey>> = hypotheses
+                .iter()
+                .enumerate()
+                .map(|(i, h)| {
+                    self.catalog_hash_for_entry(h.entry_id.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|hash| {
+                            CatalogEmbeddingLineKey::new(hash.to_string(), lines[i].clone())
+                        })
+                })
+                .collect();
+
+            let mut seen_fetch: HashSet<CatalogEmbeddingLineKey> = HashSet::new();
+            let mut fetch_keys: Vec<CatalogEmbeddingLineKey> = Vec::new();
+            for k in lookup_keys.iter().filter_map(|x| x.as_ref()) {
+                if seen_fetch.insert(k.clone()) {
+                    fetch_keys.push(k.clone());
+                }
+            }
+
+            let mut hyp_vecs: Vec<Option<Vec<f32>>> = vec![None; hypotheses.len()];
+            if let (Some(store), false) = (self.embedding_store.as_ref(), fetch_keys.is_empty()) {
+                match store
+                    .fetch_embeddings(DEFAULT_EMBEDDING_MODEL_ID, &fetch_keys)
+                    .await
+                {
+                    Ok(map) => {
+                        for (i, lk) in lookup_keys.iter().enumerate() {
+                            if let Some(k) = lk {
+                                if let Some(v) = map.get(k) {
+                                    hyp_vecs[i] = Some(v.clone());
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "typed discovery: catalog embedding store fetch failed; using local embedder for catalog lines"
+                        );
+                    }
+                }
+            }
+
+            let missing_any = hyp_vecs.iter().any(|v| v.is_none());
             let t_batch = Instant::now();
-            match embedder.embed_batch(all_texts).await {
-                Ok(vecs) if vecs.len() == hypotheses.len() + 1 => {
+            let embed_outcome = if missing_any {
+                let mut batch = vec![utterance.to_string()];
+                batch.extend(lines.iter().cloned());
+                embedder.embed_batch(batch).await
+            } else {
+                embedder.embed_batch(vec![utterance.to_string()]).await
+            };
+
+            match embed_outcome {
+                Ok(vecs) if vecs.len() == 1 && !missing_any => {
                     let qv = &vecs[0];
                     for (i, h) in hypotheses.iter_mut().enumerate() {
-                        let sim = cosine_sim(qv, &vecs[i + 1]);
+                        let Some(hv) = hyp_vecs[i].as_ref() else {
+                            continue;
+                        };
+                        let sim = cosine_sim(qv, hv);
+                        h.score += 30.0 * sim;
+                        if sim > 0.01 {
+                            h.evidence.push(DiscoveryEvidence::new(
+                                evidence_codes::EMBEDDING_SIM,
+                                format!("{sim:.4}"),
+                            ));
+                        }
+                    }
+                    metrics::record_embed_batch_duration(t_batch.elapsed());
+                }
+                Ok(vecs) if missing_any && vecs.len() == hypotheses.len() + 1 => {
+                    let qv = &vecs[0];
+                    for (i, h) in hypotheses.iter_mut().enumerate() {
+                        let hv: &[f32] = match hyp_vecs[i].as_deref() {
+                            Some(s) => s,
+                            None => vecs.get(i + 1).map(|v| v.as_slice()).unwrap_or(&[]),
+                        };
+                        if hv.is_empty() {
+                            continue;
+                        }
+                        let sim = cosine_sim(qv, hv);
                         h.score += 30.0 * sim;
                         if sim > 0.01 {
                             h.evidence.push(DiscoveryEvidence::new(
@@ -824,7 +922,7 @@ mod relation_intent_rank_tests {
     #[tokio::test]
     async fn relation_intent_boost_prefers_relation_target_over_parent_token_match() {
         let cgs = Arc::new(minimal_parent_child_comments_cgs());
-        let discovery = TypedDiscovery::from_cgs_entries(vec![("demo".into(), cgs)], false);
+        let discovery = TypedDiscovery::from_cgs_entries(vec![("demo".into(), cgs)], false, None);
         let q = DiscoveryQuery {
             utterance: "get thing comments".into(),
             allowed_entry_ids: vec![],

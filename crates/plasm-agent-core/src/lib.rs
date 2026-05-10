@@ -13,6 +13,9 @@ pub mod bootstrap_secrets;
 pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
+mod discovery_embedding_chunks;
+pub mod discovery_embedding_reconcile;
+pub mod discovery_embedding_repository;
 pub mod dispatch;
 pub mod dotenv_safe;
 pub mod error;
@@ -65,6 +68,7 @@ pub mod spans;
 pub mod subcommand_util;
 mod telemetry;
 pub mod tenant_binding;
+pub mod terminal;
 mod tool_model;
 pub mod trace_hub;
 pub(crate) mod trace_hub_metrics;
@@ -72,13 +76,7 @@ pub mod trace_sink_emit;
 pub mod typed_discovery_host;
 mod web_connected_account_notify;
 
-use clap::{Arg, Command};
-use plasm_core::PromptPipelineConfig;
-use plasm_runtime::{AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache};
-
 pub use crate::cli_builder::AgentCliSurface;
-use crate::error::AgentError;
-use crate::output::OutputFormat;
 
 /// Dotenv + telemetry init shared with `plasm-repl` and other front binaries.
 pub fn init_agent_runtime() -> Result<(), Box<dyn std::error::Error>> {
@@ -87,80 +85,9 @@ pub fn init_agent_runtime() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Schema-driven one-shot CLI (`plasm-cgs` binary).
+/// Remote HTTP terminal (`plasm-cgs` binary). Local schema-driven CGS CLIs use `plasm-repl` / tests only.
 pub async fn run_cgs_main() -> Result<(), Box<dyn std::error::Error>> {
-    init_agent_runtime()?;
-
-    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
-
-    let pre_cmd = Command::new("plasm-cgs")
-        .disable_help_flag(true)
-        .arg(
-            Arg::new("schema")
-                .long("schema")
-                .short('s')
-                .help("Path to CGS schema file"),
-        )
-        .ignore_errors(true);
-
-    let pre_matches = pre_cmd.get_matches_from(&argv);
-
-    let Some(schema_path) = pre_matches.get_one::<String>("schema").cloned() else {
-        eprintln!("plasm-cgs: --schema <path> is required");
-        std::process::exit(1);
-    };
-
-    let cgs = plasm_core::loader::load_schema(std::path::Path::new(&schema_path))
-        .map_err(AgentError::Schema)?;
-
-    plasm_compile::validate_cgs_capability_templates(&cgs)
-        .map_err(|e| AgentError::Schema(e.to_string()))?;
-
-    let app = cli_builder::build_app(&cgs, AgentCliSurface::CgsClient);
-    let matches = app.get_matches_from(&argv);
-
-    let backend_raw = matches
-        .get_one::<String>("backend")
-        .map(|s| s.as_str())
-        .unwrap_or("http://localhost:1080");
-    let backend = backend_normalize::normalize_live_backend_url(schema_path.as_str(), backend_raw);
-
-    let mode = match matches
-        .get_one::<String>("mode")
-        .map(|s| s.as_str())
-        .unwrap_or("live")
-    {
-        "replay" => ExecutionMode::Replay,
-        "hybrid" => ExecutionMode::Hybrid,
-        _ => ExecutionMode::Live,
-    };
-
-    let output_format = OutputFormat::parse(
-        matches
-            .get_one::<String>("output")
-            .map(|s| s.as_str())
-            .unwrap_or("json"),
-    );
-
-    let prompt_focus = matches.get_one::<String>("focus").cloned();
-    let prompt_pipeline = PromptPipelineConfig::for_cli_focus(prompt_focus.as_deref());
-
-    let config = ExecutionConfig {
-        base_url: Some(backend.to_string()),
-        prompt_pipeline,
-        ..ExecutionConfig::default()
-    };
-
-    let auth_resolver = cgs.auth.clone().map(AuthResolver::from_env);
-    let engine = ExecutionEngine::new_with_auth(config, auth_resolver)?;
-
-    if matches.subcommand().is_none() {
-        eprintln!("plasm-cgs: provide an entity subcommand (see --help).");
-        std::process::exit(1);
-    }
-
-    let mut cache = GraphCache::new();
-    dispatch::dispatch(&matches, &cgs, &engine, &mut cache, mode, output_format).await?;
-
-    Ok(())
+    crate::terminal::run_terminal()
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
 }

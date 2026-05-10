@@ -10,9 +10,10 @@ use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
 use plasm_core::discovery::{
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, DiscoveryError, DiscoveryResult,
+    RankedCandidate,
 };
 use plasm_core::schema::CGS;
-use plasm_discovery::DiscoveryQuery;
+use plasm_discovery::{DiscoveryDecision, DiscoveryQuery};
 use serde::{Deserialize, Serialize};
 
 use crate::http_problem_util::problem_response;
@@ -235,13 +236,127 @@ async fn post_discover_typed(
         "plasm typed discovery request"
     );
     let reg = st.catalog.snapshot();
-    match run_typed_catalog_discovery(&reg, query).await {
+    let emb = st.discovery_embedding_store();
+    match run_typed_catalog_discovery(&reg, query, emb).await {
         Ok(out) => Json(out).into_response(),
         Err(e) => {
             tracing::debug!(error = %e, "typed discovery failed");
             problem_response(typed_discovery_problem(e))
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct TerminalDiscoverBody {
+    pub intent: String,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub allowed_entry_ids: Vec<String>,
+    #[serde(default = "terminal_discover_default_embeddings")]
+    pub enable_embeddings: bool,
+}
+
+fn terminal_discover_default_embeddings() -> bool {
+    false
+}
+
+#[derive(Debug, Serialize)]
+pub struct TerminalDiscoverSeedRow {
+    pub entry_id: String,
+    pub entity: String,
+    pub capability_name: String,
+    pub score: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub capability_description: String,
+    /// `{ "api": entry_id, "entity" }` — drop-in for `POST /execute` seeding and `POST .../context`.
+    pub seed: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TerminalDiscoverResponse {
+    pub intent: String,
+    pub rows: Vec<TerminalDiscoverSeedRow>,
+    pub candidates: Vec<RankedCandidate>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub schema_neighborhoods: Vec<plasm_core::discovery::DiscoverySchemaNeighborhood>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub entity_summaries: Vec<plasm_core::discovery::EntitySummary>,
+    pub typed: DiscoveryDecision,
+}
+
+async fn post_terminal_discover(
+    Extension(st): Extension<PlasmHostState>,
+    Json(body): Json<TerminalDiscoverBody>,
+) -> Response {
+    let intent = body.intent.trim();
+    if intent.is_empty() {
+        return problem_response(discovery_problem(DiscoveryError::EmptyQuery));
+    }
+    let cq = CapabilityQuery {
+        tokens: intent.split_whitespace().map(|s| s.to_string()).collect(),
+        phrases: vec![intent.to_string()],
+        entry_ids: if body.allowed_entry_ids.is_empty() {
+            None
+        } else {
+            Some(body.allowed_entry_ids.clone())
+        },
+        ..Default::default()
+    };
+    let reg = st.catalog.snapshot();
+    let structured = match reg.discover(&cq) {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::debug!(error = %e, "terminal structured discovery failed");
+            return problem_response(discovery_problem(e));
+        }
+    };
+    let limit = body.limit.unwrap_or(32).clamp(1, 128);
+    let candidates: Vec<RankedCandidate> =
+        structured.candidates.iter().take(limit).cloned().collect();
+    let rows: Vec<TerminalDiscoverSeedRow> = candidates
+        .iter()
+        .map(|c| TerminalDiscoverSeedRow {
+            entry_id: c.entry_id.clone(),
+            entity: c.entity.clone(),
+            capability_name: c.capability_name.clone(),
+            score: c.score,
+            reason_codes: c.reason_codes.clone(),
+            capability_description: c.capability_description.clone(),
+            seed: serde_json::json!({
+                "api": c.entry_id,
+                "entity": c.entity,
+            }),
+        })
+        .collect();
+
+    let typed_query = DiscoveryQuery {
+        utterance: intent.to_string(),
+        allowed_entry_ids: body.allowed_entry_ids.clone(),
+        max_options: limit.max(8),
+        enable_embeddings: body.enable_embeddings,
+        ..Default::default()
+    };
+    let emb = st.discovery_embedding_store();
+    let typed = match run_typed_catalog_discovery(&reg, typed_query, emb).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::debug!(error = %e, "terminal typed discovery failed");
+            return problem_response(typed_discovery_problem(e));
+        }
+    };
+
+    Json(TerminalDiscoverResponse {
+        intent: intent.to_string(),
+        rows,
+        candidates,
+        schema_neighborhoods: structured.schema_neighborhoods.clone(),
+        entity_summaries: structured.entity_summaries.clone(),
+        typed,
+    })
+    .into_response()
 }
 
 async fn post_discover(
@@ -282,4 +397,5 @@ pub fn discovery_routes_protected() -> Router {
         .route("/v1/registry/{entry_id}/tool-model", get(get_tool_model))
         .route("/v1/discover", post(post_discover))
         .route("/v1/discover-typed", post(post_discover_typed))
+        .route("/v1/terminal/discover", post(post_terminal_discover))
 }

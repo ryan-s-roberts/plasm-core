@@ -1,6 +1,6 @@
 //! Interactive REPL for the Plasm path expression language.
 //!
-//! Activated with `plasm-agent --schema <path> --backend <url> --repl`.
+//! Run the **`plasm-repl`** binary: `plasm-repl --schema <dir-or-yaml> --backend <url>` (or `--plugin-dir` instead of `--schema`).
 //!
 //! On startup:
 //!   - Renders the same DOMAIN prompt as `plasm-eval` / BAML `TranslatePlan` (one expression per goal)

@@ -204,7 +204,8 @@ pub use symbol_tuning::{
     entity_slices_for_render, expand_expr_for_domain_session, expand_expr_for_parse,
     expand_path_symbols, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
     symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_for_prompt,
-    DomainExposureSession, FocusSpec, SymbolMap, SymbolMapCacheKey, SymbolMapCrossRequestCache,
+    DomainExposureSession, ExposedEntitySymbolRow, FocusSpec, SymbolMap, SymbolMapCacheKey,
+    SymbolMapCrossRequestCache,
 };
 pub use type_checker::{
     type_check_chain, type_check_create, type_check_delete, type_check_expr,

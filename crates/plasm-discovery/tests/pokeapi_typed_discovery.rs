@@ -24,7 +24,7 @@ async fn lexical_ready_resolves_berry_query() {
     let (domain, mappings) = pokeapi_fixture_paths();
     let cgs = load_split_schema(&domain, &mappings).expect("load pokeapi_mini");
     let arc = Arc::new(cgs);
-    let disc = TypedDiscovery::from_cgs_entries(vec![("pokeapi_mini".into(), arc)], false)
+    let disc = TypedDiscovery::from_cgs_entries(vec![("pokeapi_mini".into(), arc)], false, None)
         .with_max_options(8);
 
     let out = disc
@@ -53,7 +53,7 @@ async fn empty_utterance_errors() {
     let (domain, mappings) = pokeapi_fixture_paths();
     let cgs = load_split_schema(&domain, &mappings).expect("load pokeapi_mini");
     let disc =
-        TypedDiscovery::from_cgs_entries(vec![("pokeapi_mini".into(), Arc::new(cgs))], false);
+        TypedDiscovery::from_cgs_entries(vec![("pokeapi_mini".into(), Arc::new(cgs))], false, None);
 
     let err = disc
         .discover(DiscoveryQuery {

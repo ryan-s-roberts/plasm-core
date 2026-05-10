@@ -5,6 +5,7 @@
 
 pub use plasm_agent_core::*;
 
+mod embedded_postgres;
 mod mcp_main;
 
 pub use mcp_main::run_mcp_main;

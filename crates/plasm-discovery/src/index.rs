@@ -39,6 +39,12 @@ fn norm_phrase(s: &str) -> String {
         .join(" ")
 }
 
+/// Text fed to the embedder for one lexical hypothesis — must stay aligned with [`crate::engine::TypedDiscovery`] scoring.
+#[inline]
+pub fn discovery_embed_line_text(entry_id: &str, entity: &str, phrase: &str) -> String {
+    format!("{entry_id} {entity} {phrase}")
+}
+
 /// `IssueType` → `issue type`, `PullRequest` → `pull request` (for substring utterance hits).
 pub(crate) fn camel_case_word_spaced(name: &str) -> Option<String> {
     let name = name.trim();
@@ -355,25 +361,24 @@ impl CatalogIndex {
         self.cgs.entities.len()
     }
 
+    /// Deduped embed lines for materializing catalog-side vectors (`catalog_cgs_hash` rows).
+    pub fn distinct_discovery_embed_lines(&self) -> Vec<String> {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for hits in self.phrase_to_hits.values() {
+            for h in hits {
+                set.insert(discovery_embed_line_text(
+                    h.entry_id.as_str(),
+                    h.entity.as_str(),
+                    h.phrase.as_str(),
+                ));
+            }
+        }
+        set.into_iter().collect()
+    }
+
     pub fn capability_count(&self) -> usize {
         self.cgs.capabilities.len()
-    }
-}
-
-#[cfg(test)]
-mod inflection_tests {
-    use super::*;
-
-    #[test]
-    fn noun_inflection_links_issue_and_issues() {
-        assert!(inflection_alias_keys("issue").contains(&"issues".to_string()));
-        assert!(inflection_alias_keys("issues").contains(&"issue".to_string()));
-    }
-
-    #[test]
-    fn noun_inflection_pluralizes_last_token_in_phrases() {
-        let alts = inflection_alias_keys("pull request");
-        assert!(alts.contains(&"pull requests".to_string()));
     }
 }
 
@@ -428,4 +433,29 @@ pub fn qualifier_supported(cgs: &CGS, entity: &str, qualifier: &str) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod inflection_tests {
+    use super::*;
+
+    #[test]
+    fn discovery_embed_line_text_matches_typed_discovery_shape() {
+        assert_eq!(
+            discovery_embed_line_text("github", "Issue", "ticket"),
+            "github Issue ticket"
+        );
+    }
+
+    #[test]
+    fn noun_inflection_links_issue_and_issues() {
+        assert!(inflection_alias_keys("issue").contains(&"issues".to_string()));
+        assert!(inflection_alias_keys("issues").contains(&"issue".to_string()));
+    }
+
+    #[test]
+    fn noun_inflection_pluralizes_last_token_in_phrases() {
+        let alts = inflection_alias_keys("pull request");
+        assert!(alts.contains(&"pull requests".to_string()));
+    }
 }

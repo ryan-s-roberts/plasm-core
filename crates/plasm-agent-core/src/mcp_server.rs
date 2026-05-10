@@ -1984,9 +1984,10 @@ impl PlasmMcpHandler {
                     dq.allowed_entry_ids.retain(|e| cfg.entry_allowed(e));
                 }
             }
-            let decision = run_typed_catalog_discovery(&reg, dq)
-                .await
-                .map_err(typed_discovery_mcp_error)?;
+            let decision =
+                run_typed_catalog_discovery(&reg, dq, self.plasm.discovery_embedding_store())
+                    .await
+                    .map_err(typed_discovery_mcp_error)?;
             drop(_discover_guard);
             let json = serde_json::to_string_pretty(&decision).map_err(|e| {
                 CallToolError::from_message(format!("serialize typed discovery: {e}"))

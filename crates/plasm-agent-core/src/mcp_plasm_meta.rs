@@ -243,6 +243,7 @@ mod tests {
     fn sample_handle(run: Uuid, ph: &str, sid: &str) -> RunArtifactHandle {
         RunArtifactHandle {
             run_id: run,
+            resource_index: 1,
             plasm_uri: plasm_short_resource_uri(1),
             canonical_plasm_uri: plasm_run_resource_uri(ph, sid, &run),
             http_path: artifact_http_path(ph, sid, &run),

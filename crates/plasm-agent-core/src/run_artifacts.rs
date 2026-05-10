@@ -29,6 +29,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct RunArtifactHandle {
     pub run_id: Uuid,
+    /// Monotonic `plasm://r/{n}` index for this execute session (matches snapshot JSON).
+    pub resource_index: u64,
     /// LLM-facing short URI (`plasm://r/{n}`), valid with MCP `resources/read` while the same execute session is bound.
     pub plasm_uri: String,
     /// Canonical long URI (`plasm://execute/.../run/{run_id}`) for logs and HTTP-adjacent tools.

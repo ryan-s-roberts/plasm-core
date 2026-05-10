@@ -13,6 +13,17 @@ use plasm_runtime::{
     AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider,
 };
 
+async fn shutdown_embedded_pg(slot: &mut Option<crate::embedded_postgres::EmbeddedPostgresGuard>) {
+    if let Some(g) = slot.take() {
+        if let Err(e) = g.shutdown().await {
+            tracing::warn!(
+                error = %e,
+                "embedded postgres: graceful shutdown failed"
+            );
+        }
+    }
+}
+
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
@@ -91,18 +102,28 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
     let pre_matches = pre_cmd.get_matches_from(&argv);
 
     if pre_matches.get_flag("migrate_mcp_config_db") {
+        let mut embedded_pg =
+            crate::embedded_postgres::EmbeddedPostgresGuard::try_start_from_env()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url()
         else {
+            shutdown_embedded_pg(&mut embedded_pg).await;
             eprintln!(
                 "plasm-mcp: --migrate-mcp-config-db requires PLASM_MCP_CONFIG_DATABASE_URL, PLASM_AUTH_STORAGE_URL, or DATABASE_URL"
             );
             std::process::exit(1);
         };
-        plasm_agent_core::mcp_config_repository::McpConfigRepository::connect_and_migrate(&db_url)
+        let migrate_result =
+            plasm_agent_core::mcp_config_repository::McpConfigRepository::connect_and_migrate(
+                &db_url,
+            )
             .await
             .map_err(|e| -> Box<dyn std::error::Error> {
                 format!("MCP config database migrate failed: {e}").into()
-            })?;
+            });
+        shutdown_embedded_pg(&mut embedded_pg).await;
+        migrate_result?;
         tracing::info!("MCP configuration sqlx migrations applied successfully");
         return Ok(());
     }
@@ -264,6 +285,11 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
     );
     plasm_agent_core::incoming_auth::log_incoming_auth_startup(&incoming_cfg, &incoming_verifier);
 
+    let mut embedded_pg =
+        crate::embedded_postgres::EmbeddedPostgresGuard::try_start_from_env()
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
     let mut app_state = plasm_agent_core::http::build_plasm_host_state(
         plasm_agent_core::http::PlasmHostBootstrap {
             engine,
@@ -319,6 +345,17 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
 
     maybe_attach_oss_mcp_policy_store(&mut app_state).await;
 
+    if let Some(repo) =
+        plasm_agent_core::discovery_embedding_repository::maybe_connect_discovery_embedding_store()
+            .await
+    {
+        app_state.oss.discovery_embedding = Some(repo.clone());
+        plasm_agent_core::discovery_embedding_reconcile::spawn_discovery_embedding_reconcile_background(
+            app_state.clone(),
+            repo,
+        );
+    }
+
     let mcp_port = match matches.get_one::<u16>("mcp_port").copied() {
         Some(p) => p,
         None if use_http && use_mcp => port.saturating_add(1),
@@ -358,6 +395,7 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
                 res?;
             }
         }
+        shutdown_embedded_pg(&mut embedded_pg).await;
         return Ok(());
     }
     if use_http {
@@ -369,6 +407,7 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
                 r?;
             }
         }
+        shutdown_embedded_pg(&mut embedded_pg).await;
         return Ok(());
     }
     tokio::select! {
@@ -379,6 +418,7 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
             r.map_err(|e| std::io::Error::other(format!("plasm-mcp MCP server: {e}")))?;
         }
     }
+    shutdown_embedded_pg(&mut embedded_pg).await;
     Ok(())
 }
 

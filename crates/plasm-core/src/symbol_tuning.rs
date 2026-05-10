@@ -1513,6 +1513,14 @@ pub(crate) fn build_ident_type_map(
     out
 }
 
+/// One `e#` row in the DOMAIN teaching table (entity seeds / federation).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ExposedEntitySymbolRow {
+    pub symbol: String,
+    pub entry_id: String,
+    pub entity: String,
+}
+
 /// Bidirectional maps for one prompt/eval slice.
 #[derive(Debug, Clone)]
 pub struct SymbolMap {
@@ -1581,6 +1589,18 @@ pub(crate) fn next_opaque_v_symbol_after_map_and_extra_syms<'a>(
 }
 
 impl SymbolMap {
+    /// Stable `(entry_id, entity)` → `e#` assignments for HTTP `/symbols` and terminals.
+    pub fn exposed_entity_symbol_rows(&self) -> Vec<ExposedEntitySymbolRow> {
+        self.qualified_entity_to_sym
+            .iter()
+            .map(|((entry_id, entity), sym)| ExposedEntitySymbolRow {
+                symbol: sym.clone(),
+                entry_id: entry_id.clone(),
+                entity: entity.clone(),
+            })
+            .collect()
+    }
+
     /// If `token` is a session `e#` symbol (e.g. `e1` from the DOMAIN table), return the canonical entity name.
     #[inline]
     pub fn resolve_session_entity_symbol(&self, token: &str) -> Option<String> {

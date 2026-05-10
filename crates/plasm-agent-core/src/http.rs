@@ -115,6 +115,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             auth_storage: None,
             oauth_link_catalog: None,
             outbound_secret_provider: None,
+            discovery_embedding: None,
         },
         saas: None,
     }

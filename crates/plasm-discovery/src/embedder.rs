@@ -7,6 +7,12 @@ use tokio::sync::Semaphore;
 
 use crate::types::DiscoveryError;
 
+/// Stable id for rows in [`crate::embedding_store::CatalogEmbeddingStore`] (must match [`BlockingEmbedder`] weights).
+pub const DEFAULT_EMBEDDING_MODEL_ID: &str = "all-MiniLM-L6-v2";
+
+/// Dimension for [`DEFAULT_EMBEDDING_MODEL_ID`] (`fastembed::EmbeddingModel::AllMiniLML6V2`) — must match Postgres `vector(N)`.
+pub const DEFAULT_EMBEDDING_VECTOR_DIM: usize = 384;
+
 pub struct BlockingEmbedder {
     model: EmbeddingModel,
     semaphore: Arc<Semaphore>,
@@ -24,7 +30,7 @@ impl BlockingEmbedder {
     }
 
     pub fn model_id(&self) -> &'static str {
-        "all-MiniLM-L6-v2"
+        DEFAULT_EMBEDDING_MODEL_ID
     }
 
     pub async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>, DiscoveryError> {

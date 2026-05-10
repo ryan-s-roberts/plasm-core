@@ -27,6 +27,8 @@ pub enum DiscoveryError {
     UnknownEntry(String),
     #[error("embedding failed: {0}")]
     Embed(String),
+    #[error("embedding store failed: {0}")]
+    EmbeddingStore(String),
     #[error("index build failed: {0}")]
     IndexBuild(String),
     #[error("invalid clarification answer")]
