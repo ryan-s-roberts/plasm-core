@@ -12,13 +12,15 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use plasm_agent_core::mcp_config_admin::{McpConfigApiKeyRow, McpConfigCatalogRow};
+use plasm_agent_core::mcp_config_admin::{
+    McpCatalogAuthMarker, McpConfigApiKeyRow, McpConfigCatalogRow,
+};
 use plasm_agent_core::server_state::PlasmHostState;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Terminal;
 use uuid::Uuid;
 
@@ -55,26 +57,75 @@ fn mcp_curl_snippet(mcp_port: u16) -> String {
 fn api_key_row_label(k: &McpConfigApiKeyRow) -> String {
     match k.label.as_deref().map(str::trim) {
         Some(s) if !s.is_empty() => s.to_string(),
-        _ => format!("(unnamed · {})", uuid_head(&k.key_id)),
+        _ => format!("(unnamed · fp:{})", fingerprint_head(&k.fingerprint)),
     }
 }
 
-fn uuid_head(id: &Uuid) -> String {
-    id.hyphenated()
-        .to_string()
-        .split('-')
-        .next()
-        .unwrap_or_default()
-        .to_string()
+fn fingerprint_head(fingerprint: &str) -> &str {
+    let trimmed = fingerprint.trim();
+    if trimmed.is_empty() {
+        "unknown"
+    } else {
+        &trimmed[..trimmed.len().min(8)]
+    }
 }
 
 fn api_key_row_copy_line(k: &McpConfigApiKeyRow) -> String {
-    format!("{}  {}", api_key_row_label(k), k.key_id)
+    api_key_row_label(k)
 }
 
 fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     cb.set_text(text).map_err(|e| e.to_string())
+}
+
+fn env_nonempty_string(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn storage_backend_summary(
+    embedded_autostart: bool,
+    skip_reason: Option<&str>,
+) -> (&'static str, String) {
+    if embedded_autostart {
+        (
+            "Embedded Postgres",
+            "This appliance is managing its own local PostgreSQL 15 cluster.".into(),
+        )
+    } else {
+        (
+            "External / disabled Postgres",
+            skip_reason
+                .unwrap_or("Embedded Postgres is not active for this appliance.")
+                .to_string(),
+        )
+    }
+}
+
+fn storage_postgres_data_dir() -> String {
+    env_nonempty_string("PLASM_EMBEDDED_POSTGRES_DATA_DIR")
+        .or_else(|| env_nonempty_string("PGDATA"))
+        .unwrap_or_else(|| "managed OS cache (use --data-dir to pin it)".into())
+}
+
+fn storage_local_state_dir() -> String {
+    plasm_agent_core::oss_local_state::resolve_local_state_root()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "unavailable (HOME / PLASM_LOCAL_STATE_DIR unset)".into())
+}
+
+fn storage_auth_key_path() -> String {
+    plasm_agent_core::oss_local_state::resolve_local_state_root()
+        .map(|p| {
+            p.join("bootstrap-secrets")
+                .join("AUTH_STORAGE_ENCRYPTION_KEY")
+                .display()
+                .to_string()
+        })
+        .unwrap_or_else(|| "unavailable until local state root is known".into())
 }
 
 fn no_color() -> bool {
@@ -115,6 +166,14 @@ fn err_emphasis_style() -> Style {
     s
 }
 
+fn warn_emphasis_style() -> Style {
+    let mut s = Style::default().add_modifier(Modifier::BOLD);
+    if !no_color() {
+        s = s.fg(Color::Yellow);
+    }
+    s
+}
+
 fn api_toggle_on_style() -> Style {
     let mut s = Style::default().add_modifier(Modifier::BOLD);
     if !no_color() {
@@ -133,6 +192,14 @@ fn api_toggle_off_style() -> Style {
     s
 }
 
+fn selected_row_style() -> Style {
+    let mut s = Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED);
+    if !no_color() {
+        s = s.fg(Color::Black).bg(Color::Yellow);
+    }
+    s
+}
+
 fn catalog_row_display_name(entry_id: &str, label: &str) -> String {
     if label.trim() == entry_id.trim() {
         entry_id.to_string()
@@ -141,7 +208,398 @@ fn catalog_row_display_name(entry_id: &str, label: &str) -> String {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoticeSeverity {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RunNotice {
+    severity: NoticeSeverity,
+    title: String,
+    summary: String,
+    details: Vec<String>,
+    action_hint: Option<String>,
+    sticky: bool,
+}
+
+impl RunNotice {
+    fn new(severity: NoticeSeverity, title: impl Into<String>, summary: impl Into<String>) -> Self {
+        let sticky = matches!(severity, NoticeSeverity::Error);
+        Self {
+            severity,
+            title: title.into(),
+            summary: summary.into(),
+            details: Vec::new(),
+            action_hint: None,
+            sticky,
+        }
+    }
+
+    fn with_details(mut self, details: Vec<String>) -> Self {
+        self.details = details;
+        self
+    }
+
+    fn with_action_hint(mut self, hint: impl Into<String>) -> Self {
+        self.action_hint = Some(hint.into());
+        self
+    }
+
+    fn with_sticky(mut self, sticky: bool) -> Self {
+        self.sticky = sticky;
+        self
+    }
+
+    fn severity_label(&self) -> &'static str {
+        match self.severity {
+            NoticeSeverity::Info => "INFO",
+            NoticeSeverity::Success => "SUCCESS",
+            NoticeSeverity::Warning => "WARNING",
+            NoticeSeverity::Error => "ERROR",
+        }
+    }
+
+    fn heading_style(&self) -> Style {
+        match self.severity {
+            NoticeSeverity::Info => run_title_style(),
+            NoticeSeverity::Success => api_toggle_on_style(),
+            NoticeSeverity::Warning => warn_emphasis_style(),
+            NoticeSeverity::Error => err_emphasis_style(),
+        }
+    }
+
+    fn block_title(&self) -> String {
+        self.title.clone()
+    }
+
+    fn lines(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::from(vec![
+            Span::styled(format!("{} ", self.severity_label()), self.heading_style()),
+            Span::styled(self.summary.clone(), self.heading_style()),
+        ])];
+        if !self.details.is_empty() {
+            lines.push(Line::from(""));
+            lines.extend(self.details.iter().cloned().map(Line::from));
+        }
+        if let Some(ref hint) = self.action_hint {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("Next: ", dim_style()),
+                Span::raw(hint.clone()),
+            ]));
+        }
+        lines
+    }
+}
+
+fn set_notice(state: &mut RunState, notice: RunNotice) {
+    state.notice = Some(notice);
+}
+
+fn dismiss_transient_notice(state: &mut RunState) -> bool {
+    if state.notice.as_ref().is_some_and(|notice| !notice.sticky) {
+        state.notice = None;
+        return true;
+    }
+    false
+}
+
+fn split_main_notice_area(area: Rect, show_notice: bool) -> (Rect, Option<Rect>) {
+    if !show_notice {
+        return (area, None);
+    }
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(8)])
+        .split(area);
+    (split[0], Some(split[1]))
+}
+
+fn render_notice_panel(frame: &mut ratatui::Frame<'_>, area: Rect, notice: &RunNotice) {
+    frame.render_widget(
+        Paragraph::new(notice.lines())
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(notice.block_title()),
+            ),
+        area,
+    );
+}
+
+fn selected_oauth_entry_id(state: &RunState) -> Option<&str> {
+    state
+        .resources
+        .snapshot
+        .oauth_providers
+        .get(state.oauth.selected)
+        .map(|row| row.entry_id.as_str())
+}
+
+fn selected_api_row<'a>(
+    state: &'a RunState,
+    snap: &'a UiSnapshot,
+) -> Option<&'a McpConfigCatalogRow> {
+    let row_ix = *state.api.filtered_ix.get(state.api.selected)?;
+    snap.catalog_rows.get(row_ix)
+}
+
+fn auth_kind_label(row: &McpConfigCatalogRow) -> String {
+    let mut kinds = Vec::new();
+    if row.connect_profile.has_public_mode {
+        kinds.push("public");
+    }
+    if row.connect_profile.has_api_key {
+        kinds.push("api key");
+    }
+    if row.connect_profile.has_oauth {
+        kinds.push("oauth");
+    }
+    if kinds.is_empty() {
+        "public".into()
+    } else {
+        kinds.join("+")
+    }
+}
+
+fn oauth_provider_summary(snap: &UiSnapshot, entry_id: &str) -> Option<String> {
+    let idx = snap
+        .oauth_providers
+        .iter()
+        .position(|row| row.entry_id == entry_id)?;
+    let provider = &snap.oauth_providers[idx];
+    let binding = snap
+        .oauth_binding_hints
+        .get(idx)
+        .map(String::as_str)
+        .unwrap_or("binding unknown");
+    Some(if provider.enabled {
+        format!("provider ready · {binding}")
+    } else {
+        format!("provider disabled · {binding}")
+    })
+}
+
+fn current_auth_config_label(row: &McpConfigCatalogRow, snap: &UiSnapshot) -> String {
+    let mut configs = Vec::new();
+    if row.api_secret_present {
+        configs.push("api key set".to_string());
+    }
+    if let Some(oauth) = oauth_provider_summary(snap, &row.entry_id) {
+        configs.push(format!("oauth {oauth}"));
+    }
+    if configs.is_empty() && row.connect_profile.has_public_mode {
+        "public".into()
+    } else if configs.is_empty() {
+        "unconfigured".into()
+    } else {
+        configs.join(" + ")
+    }
+}
+
+fn api_secret_notice(entry_id: &str) -> RunNotice {
+    RunNotice::new(
+        NoticeSeverity::Success,
+        "API key stored",
+        format!("Stored the API secret for {entry_id}."),
+    )
+    .with_action_hint("Requests for this catalogue can now resolve the hosted secret locally.")
+    .with_sticky(false)
+}
+
+fn apply_oauth_binding_to_snapshot(state: &mut RunState, entry_id: &str) {
+    if let Some(ix) = state
+        .resources
+        .snapshot
+        .oauth_providers
+        .iter()
+        .position(|row| row.entry_id == entry_id)
+    {
+        if let Some(hint) = state.resources.snapshot.oauth_binding_hints.get_mut(ix) {
+            *hint = "binding updated — refreshing…".into();
+        }
+    }
+    for row in &mut state.resources.snapshot.catalog_rows {
+        if row.entry_id != entry_id {
+            continue;
+        }
+        row.has_auth_binding = true;
+        if matches!(row.auth_marker, McpCatalogAuthMarker::MissingBinding) {
+            row.auth_marker = McpCatalogAuthMarker::RequiresConnect;
+        }
+    }
+}
+
+fn apply_api_secret_to_snapshot(state: &mut RunState, entry_id: &str) {
+    for row in &mut state.resources.snapshot.catalog_rows {
+        if row.entry_id == entry_id {
+            row.api_secret_present = true;
+        }
+    }
+}
+
+fn select_oauth_config_from_api(state: &mut RunState, entry_id: &str) {
+    state.screen = RunScreen::OAuth;
+    if let Some(ix) = state
+        .resources
+        .snapshot
+        .oauth_providers
+        .iter()
+        .position(|row| row.entry_id == entry_id)
+    {
+        state.oauth.selected = ix;
+        set_notice(
+            state,
+            RunNotice::new(
+                NoticeSeverity::Info,
+                "OAuth selected",
+                format!("Selected the OAuth provider for {entry_id}."),
+            )
+            .with_action_hint("Press d to bind/update the account, or x to disable the provider.")
+            .with_sticky(false),
+        );
+    } else {
+        state.mode = InputMode::OAuthWizard(OAuthUpsertWizard::for_entry(entry_id));
+        set_notice(
+            state,
+            RunNotice::new(
+                NoticeSeverity::Info,
+                "Configure OAuth",
+                format!("Create an OAuth provider for {entry_id} to use OAuth auth."),
+            )
+            .with_action_hint(
+                "Complete the wizard, then run device authorization from the OAuth tab.",
+            )
+            .with_sticky(false),
+        );
+    }
+}
+
+fn device_bind_started_notice(
+    entry_id: &str,
+    prompt: &crate::appliance_oauth_admin::DeviceBindPrompt,
+) -> RunNotice {
+    let verification_target = prompt
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(prompt.verification_uri.as_str());
+    RunNotice::new(
+        NoticeSeverity::Info,
+        "Bind started",
+        format!("Open the verification URL for {entry_id} and enter the device code."),
+    )
+    .with_details(vec![
+        format!("Open: {verification_target}"),
+        format!("User code: {}", prompt.user_code),
+        format!("Code lifetime: {}s", prompt.expires_in_secs),
+        format!("Poll cadence: {}s", prompt.poll_interval_secs),
+    ])
+    .with_action_hint("Keep this screen open while the appliance waits for provider approval.")
+    .with_sticky(true)
+}
+
+fn device_bind_success_notice(
+    entry_id: &str,
+    out: &crate::appliance_oauth_admin::DeviceBindOutcome,
+) -> RunNotice {
+    let verification_target = out
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(out.verification_uri.as_str());
+    RunNotice::new(
+        NoticeSeverity::Success,
+        "Device bound",
+        format!("OAuth token stored for {entry_id}."),
+    )
+    .with_details(vec![
+        format!("Open: {verification_target}"),
+        format!("User code: {}", out.user_code),
+        format!("Expires in: {}s", out.expires_in_secs),
+        format!("Poll cadence: {}s", out.poll_interval_secs),
+    ])
+    .with_action_hint("Use this provider normally; rerun d if you need to refresh the binding.")
+}
+
+fn device_bind_error_notice(entry_id: &str, raw_error: &str) -> RunNotice {
+    let lowered = raw_error.to_ascii_lowercase();
+    let (summary, hint) = if lowered.contains("device_flow_disabled") {
+        (
+            format!("{entry_id} rejected device authorization."),
+            "Enable device flow for this OAuth app or use a different auth path.".to_string(),
+        )
+    } else if lowered.contains("device_authorization_endpoint missing") {
+        (
+            format!("{entry_id} is missing a device authorization endpoint."),
+            "Upsert this provider with a device authorization URL before pressing d.".to_string(),
+        )
+    } else if lowered.contains("timed out") {
+        (
+            format!("{entry_id} device authorization timed out."),
+            "Start the bind again when you are ready to approve it within the device-flow window."
+                .to_string(),
+        )
+    } else if lowered.contains("oauth provider catalog entry missing")
+        || lowered.contains("catalog unavailable")
+    {
+        (
+            format!("{entry_id} is unavailable in the OAuth catalog."),
+            "Restore or re-link the provider configuration, then try device bind again."
+                .to_string(),
+        )
+    } else if lowered.contains("secret not available")
+        || lowered.contains("client secret")
+        || lowered.contains("bad_secret_utf8")
+    {
+        (
+            format!("{entry_id} cannot start device authorization with its stored client secret."),
+            "Repair the provider client secret in the appliance or CLI, then retry.".to_string(),
+        )
+    } else if lowered.contains("storage error") || lowered.contains("auth storage unavailable") {
+        (
+            format!("{entry_id} could not store OAuth state."),
+            "Fix the appliance auth storage or local database state before retrying device bind."
+                .to_string(),
+        )
+    } else {
+        (
+            format!("{entry_id} device authorization failed."),
+            "Review the raw provider error below and adjust the provider configuration if needed."
+                .to_string(),
+        )
+    };
+    RunNotice::new(NoticeSeverity::Error, "Bind failed", summary)
+        .with_details(vec![raw_error.to_string()])
+        .with_action_hint(hint)
+}
+
+fn copy_notice(
+    success_title: impl Into<String>,
+    error_title: impl Into<String>,
+    copy_result: Result<(), String>,
+) -> RunNotice {
+    match copy_result {
+        Ok(()) => RunNotice::new(
+            NoticeSeverity::Success,
+            success_title,
+            "Copied to the clipboard.",
+        )
+        .with_sticky(false),
+        Err(e) => RunNotice::new(
+            NoticeSeverity::Error,
+            error_title,
+            "Clipboard operation failed.",
+        )
+        .with_details(vec![e])
+        .with_action_hint("Verify clipboard access for this terminal session and try again."),
+    }
+}
+
+#[derive(Clone, Default)]
 struct UiSnapshot {
     config_surface: McpConfigSurfaceState,
     catalog_rows: Vec<McpConfigCatalogRow>,
@@ -215,10 +673,21 @@ impl RunScreen {
 enum InputMode {
     Normal,
     ApiFilter,
-    AddKeyLabel { buf: String },
+    ApiSecretEdit {
+        entry_id: String,
+        hosted_kv_key: String,
+        buf: String,
+    },
+    AddKeyLabel {
+        buf: String,
+    },
     OAuthWizard(OAuthUpsertWizard),
-    ConfirmOAuthDisable { entry_id: String },
-    ConfirmKeyRevoke { key_id: Uuid },
+    ConfirmOAuthDisable {
+        entry_id: String,
+    },
+    ConfirmKeyRevoke {
+        key_id: Uuid,
+    },
 }
 
 #[derive(Default)]
@@ -251,6 +720,7 @@ enum AdminTaskKind {
     Refreshing,
     ProvisioningKey,
     SavingApiAllowlist,
+    SavingApiSecret,
     DeviceAuthorization,
     SavingOAuthProvider,
     DisablingOAuthProvider,
@@ -265,6 +735,7 @@ impl AdminTaskKind {
             Self::Refreshing => "Refreshing…",
             Self::ProvisioningKey => "Provisioning key…",
             Self::SavingApiAllowlist => "Saving API allowlist…",
+            Self::SavingApiSecret => "Saving API secret…",
             Self::DeviceAuthorization => "Device authorization…",
             Self::SavingOAuthProvider => "Saving OAuth provider…",
             Self::DisablingOAuthProvider => "Disabling OAuth provider…",
@@ -350,7 +821,7 @@ struct RunState {
     keys: KeysState,
     logs: LogState,
     resources: ResourceState,
-    status_msg: String,
+    notice: Option<RunNotice>,
     show_help: bool,
 }
 
@@ -364,7 +835,7 @@ impl RunState {
             keys: KeysState::default(),
             logs: LogState::default(),
             resources: ResourceState::default(),
-            status_msg: String::new(),
+            notice: None,
             show_help: false,
         }
     }
@@ -407,6 +878,7 @@ impl RunState {
         let reset = matches!(
             (&self.screen, &self.mode),
             (RunScreen::Apis, InputMode::ApiFilter)
+                | (RunScreen::Apis, InputMode::ApiSecretEdit { .. })
                 | (RunScreen::OAuth, InputMode::OAuthWizard(_))
                 | (RunScreen::OAuth, InputMode::ConfirmOAuthDisable { .. })
                 | (RunScreen::Keys, InputMode::AddKeyLabel { .. })
@@ -440,7 +912,14 @@ fn enqueue_refresh_force(state: &mut RunState, bridge: &AdminBridge) {
         .is_err()
     {
         state.resources.admin.refresh = None;
-        state.status_msg = "Admin router queue closed — restart the appliance.".into();
+        set_notice(
+            state,
+            RunNotice::new(
+                NoticeSeverity::Error,
+                "Admin bridge unavailable",
+                "Admin router queue closed — restart the appliance.",
+            ),
+        );
     }
 }
 
@@ -455,7 +934,14 @@ fn submit_inline_admin_job(
     let job = build(c);
     if bridge.jobs_tx.send(job).is_err() {
         state.resources.admin.inline = None;
-        state.status_msg = "Admin router queue closed — restart the appliance.".into();
+        set_notice(
+            state,
+            RunNotice::new(
+                NoticeSeverity::Error,
+                "Admin bridge unavailable",
+                "Admin router queue closed — restart the appliance.",
+            ),
+        );
     }
 }
 
@@ -494,10 +980,24 @@ fn apply_admin_completion(
         AdminCompletion::ProvisionApiKey { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
-                    Ok(p) => {
-                        state.status_msg = format!("provisioned key_id={}", p.key_id);
-                    }
-                    Err(e) => state.status_msg = format!("provision error: {e}"),
+                    Ok(_) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Success,
+                            "API key provisioned",
+                            "Created a new transport API key.",
+                        )
+                        .with_sticky(false),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "API key provision failed",
+                            "Could not create a new transport API key.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
@@ -508,26 +1008,97 @@ fn apply_admin_completion(
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
                     Ok(()) => {
-                        state.status_msg = "saved API allowlist".into();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Success,
+                                "API allowlist saved",
+                                "Saved the current API selection for this appliance.",
+                            )
+                            .with_sticky(false),
+                        );
                         state.api.staged_allowed = None;
                     }
-                    Err(e) => state.status_msg = format!("save error: {e}"),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "API allowlist save failed",
+                            "Could not save the selected APIs.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
                 }
             }
         }
+        AdminCompletion::StoreOutboundSecret { corr, key, result } => {
+            if state.resources.admin.finish_inline(corr).is_some() {
+                let entry_id = state
+                    .resources
+                    .snapshot
+                    .catalog_rows
+                    .iter()
+                    .find(|row| row.api_secret_hosted_kv.as_deref() == Some(key.as_str()))
+                    .map(|row| row.entry_id.clone());
+                match result {
+                    Ok(()) => {
+                        if let Some(ref entry_id) = entry_id {
+                            apply_api_secret_to_snapshot(state, entry_id);
+                            set_notice(state, api_secret_notice(entry_id));
+                        } else {
+                            set_notice(
+                                state,
+                                RunNotice::new(
+                                    NoticeSeverity::Success,
+                                    "API key stored",
+                                    "Stored the API key secret.",
+                                )
+                                .with_sticky(false),
+                            );
+                        }
+                    }
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "API key store failed",
+                            "Could not store the API key secret.",
+                        )
+                        .with_details(vec![e]),
+                    ),
+                }
+                if let Some(bridge) = bridge {
+                    enqueue_refresh_force(state, bridge);
+                }
+            }
+        }
+        AdminCompletion::OAuthDeviceBindStarted { corr, prompt } => {
+            if state.resources.admin.pending_inline_corr() == Some(corr) {
+                let entry_id = selected_oauth_entry_id(state)
+                    .unwrap_or("selected provider")
+                    .to_string();
+                set_notice(state, device_bind_started_notice(&entry_id, &prompt));
+            }
+        }
         AdminCompletion::OAuthDeviceBind { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
                     Ok(out) => {
-                        state.status_msg = format!(
-                            "device ok · open {} · user_code {} · {}",
-                            out.verification_uri, out.user_code, out.hosted_kv_key
-                        );
+                        let entry_id = selected_oauth_entry_id(state)
+                            .unwrap_or("selected provider")
+                            .to_string();
+                        apply_oauth_binding_to_snapshot(state, &entry_id);
+                        set_notice(state, device_bind_success_notice(&entry_id, &out));
                     }
-                    Err(e) => state.status_msg = format!("device bind failed: {e}"),
+                    Err(e) => {
+                        let entry_id = selected_oauth_entry_id(state)
+                            .unwrap_or("selected provider")
+                            .to_string();
+                        set_notice(state, device_bind_error_notice(&entry_id, &e));
+                    }
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
@@ -537,8 +1108,24 @@ fn apply_admin_completion(
         AdminCompletion::OauthProviderUpsert { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
-                    Ok(()) => state.status_msg = "OAuth provider saved.".into(),
-                    Err(e) => state.status_msg = format!("OAuth upsert failed: {e}"),
+                    Ok(()) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Success,
+                            "OAuth provider saved",
+                            "Saved the provider configuration.",
+                        )
+                        .with_sticky(false),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "OAuth provider save failed",
+                            "Could not save the provider configuration.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
@@ -548,8 +1135,24 @@ fn apply_admin_completion(
         AdminCompletion::OauthProviderDisable { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
-                    Ok(()) => state.status_msg = "OAuth provider disabled.".into(),
-                    Err(e) => state.status_msg = format!("OAuth disable failed: {e}"),
+                    Ok(()) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Success,
+                            "OAuth provider disabled",
+                            "Disabled the selected provider.",
+                        )
+                        .with_sticky(false),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "OAuth disable failed",
+                            "Could not disable the selected provider.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
@@ -559,10 +1162,24 @@ fn apply_admin_completion(
         AdminCompletion::RotateApiKey { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
-                    Ok(p) => {
-                        state.status_msg = format!("rotated new key_id={}", p.key_id);
-                    }
-                    Err(e) => state.status_msg = format!("rotate error: {e}"),
+                    Ok(_) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Success,
+                            "API key rotated",
+                            "Replaced the selected transport API key.",
+                        )
+                        .with_sticky(false),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "API key rotate failed",
+                            "Could not rotate the selected transport API key.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
@@ -572,8 +1189,24 @@ fn apply_admin_completion(
         AdminCompletion::RevokeApiKey { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
-                    Ok(()) => state.status_msg = "revoked key".into(),
-                    Err(e) => state.status_msg = format!("revoke error: {e}"),
+                    Ok(()) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Success,
+                            "API key revoked",
+                            "Removed the selected transport API key.",
+                        )
+                        .with_sticky(false),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "API key revoke failed",
+                            "Could not revoke the selected transport API key.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
                 if let Some(bridge) = bridge {
                     enqueue_refresh_force(state, bridge);
@@ -583,8 +1216,23 @@ fn apply_admin_completion(
         AdminCompletion::RevealApiKey { corr, result } => {
             if state.resources.admin.finish_inline(corr).is_some() {
                 match result {
-                    Ok(raw) => state.status_msg = format!("revealed key: {raw}"),
-                    Err(e) => state.status_msg = format!("reveal error: {e}"),
+                    Ok(raw) => set_notice(
+                        state,
+                        copy_notice(
+                            "API key secret copied",
+                            "API key secret copy failed",
+                            copy_text_to_clipboard(&raw),
+                        ),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "API key reveal failed",
+                            "Could not reveal the selected API key secret.",
+                        )
+                        .with_details(vec![e]),
+                    ),
                 }
             }
         }
@@ -607,6 +1255,18 @@ fn row_enabled(state: &RunState, snap: &UiSnapshot, entry_id: &str) -> bool {
 
 fn oauth_surface_status(snap: &UiSnapshot) -> Option<&str> {
     snap.oauth_surface.status_message()
+}
+
+fn input_mode_label(mode: &InputMode) -> Option<&'static str> {
+    match mode {
+        InputMode::Normal => None,
+        InputMode::ApiFilter => Some("API filter"),
+        InputMode::ApiSecretEdit { .. } => Some("API key secret"),
+        InputMode::AddKeyLabel { .. } => Some("Add key"),
+        InputMode::ConfirmKeyRevoke { .. } => Some("Confirm revoke"),
+        InputMode::OAuthWizard(_) => Some("OAuth wizard"),
+        InputMode::ConfirmOAuthDisable { .. } => Some("Confirm disable"),
+    }
 }
 
 struct UpdateDeps<'a> {
@@ -637,13 +1297,71 @@ fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) 
             }
             _ => {}
         },
+        InputMode::ApiSecretEdit {
+            entry_id: _,
+            hosted_kv_key,
+            buf,
+        } => match key.code {
+            KeyCode::Enter => {
+                let secret = buf.trim().to_string();
+                let key = hosted_kv_key.clone();
+                state.mode = InputMode::Normal;
+                if !secret.is_empty() {
+                    if state.admin_busy() {
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Warning,
+                                "Busy",
+                                "Wait for the current admin task to finish.",
+                            )
+                            .with_sticky(false),
+                        );
+                    } else if let Some(bridge) = deps.admin_bridge {
+                        submit_inline_admin_job(
+                            state,
+                            bridge,
+                            AdminTaskKind::SavingApiSecret,
+                            |c| AdminJob::StoreOutboundSecret {
+                                corr: c,
+                                key,
+                                value: secret,
+                            },
+                        );
+                    } else {
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Error,
+                                "Auth storage unavailable",
+                                "Cannot save the API key without the admin bridge.",
+                            ),
+                        );
+                    }
+                }
+            }
+            KeyCode::Esc => state.mode = InputMode::Normal,
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Char(c) => buf.push(c),
+            _ => {}
+        },
         InputMode::AddKeyLabel { buf } => match key.code {
             KeyCode::Enter => {
                 let label = buf.trim().to_string();
                 state.mode = InputMode::Normal;
                 if !label.is_empty() {
                     if state.admin_busy() {
-                        state.status_msg = "Busy — wait for the current admin task.".into();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Warning,
+                                "Busy",
+                                "Wait for the current admin task to finish.",
+                            )
+                            .with_sticky(false),
+                        );
                     } else if let (Some(bridge), Some(cid)) =
                         (deps.admin_bridge, state.resources.config_id)
                     {
@@ -658,7 +1376,15 @@ fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) 
                             },
                         );
                     } else if deps.admin_bridge.is_some() && state.resources.config_id.is_none() {
-                        state.status_msg = "MCP config still loading — wait for refresh.".into();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Warning,
+                                "Config still loading",
+                                "Wait for the appliance config refresh before provisioning a key.",
+                            )
+                            .with_sticky(false),
+                        );
                     }
                 }
             }
@@ -674,15 +1400,30 @@ fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) 
             match key.code {
                 KeyCode::Esc => {
                     state.mode = InputMode::Normal;
-                    state.status_msg = "OAuth provider wizard cancelled.".into();
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Info,
+                            "OAuth wizard cancelled",
+                            "Dismissed the provider upsert wizard.",
+                        )
+                        .with_sticky(false),
+                    );
                 }
                 KeyCode::Enter => {
                     if wiz.step == OAuthUpsertStep::Confirm {
                         match wiz.try_build_upsert() {
                             Ok(upsert) => {
                                 if state.admin_busy() {
-                                    state.status_msg =
-                                        "Busy — wait for the current admin task.".into();
+                                    set_notice(
+                                        state,
+                                        RunNotice::new(
+                                            NoticeSeverity::Warning,
+                                            "Busy",
+                                            "Wait for the current admin task to finish.",
+                                        )
+                                        .with_sticky(false),
+                                    );
                                 } else if let Some(bridge) = deps.admin_bridge {
                                     state.mode = InputMode::Normal;
                                     submit_inline_admin_job(
@@ -692,20 +1433,52 @@ fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) 
                                         |c| AdminJob::OauthProviderUpsert { corr: c, upsert },
                                     );
                                 } else {
-                                    state.status_msg =
-                                        "Admin bridge unavailable — cannot save.".into();
+                                    set_notice(
+                                        state,
+                                        RunNotice::new(
+                                            NoticeSeverity::Error,
+                                            "Admin bridge unavailable",
+                                            "Cannot save the provider without the admin bridge.",
+                                        ),
+                                    );
                                 }
                             }
-                            Err(e) => state.status_msg = format!("OAuth upsert: {e}"),
+                            Err(e) => set_notice(
+                                state,
+                                RunNotice::new(
+                                    NoticeSeverity::Error,
+                                    "OAuth provider review failed",
+                                    "The provider settings are incomplete or invalid.",
+                                )
+                                .with_details(vec![e]),
+                            ),
                         }
                     } else if wiz.step == OAuthUpsertStep::Enabled {
                         wiz.advance_enabled_to_confirm();
                     } else if wiz.step == OAuthUpsertStep::EntryId {
                         if let Err(msg) = wiz.commit_entry_selection(rows) {
-                            state.status_msg = msg.to_string();
+                            set_notice(
+                                state,
+                                RunNotice::new(
+                                    NoticeSeverity::Warning,
+                                    "Choose a provider",
+                                    "Select a registry API before continuing.",
+                                )
+                                .with_details(vec![msg.to_string()])
+                                .with_sticky(false),
+                            );
                         }
                     } else if let Err(msg) = wiz.commit_buf_and_advance() {
-                        state.status_msg = msg.to_string();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Warning,
+                                "Field validation",
+                                "Complete the current OAuth provider field before continuing.",
+                            )
+                            .with_details(vec![msg.to_string()])
+                            .with_sticky(false),
+                        );
                     }
                 }
                 KeyCode::Down | KeyCode::Char('j') if wiz.step == OAuthUpsertStep::EntryId => {
@@ -750,33 +1523,53 @@ fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) 
 }
 
 fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) -> bool {
-    let snap = &state.resources.snapshot;
+    let snap = state.resources.snapshot.clone();
     match key.code {
         KeyCode::Char('q') => return true,
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('#') if state.screen == RunScreen::Clients => {
             let url = mcp_streamable_url(deps.mcp_port);
-            state.status_msg = match copy_text_to_clipboard(&url) {
-                Ok(()) => "clipboard: MCP URL".into(),
-                Err(e) => format!("clipboard: {e}"),
-            };
+            set_notice(
+                state,
+                copy_notice(
+                    "MCP URL copied",
+                    "MCP URL copy failed",
+                    copy_text_to_clipboard(&url),
+                ),
+            );
         }
         KeyCode::Char('%') if state.screen == RunScreen::Clients => {
             let curl = mcp_curl_snippet(deps.mcp_port);
-            state.status_msg = match copy_text_to_clipboard(&curl) {
-                Ok(()) => "clipboard: curl snippet".into(),
-                Err(e) => format!("clipboard: {e}"),
-            };
+            set_notice(
+                state,
+                copy_notice(
+                    "curl snippet copied",
+                    "curl snippet copy failed",
+                    copy_text_to_clipboard(&curl),
+                ),
+            );
         }
         KeyCode::Char('#') if state.screen == RunScreen::Keys => {
             if let Some(k) = snap.keys.get(state.keys.selected) {
                 let line = api_key_row_copy_line(k);
-                state.status_msg = match copy_text_to_clipboard(&line) {
-                    Ok(()) => "clipboard: key row".into(),
-                    Err(e) => format!("clipboard: {e}"),
-                };
+                set_notice(
+                    state,
+                    copy_notice(
+                        "Key label copied",
+                        "Key label copy failed",
+                        copy_text_to_clipboard(&line),
+                    ),
+                );
             } else {
-                state.status_msg = "no key row to copy (list empty)".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "No key selected",
+                        "There is no key row to copy.",
+                    )
+                    .with_sticky(false),
+                );
             }
         }
         KeyCode::Right | KeyCode::Tab => {
@@ -792,14 +1585,32 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 && matches!(state.mode, InputMode::ConfirmOAuthDisable { .. }) =>
         {
             state.mode = InputMode::Normal;
-            state.status_msg = "OAuth disable cancelled.".into();
+            set_notice(
+                state,
+                RunNotice::new(
+                    NoticeSeverity::Info,
+                    "Disable cancelled",
+                    "Dismissed the provider disable confirmation.",
+                )
+                .with_sticky(false),
+            );
         }
         KeyCode::Esc
             if state.screen == RunScreen::Keys
                 && matches!(state.mode, InputMode::ConfirmKeyRevoke { .. }) =>
         {
             state.mode = InputMode::Normal;
+            set_notice(
+                state,
+                RunNotice::new(
+                    NoticeSeverity::Info,
+                    "Revoke cancelled",
+                    "Dismissed the API key revoke confirmation.",
+                )
+                .with_sticky(false),
+            );
         }
+        KeyCode::Esc if dismiss_transient_notice(state) => {}
         KeyCode::Char('/') if state.screen == RunScreen::Apis => {
             state.mode = InputMode::ApiFilter;
         }
@@ -830,7 +1641,15 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
         }
         KeyCode::Char('s') if state.screen == RunScreen::Apis => {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if let (Some(bridge), Some(cid)) = (deps.admin_bridge, state.resources.config_id)
             {
                 let set = state
@@ -847,6 +1666,73 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 });
             }
         }
+        KeyCode::Char('a') if state.screen == RunScreen::Apis => {
+            if let Some(row) = selected_api_row(state, &snap) {
+                let entry_id = row.entry_id.clone();
+                let supports_api_key = row.connect_profile.has_api_key;
+                let hosted_kv_key = row.api_secret_hosted_kv.clone();
+                if !supports_api_key {
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Warning,
+                            "API key unsupported",
+                            format!("{entry_id} does not advertise API-key auth."),
+                        )
+                        .with_sticky(false),
+                    );
+                } else if let Some(hosted_kv_key) = hosted_kv_key {
+                    state.mode = InputMode::ApiSecretEdit {
+                        entry_id: entry_id.clone(),
+                        hosted_kv_key,
+                        buf: String::new(),
+                    };
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Info,
+                            "Set API key",
+                            format!("Store an API key secret for {entry_id}."),
+                        )
+                        .with_action_hint(
+                            "Type the secret, then press Enter to save it in local hosted KV.",
+                        )
+                        .with_sticky(false),
+                    );
+                } else {
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Warning,
+                            "API key slot unavailable",
+                            format!(
+                                "{entry_id} uses env-managed API auth, not a hosted local key slot."
+                            ),
+                        )
+                        .with_action_hint("Use environment configuration for this catalogue or add a hosted_kv auth slot in the catalog.")
+                        .with_sticky(false),
+                    );
+                }
+            }
+        }
+        KeyCode::Char('o') if state.screen == RunScreen::Apis => {
+            if let Some(row) = selected_api_row(state, &snap) {
+                if row.connect_profile.has_oauth {
+                    let entry_id = row.entry_id.clone();
+                    select_oauth_config_from_api(state, &entry_id);
+                } else {
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Warning,
+                            "OAuth unsupported",
+                            format!("{} does not advertise OAuth auth.", row.entry_id),
+                        )
+                        .with_sticky(false),
+                    );
+                }
+            }
+        }
         KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::OAuth => {
             if state.oauth.selected + 1 < snap.oauth_providers.len() {
                 state.oauth.selected += 1;
@@ -857,25 +1743,65 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
         }
         KeyCode::Char('n') if state.screen == RunScreen::OAuth => {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if !snap.oauth_surface.services_ready() {
-                state.status_msg = oauth_surface_status(snap)
-                    .unwrap_or("OAuth services unavailable")
-                    .to_string();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Error,
+                        "OAuth unavailable",
+                        oauth_surface_status(&snap)
+                            .unwrap_or("OAuth services unavailable")
+                            .to_string(),
+                    ),
+                );
             } else {
                 state.mode = InputMode::OAuthWizard(OAuthUpsertWizard::new());
             }
         }
         KeyCode::Char('x') if state.screen == RunScreen::OAuth => {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if let Some(row) = snap.oauth_providers.get(state.oauth.selected) {
                 state.mode = InputMode::ConfirmOAuthDisable {
                     entry_id: row.entry_id.clone(),
                 };
-                state.status_msg = "Press y to confirm disable (Esc cancels)".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Disable pending",
+                        format!("Press y to disable {}.", row.entry_id),
+                    )
+                    .with_action_hint("Press Esc to cancel.")
+                    .with_sticky(false),
+                );
             } else {
-                state.status_msg = "no provider selected to disable".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "No provider selected",
+                        "Select a provider before disabling it.",
+                    )
+                    .with_sticky(false),
+                );
             }
         }
         KeyCode::Char('y')
@@ -883,7 +1809,15 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 && matches!(state.mode, InputMode::ConfirmOAuthDisable { .. }) =>
         {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if let Some(bridge) = deps.admin_bridge {
                 let entry_id = match std::mem::replace(&mut state.mode, InputMode::Normal) {
                     InputMode::ConfirmOAuthDisable { entry_id } => entry_id,
@@ -897,17 +1831,38 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 );
             } else {
                 state.mode = InputMode::Normal;
-                state.status_msg =
-                    "Admin bridge unavailable — cannot disable OAuth provider.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Error,
+                        "Admin bridge unavailable",
+                        "Cannot disable the provider without the admin bridge.",
+                    ),
+                );
             }
         }
         KeyCode::Char('d') if state.screen == RunScreen::OAuth => {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if !snap.oauth_surface.services_ready() {
-                state.status_msg = oauth_surface_status(snap)
-                    .unwrap_or("OAuth services unavailable")
-                    .to_string();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Error,
+                        "OAuth unavailable",
+                        oauth_surface_status(&snap)
+                            .unwrap_or("OAuth services unavailable")
+                            .to_string(),
+                    ),
+                );
             } else if let (Some(bridge), Some(row)) = (
                 deps.admin_bridge,
                 snap.oauth_providers.get(state.oauth.selected),
@@ -916,21 +1871,42 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 let host_state = match deps.host_state {
                     Some(host_state) => host_state,
                     None => {
-                        state.status_msg = "OAuth host state unavailable".into();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Error,
+                                "OAuth host state unavailable",
+                                "The running appliance host state is missing OAuth services.",
+                            ),
+                        );
                         return false;
                     }
                 };
                 let catalog = match host_state.oauth_link_catalog() {
                     Some(c) => Arc::clone(c),
                     None => {
-                        state.status_msg = "OAuth catalog unavailable".into();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Error,
+                                "OAuth catalog unavailable",
+                                "The running appliance has no OAuth catalog attached.",
+                            ),
+                        );
                         return false;
                     }
                 };
                 let storage = match host_state.auth_storage() {
                     Some(s) => Arc::clone(s),
                     None => {
-                        state.status_msg = "auth storage unavailable".into();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Error,
+                                "Auth storage unavailable",
+                                "Device authorization cannot run without auth storage.",
+                            ),
+                        );
                         return false;
                     }
                 };
@@ -958,7 +1934,15 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
         }
         KeyCode::Char('r') if state.screen == RunScreen::Keys => {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if let (Some(bridge), Some(cid)) = (deps.admin_bridge, state.resources.config_id)
             {
                 if let Some(key_id) = snap.keys.get(state.keys.selected).map(|k| k.key_id) {
@@ -975,7 +1959,16 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
         KeyCode::Char('d') if state.screen == RunScreen::Keys => {
             if let Some(key_id) = snap.keys.get(state.keys.selected).map(|k| k.key_id) {
                 state.mode = InputMode::ConfirmKeyRevoke { key_id };
-                state.status_msg = "Press y to confirm revoke (Esc cancels)".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Revoke pending",
+                        "Press y to revoke the selected API key.",
+                    )
+                    .with_action_hint("Press Esc to cancel.")
+                    .with_sticky(false),
+                );
             }
         }
         KeyCode::Char('y')
@@ -987,7 +1980,15 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 _ => return false,
             };
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if let (Some(bridge), Some(cid)) = (deps.admin_bridge, state.resources.config_id)
             {
                 submit_inline_admin_job(state, bridge, AdminTaskKind::RevokingKey, |c| {
@@ -1004,7 +2005,15 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                 && !key.modifiers.contains(KeyModifiers::CONTROL) =>
         {
             if state.admin_busy() {
-                state.status_msg = "Busy — wait for the current admin task.".into();
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
             } else if let (Some(bridge), Some(cid)) = (deps.admin_bridge, state.resources.config_id)
             {
                 if let Some(key_id) = snap.keys.get(state.keys.selected).map(|k| k.key_id) {
@@ -1072,6 +2081,7 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
             state.show_help = false;
             match state.mode {
                 InputMode::ApiFilter
+                | InputMode::ApiSecretEdit { .. }
                 | InputMode::AddKeyLabel { .. }
                 | InputMode::OAuthWizard(_) => update_modal_key(state, key, deps),
                 InputMode::Normal
@@ -1140,9 +2150,12 @@ fn render_running_frame(
     let main_block = Block::default()
         .borders(Borders::ALL)
         .title(model.screen.title());
+    let shared_notice = model.notice.as_ref();
 
     match model.screen {
         RunScreen::Status => {
+            let (content_area, notice_area) =
+                split_main_notice_area(chunks[2], shared_notice.is_some());
             let scope = appliance_mcp_scope();
             let mut lines = vec![
                 Line::from("Listeners"),
@@ -1239,13 +2252,19 @@ fn render_running_frame(
                 "Trace hub: {}",
                 plasm_agent_core::appliance_services::trace_hub_bounds_summary(host_state)
             )));
-            if !model.status_msg.is_empty() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(format!("Last action: {}", model.status_msg)));
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: true })
+                    .block(main_block),
+                content_area,
+            );
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
             }
-            frame.render_widget(Paragraph::new(lines).block(main_block), chunks[2]);
         }
         RunScreen::Clients => {
+            let (content_area, notice_area) =
+                split_main_notice_area(chunks[2], shared_notice.is_some());
             let url = mcp_streamable_url(mcp_port);
             let curl = mcp_curl_snippet(mcp_port);
             let accent = if no_color() {
@@ -1283,17 +2302,16 @@ fn render_running_frame(
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
                     Span::styled(
-                        "Selected key",
+                        "Selected key metadata",
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::styled("  (for your notes — use ", dim_style()),
                     Span::styled("c", dim_style().add_modifier(Modifier::BOLD)),
-                    Span::styled(" reveal on Keys tab for secret)", dim_style()),
+                    Span::styled(" copy on Keys tab for the secret)", dim_style()),
                 ]));
                 lines.push(Line::from(vec![
                     Span::raw("  "),
                     Span::styled(api_key_row_label(sel), accent),
-                    Span::styled(format!("   {}", sel.key_id), dim_style()),
                 ]));
             } else {
                 lines.push(Line::from(""));
@@ -1305,58 +2323,179 @@ fn render_running_frame(
                 ]));
             }
             frame.render_widget(
-                Paragraph::new(lines).block(main_block.title("Clients")),
-                chunks[2],
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: true })
+                    .block(main_block.title("Clients")),
+                content_area,
             );
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
+            }
         }
         RunScreen::Apis => {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+                .split(chunks[2]);
             let mut filter_line = format!("Filter: {}", model.api.filter);
             if matches!(model.mode, InputMode::ApiFilter) {
                 filter_line.push('_');
             }
             let mut lines = vec![
                 Line::from(filter_line),
-                Line::from("Space toggle  s save staged  / filter  ·  Enter Tab Esc close filter"),
+                Line::from("Space toggle  s save staged  / filter  a set api key  o oauth config"),
                 Line::from(""),
             ];
             for (fi, &row_ix) in model.api.filtered_ix.iter().enumerate() {
                 let r = &snap.catalog_rows[row_ix];
                 let on = row_enabled(model, snap, &r.entry_id);
                 let mark = if on { "[on]" } else { "[off]" };
-                let mark_style = if on {
+                let selected = fi == model.api.selected;
+                let mark_style = if selected {
+                    selected_row_style()
+                } else if on {
                     api_toggle_on_style()
                 } else {
                     api_toggle_off_style()
                 };
-                let selected = fi == model.api.selected;
                 let mut name_style = if on {
                     Style::default()
                 } else {
                     api_toggle_off_style()
                 };
                 if selected {
-                    name_style = name_style.add_modifier(Modifier::BOLD);
+                    name_style = selected_row_style();
                 }
                 let mut auth_style = dim_style();
                 if selected {
-                    auth_style = auth_style.add_modifier(Modifier::BOLD);
+                    auth_style = selected_row_style();
                 }
                 let name = catalog_row_display_name(&r.entry_id, &r.label);
+                let summary = format!(
+                    "{} · {}",
+                    auth_kind_label(r),
+                    current_auth_config_label(r, snap)
+                );
                 lines.push(Line::from(vec![
+                    Span::styled(
+                        if selected { "› " } else { "  " },
+                        if selected {
+                            selected_row_style()
+                        } else {
+                            Style::default()
+                        },
+                    ),
                     Span::styled(mark, mark_style),
                     Span::raw(" "),
                     Span::styled(name, name_style),
                     Span::raw("  "),
-                    Span::styled(format!("{:?}", r.auth_marker), auth_style),
+                    Span::styled(summary, auth_style),
                 ]));
             }
             frame.render_widget(
-                Paragraph::new(lines).block(main_block.title("APIs")),
-                chunks[2],
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: true })
+                    .block(Block::default().borders(Borders::ALL).title("Catalogues")),
+                split[0],
             );
+
+            let (detail_area, notice_area) =
+                split_main_notice_area(split[1], shared_notice.is_some());
+            let mut detail_lines = vec![Line::from("Selected catalogue"), Line::from("")];
+            if let Some(row) = selected_api_row(model, snap) {
+                detail_lines.push(Line::from(vec![
+                    Span::styled("Entry: ", dim_style()),
+                    Span::styled(
+                        row.entry_id.clone(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+                detail_lines.push(Line::from(vec![
+                    Span::styled("Supported auth: ", dim_style()),
+                    Span::raw(auth_kind_label(row)),
+                ]));
+                detail_lines.push(Line::from(vec![
+                    Span::styled("Current config: ", dim_style()),
+                    Span::raw(current_auth_config_label(row, snap)),
+                ]));
+                detail_lines.push(Line::from(vec![
+                    Span::styled("Scheme: ", dim_style()),
+                    Span::raw(if row.auth_scheme_summary.is_empty() {
+                        "public".to_string()
+                    } else {
+                        row.auth_scheme_summary.clone()
+                    }),
+                ]));
+                detail_lines.push(Line::from(vec![
+                    Span::styled("Allowlist: ", dim_style()),
+                    Span::raw(if row_enabled(model, snap, &row.entry_id) {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }),
+                ]));
+                if let Some(oauth) = oauth_provider_summary(snap, &row.entry_id) {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled("OAuth app: ", dim_style()),
+                        Span::raw(oauth),
+                    ]));
+                } else if row.connect_profile.has_oauth {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled("OAuth app: ", dim_style()),
+                        Span::raw("not configured"),
+                    ]));
+                }
+                if let Some(ref key) = row.api_secret_hosted_kv {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled("Hosted key: ", dim_style()),
+                        Span::raw(key.clone()),
+                    ]));
+                }
+                detail_lines.push(Line::from(""));
+                detail_lines.push(Line::from("Actions"));
+                detail_lines.push(Line::from("  Space toggle allowlist   s save staged"));
+                if row.connect_profile.has_api_key {
+                    detail_lines.push(Line::from("  a store/replace API key secret"));
+                }
+                if row.connect_profile.has_oauth {
+                    detail_lines.push(Line::from("  o configure or bind OAuth app"));
+                }
+                if let InputMode::ApiSecretEdit { entry_id, buf, .. } = &model.mode {
+                    if entry_id == &row.entry_id {
+                        detail_lines.push(Line::from(""));
+                        detail_lines.push(Line::from(vec![
+                            Span::styled("New API key secret: ", dim_style()),
+                            Span::styled(
+                                "*".repeat(buf.len()) + "_",
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ),
+                        ]));
+                        detail_lines.push(Line::from(
+                            "Enter save · Esc cancel · secret is masked in this pane only",
+                        ));
+                    }
+                }
+            } else {
+                detail_lines.push(Line::from("No catalogue selected."));
+            }
+            frame.render_widget(
+                Paragraph::new(detail_lines)
+                    .wrap(Wrap { trim: true })
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Auth configuration"),
+                    ),
+                detail_area,
+            );
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
+            }
         }
         RunScreen::OAuth => {
             if let InputMode::OAuthWizard(ref wiz) = model.mode {
+                let (content_area, notice_area) =
+                    split_main_notice_area(chunks[2], shared_notice.is_some());
                 let mut lines = vec![
                     Line::from(vec![
                         Span::styled(
@@ -1415,8 +2554,8 @@ fn render_running_frame(
                                 let mut row_style = Style::default();
                                 let mut meta_style = dim_style();
                                 if picked {
-                                    row_style = row_style.add_modifier(Modifier::BOLD);
-                                    meta_style = meta_style.add_modifier(Modifier::BOLD);
+                                    row_style = selected_row_style();
+                                    meta_style = selected_row_style();
                                 }
                                 lines.push(Line::from(vec![
                                     Span::styled(if picked { "› " } else { "  " }, row_style),
@@ -1465,19 +2604,74 @@ fn render_running_frame(
                         )]));
                     }
                 }
-                if !model.status_msg.is_empty() {
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(format!("Last action: {}", model.status_msg)));
-                }
                 frame.render_widget(
-                    Paragraph::new(lines).block(main_block.title("OAuth — new provider")),
-                    chunks[2],
+                    Paragraph::new(lines)
+                        .wrap(Wrap { trim: true })
+                        .block(main_block.title("OAuth — new provider")),
+                    content_area,
                 );
+                if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                    render_notice_panel(frame, area, notice);
+                }
             } else {
+                let split = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                    .split(chunks[2]);
+                let provider_items: Vec<ListItem> = if snap.oauth_providers.is_empty() {
+                    vec![ListItem::new(Line::from(Span::styled(
+                        "No providers configured",
+                        dim_style(),
+                    )))]
+                } else {
+                    snap.oauth_providers
+                        .iter()
+                        .enumerate()
+                        .map(|(i, row)| {
+                            let selected = i == model.oauth.selected;
+                            let mut name_style = if selected {
+                                selected_row_style()
+                            } else {
+                                Style::default()
+                            };
+                            if !row.enabled {
+                                name_style = name_style.patch(api_toggle_off_style());
+                            }
+                            let mut meta_style = dim_style();
+                            if selected {
+                                meta_style = selected_row_style();
+                            }
+                            let binding_hint = snap
+                                .oauth_binding_hints
+                                .get(i)
+                                .map(String::as_str)
+                                .unwrap_or("binding unknown");
+                            ListItem::new(Line::from(vec![
+                                Span::styled(if selected { "› " } else { "  " }, name_style),
+                                Span::styled(row.entry_id.as_str(), name_style),
+                                Span::raw("  "),
+                                Span::styled(
+                                    if row.enabled { "enabled" } else { "disabled" },
+                                    meta_style,
+                                ),
+                                Span::raw("  "),
+                                Span::styled(binding_hint.to_string(), meta_style),
+                            ]))
+                        })
+                        .collect()
+                };
+                frame.render_widget(
+                    List::new(provider_items)
+                        .block(Block::default().borders(Borders::ALL).title("Providers")),
+                    split[0],
+                );
+
+                let (detail_area, notice_area) =
+                    split_main_notice_area(split[1], shared_notice.is_some());
                 let mut lines = vec![
                     Line::from("Connected APIs (OAuth)"),
                     Line::from(
-                        "↑↓ or j/k — select   n new provider   d device bind   x disable + y confirm",
+                        "↑↓ or j/k select   n new provider   d device bind   x disable + y confirm",
                     ),
                     Line::from(vec![
                         Span::styled("Tip: ", dim_style()),
@@ -1489,65 +2683,85 @@ fn render_running_frame(
                     ]),
                     Line::from(""),
                 ];
+                if let Some(row) = snap.oauth_providers.get(model.oauth.selected) {
+                    let binding_hint = snap
+                        .oauth_binding_hints
+                        .get(model.oauth.selected)
+                        .map(String::as_str)
+                        .unwrap_or("binding unknown");
+                    lines.push(Line::from(vec![
+                        Span::styled("Provider: ", dim_style()),
+                        Span::styled(
+                            row.entry_id.clone(),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                    lines.push(Line::from(format!(
+                        "Enabled: {}",
+                        if row.enabled { "yes" } else { "no" }
+                    )));
+                    lines.push(Line::from(format!("Binding: {binding_hint}")));
+                    let device_ep = row
+                        .device_authorization_endpoint
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    lines.push(Line::from(format!(
+                        "Device authorization: {}",
+                        if device_ep.is_some() {
+                            "available"
+                        } else {
+                            "not configured"
+                        }
+                    )));
+                    if let Some(device_ep) = device_ep {
+                        lines.push(Line::from(format!("Device endpoint: {device_ep}")));
+                    }
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![
+                        Span::styled("Action: ", dim_style()),
+                        Span::raw("Press "),
+                        Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to run device authorization for this provider."),
+                    ]));
+                } else if snap.oauth_surface.provider_store_ready() {
+                    lines.push(Line::from(vec![
+                        Span::styled("No providers configured. ", dim_style()),
+                        Span::raw("Press "),
+                        Span::styled("n", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to add one."),
+                    ]));
+                }
                 if let Some(status) = oauth_surface_status(snap) {
+                    lines.push(Line::from(""));
                     lines.push(Line::from(vec![
                         Span::styled("OAuth status: ", err_emphasis_style()),
                         Span::styled(status, err_emphasis_style()),
                     ]));
-                    lines.push(Line::from(""));
                 }
-                if snap.oauth_surface.provider_store_ready() && snap.oauth_providers.is_empty() {
-                    lines.push(Line::from(vec![
-                        Span::styled("(No providers — press ", dim_style()),
-                        Span::styled("n", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(" here or use ", dim_style()),
-                        Span::styled(
-                            "plasm-appliance oauth",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(".)", dim_style()),
-                    ]));
-                }
-                for (i, row) in snap.oauth_providers.iter().enumerate() {
-                    let sel = i == model.oauth.selected;
-                    let mut row_style = Style::default();
-                    if sel {
-                        row_style = row_style.add_modifier(Modifier::BOLD);
-                    }
-                    let hint = snap
-                        .oauth_binding_hints
-                        .get(i)
-                        .map(String::as_str)
-                        .unwrap_or("?");
-                    let device_ep = row.device_authorization_endpoint.as_deref().unwrap_or("");
-                    lines.push(Line::from(vec![
-                        Span::styled(if sel { "› " } else { "  " }, row_style),
-                        Span::styled(row.entry_id.as_str(), row_style),
-                        Span::raw(format!(
-                            "  en={}  device_ep={}  {}",
-                            row.enabled, device_ep, hint
-                        )),
-                    ]));
-                }
-                if model.pending_oauth_disable_entry().is_some() {
+                if let Some(entry_id) = model.pending_oauth_disable_entry() {
                     lines.push(Line::from(""));
                     lines.push(Line::from(vec![
-                        Span::styled("Disable pending — press ", err_emphasis_style()),
-                        Span::styled("y", err_emphasis_style().add_modifier(Modifier::BOLD)),
-                        Span::styled(" to confirm, Esc cancel", err_emphasis_style()),
+                        Span::styled("Disable pending: ", warn_emphasis_style()),
+                        Span::styled(entry_id.to_string(), warn_emphasis_style()),
                     ]));
-                }
-                if !model.status_msg.is_empty() {
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(format!("Last action: {}", model.status_msg)));
                 }
                 frame.render_widget(
-                    Paragraph::new(lines).block(main_block.title("OAuth")),
-                    chunks[2],
+                    Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Selected provider"),
+                    ),
+                    detail_area,
                 );
+                if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                    render_notice_panel(frame, area, notice);
+                }
             }
         }
         RunScreen::Keys => {
+            let (content_area, notice_area) =
+                split_main_notice_area(chunks[2], shared_notice.is_some());
             let items: Vec<ListItem> = snap
                 .keys
                 .iter()
@@ -1558,19 +2772,14 @@ fn render_running_frame(
                     } else {
                         Style::default()
                     };
-                    let dim = dim_style();
-                    ListItem::new(Line::from(vec![
-                        Span::styled(api_key_row_label(k), style),
-                        Span::styled("  ·  ", dim),
-                        Span::styled(k.key_id.to_string(), dim),
-                    ]))
+                    ListItem::new(Line::from(vec![Span::styled(api_key_row_label(k), style)]))
                 })
                 .collect();
             let mut hint = vec![
                 Line::from(vec![
-                    Span::raw("a add   r rotate   d revoke + y confirm   c reveal → status   "),
+                    Span::raw("a add   r rotate   d revoke + y confirm   c copy secret   "),
                     Span::styled("#", dim_style()),
-                    Span::raw(" copy row"),
+                    Span::raw(" copy label"),
                 ]),
                 Line::from(""),
             ];
@@ -1595,46 +2804,83 @@ fn render_running_frame(
             let split = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(hint_head_lines.min(chunks[2].height.max(1))),
+                    Constraint::Length(hint_head_lines.min(content_area.height.max(1))),
                     Constraint::Min(0),
                 ])
-                .split(chunks[2]);
+                .split(content_area);
             frame.render_widget(Paragraph::new(hint), split[0]);
             frame.render_widget(List::new(items).block(main_block), split[1]);
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
+            }
         }
         RunScreen::Runs => {
+            let (content_area, notice_area) =
+                split_main_notice_area(chunks[2], shared_notice.is_some());
             let lines = vec![
                 Line::from("Runs / traces"),
                 Line::from(""),
                 Line::from("Operational drill-down binds to execute session store and trace hub."),
                 Line::from("Strict remote client: plasm-cgs (transport-only)."),
             ];
-            frame.render_widget(Paragraph::new(lines).block(main_block), chunks[2]);
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: true })
+                    .block(main_block),
+                content_area,
+            );
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
+            }
         }
         RunScreen::Storage => {
-            let db = std::env::var("DATABASE_URL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(|_| "(set)")
-                .unwrap_or("(unset)");
-            let emb = std::env::var("PLASM_EMBEDDED_POSTGRES")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "(unset — autostart)".into());
+            let (content_area, notice_area) =
+                split_main_notice_area(chunks[2], shared_notice.is_some());
+            let (backend_label, backend_detail) = storage_backend_summary(
+                plasm_agent::embedded_postgres::EmbeddedPostgresGuard::will_autostart_embedded_postgres(),
+                plasm_agent::embedded_postgres::EmbeddedPostgresGuard::embedded_autostart_skip_reason(),
+            );
             let lines = vec![
-                Line::from("Storage / Postgres"),
-                Line::from(format!("  DATABASE_URL            {db}")),
-                Line::from(format!("  PLASM_EMBEDDED_POSTGRES {emb}")),
+                Line::from(vec![Span::styled(
+                    "Backend",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(format!("  {backend_label}")),
+                Line::from(format!("  {backend_detail}")),
                 Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Local files",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(format!("  Postgres data: {}", storage_postgres_data_dir())),
+                Line::from(format!("  Local state:   {}", storage_local_state_dir())),
+                Line::from(format!("  Auth KV key:   {}", storage_auth_key_path())),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Change it",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(
-                    "Embedded Postgres (pg-embed, PostgreSQL 15) starts by default: cache data dir, port 55432, DB plasm_appliance, superuser password plasm_embedded_local_dev if unset (pg-embed initdb requires non-empty pwfile). Opt out: PLASM_EMBEDDED_POSTGRES=0. Override: PGDATA / PLASM_EMBEDDED_POSTGRES_* / DATABASE_URL (loopback).",
+                    "  Use --data-dir <dir> to keep Postgres and local state in one predictable place.",
+                ),
+                Line::from(
+                    "  Use PLASM_EMBEDDED_POSTGRES=0 plus DATABASE_URL=postgres://... to switch to an external database.",
                 ),
             ];
-            frame.render_widget(Paragraph::new(lines).block(main_block), chunks[2]);
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: true })
+                    .block(main_block.title("Storage — where state lives")),
+                content_area,
+            );
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
+            }
         }
         RunScreen::Logs => {
-            let inner_h = chunks[2].height.saturating_sub(2) as usize;
+            let (content_area, notice_area) =
+                split_main_notice_area(chunks[2], shared_notice.is_some());
+            let inner_h = content_area.height.saturating_sub(2) as usize;
             let visible_rows = inner_h.max(1);
             let total = model.logs.lines.len();
             let max_top = total.saturating_sub(visible_rows.min(total.max(1)));
@@ -1650,8 +2896,11 @@ fn render_running_frame(
             frame.render_widget(
                 List::new(items)
                     .block(main_block.title("Logs — tracing + HTTP help · ↑↓ j/k PgUp/Dn g/G")),
-                chunks[2],
+                content_area,
             );
+            if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
+                render_notice_panel(frame, area, notice);
+            }
         }
     }
 
@@ -1673,12 +2922,17 @@ fn render_running_frame(
     if model.screen == RunScreen::Keys && model.add_key_label_buf().is_none() {
         footer_spans.push(Span::raw("  |  "));
         footer_spans.push(Span::styled("#", dim_style()));
-        footer_spans.push(Span::raw(" copy row"));
+        footer_spans.push(Span::raw(" copy label"));
+    }
+    if let Some(mode_label) = input_mode_label(&model.mode) {
+        footer_spans.push(Span::raw("  |  "));
+        footer_spans.push(Span::styled("mode", dim_style()));
+        footer_spans.push(Span::raw(format!(" {mode_label}")));
     }
     if model.show_help {
         footer_spans.push(Span::raw("  |  "));
         footer_spans.push(Span::raw(
-            "Clients: # URL % curl · APIs: / Space s · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G",
+            "Clients: # URL % curl · APIs: / Space s a o · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G",
         ));
     }
     if let Some(task) = model.resources.admin.busy_task() {
@@ -1734,7 +2988,15 @@ pub(crate) fn run_running_mode(
             McpConfigSurfaceState::PolicyStoreUnavailable
         ) && appliance_services_policy_hint(host_state.as_ref())
         {
-            model.status_msg = "Waiting for admin bridge / policy store…".into();
+            set_notice(
+                &mut model,
+                RunNotice::new(
+                    NoticeSeverity::Info,
+                    "Waiting for admin bridge",
+                    "Waiting for admin bridge / policy store…",
+                )
+                .with_sticky(false),
+            );
         }
         let _ = update(&mut model, UiMsg::Tick, &deps);
 
@@ -1808,6 +3070,9 @@ pub fn run_control_station(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use serde_json::json;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1833,6 +3098,53 @@ mod tests {
             client_secret_key: "kv/key".into(),
             enabled: true,
         }
+    }
+
+    fn sample_catalog_row(
+        entry_id: &str,
+        has_public_mode: bool,
+        has_api_key: bool,
+        has_oauth: bool,
+    ) -> McpConfigCatalogRow {
+        serde_json::from_value(json!({
+            "entry_id": entry_id,
+            "label": entry_id,
+            "enabled_for_mcp": true,
+            "auth_optional": false,
+            "has_auth_binding": false,
+            "auth_marker": "public",
+            "connect_profile": {
+                "capability": if has_api_key && has_oauth {
+                    "api_key_and_oauth"
+                } else if has_api_key {
+                    "api_key_only"
+                } else if has_oauth {
+                    "oauth_only"
+                } else {
+                    "public"
+                },
+                "oauth": { "provider_present": has_oauth, "scope_catalog_present": has_oauth },
+                "has_public_mode": has_public_mode,
+                "has_api_key": has_api_key,
+                "has_oauth": has_oauth
+            },
+            "auth_scheme_summary": "bearer token",
+            "api_secret_hosted_kv": "plasm:outbound:v1:test",
+            "api_secret_present": false
+        }))
+        .expect("catalog row json")
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        let area = buffer.area();
+        let mut out = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
     }
 
     #[test]
@@ -1897,7 +3209,74 @@ mod tests {
 
         update(&mut state, UiMsg::Key(key(KeyCode::Esc)), &deps);
         assert!(matches!(state.mode, InputMode::Normal));
-        assert_eq!(state.status_msg, "OAuth disable cancelled.");
+        let notice = state.notice.expect("cancel notice");
+        assert_eq!(notice.title, "Disable cancelled");
+        assert_eq!(
+            notice.summary,
+            "Dismissed the provider disable confirmation."
+        );
+    }
+
+    #[test]
+    fn copy_notice_never_echoes_secret() {
+        let secret = "plasm-secret-value";
+        let ok_notice = copy_notice("API key secret copied", "copy failed", Ok(()));
+        let err_notice = copy_notice(
+            "API key secret copied",
+            "copy failed",
+            Err("clipboard missing".into()),
+        );
+
+        assert!(!ok_notice.summary.contains(secret));
+        assert!(err_notice.details.iter().all(|line| !line.contains(secret)));
+        assert_eq!(ok_notice.title, "API key secret copied");
+        assert_eq!(err_notice.title, "copy failed");
+    }
+
+    #[test]
+    fn auth_labels_show_supported_and_current_config() {
+        let mut snap = UiSnapshot::default();
+        let mut row = sample_catalog_row("github", false, true, true);
+        row.api_secret_present = true;
+        snap.oauth_providers = vec![sample_oauth_provider("github")];
+        snap.oauth_binding_hints = vec!["kv ok · exp 123".into()];
+
+        assert_eq!(auth_kind_label(&row), "api key+oauth");
+        assert!(current_auth_config_label(&row, &snap).contains("api key set"));
+        assert!(current_auth_config_label(&row, &snap).contains("oauth provider ready"));
+    }
+
+    #[test]
+    fn unlabeled_keys_use_fingerprint_not_key_id() {
+        let row = McpConfigApiKeyRow {
+            key_id: Uuid::nil(),
+            fingerprint: "deadbeefcafebabe".into(),
+            label: None,
+        };
+
+        assert_eq!(api_key_row_label(&row), "(unnamed · fp:deadbeef)");
+        assert_eq!(api_key_row_copy_line(&row), "(unnamed · fp:deadbeef)");
+    }
+
+    #[test]
+    fn storage_backend_summary_is_actionable() {
+        assert_eq!(
+            storage_backend_summary(true, None),
+            (
+                "Embedded Postgres",
+                "This appliance is managing its own local PostgreSQL 15 cluster.".into()
+            )
+        );
+        assert_eq!(
+            storage_backend_summary(
+                false,
+                Some("PLASM_EMBEDDED_POSTGRES=0 disables embedded Postgres")
+            ),
+            (
+                "External / disabled Postgres",
+                "PLASM_EMBEDDED_POSTGRES=0 disables embedded Postgres".into()
+            )
+        );
     }
 
     #[test]
@@ -1939,5 +3318,155 @@ mod tests {
             McpConfigSurfaceState::Ready { ref summary_name, .. } if summary_name == "old"
         ));
         assert_eq!(state.resources.admin.pending_refresh_corr(), Some(7));
+    }
+
+    #[test]
+    fn esc_dismisses_transient_notice() {
+        let mut state = RunState::new();
+        state.notice = Some(
+            RunNotice::new(NoticeSeverity::Success, "Saved", "Saved changes.").with_sticky(false),
+        );
+        let deps = test_deps(None);
+
+        update(&mut state, UiMsg::Key(key(KeyCode::Esc)), &deps);
+
+        assert!(state.notice.is_none());
+    }
+
+    #[test]
+    fn device_bind_error_notice_classifies_disabled_device_flow() {
+        let notice = device_bind_error_notice(
+            "github",
+            "OAuth device authorization failed: HTTP 400 Bad Request: device_flow_disabled",
+        );
+
+        assert_eq!(notice.title, "Bind failed");
+        assert!(notice
+            .summary
+            .contains("github rejected device authorization"));
+        assert!(notice
+            .action_hint
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Enable device flow"));
+        assert_eq!(
+            notice.details,
+            vec![
+                "OAuth device authorization failed: HTTP 400 Bad Request: device_flow_disabled"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn device_bind_started_completion_surfaces_url_and_code_before_finish() {
+        let mut state = RunState::new();
+        state.screen = RunScreen::OAuth;
+        state.resources.snapshot.oauth_providers = vec![sample_oauth_provider("github")];
+        state
+            .resources
+            .admin
+            .start_inline(42, AdminTaskKind::DeviceAuthorization);
+
+        apply_admin_completion(
+            &mut state,
+            None,
+            AdminCompletion::OAuthDeviceBindStarted {
+                corr: 42,
+                prompt: crate::appliance_oauth_admin::DeviceBindPrompt {
+                    user_code: "ABCD-EFGH".into(),
+                    verification_uri: "https://github.com/login/device".into(),
+                    verification_uri_complete: Some(
+                        "https://github.com/login/device?user_code=ABCD-EFGH".into(),
+                    ),
+                    expires_in_secs: 900,
+                    poll_interval_secs: 5,
+                },
+            },
+        );
+
+        let notice = state.notice.expect("bind started notice");
+        assert_eq!(notice.title, "Bind started");
+        assert!(notice.summary.contains("github"));
+        assert!(notice
+            .details
+            .iter()
+            .any(|line| line.contains("github.com/login/device")));
+        assert!(notice.details.iter().any(|line| line.contains("ABCD-EFGH")));
+        assert_eq!(state.resources.admin.pending_inline_corr(), Some(42));
+    }
+
+    #[test]
+    fn api_key_shortcut_opens_secret_modal_for_supported_entry() {
+        let mut state = RunState::new();
+        state.screen = RunScreen::Apis;
+        state.resources.snapshot.catalog_rows =
+            vec![sample_catalog_row("github", false, true, false)];
+        state.api.filtered_ix = vec![0];
+        let deps = test_deps(None);
+
+        update(&mut state, UiMsg::Key(key(KeyCode::Char('a'))), &deps);
+
+        assert!(matches!(state.mode, InputMode::ApiSecretEdit { .. }));
+        let notice = state.notice.expect("api key notice");
+        assert_eq!(notice.title, "Set API key");
+    }
+
+    #[test]
+    fn apply_oauth_binding_to_snapshot_updates_oauth_and_api_rows() {
+        let mut state = RunState::new();
+        state.resources.snapshot.oauth_providers = vec![sample_oauth_provider("github")];
+        state.resources.snapshot.oauth_binding_hints = vec!["no binding".into()];
+        state.resources.snapshot.catalog_rows = vec![serde_json::from_value(json!({
+            "entry_id": "github",
+            "label": "GitHub",
+            "enabled_for_mcp": true,
+            "auth_optional": false,
+            "has_auth_binding": false,
+            "auth_marker": "missing_binding",
+            "connect_profile": {
+                "capability": "oauth_only",
+                "oauth": { "provider_present": true, "scope_catalog_present": true },
+                "has_public_mode": false,
+                "has_api_key": false,
+                "has_oauth": true
+            }
+        }))
+        .expect("catalog row json")];
+
+        apply_oauth_binding_to_snapshot(&mut state, "github");
+
+        assert_eq!(
+            state.resources.snapshot.oauth_binding_hints,
+            vec!["binding updated — refreshing…"]
+        );
+        assert!(state.resources.snapshot.catalog_rows[0].has_auth_binding);
+        assert_eq!(
+            state.resources.snapshot.catalog_rows[0].auth_marker,
+            McpCatalogAuthMarker::RequiresConnect
+        );
+    }
+
+    #[test]
+    fn notice_panel_wraps_long_bind_failure() {
+        let notice = device_bind_error_notice(
+            "github",
+            "OAuth device authorization failed: HTTP 400 Bad Request: device_flow_disabled and a very long provider explanation that should wrap cleanly inside the notice panel",
+        );
+        let backend = TestBackend::new(48, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+
+        terminal
+            .draw(|frame| {
+                render_notice_panel(frame, frame.area(), &notice);
+            })
+            .expect("draw notice panel");
+
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(rendered.contains("Bind failed"));
+        assert!(rendered.contains("ERROR"));
+        assert!(rendered.contains("device_flow_disabled"));
+        assert!(rendered.contains("Enable"));
+        assert!(rendered.contains("OAuth app"));
     }
 }

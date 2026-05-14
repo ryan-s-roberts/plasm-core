@@ -11,7 +11,7 @@ use std::time::Duration;
 use auth_framework::storage::AuthStorage;
 use plasm_agent_core::mcp_api_key_registry::McpApiKeyProvisioned;
 use plasm_agent_core::mcp_config_admin::{
-    McpConfigAdminService, McpConfigApiKeyRow, McpConfigCatalogRow,
+    McpCatalogAuthMarker, McpConfigAdminService, McpConfigApiKeyRow, McpConfigCatalogRow,
 };
 use plasm_agent_core::oauth_link_catalog::OauthLinkCatalog;
 use plasm_agent_core::oauth_provider_repository::OauthProviderAppRow;
@@ -101,6 +101,11 @@ pub enum AdminJob {
         config_id: Uuid,
         entry_ids: HashSet<String>,
     },
+    StoreOutboundSecret {
+        corr: AdminCorr,
+        key: String,
+        value: String,
+    },
     OAuthDeviceBind {
         corr: AdminCorr,
         entry_id: String,
@@ -146,6 +151,15 @@ pub enum AdminCompletion {
     SetAllowedApisExact {
         corr: AdminCorr,
         result: Result<(), String>,
+    },
+    StoreOutboundSecret {
+        corr: AdminCorr,
+        key: String,
+        result: Result<(), String>,
+    },
+    OAuthDeviceBindStarted {
+        corr: AdminCorr,
+        prompt: appliance_oauth_admin::DeviceBindPrompt,
     },
     OAuthDeviceBind {
         corr: AdminCorr,
@@ -194,6 +208,41 @@ fn send_completion(tx: &crossbeam_channel::Sender<AdminCompletion>, msg: AdminCo
     }
 }
 
+fn rotated_api_key_label(rows: Vec<McpConfigApiKeyRow>, key_id: Uuid) -> String {
+    rows.into_iter()
+        .find(|row| row.key_id == key_id)
+        .and_then(|row| row.label)
+        .unwrap_or_default()
+}
+
+fn apply_oauth_binding_state_to_catalog_rows(
+    rows: &mut [McpConfigCatalogRow],
+    bound_entry_ids: &HashSet<String>,
+) {
+    for row in rows {
+        if !bound_entry_ids.contains(&row.entry_id) {
+            continue;
+        }
+        row.has_auth_binding = true;
+        if matches!(row.auth_marker, McpCatalogAuthMarker::MissingBinding) {
+            row.auth_marker = McpCatalogAuthMarker::RequiresConnect;
+        }
+    }
+}
+
+async fn apply_local_secret_state_to_catalog_rows(
+    rows: &mut [McpConfigCatalogRow],
+    storage: &Arc<dyn AuthStorage>,
+) {
+    for row in rows {
+        let Some(key) = row.api_secret_hosted_kv.as_deref() else {
+            row.api_secret_present = false;
+            continue;
+        };
+        row.api_secret_present = matches!(storage.get_kv(key).await, Ok(Some(_)));
+    }
+}
+
 async fn refresh_oauth_into(state: &PlasmHostState, data: &mut RefreshedUiData) {
     data.oauth_providers.clear();
     data.oauth_binding_hints.clear();
@@ -222,9 +271,16 @@ async fn refresh_oauth_into(state: &PlasmHostState, data: &mut RefreshedUiData) 
             }
         };
     let mut hints = Vec::with_capacity(rows.len());
+    let mut bound_entry_ids = HashSet::new();
     for r in &rows {
-        hints.push(appliance_oauth_admin::oauth_binding_hint(&storage, &r.entry_id).await);
+        let status = appliance_oauth_admin::oauth_binding_status(&storage, &r.entry_id).await;
+        if status.bound {
+            bound_entry_ids.insert(r.entry_id.clone());
+        }
+        hints.push(status.hint);
     }
+    apply_local_secret_state_to_catalog_rows(&mut data.catalog_rows, &storage).await;
+    apply_oauth_binding_state_to_catalog_rows(&mut data.catalog_rows, &bound_entry_ids);
     data.oauth_surface = OAuthSurfaceState::Ready;
     data.oauth_providers = rows;
     data.oauth_binding_hints = hints;
@@ -327,6 +383,20 @@ async fn run_admin_job(
                 AdminCompletion::SetAllowedApisExact { corr, result },
             );
         }
+        AdminJob::StoreOutboundSecret { corr, key, value } => {
+            let result = if let Some(storage) = state.auth_storage() {
+                storage
+                    .store_kv(key.as_str(), value.as_bytes(), None)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                Err("auth storage unavailable".into())
+            };
+            send_completion(
+                &comp_tx,
+                AdminCompletion::StoreOutboundSecret { corr, key, result },
+            );
+        }
         AdminJob::OAuthDeviceBind {
             corr,
             entry_id,
@@ -353,6 +423,15 @@ async fn run_admin_job(
                 &storage,
                 &resolved_scopes,
                 Duration::from_secs(600),
+                |prompt| {
+                    send_completion(
+                        &comp_tx,
+                        AdminCompletion::OAuthDeviceBindStarted {
+                            corr,
+                            prompt: prompt.clone(),
+                        },
+                    );
+                },
             )
             .await
             .map_err(|e| format!("{e}"));
@@ -408,8 +487,21 @@ async fn run_admin_job(
             key_id,
         } => {
             let result = if let Some(admin) = admin_service_from_host(state.as_ref()) {
+                let new_label = match admin.list_api_key_rows(config_id).await {
+                    Ok(rows) => rotated_api_key_label(rows, key_id),
+                    Err(e) => {
+                        send_completion(
+                            &comp_tx,
+                            AdminCompletion::RotateApiKey {
+                                corr,
+                                result: Err(format!("{e}")),
+                            },
+                        );
+                        return;
+                    }
+                };
                 admin
-                    .rotate_one_api_key(config_id, key_id, "rotated".into())
+                    .rotate_one_api_key(config_id, key_id, new_label)
                     .await
                     .map_err(|e| format!("{e}"))
             } else {
@@ -469,5 +561,61 @@ pub fn spawn_admin_router(state: Arc<PlasmHostState>) -> AdminBridge {
     AdminBridge {
         jobs_tx,
         completions_rx: comp_rx,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rotated_api_key_label_preserves_existing_label() {
+        let key_id = Uuid::new_v4();
+        let rows = vec![McpConfigApiKeyRow {
+            key_id,
+            fingerprint: "fp".into(),
+            label: Some("bob".into()),
+        }];
+
+        assert_eq!(rotated_api_key_label(rows, key_id), "bob");
+    }
+
+    #[test]
+    fn rotated_api_key_label_keeps_unnamed_keys_unnamed() {
+        let key_id = Uuid::new_v4();
+        let rows = vec![McpConfigApiKeyRow {
+            key_id,
+            fingerprint: "fp".into(),
+            label: None,
+        }];
+
+        assert_eq!(rotated_api_key_label(rows, key_id), "");
+    }
+
+    #[test]
+    fn oauth_binding_state_updates_missing_binding_catalog_rows() {
+        let mut rows: Vec<McpConfigCatalogRow> = vec![serde_json::from_value(json!({
+            "entry_id": "github",
+            "label": "GitHub",
+            "enabled_for_mcp": true,
+            "auth_optional": false,
+            "has_auth_binding": false,
+            "auth_marker": "missing_binding",
+            "connect_profile": {
+                "capability": "oauth_only",
+                "oauth": { "provider_present": true, "scope_catalog_present": true },
+                "has_public_mode": false,
+                "has_api_key": false,
+                "has_oauth": true
+            }
+        }))
+        .expect("catalog row json")];
+        let bound = HashSet::from(["github".to_string()]);
+
+        apply_oauth_binding_state_to_catalog_rows(&mut rows, &bound);
+
+        assert!(rows[0].has_auth_binding);
+        assert_eq!(rows[0].auth_marker, McpCatalogAuthMarker::RequiresConnect);
     }
 }
