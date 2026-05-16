@@ -333,6 +333,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: LINKEDIN_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:linkedin
 values:
   nv_media_upload_register_recipe:
     type: select

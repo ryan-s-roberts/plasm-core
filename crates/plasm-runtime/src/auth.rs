@@ -46,7 +46,7 @@ pub trait SecretProvider: Send + Sync {
 
     /// Resolve a Plasm-hosted credential from auth-framework `kv_store` (or equivalent).
     ///
-    /// Default: always `None` (env-only deployments). `plasm-agent` overrides this when
+    /// Default: always `None` (env-only deployments). The MCP/HTTP host (`plasm-agent-core`) overrides this when
     /// wiring [`AuthResolver`] for HTTP/MCP.
     fn get_hosted_secret<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<String>> {
         Box::pin(async move {
@@ -335,6 +335,23 @@ impl AuthResolver {
         let e = env.map(str::trim).filter(|s| !s.is_empty());
         let h = hosted_kv.map(str::trim).filter(|s| !s.is_empty());
         match (e, h) {
+            (Some(env_name), Some(kv)) => {
+                // Dual-deck catalogs: prefer hosted KV when populated (appliance / control plane),
+                // otherwise fall back to the declared env var (shells / CI).
+                match self.provider.get_hosted_secret(kv).await {
+                    Some(raw) => {
+                        let trimmed = raw.trim();
+                        if trimmed.is_empty() {
+                            return self.require_secret_trimmed(env_name).await;
+                        }
+                        if trimmed.starts_with('{') {
+                            return self.provider.resolve_hosted_bearer(kv).await;
+                        }
+                        Ok(trimmed.to_string())
+                    }
+                    None => self.require_secret_trimmed(env_name).await,
+                }
+            }
             (_, Some(kv)) => self.resolve_hosted_oauth_envelope_or_bare(kv, context).await,
             (Some(name), None) => self.require_secret_trimmed(name).await,
             (None, None) => Err(RuntimeError::AuthenticationError {

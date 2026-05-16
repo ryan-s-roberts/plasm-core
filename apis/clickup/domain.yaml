@@ -1321,6 +1321,7 @@ auth:
   scheme: api_key_header
   header: Authorization
   env: CLICKUP_API_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:clickup
 values:
   nv_attachment_id:
     type: string

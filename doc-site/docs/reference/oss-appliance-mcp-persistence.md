@@ -45,7 +45,7 @@ Optional desktop KV (`desktop_settings`) remains **chrome only** (e.g. agent bas
 
 SaaS pushes JSON via [`PlasmWeb.PlasmMcpControlPlane`](web/lib/plasm_web/plasm_mcp_control_plane.ex) to **`/internal/*`** on the hosted binary.
 
-**OSS `plasm-mcp` (implemented):** When `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL` / `DATABASE_URL` resolves, the OSS binary connects **`project_mcp_*`**, mounts the same routes as [private-control-plane-api.md](private-control-plane-api.md) **`McpConfig_v1`** / **`McpApiKey_v1`** under `/internal/…` (handlers in [`http_mcp_config.rs`](../plasm-oss/crates/plasm-agent-core/src/http_mcp_config.rs)), and wires MCP transport API keys (Postgres auth KV when available, otherwise **in-memory** keys only until restart). Use **`cargo run -p plasm-agent --bin plasm-mcp -- --migrate-mcp-config-db`** against that URL to apply migrations.
+**OSS `plasm-mcp` (implemented):** When `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL` / `DATABASE_URL` resolves, the OSS binary connects **`project_mcp_*`**, mounts the same routes as [private-control-plane-api.md](private-control-plane-api.md) **`McpConfig_v1`** / **`McpApiKey_v1`** under `/internal/…` (handlers in [`http_mcp_config.rs`](../plasm-oss/crates/plasm-agent-core/src/http_mcp_config.rs)), and wires MCP transport API keys (Postgres auth KV when available, otherwise **in-memory** keys only until restart). Use **`cargo run -p plasm --bin plasm-mcp -- --migrate-mcp-config-db`** against that URL to apply migrations.
 
 **Guards:**
 

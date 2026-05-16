@@ -44,7 +44,8 @@ pub struct McpTraceAuditFields {
     pub logical_session_id: Option<String>,
     pub plasm_prompt_hash: Option<String>,
     pub plasm_execute_session: Option<String>,
-    pub run_id: Option<Uuid>,
+    /// Deterministic wire `run_id` (`pr` + 64 hex), when present.
+    pub run_id: Option<String>,
     pub tenant_id: Option<String>,
     pub principal_sub: Option<String>,
 }
@@ -261,7 +262,7 @@ pub fn spawn_emit_mcp_trace_segment(
         mcp_session_id: fields.mcp_session_id.clone(),
         plasm_prompt_hash: fields.plasm_prompt_hash.clone(),
         plasm_execute_session: fields.plasm_execute_session.clone(),
-        run_id: fields.run_id,
+        run_id: fields.run_id.clone(),
         call_index,
         line_index,
         tenant_id: fields.tenant_id.clone(),

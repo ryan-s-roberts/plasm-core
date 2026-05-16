@@ -18,17 +18,129 @@ use futures_util::TryStreamExt;
 use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};
 use plasm_runtime::{ExecutionResult, ExecutionSource, ExecutionStats};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
+use plasm_core::expr_parser::ParsedExpr;
+
+/// ASCII prefix for deterministic run artifact wire ids (`pr` + 64 lowercase hex = full SHA256 digest).
+pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
+
+/// Canonical 32-byte identity for a stored execute run snapshot (content-addressed).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RunArtifactId([u8; 32]);
+
+impl RunArtifactId {
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// On-the-wire / URL / header form: `RUN_ARTIFACT_WIRE_PREFIX` + 64 lowercase hex nybbles.
+    #[must_use]
+    pub fn to_wire(&self) -> String {
+        format!("{}{}", RUN_ARTIFACT_WIRE_PREFIX, hex::encode(self.0))
+    }
+
+    /// Parse strict wire form (prefix + 64 hex). UUID-shaped strings are rejected.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        let rest = s.strip_prefix(RUN_ARTIFACT_WIRE_PREFIX)?;
+        if rest.len() != 64 {
+            return None;
+        }
+        if !rest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let decoded = hex::decode(rest).ok()?;
+        if decoded.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&decoded);
+        Some(Self(out))
+    }
+
+    /// Deterministic digest from canonical plan bundle (see product docs / AGENTS).
+    pub fn from_plan_bundle_inputs(
+        catalog_cgs_hash: &str,
+        domain_revision: u32,
+        entry_id: &str,
+        source_line: &str,
+        parsed: &ParsedExpr,
+        request_fingerprints: &[String],
+    ) -> Result<Self, serde_json::Error> {
+        let mut fps: Vec<String> = request_fingerprints.to_vec();
+        fps.sort();
+        let v = serde_json::json!({
+            "schema_version": 1u32,
+            "catalog_cgs_hash": catalog_cgs_hash,
+            "domain_revision": domain_revision,
+            "entry_id": entry_id,
+            "source_line": source_line.trim(),
+            "parsed": parsed,
+            "request_fingerprints": fps,
+        });
+        let bytes = serde_json::to_vec(&v)?;
+        let digest = Sha256::digest(&bytes);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&digest);
+        Ok(Self(out))
+    }
+}
+
+impl fmt::Debug for RunArtifactId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("RunArtifactId")
+            .field(&hex::encode(self.0))
+            .finish()
+    }
+}
+
+impl Serialize for RunArtifactId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_wire())
+    }
+}
+
+/// Inbound path/header segment: strict `pr` + 64 hex only (full cutover, no UUID).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunArtifactWire(pub RunArtifactId);
+
+impl FromStr for RunArtifactWire {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        RunArtifactId::from_wire(s.trim())
+            .map(RunArtifactWire)
+            .ok_or_else(|| {
+                format!(
+                    "invalid `run_id`: expected `{RUN_ARTIFACT_WIRE_PREFIX}` + 64 hex digits (got {:?})",
+                    s.chars().take(80).collect::<String>()
+                )
+            })
+    }
+}
+
 /// Handle for a stored run snapshot (HTTP path + MCP resource URI).
 #[derive(Debug, Clone)]
 pub struct RunArtifactHandle {
-    pub run_id: Uuid,
+    pub run_id: RunArtifactId,
     /// Monotonic `plasm://r/{n}` index for this execute session (matches snapshot JSON).
     pub resource_index: u64,
     /// LLM-facing short URI (`plasm://r/{n}`), valid with MCP `resources/read` while the same execute session is bound.
@@ -69,7 +181,7 @@ impl ArtifactPayloadMetadata {
             content_type: "application/json".into(),
             content_encoding: None,
             schema_version: 1,
-            producer: "plasm-agent".into(),
+            producer: "plasm".into(),
         }
     }
 }
@@ -141,7 +253,7 @@ pub trait RunArtifactBackend: Send + Sync {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         encoded: Vec<u8>,
     ) -> Result<usize, RunArtifactError>;
 
@@ -149,7 +261,7 @@ pub trait RunArtifactBackend: Send + Sync {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Option<Vec<u8>>;
 
     /// Persist `resource_index → run_id` under the same session prefix as blob artifacts.
@@ -158,7 +270,7 @@ pub trait RunArtifactBackend: Send + Sync {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Result<(), RunArtifactError>;
 
     async fn get_run_id_for_resource_index(
@@ -166,7 +278,7 @@ pub trait RunArtifactBackend: Send + Sync {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-    ) -> Option<Uuid>;
+    ) -> Option<RunArtifactId>;
 
     async fn insert_plan_encoded(
         &self,
@@ -209,7 +321,7 @@ impl RunArtifactStore {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         doc: &RunArtifactDocument,
     ) -> Result<usize, RunArtifactError> {
         let bytes = serde_json::to_vec(doc)?;
@@ -230,7 +342,7 @@ impl RunArtifactStore {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         resource_index: Option<u64>,
         payload: &ArtifactPayload,
     ) -> Result<usize, RunArtifactError> {
@@ -251,7 +363,7 @@ impl RunArtifactStore {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Option<ArtifactPayload> {
         self.get_payload_result(prompt_hash, session_id, run_id)
             .await
@@ -263,7 +375,7 @@ impl RunArtifactStore {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Result<Option<ArtifactPayload>, RunArtifactError> {
         let encoded = self
             .inner
@@ -275,7 +387,7 @@ impl RunArtifactStore {
         }
     }
 
-    pub async fn get(&self, prompt_hash: &str, session_id: &str, run_id: Uuid) -> Option<Vec<u8>> {
+    pub async fn get(&self, prompt_hash: &str, session_id: &str, run_id: RunArtifactId) -> Option<Vec<u8>> {
         let payload = self.get_payload(prompt_hash, session_id, run_id).await?;
         Some(payload.bytes.to_vec())
     }
@@ -303,7 +415,7 @@ impl RunArtifactStore {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-    ) -> Option<Uuid> {
+    ) -> Option<RunArtifactId> {
         self.inner
             .get_run_id_for_resource_index(prompt_hash, session_id, resource_index)
             .await
@@ -392,8 +504,8 @@ impl Default for RunArtifactStore {
 
 #[derive(Debug, Default)]
 struct MemoryRunArtifactState {
-    blobs: HashMap<(String, String, Uuid), Vec<u8>>,
-    by_resource_index: HashMap<(String, String, u64), Uuid>,
+    blobs: HashMap<(String, String, RunArtifactId), Vec<u8>>,
+    by_resource_index: HashMap<(String, String, u64), RunArtifactId>,
     plan_blobs: HashMap<(String, String, Uuid), Vec<u8>>,
     plan_by_index: HashMap<(String, String, u64), Uuid>,
 }
@@ -409,7 +521,7 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         encoded: Vec<u8>,
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
@@ -425,7 +537,7 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Option<Vec<u8>> {
         let g = self.inner.read().ok()?;
         g.blobs
@@ -438,7 +550,7 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Result<(), RunArtifactError> {
         let mut g = self.inner.write().expect("run artifact mutex poisoned");
         g.by_resource_index.insert(
@@ -457,7 +569,7 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-    ) -> Option<Uuid> {
+    ) -> Option<RunArtifactId> {
         let g = self.inner.read().ok()?;
         g.by_resource_index
             .get(&(
@@ -514,8 +626,12 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
     }
 }
 
-/// Local filesystem run artifacts: `execute/{prompt_hash}/{session_id}/{run_id}.artifact` and
-/// `execute/.../resource-index/{n}.txt` (UUID text) for `plasm://r/{n}` resolution.
+fn run_artifact_blob_filename(run_id: RunArtifactId) -> String {
+    format!("{}.artifact", hex::encode(run_id.as_bytes()))
+}
+
+/// Local filesystem run artifacts: `execute/{prompt_hash}/{session_id}/{hex64}.artifact` and
+/// `execute/.../resource-index/{n}.txt` (wire text) for `plasm://r/{n}` resolution.
 #[derive(Debug, Clone)]
 struct FsRunArtifactBackend {
     root: PathBuf,
@@ -535,16 +651,18 @@ impl FsRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Result<PathBuf, RunArtifactError> {
         let ph = run_artifact_fs_segment(prompt_hash)?;
         let sid = run_artifact_fs_segment(session_id)?;
+        let fname_owned = run_artifact_blob_filename(run_id);
+        let fname = run_artifact_fs_segment(&fname_owned)?;
         Ok(self
             .root
             .join("execute")
             .join(ph)
             .join(sid)
-            .join(format!("{run_id}.artifact")))
+            .join(fname))
     }
 
     fn resource_index_path(
@@ -604,7 +722,7 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         encoded: Vec<u8>,
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
@@ -624,7 +742,7 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Option<Vec<u8>> {
         let path = self.blob_path(prompt_hash, session_id, run_id).ok()?;
         tokio::fs::read(&path).await.ok()
@@ -635,7 +753,7 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Result<(), RunArtifactError> {
         let path = self.resource_index_path(prompt_hash, session_id, resource_index)?;
         if let Some(parent) = path.parent() {
@@ -643,7 +761,7 @@ impl RunArtifactBackend for FsRunArtifactBackend {
                 .await
                 .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
         }
-        let body = run_id.as_hyphenated().to_string();
+        let body = run_id.to_wire();
         tokio::fs::write(&path, body)
             .await
             .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
@@ -655,13 +773,13 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-    ) -> Option<Uuid> {
+    ) -> Option<RunArtifactId> {
         let path = self
             .resource_index_path(prompt_hash, session_id, resource_index)
             .ok()?;
         let bytes = tokio::fs::read(&path).await.ok()?;
         let s = std::str::from_utf8(&bytes).ok()?;
-        Uuid::parse_str(s.trim()).ok()
+        RunArtifactId::from_wire(s.trim())
     }
 
     async fn insert_plan_encoded(
@@ -730,7 +848,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         encoded: Vec<u8>,
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
@@ -746,7 +864,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         &self,
         prompt_hash: &str,
         session_id: &str,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Option<Vec<u8>> {
         let key = artifact_object_key(&self.prefix, prompt_hash, session_id, run_id);
         let res = self.store.get(&key).await.ok()?;
@@ -758,10 +876,10 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-        run_id: Uuid,
+        run_id: RunArtifactId,
     ) -> Result<(), RunArtifactError> {
         let key = resource_index_pointer_key(&self.prefix, prompt_hash, session_id, resource_index);
-        let body = run_id.as_hyphenated().to_string();
+        let body = run_id.to_wire();
         self.store
             .put(&key, body.into_bytes().into())
             .await
@@ -774,12 +892,12 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         prompt_hash: &str,
         session_id: &str,
         resource_index: u64,
-    ) -> Option<Uuid> {
+    ) -> Option<RunArtifactId> {
         let key = resource_index_pointer_key(&self.prefix, prompt_hash, session_id, resource_index);
         let res = self.store.get(&key).await.ok()?;
         let bytes = res.bytes().await.ok()?;
         let s = std::str::from_utf8(bytes.as_ref()).ok()?;
-        Uuid::parse_str(s.trim()).ok()
+        RunArtifactId::from_wire(s.trim())
     }
 
     async fn insert_plan_encoded(
@@ -836,14 +954,14 @@ fn artifact_object_key(
     prefix: &StorePath,
     prompt_hash: &str,
     session_id: &str,
-    run_id: Uuid,
+    run_id: RunArtifactId,
 ) -> StorePath {
     prefix
         .clone()
         .join("execute")
         .join(prompt_hash)
         .join(session_id)
-        .join(format!("{run_id}.artifact"))
+        .join(run_artifact_blob_filename(run_id))
 }
 
 fn resource_index_pointer_key(
@@ -926,7 +1044,7 @@ fn decode_payload(encoded: &[u8]) -> Result<ArtifactPayload, RunArtifactError> {
 /// Policy for default local filesystem run-artifact dir when env vars are unset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunArtifactInitPolicy {
-    /// OSS `plasm-agent`: under [`crate::oss_local_state::resolve_local_state_root`] when enabled.
+    /// OSS `plasm`: under [`crate::oss_local_state::resolve_local_state_root`] when enabled.
     OssFilesystemDefaults,
     /// Hosted `plasm-mcp-app`: in-memory when URL and dir unset (no `~/.plasm` writes).
     HostedExplicitOnly,
@@ -1080,8 +1198,11 @@ async fn run_artifact_gc_pass(
 }
 
 /// Canonical MCP / logical URI for a run artifact.
-pub fn plasm_run_resource_uri(prompt_hash: &str, session_id: &str, run_id: &Uuid) -> String {
-    format!("plasm://execute/{prompt_hash}/{session_id}/run/{run_id}")
+pub fn plasm_run_resource_uri(prompt_hash: &str, session_id: &str, run_id: &RunArtifactId) -> String {
+    format!(
+        "plasm://execute/{prompt_hash}/{session_id}/run/{}",
+        run_id.to_wire()
+    )
 }
 
 /// Short LLM-facing URI; resolve via MCP `resources/read` using the bound execute session (HTTP / legacy).
@@ -1204,22 +1325,25 @@ pub fn parse_plasm_session_short_plan_uri(uri: &str) -> Option<(LogicalSessionUr
     Some((segment, idx))
 }
 
-pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &Uuid) -> String {
-    format!("/execute/{prompt_hash}/{session_id}/artifacts/{run_id}")
+pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &RunArtifactId) -> String {
+    format!(
+        "/execute/{prompt_hash}/{session_id}/artifacts/{}",
+        run_id.to_wire()
+    )
 }
 
 pub fn code_plan_http_path(prompt_hash: &str, session_id: &str, plan_id: &Uuid) -> String {
     format!("/execute/{prompt_hash}/{session_id}/plans/{plan_id}")
 }
 
-/// Parse `plasm://execute/{prompt_hash}/{session_id}/run/{run_id}`.
-pub fn parse_plasm_execute_run_uri(uri: &str) -> Option<(String, String, Uuid)> {
+/// Parse `plasm://execute/{prompt_hash}/{session_id}/run/{run_id}` (`run_id` = prefixed hex digest).
+pub fn parse_plasm_execute_run_uri(uri: &str) -> Option<(String, String, RunArtifactId)> {
     let rest = uri.strip_prefix("plasm://execute/")?;
     let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
     if parts.len() != 4 || parts[2] != "run" {
         return None;
     }
-    let run_id = Uuid::parse_str(parts[3]).ok()?;
+    let run_id = RunArtifactId::from_wire(parts[3])?;
     Some((parts[0].to_string(), parts[1].to_string(), run_id))
 }
 
@@ -1236,7 +1360,7 @@ pub fn parse_plasm_execute_plan_uri(uri: &str) -> Option<(String, String, Uuid)>
 
 /// Arguments for [`document_from_run`].
 pub struct DocumentFromRun<'a> {
-    pub run_id: Uuid,
+    pub run_id: RunArtifactId,
     pub prompt_hash: &'a str,
     pub session_id: &'a str,
     pub entry_id: &'a str,
@@ -1254,7 +1378,7 @@ pub fn document_from_run(d: DocumentFromRun<'_>) -> RunArtifactDocument {
         .map(|e| e.payload_to_json())
         .collect();
     RunArtifactDocument {
-        run_id: d.run_id.to_string(),
+        run_id: d.run_id.to_wire(),
         prompt_hash: d.prompt_hash.to_string(),
         session_id: d.session_id.to_string(),
         entry_id: d.entry_id.to_string(),
@@ -1296,9 +1420,13 @@ mod tests {
         }
     }
 
+    fn sample_run_id() -> RunArtifactId {
+        RunArtifactId::from_bytes([0xab; 32])
+    }
+
     #[test]
     fn parse_plasm_run_uri_round_trip() {
-        let id = Uuid::nil();
+        let id = sample_run_id();
         let ph64 = "ab".repeat(32);
         let uri = plasm_run_resource_uri(&ph64, "sess01", &id);
         let (ph, sid, rid) = parse_plasm_execute_run_uri(&uri).expect("parse");
@@ -1307,12 +1435,62 @@ mod tests {
         assert_eq!(rid, id);
     }
 
+    #[test]
+    fn run_artifact_wire_rejects_uuid_shape() {
+        assert!(RunArtifactWire::from_str("550e8400-e29b-41d4-a716-446655440000").is_err());
+    }
+
+    #[test]
+    fn run_artifact_wire_accepts_uppercase_hex() {
+        let lower = sample_run_id().to_wire();
+        let upper_hex: String = lower
+            .strip_prefix(RUN_ARTIFACT_WIRE_PREFIX)
+            .expect("prefix")
+            .to_ascii_uppercase();
+        let mixed = format!("{RUN_ARTIFACT_WIRE_PREFIX}{upper_hex}");
+        let w = RunArtifactWire::from_str(&mixed).expect("parse uppercase hex");
+        assert_eq!(w.0, sample_run_id());
+    }
+
+    #[test]
+    fn plan_bundle_digest_stable_and_fingerprint_sensitive() {
+        use plasm_core::{Expr, Value};
+        let p = ParsedExpr {
+            expr: Expr::TeachingValue {
+                value: Value::String("probe".into()),
+            },
+            projection: None,
+        };
+        let a = RunArtifactId::from_plan_bundle_inputs(
+            "h",
+            0,
+            "e",
+            " line ",
+            &p,
+            &["b".into(), "a".into()],
+        )
+        .expect("digest");
+        let b = RunArtifactId::from_plan_bundle_inputs(
+            "h",
+            0,
+            "e",
+            "line",
+            &p,
+            &["a".into(), "b".into()],
+        )
+        .expect("digest");
+        assert_eq!(a, b, "fingerprints are sorted in the bundle");
+        let c = RunArtifactId::from_plan_bundle_inputs("h", 0, "e", "line", &p, &["z".into()])
+            .expect("digest");
+        assert_ne!(a, c);
+    }
+
     #[tokio::test]
     async fn memory_insert_get_round_trip() {
         let store = RunArtifactStore::memory();
-        let run_id = Uuid::new_v4();
+        let run_id = sample_run_id();
         let doc = RunArtifactDocument {
-            run_id: run_id.to_string(),
+            run_id: run_id.to_wire(),
             prompt_hash: "p".repeat(64),
             session_id: "s1".into(),
             entry_id: "e".into(),
@@ -1336,13 +1514,13 @@ mod tests {
         assert!(n > 0);
         let bytes = store.get(&"p".repeat(64), "s1", run_id).await.expect("get");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        assert_eq!(v["run_id"], run_id.to_string());
+        assert_eq!(v["run_id"], run_id.to_wire());
     }
 
     #[tokio::test]
     async fn memory_insert_get_payload_round_trip_binary() {
         let store = RunArtifactStore::memory();
-        let run_id = Uuid::new_v4();
+        let run_id = sample_run_id();
         let payload = ArtifactPayload {
             metadata: ArtifactPayloadMetadata {
                 content_type: "application/x-plasm-test".into(),
@@ -1455,9 +1633,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let store = RunArtifactStore::from_fs_root_for_test(tmp.path().to_path_buf());
         let ph = "p".repeat(64);
-        let run_id = Uuid::new_v4();
+        let run_id = sample_run_id();
         let doc = RunArtifactDocument {
-            run_id: run_id.to_string(),
+            run_id: run_id.to_wire(),
             prompt_hash: ph.clone(),
             session_id: "s1".into(),
             entry_id: "e".into(),
@@ -1481,7 +1659,7 @@ mod tests {
             .expect("by index")
             .expect("some");
         let v: serde_json::Value = serde_json::from_slice(&by_idx.bytes).expect("json");
-        assert_eq!(v["run_id"], run_id.to_string());
+        assert_eq!(v["run_id"], run_id.to_wire());
     }
 
     /// `PLASM_RUN_ARTIFACTS_URL` must win over `PLASM_RUN_ARTIFACTS_DIR` (hosted/SaaS invariant).
@@ -1513,9 +1691,9 @@ mod tests {
         let store: Arc<RunArtifactStore> = init_from_env().expect("init_from_env");
 
         let ph = "c".repeat(64);
-        let run_id = Uuid::new_v4();
+        let run_id = sample_run_id();
         let doc = RunArtifactDocument {
-            run_id: run_id.to_string(),
+            run_id: run_id.to_wire(),
             prompt_hash: ph.clone(),
             session_id: "sess".into(),
             entry_id: "e".into(),

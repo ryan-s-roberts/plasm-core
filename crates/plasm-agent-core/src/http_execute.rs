@@ -23,7 +23,7 @@ use plasm_core::{
     domain_tsv_table_from_wrapped_prompt,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated, AuthScheme,
-    CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
+    CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
@@ -42,7 +42,8 @@ use uuid::Uuid;
 use crate::run_artifacts::{
     artifact_http_path, document_from_run, plasm_run_resource_uri,
     plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle,
+    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle, RunArtifactId,
+    RunArtifactWire,
 };
 use crate::trace_hub::{
     trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
@@ -157,6 +158,33 @@ use crate::output::{
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
 
+fn artifact_archive_fallback_parsed_expr() -> ParsedExpr {
+    ParsedExpr {
+        expr: Expr::TeachingValue {
+            value: Value::String("__plasm_run_artifact_archive__".into()),
+        },
+        projection: None,
+    }
+}
+
+fn mint_run_artifact_id(
+    sess: &ExecuteSession,
+    entry_id: &str,
+    source_line: &str,
+    parsed: &ParsedExpr,
+    fingerprints: &[String],
+) -> Result<RunArtifactId, String> {
+    RunArtifactId::from_plan_bundle_inputs(
+        &sess.cgs.catalog_cgs_hash_hex(),
+        sess.domain_revision,
+        entry_id,
+        source_line,
+        parsed,
+        fingerprints,
+    )
+    .map_err(|e| format!("run artifact id digest failed: {e}"))
+}
+
 /// Re-export: MCP adaptive preview threshold (Unicode scalars).
 pub use crate::mcp_run_markdown::MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS;
 
@@ -195,7 +223,7 @@ fn plasm_meta_object(
             .enumerate()
             .map(|(i, h)| {
                 let mut step = serde_json::json!({
-                    "run_id": h.run_id.to_string(),
+                    "run_id": h.run_id.to_wire(),
                     "artifact_uri": h.plasm_uri,
                     "canonical_artifact_uri": h.canonical_plasm_uri,
                     "artifact_path": h.http_path,
@@ -413,7 +441,7 @@ pub struct CreateExecuteSessionResponse {
     pub principal: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CapabilityWaveOutcome {
     pub mode: String,
     pub entry_id: String,
@@ -423,7 +451,7 @@ pub struct CapabilityWaveOutcome {
     pub domain_prompt_chars_added: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ApplyCapabilitySeedsOutcome {
     pub prompt_hash: String,
     pub session_id: String,
@@ -526,7 +554,7 @@ fn attach_plasm_run_headers(res: Response, artifact: Option<&RunArtifactHandle>)
     };
     let (mut parts, body) = res.into_parts();
     let hdr = &mut parts.headers;
-    if let Ok(v) = HeaderValue::from_str(&h.run_id.to_string()) {
+    if let Ok(v) = HeaderValue::from_str(&h.run_id.to_wire()) {
         hdr.insert(HeaderName::from_static("x-plasm-run-id"), v);
     }
     if let Ok(v) = HeaderValue::from_str(h.http_path.as_str()) {
@@ -2230,7 +2258,22 @@ pub async fn archive_plasm_result_snapshot(
     result: &ExecutionResult,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<RunArtifactHandle, String> {
-    let run_id = Uuid::new_v4();
+    let entry_id = entry_id_override.unwrap_or(sess.entry_id.as_str());
+    let source_line = expressions.join("\n");
+    let parsed_digest = match expressions.first() {
+        Some(line) => match parse_plasm_line(line.trim(), sess, st) {
+            Ok(p) => p,
+            Err(_) => artifact_archive_fallback_parsed_expr(),
+        },
+        None => artifact_archive_fallback_parsed_expr(),
+    };
+    let run_id = mint_run_artifact_id(
+        sess,
+        entry_id,
+        &source_line,
+        &parsed_digest,
+        &result.request_fingerprints,
+    )?;
     let resource_index = sess.mint_run_resource_index();
     let doc = document_from_run(DocumentFromRun {
         run_id,
@@ -2965,7 +3008,14 @@ async fn run_parsed_plasm_line(
     if let Some(ref key) = page_storage_key {
         if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
             let result = synthetic_page_result(sess, key, cursor, trace);
-            let run_id = Uuid::new_v4();
+            let run_id = mint_run_artifact_id(
+                sess,
+                sess.entry_id.as_str(),
+                line,
+                &parsed,
+                &result.request_fingerprints,
+            )
+            .map_err(RunLineError::Parse)?;
             let resource_index = sess.mint_run_resource_index();
             let doc = document_from_run(DocumentFromRun {
                 run_id,
@@ -3250,7 +3300,14 @@ async fn run_parsed_plasm_line(
 
     result.request_fingerprints = fp_sink.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-    let run_id = Uuid::new_v4();
+    let run_id = mint_run_artifact_id(
+        sess,
+        sess.entry_id.as_str(),
+        line,
+        &parsed,
+        &result.request_fingerprints,
+    )
+    .map_err(RunLineError::Parse)?;
     let resource_index = sess.mint_run_resource_index();
     let doc = document_from_run(DocumentFromRun {
         run_id,
@@ -3390,7 +3447,7 @@ async fn run_parsed_plasm_line(
                 logical_session_id: ctx.logical_session_id.clone(),
                 plasm_prompt_hash: Some(sess.prompt_hash.to_string()),
                 plasm_execute_session: Some(session_id.to_string()),
-                run_id: Some(run_id),
+                run_id: Some(run_id.to_wire()),
                 tenant_id: (!sess.tenant_scope.is_empty()).then(|| sess.tenant_scope.clone()),
                 principal_sub: (!sess.principal_subject.is_empty())
                     .then(|| sess.principal_subject.clone()),
@@ -3982,6 +4039,118 @@ async fn get_execute_session_runs(
     .into_response()
 }
 
+async fn post_execute_session_plan(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
+    ExecutePath {
+        prompt_hash,
+        session_id,
+    }: ExecutePath,
+    headers: HeaderMap,
+    Json(body): Json<crate::resolved_plan_http::ResolvedPlanRequest>,
+) -> Response {
+    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_SESSION),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown or expired execute session"),
+        );
+    };
+
+    if !session_allows_principal(&sess, principal.as_ref()) {
+        return incoming_auth_problem(
+            crate::incoming_auth::IncomingAuthFailure::Invalid(
+                "execute session tenant does not match caller".into(),
+            ),
+            true,
+        );
+    }
+
+    let prepared =
+        match crate::resolved_plan_http::prepare_resolved_plan_request(body, &sess) {
+            Ok(p) => p,
+            Err(e) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::BAD_REQUEST,
+                        Uri::from_static(problem_types::EXECUTE_INVALID_REQUEST_BODY),
+                    )
+                    .with_title("Bad Request")
+                    .with_detail(e.to_string()),
+                );
+            }
+        };
+    let run_live = matches!(
+        prepared.mode,
+        crate::resolved_plan_http::ResolvedPlanRunMode::Run
+    );
+    let ph_str = prompt_hash.to_string();
+    let sid_str = session_id.to_string();
+    let outcome = crate::plasm_plan_run::run_validated_plasm_plan(
+        &sess,
+        &st,
+        ph_str.as_str(),
+        sid_str.as_str(),
+        &prepared.validated,
+        run_live,
+        None,
+    )
+    .await;
+
+    match outcome {
+        Ok(result) => {
+            let accept = headers.get(ACCEPT).and_then(|v| v.to_str().ok());
+            let kind = match negotiate_accept(accept) {
+                Ok(k) => k,
+                Err(AcceptNegotiationError::NoSupportedMediaType) => ExecResponseKind::Json,
+            };
+            let payload = crate::resolved_plan_http::ResolvedPlanResponse {
+                plan: true,
+                dry_run: !run_live,
+                plan_dag: result.plan_dag,
+                node_results: Some(result.node_results),
+                graph_summary: Some(result.graph_summary),
+                run_markdown: result.run_markdown,
+                meta: result
+                    .run_plasm_meta
+                    .map(serde_json::Value::Object),
+            };
+            if run_live {
+                if let ExecResponseKind::Toon | ExecResponseKind::Ndjson = kind {
+                    return respond_plan_payload(kind, serde_json::to_value(&payload).unwrap_or_default());
+                }
+                if let Some(md) = payload.run_markdown.as_deref() {
+                    if matches!(kind, ExecResponseKind::Table) {
+                        return (
+                            StatusCode::OK,
+                            [(CONTENT_TYPE, "text/plain; charset=utf-8")],
+                            md.to_string(),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+            (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                Json(payload),
+            )
+                .into_response()
+        }
+        Err(e) => problem_response(
+            Problem::custom(
+                ProblemStatus::BAD_REQUEST,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Bad Request")
+            .with_detail(e),
+        ),
+    }
+}
+
 pub fn execute_routes() -> Router {
     Router::new()
         .route("/execute", post(post_create_execute_session))
@@ -4004,6 +4173,10 @@ pub fn execute_routes() -> Router {
         .route(
             "/execute/{prompt_hash}/{session_id}/context",
             post(post_execute_session_context),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/plan",
+            post(post_execute_session_plan),
         )
         .route(
             "/execute/{prompt_hash}/{session_id}",
@@ -4147,13 +4320,13 @@ async fn get_execute_run_artifact(
             );
         }
     };
-    let run_id = match Uuid::parse_str(rid.trim()) {
-        Ok(u) => u,
-        Err(_) => {
+    let run_id = match rid.trim().parse::<RunArtifactWire>() {
+        Ok(w) => w.0,
+        Err(e) => {
             crate::metrics::record_execute_artifact_serve("error", "bad_path", started.elapsed());
             return problem_response_invalid_execute_path(
                 StatusCode::BAD_REQUEST,
-                "invalid `run_id` path segment: expected UUID",
+                format!("invalid `run_id` path segment: {e}"),
             );
         }
     };
@@ -4219,7 +4392,7 @@ async fn get_execute_run_artifact(
             target: "plasm_agent::http_execute",
             prompt_hash = %prompt_hash.as_str(),
             session_id = %session_id.as_str(),
-            run_id = %run_id,
+            run_id = %run_id.to_wire(),
             bytes = payload.bytes.len(),
             "GET execute run artifact"
         );
@@ -4936,6 +5109,123 @@ mod tests {
             detail.contains("line 1 of 2:"),
             "expected line index in detail: {detail:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn resolved_plan_endpoint_plan_mode() {
+        use crate::plasm_dag::compile_plasm_surface_line_to_plan;
+        use crate::catalog_pin::CatalogPin;
+        use crate::resolved_plan_http::{
+            ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
+            RESOLVED_PLAN_CONTENT_TYPE,
+        };
+
+        let st = test_state_with_registry();
+        let app = test_app_execute(st.clone());
+        let create = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "entry_id": "overshow",
+                    "entities": ["Profile"],
+                    "context_intent": "profile query",
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(create).await.unwrap();
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let loc = res.headers().get(LOCATION).unwrap().to_str().unwrap();
+        let created = get_execute_session_json(&app, loc).await;
+        let sess = st
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .expect("session");
+        let pipeline = st.engine.prompt_pipeline();
+        let cross = st.sessions.symbol_map_cross_cache();
+        let plan = compile_plasm_surface_line_to_plan(
+            pipeline,
+            Some(cross),
+            &sess,
+            "test",
+            "Profile{}",
+        )
+        .expect("compile");
+        let digest = sess.cgs.catalog_cgs_hash_hex();
+        let req = ResolvedPlanRequest {
+            protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
+            client_session_id: "cs_test".into(),
+            catalog_pins: vec![CatalogPin {
+                api: "overshow".into(),
+                digest: digest.clone(),
+            }],
+            mode: ResolvedPlanRunMode::Plan,
+            source_program: "Profile{}".into(),
+            plan,
+        };
+        let plan_uri = format!("/execute/{}/{}/plan", created.prompt_hash, created.session);
+        let run = Request::builder()
+            .method("POST")
+            .uri(&plan_uri)
+            .header("content-type", RESOLVED_PLAN_CONTENT_TYPE)
+            .header("accept", "application/json")
+            .body(Body::from(serde_json::to_string(&req).unwrap()))
+            .unwrap();
+        let res2 = app.oneshot(run).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::OK, "plan endpoint should succeed");
+        let bytes = axum::body::to_bytes(res2.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(doc.get("plan").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(doc.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+        assert!(doc.get("plan_dag").is_some());
+    }
+
+    #[tokio::test]
+    async fn resolved_plan_endpoint_rejects_digest_mismatch() {
+        use crate::catalog_pin::CatalogPin;
+        use crate::resolved_plan_http::{
+            ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
+            RESOLVED_PLAN_CONTENT_TYPE,
+        };
+
+        let st = test_state_with_registry();
+        let app = test_app_execute(st.clone());
+        let create = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(create).await.unwrap();
+        let loc = res.headers().get(LOCATION).unwrap().to_str().unwrap();
+        let created = get_execute_session_json(&app, loc).await;
+        let req = ResolvedPlanRequest {
+            protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
+            client_session_id: "cs_test".into(),
+            catalog_pins: vec![CatalogPin {
+                api: "overshow".into(),
+                digest: "0".repeat(64),
+            }],
+            mode: ResolvedPlanRunMode::Plan,
+            source_program: "Profile{}".into(),
+            plan: serde_json::json!({ "version": 1, "name": "bad", "nodes": [], "returns": { "type": "node", "id": "n1" } }),
+        };
+        let plan_uri = format!("/execute/{}/{}/plan", created.prompt_hash, created.session);
+        let run = Request::builder()
+            .method("POST")
+            .uri(&plan_uri)
+            .header("content-type", RESOLVED_PLAN_CONTENT_TYPE)
+            .body(Body::from(serde_json::to_string(&req).unwrap()))
+            .unwrap();
+        let res2 = app.oneshot(run).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

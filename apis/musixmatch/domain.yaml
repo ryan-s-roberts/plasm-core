@@ -156,6 +156,7 @@ auth:
   scheme: api_key_query
   param: apikey
   env: MUSIXMATCH_API_KEY
+  hosted_kv: plasm:outbound:v1:catalog:musixmatch
 values:
   nv_artist_artist_country:
     type: string

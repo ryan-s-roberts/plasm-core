@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Musixmatch API](https://develop
 
 ```bash
 export MUSIXMATCH_API_KEY=...
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/musixmatch \
   --backend https://api.musixmatch.com \
   --repl

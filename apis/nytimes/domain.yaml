@@ -63,6 +63,7 @@ auth:
   scheme: api_key_query
   param: api-key
   env: NYTIMES_API_KEY
+  hosted_kv: plasm:outbound:v1:catalog:nytimes
 values:
   nv_article_abstract:
     type: string

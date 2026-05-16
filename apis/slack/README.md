@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [Slack Web API](https://api.slac
 ```bash
 # Run against the live API (requires SLACK_BOT_TOKEN in env)
 export SLACK_BOT_TOKEN=xoxb-...
-cargo run -p plasm-agent --bin plasm-cgs -- \
+cargo run -p plasm --bin plasm-cgs -- \
   --schema apis/slack \
   --backend https://slack.com/api \
   --repl
@@ -287,13 +287,13 @@ plasm-cgs --schema apis/slack --backend https://slack.com/api \
 Schema loads without panics. All subcommand names, typed flags, and pagination controls verified.
 
 ```bash
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack --help
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack channel --help
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack channel query --help
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack message --help
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack message search --help
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack message channel-history --help
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack user --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack channel --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack channel query --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack message --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack message search --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack message channel-history --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack user --help
 ```
 
 CLI outputs verified:
@@ -375,4 +375,4 @@ plasm-cgs --schema apis/slack --backend https://slack.com/api user query --limit
 
 ## CGS review and backlog
 
-For a structured completeness and ergonomics pass (toolchain results, CGS-first gap matrix, prioritized follow-ups), see [REVIEW.md](REVIEW.md). Validate the toolkit with `cargo run -p plasm-cli --bin plasm -- schema validate apis/slack` (directory, not `domain.yaml` alone). The schema-driven CLI binary is `plasm-cgs` in the `plasm-agent` crate: `cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack --help`.
+For a structured completeness and ergonomics pass (toolchain results, CGS-first gap matrix, prioritized follow-ups), see [REVIEW.md](REVIEW.md). Validate the toolkit with `cargo run -p plasm-cli --bin plasm -- schema validate apis/slack` (directory, not `domain.yaml` alone). The schema-driven CLI binary is `plasm-cgs` in the `plasm` crate: `cargo run -p plasm --bin plasm-cgs -- --schema apis/slack --help`.

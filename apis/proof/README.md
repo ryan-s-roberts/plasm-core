@@ -21,7 +21,7 @@ Point Plasm at that origin (overrides `domain.yaml` `http_backend` for the sessi
 
 ```bash
 export PROOF_API_TOKEN=   # if PROOF_SHARE_MARKDOWN_AUTH_MODE=api_key
-cargo run -p plasm-agent --bin plasm-mcp -- --schema apis/proof --http --port 3000 --backend http://127.0.0.1:4000
+cargo run -p plasm --bin plasm-mcp -- --schema apis/proof --http --port 3000 --backend http://127.0.0.1:4000
 ```
 
 If your local SDK does not mirror **`/api/agent/:slug/*`**, adjust **`mappings.yaml`** paths for that backend (hosted **`www.proofeditor.ai`** is the default `http_backend` target).

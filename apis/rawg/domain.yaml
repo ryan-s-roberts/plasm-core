@@ -92,6 +92,7 @@ auth:
   scheme: api_key_query
   param: key
   env: RAWG_API_KEY
+  hosted_kv: plasm:outbound:v1:catalog:rawg
 values:
   nv_game_background_image:
     type: string

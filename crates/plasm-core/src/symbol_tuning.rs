@@ -2854,10 +2854,8 @@ impl DomainExposureSession {
             }
         }
         new_triples.sort();
-        let mut next_m = self.sym_to_method.len() + 1;
-        for triple in new_triples {
+        for (next_m, triple) in (self.sym_to_method.len() + 1..).zip(new_triples) {
             let sym = format!("m{next_m}");
-            next_m += 1;
             self.method_to_sym.insert(triple.clone(), sym.clone());
             self.sym_to_method.insert(sym, triple);
         }
@@ -2915,10 +2913,8 @@ impl DomainExposureSession {
             .cloned()
             .collect();
         new_fps.sort();
-        let mut next_p = self.slot_fingerprint_to_sym.len() + 1;
-        for fp in new_fps {
+        for (next_p, fp) in (self.slot_fingerprint_to_sym.len() + 1..).zip(new_fps) {
             let sym = format!("p{next_p}");
-            next_p += 1;
             self.slot_fingerprint_to_sym.insert(fp, sym);
         }
         self.rebuild_parameter_symbol_maps();

@@ -1,0 +1,78 @@
+name: OSS release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches workspace version
+        run: bash scripts/ci/verify-release-tag-matches-workspace-version.sh
+
+  build:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-13
+            triple: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binaries
+        run: |
+          cargo build --release \
+            -p plasm-server --bin plasm-server \
+            -p plasm --bin plasm \
+            -p plasm-cli --bin plasm-cgs
+      - name: Package tarball
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${TAG#v}"
+          out="plasm-oss-${ver}-${{ matrix.triple }}.tar.gz"
+          mkdir -p pack
+          cp target/release/plasm target/release/plasm-server target/release/plasm-cgs pack/
+          tar -czvf "$out" -C pack plasm plasm-server plasm-cgs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.triple }}
+          path: plasm-oss-*.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: dist-*
+          merge-multiple: true
+      - name: Flatten artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          find artifacts -type f -name 'plasm-oss-*.tar.gz' -exec cp {} upload/ \;
+          (cd upload && sha256sum plasm-oss-*.tar.gz > SHA256SUMS)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: upload/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -6,7 +6,7 @@ Curated read surface for the Reddit OAuth host: identity, subreddit metadata, po
 
 - Obtain a user or installed-app OAuth access token with at least the `identity` and `read` scopes (see `oauth` in `domain.yaml` for scope notes).
 - Set `REDDIT_ACCESS_TOKEN` to the bearer token.
-- Every mapping sends a `User-Agent` header (`plasm:reddit-schema/1.0 (by plasm-agent)`). Reddit often rejects anonymous defaults; override in `mappings.yaml` if the machine-spirit demands a richer product string.
+- Every mapping sends a `User-Agent` header (`plasm:reddit-schema/1.0 (by plasm)`). Reddit often rejects anonymous defaults; override in `mappings.yaml` if the machine-spirit demands a richer product string.
 
 ## Run
 

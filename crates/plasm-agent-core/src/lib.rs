@@ -1,4 +1,4 @@
-//! `plasm-agent` library: HTTP/MCP SaaS core and schema CLI — built as **`plasm-mcp`** and **`plasm-cgs`**.
+//! `plasm-agent-core` library: HTTP/MCP host engine — built as **`plasm-mcp`** and **`plasm`** (remote HTTP terminal) via the workspace **`plasm`** crate.
 //! Interactive REPL (`plasm-repl`) lives in **`plasm-repl`** (depends on `plasm-eval` / BAML). Integration tests live under `tests/*.rs`.
 
 // Large MCP tool async stacks + `#[async_trait]` boxing can exceed the default trait solver recursion
@@ -6,6 +6,7 @@
 #![recursion_limit = "512"]
 
 pub mod appliance_mcp_defaults;
+pub mod appliance_services;
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;
 pub mod backend_normalize;
@@ -16,6 +17,7 @@ pub mod control_plane_http;
 mod discovery_embedding_chunks;
 pub mod discovery_embedding_reconcile;
 pub mod discovery_embedding_repository;
+mod discovery_human_format;
 pub mod dispatch;
 pub mod dotenv_safe;
 pub mod error;
@@ -37,7 +39,9 @@ pub mod input_field_cli;
 pub mod invoke_args;
 pub mod local_trace_archive;
 pub mod mcp_api_key_registry;
+pub mod mcp_config_admin;
 pub mod mcp_config_repository;
+pub mod mcp_host_bootstrap;
 pub mod mcp_plasm_meta;
 pub mod mcp_policy;
 mod mcp_run_markdown;
@@ -46,11 +50,13 @@ pub mod mcp_server;
 mod mcp_stream_auth;
 pub mod mcp_transport_auth;
 pub mod metrics;
+pub mod oauth_binding_kv;
 pub mod oauth_link_catalog;
 pub mod oauth_link_session;
-mod oauth_provider_model;
+pub mod oauth_provider_model;
 pub mod oauth_provider_pull;
-mod oauth_runtime_source;
+pub mod oauth_provider_repository;
+pub mod oauth_runtime_source;
 pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
@@ -58,6 +64,8 @@ pub mod plasm_dag;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;
+pub(crate) mod catalog_pin;
+pub(crate) mod resolved_plan_http;
 pub mod plugin_catalog;
 pub mod query_args;
 pub mod run_artifacts;
@@ -69,6 +77,9 @@ pub mod subcommand_util;
 mod telemetry;
 pub mod tenant_binding;
 pub mod terminal;
+mod terminal_session;
+mod terminal_state;
+pub use terminal::DEFAULT_PLASM_HTTP_ORIGIN;
 mod tool_model;
 pub mod trace_hub;
 pub(crate) mod trace_hub_metrics;
@@ -85,7 +96,20 @@ pub fn init_agent_runtime() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Remote HTTP terminal (`plasm-cgs` binary). Local schema-driven CGS CLIs use `plasm-repl` / tests only.
+/// Like [`init_agent_runtime`], but installs the `tracing` **fmt** layer with `make_writer` (e.g. alternate-screen TUIs).
+pub fn init_agent_runtime_with_fmt_writer<W>(
+    make_writer: W,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
+{
+    crate::dotenv_safe::load_from_cwd_parents();
+    crate::telemetry::init_with_fmt_make_writer(make_writer)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    Ok(())
+}
+
+/// Remote HTTP terminal (`plasm` binary from the workspace `plasm` crate). Local schema-driven CGS CLIs use `plasm-repl` / tests only.
 pub async fn run_cgs_main() -> Result<(), Box<dyn std::error::Error>> {
     crate::terminal::run_terminal()
         .await

@@ -1,7 +1,7 @@
-//! OpenTelemetry metrics for `plasm-agent` (MCP tools, HTTP execute, trace sink, plugin catalog reload).
+//! OpenTelemetry metrics for `plasm` (MCP tools, HTTP execute, trace sink, plugin catalog reload).
 //!
 //! Follows [`docs/otel-metrics-instrumentation-guide.md`](../../docs/otel-metrics-instrumentation-guide.md):
-//! static metric names, structured attributes, `OnceLock` instrument cache, meter `plasm-agent`.
+//! static metric names, structured attributes, `OnceLock` instrument cache, meter `plasm`.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -10,7 +10,7 @@ use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Histogram};
 use opentelemetry::KeyValue;
 
-const METER_NAME: &str = "plasm-agent";
+const METER_NAME: &str = "plasm";
 
 struct AgentMetrics {
     mcp_tool_calls: Counter<u64>,

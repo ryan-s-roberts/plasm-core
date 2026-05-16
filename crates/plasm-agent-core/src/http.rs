@@ -178,39 +178,100 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
         .layer(Extension(state))
 }
 
+/// Options for [`serve_discovery_execute_on_listener_opts`] (defaults preserve CLI / headless behavior).
+#[derive(Clone, Copy, Debug)]
+pub struct DiscoveryHttpServeOpts {
+    /// When true, print the multi-line HTTP route cheat sheet to stderr on startup.
+    pub emit_stderr_route_help: bool,
+}
+
+impl Default for DiscoveryHttpServeOpts {
+    fn default() -> Self {
+        Self {
+            emit_stderr_route_help: true,
+        }
+    }
+}
+
+/// Same text as the stderr startup banner, for UIs that must not write to stdio (e.g. alternate-screen TUIs).
+pub fn format_http_route_help(port: u16) -> String {
+    [
+        format!("plasm HTTP+MCP (unified): http://127.0.0.1:{port}"),
+        "  MCP Streamable HTTP on the same port: GET/POST /mcp (SDK default; plus optional /health when enabled)".into(),
+        "  GET  /v1/health   GET /v1/auth/status   GET /v1/registry   GET /v1/registry/:entry_id   GET /v1/registry/:entry_id/tool-model   GET /v1/incoming-auth/context   POST /v1/discover".into(),
+        "  GET  /oauth/link/callback   POST /internal/oauth-link/v1/start   POST /internal/oauth-link/v1/device/start   POST /internal/oauth-link/v1/device/poll   POST /internal/outbound-secrets/v1/put   POST /internal/outbound-secrets/v1/delete (when outbound OAuth KV is configured)".into(),
+        "  When DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL is set: POST /internal/mcp-config/v1/upsert (+ MCP API key routes) with X-Plasm-Control-Plane-Secret — same contract as hosted control plane".into(),
+        "  POST /execute — { entry_id, entities } → 303 Location only → GET that URL for session JSON + DOMAIN prompt".into(),
+        "  POST /execute/:prompt_hash/:session — text/plain or JSON lines; default Accept: text/toon (results only); also json | x-ndjson | text/plain".into(),
+        "  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)".into(),
+        "  GET  /execute/:prompt_hash/:session/plans/:plan_id — archived serialized program plan IR / evaluation artifact (or /plans/by-index/:n)".into(),
+    ]
+    .join("\n")
+        + "\n"
+}
+
+fn eprint_http_command_help(port: u16) {
+    eprint!("{}", format_http_route_help(port));
+}
+
+/// Serve discovery + execute on an already-bound [`tokio::net::TcpListener`] (bind-first readiness).
+pub async fn serve_discovery_execute_on_listener(
+    listener: tokio::net::TcpListener,
+    state: PlasmHostState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    serve_discovery_execute_on_listener_opts(listener, state, DiscoveryHttpServeOpts::default())
+        .await
+}
+
+/// Like [`serve_discovery_execute_on_listener`] with explicit stderr banner policy.
+pub async fn serve_discovery_execute_on_listener_opts(
+    listener: tokio::net::TcpListener,
+    state: PlasmHostState,
+    opts: DiscoveryHttpServeOpts,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = listener.local_addr()?;
+    let port = addr.port();
+    tracing::info!("plasm HTTP listening on http://{addr}");
+    if opts.emit_stderr_route_help {
+        eprint_http_command_help(port);
+    }
+    let app = discovery_execute_router(state);
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
 /// Bind `0.0.0.0:port` and serve discovery + execute (used by `--http` alone or with `--mcp`).
 pub async fn serve_http_listener(
     state: PlasmHostState,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let app = discovery_execute_router(state);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("plasm-agent HTTP listening on http://{addr}");
-    eprintln!("plasm-agent HTTP mode: http://127.0.0.1:{port}");
-    eprintln!(
-        "  GET  /v1/health   GET /v1/auth/status   GET /v1/registry   GET /v1/registry/:entry_id   GET /v1/registry/:entry_id/tool-model   GET /v1/incoming-auth/context   POST /v1/discover"
-    );
-    eprintln!(
-        "  GET  /oauth/link/callback   POST /internal/oauth-link/v1/start   POST /internal/outbound-secrets/v1/put   POST /internal/outbound-secrets/v1/delete (when outbound OAuth KV is configured)"
-    );
-    eprintln!(
-        "  When DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL is set: POST /internal/mcp-config/v1/upsert (+ MCP API key routes) with X-Plasm-Control-Plane-Secret — same contract as hosted control plane"
-    );
-    eprintln!(
-        "  POST /execute — {{ entry_id, entities }} → 303 Location only → GET that URL for session JSON + DOMAIN prompt"
-    );
-    eprintln!(
-        "  POST /execute/:prompt_hash/:session — text/plain or JSON lines; default Accept: text/toon (results only); also json | x-ndjson | text/plain"
-    );
-    eprintln!(
-        "  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)"
-    );
-    eprintln!(
-        "  GET  /execute/:prompt_hash/:session/plans/:plan_id — archived serialized program plan IR / evaluation artifact (or /plans/by-index/:n)"
-    );
-
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    serve_discovery_execute_on_listener(listener, state).await
+}
 
+/// Discovery + execute + MCP Streamable HTTP on **one** TCP listener (same port).
+///
+/// Router order: discovery/execute first, then MCP (`/mcp`, optional `/health`, …) so MCP’s
+/// catch-all fallback does not shadow Plasm routes.
+pub async fn serve_discovery_execute_and_mcp_unified(
+    listener: tokio::net::TcpListener,
+    state: PlasmHostState,
+    opts: DiscoveryHttpServeOpts,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = listener.local_addr()?;
+    let port = addr.port();
+    tracing::info!("plasm HTTP+MCP unified listening on http://{addr}");
+    if opts.emit_stderr_route_help {
+        eprint_http_command_help(port);
+    }
+    let plasm_arc = std::sync::Arc::new(state.clone());
+    let mcp =
+        crate::mcp_server::build_mcp_hyper_server_for_merge(std::sync::Arc::clone(&plasm_arc));
+    let mcp_router = mcp.into_router();
+    let app = Router::new()
+        .merge(discovery_execute_router(state))
+        .merge(mcp_router);
+    axum::serve(listener, app).await?;
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! Postgres integration for [`plasm_agent_core::discovery_embedding_repository`].
 //!
-//! Uses the [`pgvector/pgvector`](https://hub.docker.com/r/pgvector/pgvector) image so `CREATE EXTENSION vector` succeeds.
+//! Uses the official [`postgres`](https://hub.docker.com/_/postgres) image (no pgvector required).
 //!
 //! ```text
 //! cargo test -p plasm-agent-core --test discovery_embedding_pg -- --ignored --nocapture
@@ -21,7 +21,7 @@ use testcontainers_modules::testcontainers::{
 #[ignore = "requires Docker (see module doc comment)"]
 async fn discovery_embedding_fetch_roundtrip() {
     const START_TIMEOUT: Duration = Duration::from_secs(120);
-    let image = GenericImage::new("pgvector/pgvector", "pg16-bookworm")
+    let image = GenericImage::new("postgres", "16-bookworm")
         .with_exposed_port(5432.tcp())
         .with_wait_for(WaitFor::message_on_stderr(
             "database system is ready to accept connections",
@@ -67,7 +67,7 @@ async fn discovery_embedding_fetch_roundtrip() {
 #[ignore = "requires Docker (see module doc comment)"]
 async fn discovery_embedding_fetch_duplicate_keys_returns_once() {
     const START_TIMEOUT: Duration = Duration::from_secs(120);
-    let image = GenericImage::new("pgvector/pgvector", "pg16-bookworm")
+    let image = GenericImage::new("postgres", "16-bookworm")
         .with_exposed_port(5432.tcp())
         .with_wait_for(WaitFor::message_on_stderr(
             "database system is ready to accept connections",

@@ -1,6 +1,6 @@
 # plasm-agent-core
 
-Open-source **MCP/HTTP host engine** for this workspace: execute, discovery, Streamable HTTP MCP, session + trace stores, and optional incoming-auth. Binaries live in the sibling [`plasm-agent`](../plasm-agent/) crate; the **SaaS `/internal/*` control-plane** surface is in [`plasm-saas`](../plasm-saas/). **Ownership map:** [docs/oss-saas-boundary.md](../../docs/oss-saas-boundary.md).
+Open-source **MCP/HTTP host engine** for this workspace: execute, discovery, Streamable HTTP MCP, session + trace stores, and optional incoming-auth. Binaries live in the sibling [`plasm`](../plasm/) crate; the **SaaS `/internal/*` control-plane** surface is in [`plasm-saas`](../plasm-saas/). **Ownership map:** [docs/oss-saas-boundary.md](../../docs/oss-saas-boundary.md).
 
 ## Design boundary: no domain leakage
 
@@ -19,4 +19,4 @@ See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.
 - `**PLASM_TRACE_SINK_STRICT`** — If set to `1` / `true` / `yes` and `**PLASM_TRACE_SINK_URL` is unset**, a **one-time** `tracing::error!` is emitted (operators should fix config in environments where durable ingest is mandatory).
 - `**PLASM_TRACE_HUB_INGEST_QUEUE_CAP`** — Bounded queue for async durable ingest jobs (default **512**). When full, **MCP / HTTP** trace emitters **wait** on `send` (after the live SSE `patch` is broadcast); durable work is not dropped for backpressure. `plasm.trace_hub.ingest_send_wait_ms` records that wait. `ingest_enqueue_failed_total` is for **closed** channel (shutdown), with optional SSE `durable_ingest` + `tracing::warn!`.
 
-OpenTelemetry metric names for TraceHub + trace-sink HTTP are listed under **Meter: `plasm-agent`** in `[docs/otel-signoz-metrics-inventory.md](../../docs/otel-signoz-metrics-inventory.md)`.
+OpenTelemetry metric names for TraceHub + trace-sink HTTP are listed under **Meter: `plasm`** in `[docs/otel-signoz-metrics-inventory.md](../../docs/otel-signoz-metrics-inventory.md)`.

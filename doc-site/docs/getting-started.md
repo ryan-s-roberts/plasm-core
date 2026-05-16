@@ -21,7 +21,7 @@ cargo run -p plasm-cli --bin plasm -- schema validate apis/dnd5e
 Examples below use **public HTTP** backends only:
 
 ```bash
-cargo run -p plasm-agent --bin plasm-repl -- \
+cargo run -p plasm --bin plasm-repl -- \
   --schema apis/dnd5e \
   --backend https://www.dnd5eapi.co
 ```
@@ -33,7 +33,7 @@ At the `repl>` prompt, run a simple query aligned with that catalog (for example
 Other quick sandboxes:
 
 ```bash
-cargo run -p plasm-agent --bin plasm-repl -- \
+cargo run -p plasm --bin plasm-repl -- \
   --schema apis/rickandmorty \
   --backend https://rickandmortyapi.com/api
 ```
@@ -47,7 +47,7 @@ cargo run -p plasm-agent --bin plasm-repl -- \
 Optional one-shot command without the REPL:
 
 ```bash
-cargo run -p plasm-agent --bin plasm-cgs -- \
+cargo run -p plasm --bin plasm-cgs -- \
   --schema apis/pokeapi \
   --backend https://pokeapi.co \
   pokemon pikachu
@@ -62,7 +62,7 @@ cargo run -p plasm-agent --bin plasm-cgs -- \
 Build once, then run **both** transports:
 
 ```bash
-cargo build -p plasm-agent --release --bin plasm-mcp
+cargo build -p plasm --release --bin plasm-mcp
 ./target/release/plasm-mcp --schema apis/dnd5e --http --port 3001 --mcp --mcp-port 3000
 ```
 

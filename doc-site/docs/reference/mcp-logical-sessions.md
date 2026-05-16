@@ -24,7 +24,7 @@ That model breaks when:
 
 ## In-process vs scaled deployments
 
-Today, logical session metadata and execute bindings are still **in-memory** in `plasm-agent`. Surviving process restart or moving to another replica requires a shared **logical session repository** (out of scope for this document’s implementation phase); the types and IDs are chosen so that repository can be added without changing the client contract.
+Today, logical session metadata and execute bindings are still **in-memory** in `plasm`. Surviving process restart or moving to another replica requires a shared **logical session repository** (out of scope for this document’s implementation phase); the types and IDs are chosen so that repository can be added without changing the client contract.
 
 ## Related code
 

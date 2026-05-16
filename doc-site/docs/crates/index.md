@@ -9,11 +9,11 @@ Workspace layout for **[plasm-core](https://github.com/ryan-s-roberts/plasm-core
 | [**plasm-compile**](https://docs.rs/plasm-compile) | Predicates, decoding, template validation. |
 | [**plasm-runtime**](https://docs.rs/plasm-runtime) | Execution engine, cache, replay, auth resolution. |
 | [**plasm-agent-core**](https://docs.rs/plasm-agent-core) | MCP host, sessions, traces, MCP sqlx metadata, and local service endpoints. |
-| [**plasm-agent**](https://docs.rs/plasm-agent) | Re-exports core; ships **`plasm-mcp`**, **`plasm-cgs`**, **`plasm-pack-plugins`**. |
+| [**plasm**](https://docs.rs/plasm) | Re-exports core; ships **`plasm-mcp`**, **`plasm-cgs`**, **`plasm-pack-plugins`**. |
 | [**plasm-plugin-abi**](https://docs.rs/plasm-plugin-abi) / **plasm-plugin-host** / **plasm-plugin-stub** | Compile-only plugin ABI and loader. |
 | **plasm-repl**, **plasm-cli**, **plasm-eval**, **plasm-e2e**, **plasm-mock** | Tooling and test harnesses (see workspace `Cargo.toml`). |
 
-**Dependency direction (simplified):** `plasm-core` ← `plasm-compile` ← `plasm-runtime` ← `plasm-agent-core` ← `plasm-agent`.
+**Dependency direction (simplified):** `plasm-core` ← `plasm-compile` ← `plasm-runtime` ← `plasm-agent-core` ← `plasm`.
 
 Binaries of interest:
 

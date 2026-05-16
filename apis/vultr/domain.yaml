@@ -2839,6 +2839,7 @@ capabilities:
 auth:
   scheme: bearer_token
   env: VULTR_API_KEY
+  hosted_kv: plasm:outbound:v1:catalog:vultr
 values:
   nv_account_bandwidth_usage:
     type: json

@@ -583,7 +583,7 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                         .long("port")
                         .default_value("3000")
                         .value_parser(clap::value_parser!(u16))
-                        .help("HTTP listen port"),
+                        .help("TCP listen port: HTTP when using --http; MCP when using --mcp alone; **both** share this single port"),
                 )
                 .arg(
                     Arg::new("mcp")
@@ -595,7 +595,7 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                     Arg::new("mcp_port")
                         .long("mcp-port")
                         .value_parser(clap::value_parser!(u16))
-                        .help("MCP port (default: --port+1 when both HTTP and MCP; else --port)"),
+                        .help("MCP-only mode: listen port (defaults to --port). With **both** --http and --mcp, must match --port or be omitted"),
                 )
                 .arg(
                     Arg::new("compile_plugin")
@@ -1044,7 +1044,7 @@ mod tests {
         let cgs = test_cgs();
         let app = build_app(&cgs, AgentCliSurface::CgsClient);
         let matches = app
-            .try_get_matches_from(["plasm-agent", "account", "query", "--region", "EMEA"])
+            .try_get_matches_from(["plasm", "account", "query", "--region", "EMEA"])
             .unwrap();
 
         let (entity_name, entity_matches) = matches.subcommand().unwrap();
@@ -1070,7 +1070,7 @@ mod tests {
         let cgs = test_cgs();
         let app = build_app(&cgs, AgentCliSurface::CgsClient);
         let matches = app
-            .try_get_matches_from(["plasm-agent", "account", "acc-1"])
+            .try_get_matches_from(["plasm", "account", "acc-1"])
             .unwrap();
 
         let (_, entity_matches) = matches.subcommand().unwrap();
@@ -1084,14 +1084,7 @@ mod tests {
         let cgs = test_cgs();
         let app = build_app(&cgs, AgentCliSurface::CgsClient);
         let matches = app
-            .try_get_matches_from([
-                "plasm-agent",
-                "account",
-                "acc-1",
-                "contacts",
-                "--role",
-                "Manager",
-            ])
+            .try_get_matches_from(["plasm", "account", "acc-1", "contacts", "--role", "Manager"])
             .unwrap();
 
         let (_, entity_matches) = matches.subcommand().unwrap();
@@ -1398,7 +1391,7 @@ mod tests {
         let cgs = test_cgs_with_reverse_traversal();
         let app = build_app(&cgs, AgentCliSurface::CgsClient);
         let matches = app
-            .try_get_matches_from(["plasm-agent", "pet", "10", "orders"])
+            .try_get_matches_from(["plasm", "pet", "10", "orders"])
             .unwrap();
 
         let (entity_name, entity_matches) = matches.subcommand().unwrap();
@@ -1413,7 +1406,7 @@ mod tests {
         let cgs = test_cgs_with_entity_ref();
         let app = build_app(&cgs, AgentCliSurface::CgsClient);
         let matches = app
-            .try_get_matches_from(["plasm-agent", "order", "5", "pet-id"])
+            .try_get_matches_from(["plasm", "order", "5", "pet-id"])
             .unwrap();
 
         let (entity_name, entity_matches) = matches.subcommand().unwrap();
@@ -1439,7 +1432,7 @@ mod tests {
         );
 
         let matches = app
-            .try_get_matches_from(["plasm-agent", "balance", "0xabc", "--block", "latest"])
+            .try_get_matches_from(["plasm", "balance", "0xabc", "--block", "latest"])
             .unwrap();
         let (_, entity_matches) = matches.subcommand().unwrap();
         assert_eq!(

@@ -3,7 +3,7 @@
 A [Plasm](../../README.md) domain model for the [Rick and Morty API](https://rickandmortyapi.com/).
 
 ```bash
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/rickandmorty \
   --backend https://rickandmortyapi.com \
   --repl

@@ -290,6 +290,7 @@ version: 2
 auth:
   scheme: bearer_token
   env: NOTION_API_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:notion
 values:
   nv_comment_query_block_id:
     type: string

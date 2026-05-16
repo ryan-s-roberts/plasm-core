@@ -16,7 +16,7 @@ account_me_read:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     single: true
 
@@ -34,7 +34,7 @@ account_get:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     single: true
     item_inner_key: data
@@ -53,7 +53,7 @@ subreddit_get:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     single: true
     item_inner_key: data
@@ -73,7 +73,7 @@ post_feed_query:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     items_path: [data, children]
     item_inner_key: data
@@ -103,7 +103,7 @@ post_get:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   query:
     type: object
     fields:
@@ -125,7 +125,7 @@ post_search_query:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     items_path: [data, children]
     item_inner_key: data
@@ -176,7 +176,7 @@ subreddit_popular_query:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     items_path: [data, children]
     item_inner_key: data
@@ -198,7 +198,7 @@ subreddit_search_query:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     items_path: [data, children]
     item_inner_key: data
@@ -232,7 +232,7 @@ comment_thread_query:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   response:
     items_path: ["1", "data", "children"]
     item_inner_key: data
@@ -260,7 +260,7 @@ comment_get:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)
   query:
     type: object
     fields:
@@ -297,4 +297,4 @@ post_comment_submit:
     fields:
       - - User-Agent
         - type: const
-          value: plasm:reddit-schema/1.0 (by plasm-agent)
+          value: plasm:reddit-schema/1.0 (by plasm)

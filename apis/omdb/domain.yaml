@@ -89,6 +89,7 @@ auth:
   scheme: api_key_query
   param: apikey
   env: OMDB_API_KEY
+  hosted_kv: plasm:outbound:v1:catalog:omdb
 values:
   nv_movie_director:
     type: string

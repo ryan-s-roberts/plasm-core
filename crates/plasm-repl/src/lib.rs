@@ -1,6 +1,6 @@
 //! Interactive REPL binary: path expressions, optional `:llm` mode via BAML (`plasm-eval`).
 //!
-//! Split from `plasm-agent` so HTTP/MCP builds and CI do not compile `plasm-eval` / generated `baml_client`.
+//! Split from `plasm` so HTTP/MCP builds and CI do not compile `plasm-eval` / generated `baml_client`.
 
 use clap::{Arg, Command};
 use plasm_agent::error::AgentError;

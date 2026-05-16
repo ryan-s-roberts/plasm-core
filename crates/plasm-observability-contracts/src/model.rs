@@ -26,7 +26,7 @@ pub struct AuditEvent {
     pub mcp_session_id: Option<String>,
     pub plasm_prompt_hash: Option<String>,
     pub plasm_execute_session: Option<String>,
-    pub run_id: Option<Uuid>,
+    pub run_id: Option<String>,
     pub call_index: Option<i64>,
     pub line_index: Option<i64>,
     pub tenant_id: Option<String>,

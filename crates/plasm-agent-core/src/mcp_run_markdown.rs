@@ -264,7 +264,7 @@ pub(crate) fn mcp_prepend_artifact_followup_markdown(
 mod tests {
     use super::*;
     use crate::output::LossySummaryFieldNames;
-    use uuid::Uuid;
+    use crate::run_artifacts::{artifact_http_path, plasm_run_resource_uri, RunArtifactId};
 
     #[test]
     fn mcp_markdown_preview_prologues_are_empty() {
@@ -312,13 +312,13 @@ mod tests {
     }
 
     fn sample_handle() -> RunArtifactHandle {
+        let run_id = RunArtifactId::from_bytes([0u8; 32]);
         RunArtifactHandle {
-            run_id: Uuid::nil(),
+            run_id,
             resource_index: 1,
             plasm_uri: "plasm://r/1".into(),
-            canonical_plasm_uri: "plasm://execute/a/b/run/00000000-0000-0000-0000-000000000000"
-                .into(),
-            http_path: "/x".into(),
+            canonical_plasm_uri: plasm_run_resource_uri("a", "b", &run_id),
+            http_path: artifact_http_path("a", "b", &run_id),
             payload_len: 1,
             request_fingerprints: vec![],
         }
@@ -345,14 +345,13 @@ mod tests {
 
     #[test]
     fn mcp_prepend_artifact_followup_no_prefix_when_no_truncated_snapshots() {
-        let rid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let run_id = RunArtifactId::from_bytes([0x55; 32]);
         let h = RunArtifactHandle {
-            run_id: rid,
+            run_id,
             resource_index: 3,
             plasm_uri: "plasm://r/3".into(),
-            canonical_plasm_uri: "plasm://execute/ph/sess/run/550e8400-e29b-41d4-a716-446655440000"
-                .into(),
-            http_path: "/execute/ph/sess/artifacts/550e8400-e29b-41d4-a716-446655440000".into(),
+            canonical_plasm_uri: plasm_run_resource_uri("ph", "sess", &run_id),
+            http_path: artifact_http_path("ph", "sess", &run_id),
             payload_len: 100,
             request_fingerprints: vec!["abc".into()],
         };
@@ -368,14 +367,13 @@ mod tests {
 
     #[test]
     fn mcp_prepend_artifact_followup_with_handles_returns_body_unchanged() {
-        let rid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let run_id = RunArtifactId::from_bytes([0x66; 32]);
         let h = RunArtifactHandle {
-            run_id: rid,
+            run_id,
             resource_index: 2,
             plasm_uri: "plasm://r/2".into(),
-            canonical_plasm_uri: "plasm://execute/ph/sess/run/550e8400-e29b-41d4-a716-446655440000"
-                .into(),
-            http_path: "/execute/ph/sess/artifacts/550e8400-e29b-41d4-a716-446655440000".into(),
+            canonical_plasm_uri: plasm_run_resource_uri("ph", "sess", &run_id),
+            http_path: artifact_http_path("ph", "sess", &run_id),
             payload_len: 100,
             request_fingerprints: vec![],
         };

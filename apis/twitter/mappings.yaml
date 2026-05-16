@@ -1,7 +1,7 @@
 # X API v2 — CML mappings. Semantic model in domain.yaml.
 #
 # Base URL: set via domain `http_backend` (https://api.x.com) or override with
-# `plasm-agent --backend https://api.twitter.com`.
+# `plasm --backend https://api.twitter.com`.
 #
 # Responses commonly wrap entities as { "data": ... , "meta": { "next_token": ... } }.
 # Pagination uses meta.next_token with request param `pagination_token` (timelines, lists)

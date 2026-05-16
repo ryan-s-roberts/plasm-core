@@ -1,7 +1,10 @@
-//! JSON discovery API (`/v1/*`): catalog, capability search, and operator [`tool-model`](crate::tool_model). Use discovery results to build `POST /execute`
+//! JSON discovery API (`/v1/*`): catalog, capability search, and operator [`tool-model`](crate::tool_model).
+//! `POST /v1/terminal/discover` returns the **same Markdown** as MCP `discover_capabilities` (non-typed): fenced TSV + ambiguity notes — use discovery results to build `POST /execute`
 //! (`entry_id` + deduped `entity` values from [`RankedCandidate`](plasm_core::discovery::RankedCandidate)).
 
+use axum::body::Body;
 use axum::extract::{Extension, Path, Query};
+use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -10,10 +13,9 @@ use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
 use plasm_core::discovery::{
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, DiscoveryError, DiscoveryResult,
-    RankedCandidate,
 };
 use plasm_core::schema::CGS;
-use plasm_discovery::{DiscoveryDecision, DiscoveryQuery};
+use plasm_discovery::DiscoveryQuery;
 use serde::{Deserialize, Serialize};
 
 use crate::http_problem_util::problem_response;
@@ -38,6 +40,9 @@ pub struct RegistryEntryResponse {
     pub entry_id: String,
     pub label: String,
     pub tags: Vec<String>,
+    /// Present when `include_cgs=true` — digest for client symbol-space pinning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_cgs_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cgs: Option<CGS>,
 }
@@ -166,18 +171,22 @@ async fn get_registry_entry(
             return problem_response(discovery_problem(DiscoveryError::UnknownEntry(id.clone())));
         }
     };
-    let cgs = if q.include_cgs {
+    let (cgs, catalog_cgs_hash) = if q.include_cgs {
         match reg.load_context(&id) {
-            Ok(ctx) => Some((*ctx.cgs).clone()),
+            Ok(ctx) => {
+                let digest = ctx.cgs.catalog_cgs_hash_hex();
+                (Some((*ctx.cgs).clone()), Some(digest))
+            }
             Err(e) => return problem_response(discovery_problem(e)),
         }
     } else {
-        None
+        (None, None)
     };
     Json(RegistryEntryResponse {
         entry_id: meta.entry_id,
         label: meta.label,
         tags: meta.tags,
+        catalog_cgs_hash,
         cgs,
     })
     .into_response()
@@ -253,38 +262,6 @@ pub struct TerminalDiscoverBody {
     pub limit: Option<usize>,
     #[serde(default)]
     pub allowed_entry_ids: Vec<String>,
-    #[serde(default = "terminal_discover_default_embeddings")]
-    pub enable_embeddings: bool,
-}
-
-fn terminal_discover_default_embeddings() -> bool {
-    false
-}
-
-#[derive(Debug, Serialize)]
-pub struct TerminalDiscoverSeedRow {
-    pub entry_id: String,
-    pub entity: String,
-    pub capability_name: String,
-    pub score: u32,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub reason_codes: Vec<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub capability_description: String,
-    /// `{ "api": entry_id, "entity" }` — drop-in for `POST /execute` seeding and `POST .../context`.
-    pub seed: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TerminalDiscoverResponse {
-    pub intent: String,
-    pub rows: Vec<TerminalDiscoverSeedRow>,
-    pub candidates: Vec<RankedCandidate>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub schema_neighborhoods: Vec<plasm_core::discovery::DiscoverySchemaNeighborhood>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub entity_summaries: Vec<plasm_core::discovery::EntitySummary>,
-    pub typed: DiscoveryDecision,
 }
 
 async fn post_terminal_discover(
@@ -314,49 +291,21 @@ async fn post_terminal_discover(
         }
     };
     let limit = body.limit.unwrap_or(32).clamp(1, 128);
-    let candidates: Vec<RankedCandidate> =
-        structured.candidates.iter().take(limit).cloned().collect();
-    let rows: Vec<TerminalDiscoverSeedRow> = candidates
-        .iter()
-        .map(|c| TerminalDiscoverSeedRow {
-            entry_id: c.entry_id.clone(),
-            entity: c.entity.clone(),
-            capability_name: c.capability_name.clone(),
-            score: c.score,
-            reason_codes: c.reason_codes.clone(),
-            capability_description: c.capability_description.clone(),
-            seed: serde_json::json!({
-                "api": c.entry_id,
-                "entity": c.entity,
-            }),
-        })
-        .collect();
 
-    let typed_query = DiscoveryQuery {
-        utterance: intent.to_string(),
-        allowed_entry_ids: body.allowed_entry_ids.clone(),
-        max_options: limit.max(8),
-        enable_embeddings: body.enable_embeddings,
-        ..Default::default()
-    };
-    let emb = st.discovery_embedding_store();
-    let typed = match run_typed_catalog_discovery(&reg, typed_query, emb).await {
-        Ok(d) => d,
+    let mut r_out = structured.clone();
+    r_out.candidates = structured.candidates.iter().take(limit).cloned().collect();
+    let text = crate::discovery_human_format::format_discovery_markdown(&r_out);
+    match Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(Body::from(text))
+    {
+        Ok(resp) => resp,
         Err(e) => {
-            tracing::debug!(error = %e, "terminal typed discovery failed");
-            return problem_response(typed_discovery_problem(e));
+            tracing::error!(error = %e, "terminal discover response build failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
-    };
-
-    Json(TerminalDiscoverResponse {
-        intent: intent.to_string(),
-        rows,
-        candidates,
-        schema_neighborhoods: structured.schema_neighborhoods.clone(),
-        entity_summaries: structured.entity_summaries.clone(),
-        typed,
-    })
-    .into_response()
+    }
 }
 
 async fn post_discover(

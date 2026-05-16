@@ -31,13 +31,13 @@ cargo run -p plasm-cli --bin plasm -- validate --spec apis/linkedin/openapi.json
 
 ```bash
 # OIDC userinfo
-plasm-agent --schema apis/linkedin openidprofile get
+plasm --schema apis/linkedin openidprofile get
 
 # Current member profile
-plasm-agent --schema apis/linkedin member get
+plasm --schema apis/linkedin member get
 
 # Member-authored posts (scope composed via CML format expression)
-plasm-agent --schema apis/linkedin ugcpost ugc-post-query-for-member --member 8675309
+plasm --schema apis/linkedin ugcpost ugc-post-query-for-member --member 8675309
 ```
 
 ## Notes

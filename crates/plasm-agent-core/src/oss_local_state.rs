@@ -1,4 +1,4 @@
-//! Default local state directory for OSS `plasm-agent` (`~/.plasm/local` or `PLASM_LOCAL_STATE_DIR`).
+//! Default local state directory for OSS `plasm` (`~/.plasm/local` or `PLASM_LOCAL_STATE_DIR`).
 
 use std::path::PathBuf;
 

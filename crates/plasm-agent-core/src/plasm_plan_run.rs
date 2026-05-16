@@ -30,7 +30,7 @@ use crate::http_execute::{
 use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plasm_plan::{
-    parse_plan_value, validate_plan_artifact, AggregateFunction, BindingName, ComputeOp,
+    parse_and_validate_plan_json, AggregateFunction, BindingName, ComputeOp,
     ComputeTemplate, EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate,
     PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
     ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
@@ -47,6 +47,9 @@ use plasm_runtime::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
+
+#[cfg(test)]
+use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
 
 /// CGS layers for [`parse_with_cgs_layers`] (primary + federated contexts).
 pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
@@ -412,8 +415,7 @@ pub(crate) fn evaluate_plasm_plan_dry(
     es: &ExecuteSession,
     plan: &serde_json::Value,
 ) -> Result<DryPlasmPlanEvaluation, String> {
-    let plan = parse_plan_value(plan)?;
-    let validated = validate_plan_artifact(&plan)?;
+    let validated = parse_and_validate_plan_json(plan)?;
     evaluate_validated_plasm_plan_dry(es, &validated)
 }
 
@@ -1966,8 +1968,7 @@ pub(crate) async fn run_plasm_plan(
     run: bool,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
 ) -> Result<PlasmPlanRunResult, String> {
-    let plan_typed = parse_plan_value(plan)?;
-    let validated = validate_plan_artifact(&plan_typed)?;
+    let validated = parse_and_validate_plan_json(plan)?;
     run_validated_plasm_plan(
         es,
         st,
@@ -2290,7 +2291,7 @@ async fn run_validated_plan_phased(
             continue;
         };
         code_plan_run_artifacts.push(CodePlanRunArtifactRef {
-            run_id: h.run_id.to_string(),
+            run_id: h.run_id.to_wire(),
             artifact_uri: Some(h.plasm_uri.clone()),
             canonical_artifact_uri: Some(h.canonical_plasm_uri.clone()),
             artifact_path: Some(h.http_path.clone()),

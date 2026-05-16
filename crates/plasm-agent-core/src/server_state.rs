@@ -99,7 +99,7 @@ pub struct PlasmSaaSHostExtension {
 #[derive(Clone)]
 pub struct PlasmHostState {
     pub oss: PlasmOssHostState,
-    /// Injected in the `plasm-agent` + `plasm-saas` composition; [`None`] for OSS-only HTTP/execute.
+    /// Injected in the `plasm` + `plasm-saas` composition; [`None`] for OSS-only HTTP/execute.
     pub saas: Option<PlasmSaaSHostExtension>,
 }
 

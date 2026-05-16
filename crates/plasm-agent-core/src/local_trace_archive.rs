@@ -131,7 +131,7 @@ impl LocalTraceArchive {
                 summaries.push((dto.started_at_ms, dto));
             }
         }
-        summaries.sort_by(|a, b| b.0.cmp(&a.0));
+        summaries.sort_by_key(|a| std::cmp::Reverse(a.0));
         Ok(summaries
             .into_iter()
             .map(|(_, s)| s)

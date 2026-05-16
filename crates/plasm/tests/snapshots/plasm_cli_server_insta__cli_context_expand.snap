@@ -1,0 +1,10 @@
+---
+source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
+expression: h.norm(&combined_output(&expand))
+---
+status: exit status: 0
+stdout:
+Active context: overshow:Profile, overshow:RecordedContent
+
+stderr:
+mirror: $HOME/.plasm/cgs/servers/SERVER_SLUG/sessions/cs_SESSION/domain.tsv

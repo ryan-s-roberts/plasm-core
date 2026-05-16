@@ -8,7 +8,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 
 **Canon:** Do not overwrite existing `apis/<name>/` trees without an explicit decision; add new APIs as new directories.
 
-**Multi-entry runtime:** Author `**apis/<name>/`**, then pack to cdylibs with `**cargo run -p plasm-agent --bin plasm-pack-plugins -- --apis-root apis --output-dir target/plasm-plugins`** (or `**just build-plugins**`). Start `**plasm-mcp --plugin-dir target/plasm-plugins**`. **Production Docker images** pass `**--package-list deploy/packaged-apis.txt`** so only listed catalogs are built into `**/app/plugins`** (edit that file to change the release set). Omit `**--package-list`** to pack every API under `**apis/`** (local default). Images do not ship raw `**apis/**` for runtime loading.
+**Multi-entry runtime:** Author `**apis/<name>/`**, then pack to cdylibs with `**cargo run -p plasm --bin plasm-pack-plugins -- --apis-root apis --output-dir target/plasm-plugins`** (or `**just build-plugins**`). Start `**plasm-mcp --plugin-dir target/plasm-plugins**`. **Production Docker images** pass `**--package-list deploy/packaged-apis.txt`** so only listed catalogs are built into `**/app/plugins`** (edit that file to change the release set). Omit `**--package-list`** to pack every API under `**apis/`** (local default). Images do not ship raw `**apis/**` for runtime loading.
 
 **Federation:** A multi-entry registry lets HTTP/MCP execute sessions load **more than one** API schema in the **same** session (monotonic `e#` / `m#` / `p#`, per-catalog dispatch — **no** CGS merge). See `[docs/incremental-domain-prompts.md](../docs/incremental-domain-prompts.md#federated-sessions-multi-catalog)`.
 

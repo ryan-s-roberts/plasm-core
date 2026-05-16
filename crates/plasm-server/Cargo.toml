@@ -1,0 +1,48 @@
+[package]
+name = "plasm-server"
+version.workspace = true
+edition.workspace = true
+description = "Single-binary Plasm server (`plasm-server`): in-process plasm-mcp kernel + Ratatui control station"
+publish = false
+
+[features]
+# Links pg-embed into this binary (large). Slim CI/tooling builds:
+#   cargo build -p plasm-server --no-default-features
+default = ["embedded_postgres"]
+embedded_postgres = ["plasm/embedded_postgres"]
+# Opt-in: compile `tests/tui_pty_integration.rs` (PTY + ratatui-testlib).
+tui_pty_tests = []
+
+[[bin]]
+name = "plasm-server"
+path = "src/main.rs"
+
+[[test]]
+name = "tui_pty_integration"
+path = "tests/tui_pty_integration.rs"
+required-features = ["tui_pty_tests"]
+
+[dependencies]
+plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
+plasm = { path = "../plasm", default-features = false }
+plasm-core = { path = "../plasm-core" }
+plasm-runtime = { path = "../plasm-runtime" }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+unicode-width = { workspace = true }
+strip-ansi-escapes = { workspace = true }
+crossbeam-channel = { workspace = true }
+scopeguard = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+auth-framework = { workspace = true }
+arboard = "3"
+
+[dev-dependencies]
+ratatui-testlib = { version = "0.1", default-features = false, features = ["mvp"] }
+portable-pty = "0.8"
+tempfile = { workspace = true }

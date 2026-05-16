@@ -6,7 +6,7 @@ A [Plasm](../../README.md) domain model for the [Tavily API](https://docs.tavily
 export TAVILY_API_TOKEN=tvly-...   # in /Users/ryan/code/plasm/.env
 source /Users/ryan/code/plasm/.env
 
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/tavily \
   --backend https://api.tavily.com \
   --repl
@@ -46,69 +46,69 @@ cargo run --bin plasm-agent -- \
 BASE="--schema apis/tavily --backend https://api.tavily.com"
 
 # Web search — basic
-plasm-agent $BASE searchresult search \
+plasm $BASE searchresult search \
   --query "Rust async runtime comparison 2025" \
   --max_results 5
 
 # News search with LLM answer
-plasm-agent $BASE searchresult search \
+plasm $BASE searchresult search \
   --query "AI agent frameworks latest releases" \
   --topic news \
   --include_answer \
   --max_results 5
 
 # Date-bounded search
-plasm-agent $BASE searchresult search \
+plasm $BASE searchresult search \
   --query "Rust 1.94 release notes" \
   --start_date 2026-01-01 \
   --end_date 2026-03-31 \
   --max_results 3
 
 # Domain-filtered search
-plasm-agent $BASE searchresult search \
+plasm $BASE searchresult search \
   --query "Rust async tutorial" \
   --include_domains docs.rs \
   --include_domains blog.rust-lang.org \
   --max_results 5
 
 # Fast search with auto parameter selection
-plasm-agent $BASE searchresult search \
+plasm $BASE searchresult search \
   --query "latest OpenClaw features" \
   --search_depth fast \
   --auto_parameters \
   --max_results 3
 
 # Extract a single URL
-plasm-agent $BASE extractresult query \
+plasm $BASE extractresult query \
   --urls https://docs.tavily.com/documentation/about
 
 # Extract multiple URLs
-plasm-agent $BASE extractresult query \
+plasm $BASE extractresult query \
   --urls https://blog.rust-lang.org/ \
   --urls https://doc.rust-lang.org/book/ \
   --extract_depth advanced \
   --format markdown
 
 # Crawl a website
-plasm-agent $BASE extractresult site-crawl \
+plasm $BASE extractresult site-crawl \
   --url https://docs.tavily.com \
   --max_depth 2 \
   --limit 10
 
 # Crawl with instructions
-plasm-agent $BASE extractresult site-crawl \
+plasm $BASE extractresult site-crawl \
   --url https://docs.tavily.com \
   --instructions "Find all pages about the Python SDK" \
   --limit 5
 
 # Start async research task
-plasm-agent $BASE researchtask research-create \
+plasm $BASE researchtask research-create \
   --input "What is Plasm, the Rust typed agent CLI for REST APIs?" \
   --model mini \
   --citation_format numbered
 
 # Poll research status (returns content when completed)
-plasm-agent $BASE researchtask ec406c91-e2e9-45cd-8f07-0d5725472c1a
+plasm $BASE researchtask ec406c91-e2e9-45cd-8f07-0d5725472c1a
 ```
 
 ---

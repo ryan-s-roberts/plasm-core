@@ -612,6 +612,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: CLOUDFLARE_API_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:cloudflare
 values:
   nv_cf_security_posture_bool:
     type: boolean

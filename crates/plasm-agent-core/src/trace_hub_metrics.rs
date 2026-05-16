@@ -23,7 +23,7 @@ static TRACE_HUB_INSTRUMENTS: OnceLock<TraceHubInstruments> = OnceLock::new();
 
 fn instruments() -> &'static TraceHubInstruments {
     TRACE_HUB_INSTRUMENTS.get_or_init(|| {
-        let meter = global::meter("plasm-agent");
+        let meter = global::meter("plasm");
         TraceHubInstruments {
             completed_queue_depth: meter
                 .u64_histogram("plasm.trace_hub.completed_queue_depth")

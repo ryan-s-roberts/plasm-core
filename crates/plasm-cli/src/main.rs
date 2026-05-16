@@ -25,8 +25,11 @@ impl From<CliExecutionMode> for ExecutionMode {
 }
 
 #[derive(Parser)]
-#[command(name = "plasm")]
-#[command(about = "A semantic projection layer for REST APIs")]
+#[command(
+    name = "plasm-cgs",
+    version = env!("CARGO_PKG_VERSION"),
+    about = "A semantic projection layer for REST APIs"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

@@ -92,7 +92,7 @@ pub async fn reconcile_catalog_hashes(host: &PlasmHostState, repo: &DiscoveryEmb
         }
 
         for chunk in lines.chunks(RECONCILE_EMBED_BATCH) {
-            let texts: Vec<String> = chunk.iter().cloned().collect();
+            let texts = chunk.to_vec();
             let vecs = match embedder.embed_batch(texts).await {
                 Ok(v) => v,
                 Err(e) => {
@@ -111,8 +111,7 @@ pub async fn reconcile_catalog_hashes(host: &PlasmHostState, repo: &DiscoveryEmb
                 );
                 break;
             }
-            let pairs: Vec<(String, Vec<f32>)> =
-                chunk.iter().cloned().zip(vecs.into_iter()).collect();
+            let pairs: Vec<(String, Vec<f32>)> = chunk.iter().cloned().zip(vecs).collect();
             if let Err(e) = repo
                 .upsert_lines_batch(&meta.catalog_cgs_hash, model_id, pairs)
                 .await

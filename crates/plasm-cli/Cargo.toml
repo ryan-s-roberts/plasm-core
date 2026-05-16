@@ -1,11 +1,11 @@
 [package]
 name = "plasm-cli"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 readme = "README.md"
 
 [[bin]]
-name = "plasm"
+name = "plasm-cgs"
 path = "src/main.rs"
 
 [[bin]]

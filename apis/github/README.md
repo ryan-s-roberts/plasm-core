@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [GitHub REST API](https://docs.g
 ```bash
 # Run against the live API (requires GITHUB_TOKEN in env)
 export GITHUB_TOKEN=ghp_...
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/github \
   --backend https://api.github.com \
   --repl
@@ -63,7 +63,7 @@ This declares stable identity for path-addressed resources. The runtime binds ev
 
 **Global issue / PR search** (`issue_search`, `pr_search`) returns rows that expose `repository_url` rather than top-level `owner`/`repo`. The domain uses generic `segments_after_prefix` field derivation so those search hits still materialize full compound `Issue` / `PullRequest` identity for cache and hydration.
 
-**CLI** (see `plasm-agent` generated help): for HTTP GETs whose path has multiple `{var}` segments, earlier segments are required `--owner`, `--repo`, … flags (kebab-case) and the **last** segment is the positional `id` argument — except when a `key_vars` part is not present on the URL path, in which case it becomes its own required `--flag`.
+**CLI** (see `plasm` generated help): for HTTP GETs whose path has multiple `{var}` segments, earlier segments are required `--owner`, `--repo`, … flags (kebab-case) and the **last** segment is the positional `id` argument — except when a `key_vars` part is not present on the URL path, in which case it becomes its own required `--flag`.
 
 This is a generalisation of the common `id_field` (a single-field key). For simple entities `id_field: x` is shorthand for `key_vars: [x]`. Existing schemas are unchanged.
 
@@ -220,63 +220,63 @@ CLI: `user get-me` (no positional ID required). Internally dispatched as a param
 
 ```bash
 # Search repositories
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   repository search --q "language:rust stars:>1000"
 
 # List open issues in a repo
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   issue query --owner rust-lang --repo rust --state open --limit 20
 
 # Get a specific user
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   user torvalds
 
 # Get authenticated user (singleton)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   user get-me
 
 # List PRs filtered to open drafts
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   pullrequest query --owner owner --repo repo --state open
 
 # Get one repository (compound key: owner flag + name slug positional)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   repository --owner rust-lang rust
 
 # Recent commits and a single commit by ref (SHA or branch name)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   commit query --owner rust-lang --repo rust --limit 5
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   commit --owner rust-lang --repo rust main
 
 # Branches, PR reviews, PR files
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   branch query --owner rust-lang --repo rust --limit 20
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   branch --owner rust-lang --repo rust master
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   pullrequestreview pr-review-query --owner rust-lang --repo rust --pull_number 1
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   pullrequestfile pr-file-query --owner rust-lang --repo rust --pull_number 1 --limit 50
 
 # Search issues globally
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   issue search --q "is:issue is:open label:good-first-issue language:rust" --sort reactions
 
 # Comments on an issue (scoped query — three scope params)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   issuecomment issue-comment-query --owner octocat --repo Hello-World --issue_number 42
 
 # Organization profile and repos (token not required for public orgs)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   organization rust-lang
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   repository org-repos-query --org rust-lang --limit 10
 
 # Gists and notifications (require GITHUB_TOKEN)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   gist query --limit 5
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   notification query --limit 20
 ```
 
@@ -289,11 +289,11 @@ plasm-agent --schema apis/github --backend https://api.github.com \
 Schema loads and CLI generates correctly. Validated with:
 
 ```bash
-cargo run --bin plasm-agent -- --schema apis/github --help
-cargo run --bin plasm-agent -- --schema apis/github issue --help
-cargo run --bin plasm-agent -- --schema apis/github issue query --help
-cargo run --bin plasm-agent -- --schema apis/github user --help
-cargo run --bin plasm-agent -- --schema apis/github pullrequest --help
+cargo run --bin plasm -- --schema apis/github --help
+cargo run --bin plasm -- --schema apis/github issue --help
+cargo run --bin plasm -- --schema apis/github issue query --help
+cargo run --bin plasm -- --schema apis/github user --help
+cargo run --bin plasm -- --schema apis/github pullrequest --help
 ```
 
 All entities, subcommands, typed flags, pagination controls (`--limit`, `--all`, `--page`), and compound-key help text verified. For multi-segment URL paths, earlier segments use `--kebab` flags and the **last** segment is the positional `id`; the generated `Ref` uses structured `key_vars` (same shape as the REPL’s `Entity(k=v,…)` form).
@@ -311,7 +311,7 @@ curl -o /tmp/github.json \
 hermit --specs /tmp/github.json --port 9090 --use-examples
 
 # Run against mock
-plasm-agent --schema apis/github --backend http://localhost:9090 \
+plasm --schema apis/github --backend http://localhost:9090 \
   user torvalds
 ```
 
@@ -325,15 +325,15 @@ Not yet tested end-to-end. To test:
 export GITHUB_TOKEN=ghp_your_token_here
 
 # Test user get
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   --mode live user torvalds
 
 # Test repo search
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   --mode live repository search --q "plasm stars:>10"
 
 # Test issue query (rate limited — use --limit to cap requests)
-plasm-agent --schema apis/github --backend https://api.github.com \
+plasm --schema apis/github --backend https://api.github.com \
   --mode live issue query --owner rust-lang --repo rust --state open --limit 10
 ```
 

@@ -362,7 +362,9 @@ pub enum SchemaError {
     )]
     OauthUnknownScope { context: String, scope: String },
 
-    #[error("auth.{context}: specify exactly one of `env` or `hosted_kv` (non-empty)")]
+    #[error(
+        "auth.{context}: specify at least one non-empty `env` or `hosted_kv` (both may be set; runtime prefers hosted KV when populated, else env)"
+    )]
     AuthCredentialSourceInvalid { context: String },
 
     #[error("auth.oauth2_client_credentials: `hosted_kv` keys must start with `plasm:outbound:`")]

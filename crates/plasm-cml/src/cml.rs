@@ -464,7 +464,7 @@ where
     #[serde(untagged)]
     enum Wrapper {
         Str(String),
-        Decode(HttpResponseDecode),
+        Decode(Box<HttpResponseDecode>),
     }
 
     let opt = Option::<Wrapper>::deserialize(deserializer)?;
@@ -474,7 +474,7 @@ where
             let d = legacy_http_response_decode(&s).map_err(serde::de::Error::custom)?;
             Ok(Some(d))
         }
-        Some(Wrapper::Decode(d)) => Ok(Some(d)),
+        Some(Wrapper::Decode(d)) => Ok(Some(*d)),
     }
 }
 

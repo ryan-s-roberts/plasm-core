@@ -12,25 +12,20 @@ Most agent stacks still center on **ad hoc JSON tools**: large schemas in contex
 
 ## Quick start
 
-Prerequisites: **Docker**, **Elixir**, **Just** and **Rust** (`cargo`). Clone this repo and work from its root.
+Prerequisites: **Rust** (`cargo`). Optional: **Just**, **Elixir** (for downstream Phoenix workflows).
 
-**OSS appliance (Docker)** — PostgreSQL, packed `apis/` plugins, `plasm-mcp`, and Plasm Desktop in one image ([`docker/README.md`](docker/README.md) for Buildx setup, multi-arch builds, and env overrides):
-
-```bash
-docker buildx build -f docker/oss-appliance.Dockerfile -t plasm-oss-appliance:local --load .
-docker run --rm \
-  -p 4000:4000 -p 3001:3001 -p 3000:3000 \
-  -v plasm-oss-data:/data \
-  plasm-oss-appliance:local
-```
-
-After start: **Desktop** `http://127.0.0.1:4000/`, **HTTP** (health, discovery, execute) on **:3001**, **MCP** (Streamable HTTP) on **:3000**.
-
-**Local desktop dev** — same rough layout from a source checkout: Postgres, trace sink, plugin pack, `plasm-mcp`, and Phoenix via **`just`** ([`desktop/README.md`](desktop/README.md) for split terminals, ports, and Mix-only flows):
+**OSS appliance (native binary)** — **`plasm-server`** (Cargo package `plasm-server`): in-process kernel, HTTP + MCP, optional Ratatui UI. No OSS container image is shipped from this repo; run with Cargo:
 
 ```bash
-just oss-desktop-dev
+cargo build -p plasm-server --release
+cargo run -p plasm-server --release -- \
+  --schema fixtures/schemas/capability_with_input.cgs.yaml \
+  --http-port 3001 --mcp-port 3000
 ```
+
+Use **`--plugin-dir target/plasm-plugins`** after packing plugins (see **`AGENTS.md`**). **`--no-tui`** runs headless. For `project_mcp_*` persistence set **`DATABASE_URL`** / **`PLASM_MCP_CONFIG_DATABASE_URL`** (and run **`plasm-server mcp migrate-db`** or **`--migrate-mcp-config-db`**). Details: [`crates/plasm-server/README.md`](crates/plasm-server/README.md).
+
+**SaaS Phoenix + Tool Explorer** lives in the **[plasm](https://github.com/ryan-s-roberts/plasm)** monorepo under **`web/`** (`just local-web` from that checkout).
 
 Full flags, `/execute`, MCP tools, plugins, and catalog workflows are covered in **[the documentation](https://plasmtools.github.io/plasm-core/)**; contributor-oriented commands and boundaries are summarized in [`AGENTS.md`](AGENTS.md). Doc sources: [`doc-site/`](doc-site/README.md).
 

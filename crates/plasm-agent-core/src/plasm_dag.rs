@@ -267,7 +267,10 @@ pub fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
     if expressions.len() != 1 {
         return false;
     }
-    let src = expressions[0].trim();
+    is_plasm_dag_source(expressions[0].trim())
+}
+
+fn is_plasm_dag_source(src: &str) -> bool {
     src.lines().any(|line| {
         let line = strip_line_comment(line).trim();
         !line.is_empty() && split_assignment_at_top_level(line).is_some()
@@ -275,6 +278,21 @@ pub fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
         || peel_postfix_suffixes(src)
             .map(|(_, ops)| !ops.is_empty())
             .unwrap_or(false)
+}
+
+/// Compile one program expression to plan JSON (DAG program vs single surface line).
+pub fn compile_plasm_expression_to_plan(
+    pipeline: &PromptPipelineConfig,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    session: &ExecuteSession,
+    name: &str,
+    source: &str,
+) -> Result<serde_json::Value, String> {
+    if is_plasm_dag_source(source.trim()) {
+        compile_plasm_dag_to_plan(pipeline, symbol_map_cross_cache, session, name, source)
+    } else {
+        compile_plasm_surface_line_to_plan(pipeline, symbol_map_cross_cache, session, name, source)
+    }
 }
 
 pub fn split_bare_plasm_roots(src: &str) -> Option<Vec<String>> {

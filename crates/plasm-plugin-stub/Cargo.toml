@@ -1,7 +1,7 @@
 [package]
 name = "plasm-plugin-stub"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Reference cdylib implementing plasm-plugin-abi (delegates to plasm-compile)"
 readme = "README.md"
 

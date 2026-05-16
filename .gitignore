@@ -17,12 +17,12 @@ __pycache__/
 *~
 .DS_Store
 .env
-# Local plasm-agent dev JWT (scripts/ensure-plasm-dev-jwt-secret.sh)
+# Local plasm dev JWT (scripts/ensure-plasm-dev-jwt-secret.sh)
 .plasm/
-# Local Cursor + plasm-agent helper script artifacts (see scripts/cursor-plasm-mcp.sh)
-.cursor/plasm-agent.log
-.cursor/plasm-agent.pid
-.cursor/plasm-agent-goal.md
+# Local Cursor + plasm helper script artifacts (see scripts/cursor-plasm-mcp.sh)
+.cursor/plasm.log
+.cursor/plasm.pid
+.cursor/plasm-goal.md
 baml_client
 eval-reports/
 # plasm-eval last-run artifacts next to cases.yaml ({model-slug}.latest.*)

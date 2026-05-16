@@ -10,7 +10,7 @@ members = [
     "crates/plasm-cli",
     "crates/plasm-e2e",
     "crates/plasm-agent-core",
-    "crates/plasm-agent",
+    "crates/plasm",
     "crates/plasm-repl",
     "crates/plasm-eval",
     "crates/plasm-sdk-transport",
@@ -20,8 +20,14 @@ members = [
     "crates/plasm-trace-sink",
     "crates/plasm-otel",
     "crates/plasm-discovery",
+    "crates/plasm-server",
 ]
 resolver = "2"
+
+# Single SemVer for the OSS workspace (see plasm-oss/RELEASING.md).
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
 
 [workspace.dependencies]
 # Core serialization and typing
@@ -107,6 +113,8 @@ sqlx = { version = "0.8.6", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
 ] }
+# OSS: embedded PostgreSQL (`embedded_postgres` on `plasm`; default for `plasm-server` crate, autostart unless opted out).
+pg-embed = { version = "1.0.0", default-features = false, features = ["rt_tokio_migrate"] }
 
 # Dynamic loading (compile plugins)
 libloading = "0.8"
@@ -123,6 +131,8 @@ genco = "0.17.9"
 rquickjs = { version = "0.6", default-features = true }
 
 # Utility crates
+unicode-width = "0.2"
+strip-ansi-escapes = "0.2"
 arc-swap = "1.7"
 inflection = "0.1.2"
 indexmap = { version = "2.0", features = ["serde"] }
@@ -151,6 +161,12 @@ rust-mcp-sdk = { version = "0.9.0", default-features = false, features = [
 ] }
 rustyline = "17.0.2"
 
+# Appliance TUI (`plasm-server` binary + package)
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+crossbeam-channel = "0.5"
+scopeguard = "1.2"
+
 # Data / Iceberg (JanKaul iceberg-rust stack)
 datafusion = "53"
 datafusion_iceberg = { git = "https://github.com/JanKaul/iceberg-rust", package = "datafusion_iceberg" }
@@ -173,3 +189,7 @@ alloy-transport-http = "1.8.2"
 
 # Containers
 testcontainers-modules = "0.15.0"
+
+# Vendored fork: `HyperServer::into_router`, `Router<()>` merge with Plasm Axum apps. Parent monorepo also patches this path.
+[patch.crates-io]
+rust-mcp-sdk = { path = "third_party/rust-mcp-sdk" }

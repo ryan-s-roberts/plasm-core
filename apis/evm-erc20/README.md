@@ -7,20 +7,20 @@ The default contract address is [USDC on Ethereum mainnet](https://etherscan.io/
 ```bash
 # Read USDC balance for an address (Infura RPC)
 export ETH_RPC_URL=https://mainnet.infura.io/v3/<PROJECT_ID>
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/evm-erc20 \
   --backend "$ETH_RPC_URL" \
   balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 
 # Scan all Transfer events in a block range
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/evm-erc20 \
   --backend "$ETH_RPC_URL" \
   transfer query --from-block 21000000 --to-block 21001000 --all
 ```
 
 > **EVM feature flag** — this schema requires the `evm` Cargo feature:
-> `cargo run --features plasm-agent/evm --bin plasm-agent -- ...`
+> `cargo run --features plasm/evm --bin plasm -- ...`
 
 ---
 
@@ -104,7 +104,7 @@ The `range_size` param in `mappings.yaml` controls chunk size. Increase it for l
 
 ```bash
 export RPC=https://mainnet.infura.io/v3/<PROJECT_ID>
-alias pa="cargo run --features plasm-agent/evm --bin plasm-agent -- --schema apis/evm-erc20 --backend $RPC"
+alias pa="cargo run --features plasm/evm --bin plasm -- --schema apis/evm-erc20 --backend $RPC"
 
 # Balance of vitalik.eth
 pa balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
@@ -155,8 +155,8 @@ Tested against a local [Anvil](https://book.getfoundry.sh/reference/anvil/) node
 
 ```bash
 # Unit tests (compile-time validation, no network)
-cargo test -p plasm-compile -p plasm-runtime -p plasm-agent \
-  --lib --features plasm-compile/evm,plasm-runtime/evm,plasm-agent/evm
+cargo test -p plasm-compile -p plasm-runtime -p plasm \
+  --lib --features plasm-compile/evm,plasm-runtime/evm,plasm/evm
 
 # Auth e2e (mock RPC server, no Docker)
 cargo test -p plasm-e2e --test evm_auth_e2e --features plasm-e2e/evm

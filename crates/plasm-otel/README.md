@@ -2,7 +2,7 @@
 
 Shared bootstrap for OpenTelemetry **traces**, **metrics**, and **logs** over **OTLP**, driven by standard `OTEL_*` environment variables.
 
-Used by `plasm-mcp` / `plasm-agent` and `plasm-trace-sink`.
+Used by `plasm-mcp` / `plasm` and `plasm-trace-sink`.
 
 ## When OTLP is enabled
 
@@ -18,7 +18,7 @@ Disabled when:
 
 ## Resource
 
-Uses `opentelemetry_sdk::Resource::builder()` so `**OTEL_SERVICE_NAME`**, `**OTEL_RESOURCE_ATTRIBUTES**`, and SDK defaults apply. If `OTEL_SERVICE_NAME` is unset, the passed-in **default service name** (e.g. `plasm-agent`) is merged as `service.name`.
+Uses `opentelemetry_sdk::Resource::builder()` so `**OTEL_SERVICE_NAME`**, `**OTEL_RESOURCE_ATTRIBUTES**`, and SDK defaults apply. If `OTEL_SERVICE_NAME` is unset, the passed-in **default service name** (e.g. `plasm`) is merged as `service.name`.
 
 ## Protocol
 

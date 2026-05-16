@@ -350,7 +350,7 @@ pub struct FieldSchema {
     pub agent_presentation: Option<AgentPresentation>,
     /// Optional MIME type for **tabular summaries** when the wire value is reference-only or will
     /// be modeled as an attachment: MCP/HTTP table and TSV cells include this next to the ref
-    /// placeholder (see `plasm-agent` output formatters). Per-row MIME should instead live on the
+    /// placeholder (see `plasm-mcp` output formatters). Per-row MIME should instead live on the
     /// decoded value (reserved `__plasm_attachment` object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type_hint: Option<String>,
@@ -1329,11 +1329,13 @@ pub enum OutputType {
 /// Use [`AuthScheme::None`] to mark **public** catalogs (no outbound credentials). Omitting `auth`
 /// entirely is still accepted for backward compatibility but is ambiguous for tooling.
 ///
-/// For each secret-bearing slot on other variants, specify **exactly one** of:
+/// For each secret-bearing slot on other variants, declare **at least one** non-empty source:
 /// - `env` — environment variable name (local dev / operator-managed)
 /// - `hosted_kv` — auth-framework `kv_store` key path (must start with `plasm:outbound:`)
 ///
-/// The runtime resolves values through [`plasm_runtime::auth::SecretProvider`] (env vs `kv_store` lookup).
+/// For `api_key_header`, `api_key_query`, and `bearer_token`, **both** may be set: the runtime
+/// prefers a non-empty `hosted_kv` value (e.g. set from `plasm-server`) and falls back to `env`
+/// when the hosted slot is unset or empty.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "scheme", rename_all = "snake_case")]
 pub enum AuthScheme {
@@ -1406,6 +1408,29 @@ impl AuthScheme {
     pub(crate) fn validate(&self) -> Result<(), crate::error::SchemaError> {
         use crate::error::SchemaError;
 
+        /// At least one of `env` or `hosted_kv` must be set. **Both may be set**: operators can keep
+        /// `env` for shells/CI while `plasm-server` / Phoenix store a secret in `hosted_kv`, which
+        /// the runtime prefers when non-empty.
+        fn at_least_one_env_or_hosted(
+            env: Option<&str>,
+            hosted: Option<&str>,
+            ctx: &'static str,
+        ) -> Result<(), SchemaError> {
+            let e = env.map(str::trim).filter(|s| !s.is_empty());
+            let h = hosted.map(str::trim).filter(|s| !s.is_empty());
+            if e.is_none() && h.is_none() {
+                return Err(SchemaError::AuthCredentialSourceInvalid {
+                    context: ctx.into(),
+                });
+            }
+            if let Some(k) = h {
+                if !k.starts_with("plasm:outbound:") {
+                    return Err(SchemaError::AuthHostedKvKeyPrefix { field: ctx.into() });
+                }
+            }
+            Ok(())
+        }
+
         fn one_of_env_hosted(
             env: Option<&str>,
             hosted: Option<&str>,
@@ -1433,10 +1458,10 @@ impl AuthScheme {
         match self {
             AuthScheme::None => Ok(()),
             AuthScheme::ApiKeyHeader { env, hosted_kv, .. } => {
-                one_of_env_hosted(env.as_deref(), hosted_kv.as_deref(), "api_key_header")
+                at_least_one_env_or_hosted(env.as_deref(), hosted_kv.as_deref(), "api_key_header")
             }
             AuthScheme::ApiKeyQuery { env, hosted_kv, .. } => {
-                one_of_env_hosted(env.as_deref(), hosted_kv.as_deref(), "api_key_query")
+                at_least_one_env_or_hosted(env.as_deref(), hosted_kv.as_deref(), "api_key_query")
             }
             AuthScheme::BearerToken {
                 env,
@@ -1451,7 +1476,7 @@ impl AuthScheme {
                 if *optional_env && e.is_none() && h.is_none() {
                     return Ok(());
                 }
-                one_of_env_hosted(env.as_deref(), hosted_kv.as_deref(), "bearer_token")
+                at_least_one_env_or_hosted(env.as_deref(), hosted_kv.as_deref(), "bearer_token")
             }
             AuthScheme::Oauth2ClientCredentials {
                 token_url,
@@ -1543,7 +1568,7 @@ pub struct OauthExtension {
 }
 
 /// Pre-classified capability surface for one entity. Built once by [`CGS::capability_manifest`]
-/// and consumed by both CLI generation (`plasm-agent`) and prompt rendering (`prompt_render`).
+/// and consumed by both CLI generation (`plasm-mcp` / tool-model HTTP) and prompt rendering (`prompt_render`).
 #[derive(Debug)]
 pub struct CapabilityManifest<'a> {
     /// Unscoped query (the "list all" verb), if any.

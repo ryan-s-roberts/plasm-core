@@ -147,8 +147,9 @@ pub use hosted_oauth_kv::{
 pub use http_transport::{HttpTransport, ReqwestHttpTransport};
 pub use mockserver::*;
 pub use oauth_client::{
-    begin_authorization_code_pkce, exchange_authorization_code, OAuthAuthorizationStart,
-    OAuthConnectError,
+    begin_authorization_code_pkce, exchange_authorization_code, poll_oauth_device_token_once,
+    request_oauth_device_authorization, OAuthAuthorizationStart, OAuthConnectError,
+    OAuthDeviceAuthorizationResponse, OAuthDeviceTokenPoll,
 };
 pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use replay::*;

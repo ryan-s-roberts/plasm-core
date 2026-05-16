@@ -50,7 +50,7 @@ When the cumulative slice includes structured string semantics, the preamble add
 
 **Grammar note:** The opener is **`<<`** (two characters) plus a tag, not `<<<`. Legacy `d<<<` is removed—use **`<<TAG`** only (never `<<` + newline alone).
 
-### Execute session state (plasm-agent)
+### Execute session state (plasm)
 
 [`ExecuteSession`](plasm-oss/crates/plasm-agent-core/src/execute_session.rs) holds:
 

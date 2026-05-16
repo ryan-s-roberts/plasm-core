@@ -13,12 +13,12 @@ This document applies the [plasm-authoring skill](../../.cursor/skills/plasm-aut
 | CGS + CML validate | `cargo run -p plasm-cli --bin plasm -- schema validate apis/slack` | Pass — **11 entities**, **57 capabilities** |
 | Loader smoke | `cargo test -p plasm-core test_apis_split_schemas_smoke` | Pass |
 | NL eval coverage | `cargo run -p plasm-eval -- coverage --schema apis/slack --cases apis/slack/eval/cases.yaml` | **Full coverage** — no missing required buckets; all capability domains appear in ≥1 eval case |
-| CLI generation | `cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack --help` | Pass — entity subcommands include **bookmark**, **scheduledmessage**, etc. |
+| CLI generation | `cargo run -p plasm --bin plasm-cgs -- --schema apis/slack --help` | Pass — entity subcommands include **bookmark**, **scheduledmessage**, etc. |
 
 **Notes**
 
 - Validating **`domain.yaml` alone** with `plasm schema validate apis/slack/domain.yaml` fails (no `method` in template); always validate the **directory** `apis/slack` so `mappings.yaml` is loaded.
-- The schema-driven CLI binary is **`plasm-cgs`** (`plasm-agent` crate), not a binary named `plasm-agent`.
+- The schema-driven CLI binary is **`plasm-cgs`** (`plasm` crate), not a binary named `plasm`.
 - **DOMAIN / `channel_history` vs `channel_replies`:** `Message` had two query capabilities that differ only by required `ts`. The core resolver (`required_predicate_field_names_for_scoped_match` in `query_resolve.rs`) now treats required **filter-like** params (not only scope params) as part of the match key, so `channel` alone resolves to `channel_history` and `channel` + `ts` resolves to `channel_replies`. Loader warnings for those caps are cleared when DOMAIN lines type-check.
 - **`scheduledmessage_create` DOMAIN teaching:** `post_at` is modeled as **`integer`** (Unix seconds), matching Slack’s `post_at` argument and allowing `$` placeholders in synthesized `ScheduledMessage.create(…)` lines (temporal types do not accept the DOMAIN `$` token in shadow-arg parse).
 
@@ -108,5 +108,5 @@ cargo run -p plasm-cli --bin plasm -- schema validate apis/slack
 cargo test -p plasm-core test_apis_split_schemas_smoke
 cargo test -p plasm-core slack_domain_covers_all_capabilities
 cargo run -p plasm-eval -- coverage --schema apis/slack --cases apis/slack/eval/cases.yaml
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/slack --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/slack --help
 ```

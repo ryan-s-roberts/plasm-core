@@ -2206,6 +2206,7 @@ auth:
   scheme: api_key_header
   header: Authorization
   env: DISCORD_BOT_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:discord
 values:
   nv_application_command_application_id:
     type: entity_ref

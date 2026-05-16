@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use pgvector::Vector;
 use plasm_discovery::embedding_store::{CatalogEmbeddingLineKey, CatalogEmbeddingStore};
 use plasm_discovery::{DiscoveryError, DEFAULT_EMBEDDING_VECTOR_DIM};
 use sqlx::postgres::PgPoolOptions;
@@ -32,7 +31,32 @@ pub struct DiscoveryEmbeddingRepository {
 struct EmbeddingRow {
     catalog_cgs_hash: String,
     line_text: String,
-    embedding: Vector,
+    embedding: Vec<u8>,
+}
+
+fn f32_slice_to_le_bytes(values: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * 4);
+    for &v in values {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>, DiscoveryEmbeddingRepositoryError> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err(DiscoveryEmbeddingRepositoryError::InvalidEmbedding(
+            format!(
+                "embedding BYTEA length {} is not a multiple of 4",
+                bytes.len()
+            ),
+        ));
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4);
+    for chunk in bytes.chunks_exact(4) {
+        let arr: [u8; 4] = chunk.try_into().expect("chunks_exact(4)");
+        out.push(f32::from_le_bytes(arr));
+    }
+    Ok(out)
 }
 
 impl DiscoveryEmbeddingRepository {
@@ -104,7 +128,7 @@ impl DiscoveryEmbeddingRepository {
     ) -> Result<(), DiscoveryEmbeddingRepositoryError> {
         Self::validate_embedding(embedding)?;
         let dim = embedding.len().min(i16::MAX as usize) as i16;
-        let v = Vector::from(embedding.to_vec());
+        let bytes = f32_slice_to_le_bytes(embedding);
         sqlx::query(
             r#"INSERT INTO plasm_catalog_discovery_embeddings
                (catalog_cgs_hash, embedding_model_id, line_text, embedding_dim, embedding)
@@ -118,13 +142,13 @@ impl DiscoveryEmbeddingRepository {
         .bind(embedding_model_id)
         .bind(line_text)
         .bind(dim)
-        .bind(v)
+        .bind(bytes)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    /// Batch upsert for materialization (one statement per chunk). Consumes embedding vectors to avoid cloning into [`Vector`].
+    /// Batch upsert for materialization (one statement per chunk).
     pub async fn upsert_lines_batch(
         &self,
         catalog_cgs_hash: &str,
@@ -144,12 +168,13 @@ impl DiscoveryEmbeddingRepository {
             let mut qb = QueryBuilder::<Postgres>::new(
                 "INSERT INTO plasm_catalog_discovery_embeddings (catalog_cgs_hash, embedding_model_id, line_text, embedding_dim, embedding) ",
             );
-            qb.push_values(chunk.into_iter(), |mut b, (line, vec)| {
+            qb.push_values(chunk, |mut b, (line, vec)| {
+                let bytes = f32_slice_to_le_bytes(vec.as_slice());
                 b.push_bind(catalog_cgs_hash)
                     .push_bind(embedding_model_id)
                     .push_bind(line)
                     .push_bind(dim)
-                    .push_bind(Vector::from(vec));
+                    .push_bind(bytes);
             });
             qb.push(
                 " ON CONFLICT (catalog_cgs_hash, embedding_model_id, line_text) DO UPDATE SET \
@@ -196,7 +221,18 @@ impl CatalogEmbeddingStore for DiscoveryEmbeddingRepository {
             .await
             .map_err(|e| DiscoveryError::EmbeddingStore(e.to_string()))?;
             for row in rows {
-                let arr: Vec<f32> = row.embedding.into();
+                let arr = match le_bytes_to_f32_vec(row.embedding.as_slice()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            catalog_cgs_hash = %row.catalog_cgs_hash,
+                            line_text_len = row.line_text.len(),
+                            error = %e,
+                            "discovery embeddings: skipping row with invalid BYTEA payload"
+                        );
+                        continue;
+                    }
+                };
                 if arr.len() != DEFAULT_EMBEDDING_VECTOR_DIM {
                     tracing::warn!(
                         catalog_cgs_hash = %row.catalog_cgs_hash,

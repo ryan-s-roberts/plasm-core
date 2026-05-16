@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [RAWG API](https://rawg.io/apido
 
 ```bash
 export RAWG_API_KEY=...   # optional for higher rate limits
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/rawg \
   --backend https://api.rawg.io \
   --repl

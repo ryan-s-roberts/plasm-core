@@ -1471,6 +1471,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: SLACK_BOT_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:slack
 values:
   nv_bookmark_add_channel:
     type: entity_ref

@@ -50,7 +50,12 @@ impl OauthRuntimeProviderSource for PostgresOauthRuntimeProviderSource {
         Box::pin(async move {
             let rows = sqlx::query(
                 r#"
-                SELECT entry_id, authorization_endpoint, token_endpoint, client_id, client_secret_key
+                SELECT entry_id,
+                       authorization_endpoint,
+                       token_endpoint,
+                       device_authorization_endpoint,
+                       client_id,
+                       client_secret_key
                 FROM public.oauth_provider_apps
                 WHERE enabled = true
                 "#,
@@ -70,6 +75,9 @@ impl OauthRuntimeProviderSource for PostgresOauthRuntimeProviderSource {
                 let token_ep: Option<String> = row
                     .try_get("token_endpoint")
                     .map_err(OauthRuntimeFetchError::from)?;
+                let device_ep: Option<String> = row
+                    .try_get("device_authorization_endpoint")
+                    .map_err(OauthRuntimeFetchError::from)?;
                 let client_id: String = row
                     .try_get("client_id")
                     .map_err(OauthRuntimeFetchError::from)?;
@@ -78,14 +86,19 @@ impl OauthRuntimeProviderSource for PostgresOauthRuntimeProviderSource {
                     .map_err(OauthRuntimeFetchError::from)?;
 
                 let entry_id = entry_id.trim();
-                let auth_ep = auth_ep.as_deref().unwrap_or("").trim();
+                let auth_ep_raw = auth_ep.as_deref().map(str::trim).filter(|s| !s.is_empty());
                 let token_ep = token_ep.as_deref().unwrap_or("").trim();
+                let device_ep_raw = device_ep
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 let client_id_s = client_id.trim();
                 let client_secret_key = client_secret_key.trim();
 
-                match RuntimeOauthProviderMeta::try_new(
-                    auth_ep,
+                match RuntimeOauthProviderMeta::try_from_parts(
+                    auth_ep_raw,
                     token_ep,
+                    device_ep_raw,
                     Vec::new(),
                     client_id_s,
                     client_secret_key,

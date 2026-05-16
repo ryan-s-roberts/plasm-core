@@ -12,3 +12,11 @@
 pub fn init() -> anyhow::Result<()> {
     plasm_otel::init("plasm-agent")
 }
+
+/// Like [`init`], but sends the human-readable **fmt** layer through `make_writer` (for example a TUI log sink).
+pub fn init_with_fmt_make_writer<W>(make_writer: W) -> anyhow::Result<()>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
+{
+    plasm_otel::init_with_fmt_make_writer("plasm-agent", make_writer)
+}

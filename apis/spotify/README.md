@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Spotify Web API](https://develo
 
 ```bash
 export SPOTIFY_ACCESS_TOKEN=...
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/spotify \
   --backend https://api.spotify.com \
   --repl

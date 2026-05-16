@@ -434,6 +434,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: FIGMA_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:figma
 values:
   nv_comment_create_file_key:
     type: entity_ref

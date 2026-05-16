@@ -137,7 +137,7 @@ async fn build_framework_on_storage(
 
     let config = AuthConfig::new()
         .storage(storage_config)
-        .issuer("plasm-agent")
+        .issuer("plasm")
         .audience("plasm")
         .token_lifetime(Duration::from_secs(3600))
         .refresh_token_lifetime(Duration::from_secs(86400 * 7))

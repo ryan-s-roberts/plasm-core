@@ -16,6 +16,9 @@ use oauth2::{
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 use reqwest::redirect::Policy;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
 use url::Url;
 
@@ -36,6 +39,8 @@ pub enum OAuthConnectError {
     InvalidUrl(String),
     #[error("OAuth token exchange failed: {0}")]
     TokenExchange(String),
+    #[error("OAuth device authorization failed: {0}")]
+    DeviceAuthorization(String),
 }
 
 /// Build an OAuth2 Basic client and produce an authorization URL with PKCE (S256).
@@ -148,10 +153,252 @@ pub async fn exchange_authorization_code(
     Ok(token.access_token().secret().to_string())
 }
 
+/// RFC 8628 device authorization response (fields used by Plasm outbound device flows).
+#[derive(Debug, Clone)]
+pub struct OAuthDeviceAuthorizationResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: u64,
+    pub interval: Option<u64>,
+}
+
+/// Single token-endpoint poll for the device code grant ([RFC 8628 §3.4](https://www.rfc-editor.org/rfc/rfc8628#section-3.4)).
+#[derive(Debug, Clone)]
+pub enum OAuthDeviceTokenPoll {
+    Success(Value),
+    AuthorizationPending,
+    SlowDown {
+        interval_secs: u64,
+    },
+    OAuthError {
+        error: String,
+        error_description: Option<String>,
+    },
+}
+
+/// `POST` the device authorization endpoint (`application/x-www-form-urlencoded`).
+pub async fn request_oauth_device_authorization(
+    http: &reqwest::Client,
+    device_authorization_endpoint: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    scopes: &[String],
+    timeout: Duration,
+) -> Result<OAuthDeviceAuthorizationResponse, OAuthConnectError> {
+    let mut form = HashMap::new();
+    form.insert("client_id".to_string(), client_id.to_string());
+    if let Some(sec) = client_secret {
+        form.insert("client_secret".to_string(), sec.to_string());
+    }
+    if !scopes.is_empty() {
+        form.insert("scope".to_string(), scopes.join(" "));
+    }
+
+    let response = http
+        .post(device_authorization_endpoint)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .form(&form)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| OAuthConnectError::DeviceAuthorization(e.to_string()))?;
+
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|e| OAuthConnectError::DeviceAuthorization(format!("invalid JSON: {e}")))?;
+
+    if !status.is_success() {
+        let msg = device_oauth_error_summary(&body);
+        return Err(OAuthConnectError::DeviceAuthorization(format!(
+            "HTTP {status}: {msg}"
+        )));
+    }
+
+    let device_code = json_required_string(&body, "device_code")?;
+    let user_code = json_required_string(&body, "user_code")?;
+    let verification_uri = json_required_string(&body, "verification_uri")?;
+    let verification_uri_complete = body
+        .get("verification_uri_complete")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let expires_in = body
+        .get("expires_in")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            body.get("expires_in")
+                .and_then(|v| v.as_i64())
+                .map(|v| v.max(0) as u64)
+        })
+        .unwrap_or(1800);
+    let interval = body.get("interval").and_then(|v| v.as_u64()).or_else(|| {
+        body.get("interval")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.max(0) as u64)
+    });
+
+    Ok(OAuthDeviceAuthorizationResponse {
+        device_code,
+        user_code,
+        verification_uri,
+        verification_uri_complete,
+        expires_in,
+        interval,
+    })
+}
+
+fn json_required_string(body: &Value, key: &str) -> Result<String, OAuthConnectError> {
+    let Some(v) = body.get(key).and_then(|v| v.as_str()) else {
+        return Err(OAuthConnectError::DeviceAuthorization(format!(
+            "missing string field {key:?}"
+        )));
+    };
+    let t = v.trim();
+    if t.is_empty() {
+        return Err(OAuthConnectError::DeviceAuthorization(format!(
+            "empty string field {key:?}"
+        )));
+    }
+    Ok(t.to_string())
+}
+
+fn device_oauth_error_summary(body: &Value) -> String {
+    let code = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown_error");
+    let desc = body
+        .get("error_description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    format!("{code} {desc}").trim().to_string()
+}
+
+/// Poll the token endpoint once using `grant_type=urn:ietf:params:oauth:grant-type:device_code`.
+pub async fn poll_oauth_device_token_once(
+    http: &reqwest::Client,
+    token_endpoint: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    device_code: &str,
+    timeout: Duration,
+) -> Result<OAuthDeviceTokenPoll, OAuthConnectError> {
+    let mut form = HashMap::new();
+    form.insert(
+        "grant_type".to_string(),
+        "urn:ietf:params:oauth:grant-type:device_code".to_string(),
+    );
+    form.insert("device_code".to_string(), device_code.to_string());
+    form.insert("client_id".to_string(), client_id.to_string());
+    if let Some(sec) = client_secret {
+        form.insert("client_secret".to_string(), sec.to_string());
+    }
+
+    let response = http
+        .post(token_endpoint)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .form(&form)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| OAuthConnectError::TokenExchange(e.to_string()))?;
+
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|e| OAuthConnectError::TokenExchange(format!("invalid JSON: {e}")))?;
+
+    if status.is_success() && body.get("access_token").is_some() {
+        return Ok(OAuthDeviceTokenPoll::Success(body));
+    }
+
+    let err_code = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+
+    match err_code {
+        "" if status.is_success() => Err(OAuthConnectError::TokenExchange(
+            "token response missing access_token".into(),
+        )),
+        "authorization_pending" => Ok(OAuthDeviceTokenPoll::AuthorizationPending),
+        "slow_down" => {
+            let interval_secs = body
+                .get("interval")
+                .and_then(|v| v.as_u64())
+                .or_else(|| {
+                    body.get("interval")
+                        .and_then(|v| v.as_i64())
+                        .map(|i| i.max(1) as u64)
+                })
+                .unwrap_or(5);
+            Ok(OAuthDeviceTokenPoll::SlowDown { interval_secs })
+        }
+        other if !other.is_empty() => {
+            let desc = body
+                .get("error_description")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            Ok(OAuthDeviceTokenPoll::OAuthError {
+                error: other.to_string(),
+                error_description: desc,
+            })
+        }
+        _ => Err(OAuthConnectError::TokenExchange(format!(
+            "HTTP {status}: {}",
+            device_oauth_error_summary(&body)
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use url::Url;
+
+    #[tokio::test]
+    async fn poll_device_token_authorization_pending() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).await.expect("read");
+            let req = String::from_utf8_lossy(&buf[..n]);
+            assert!(req.contains("device_code"));
+            let body = r#"{"error":"authorization_pending"}"#;
+            let resp = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(resp.as_bytes()).await.unwrap();
+        });
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let token_url = format!("http://{}", addr);
+        let out = poll_oauth_device_token_once(
+            &http,
+            &token_url,
+            "cid",
+            Some("sec"),
+            "dc",
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("poll");
+        assert!(matches!(out, OAuthDeviceTokenPoll::AuthorizationPending));
+    }
 
     #[test]
     fn begin_pkce_produces_https_urls() {

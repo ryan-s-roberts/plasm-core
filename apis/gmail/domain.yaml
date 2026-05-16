@@ -874,6 +874,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: GMAIL_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:gmail
 values:
   nv_attachment_data:
     type: blob

@@ -1,5 +1,6 @@
-//! Integration tests for terminal HTTP extensions (`/v1/terminal/discover`, `/execute/.../context`,
-//! plan mode, `/symbols`, `/status`, `/runs`). Docker-free.
+//! HTTP-only contracts for terminal extensions not covered by `plasm` CLI insta tests
+//! (`crates/plasm/tests/plasm_cli_server_insta.rs`): `/symbols`, `/status`, `/runs`, and
+//! `POST /execute/.../context`. Discovery TSV shape and plan/run flows are CLI snapshots.
 
 use axum::body::Body;
 use axum::extract::Extension;
@@ -56,35 +57,7 @@ fn test_app(st: PlasmHostState) -> Router<()> {
         .layer(Extension(IncomingPrincipal(None)))
 }
 
-#[tokio::test]
-async fn terminal_discover_and_execute_extensions() {
-    let app = test_app(test_state());
-
-    let disc = Request::builder()
-        .method("POST")
-        .uri("/v1/terminal/discover")
-        .header(CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            serde_json::json!({
-                "intent": "profile query",
-                "limit": 4,
-                "allowed_entry_ids": [],
-                "enable_embeddings": false,
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(disc).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(
-        v.get("typed").is_some(),
-        "expected typed discovery decision"
-    );
-
+async fn open_overshow_profile_session(app: &Router<()>) -> (String, String) {
     let create = Request::builder()
         .method("POST")
         .uri("/execute")
@@ -96,30 +69,38 @@ async fn terminal_discover_and_execute_extensions() {
     let res = app.clone().oneshot(create).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let loc = res.headers().get(LOCATION).unwrap().to_str().unwrap();
-    let created: serde_json::Value = {
-        let get = Request::builder()
-            .method("GET")
-            .uri(loc)
-            .header(ACCEPT, "application/json")
-            .body(Body::empty())
-            .unwrap();
-        let res = app.clone().oneshot(get).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let b = axum::body::to_bytes(res.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        serde_json::from_slice(&b).unwrap()
-    };
-    let ph = created["prompt_hash"].as_str().unwrap();
-    let sid = created["session"].as_str().unwrap();
+    let get = Request::builder()
+        .method("GET")
+        .uri(loc)
+        .header(ACCEPT, "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(get).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    (
+        created["prompt_hash"].as_str().unwrap().to_string(),
+        created["session"].as_str().unwrap().to_string(),
+    )
+}
+
+#[tokio::test]
+async fn execute_symbols_status_and_runs() {
+    let app = test_app(test_state());
+    let (ph, sid) = open_overshow_profile_session(&app).await;
 
     let sym = Request::builder()
         .method("GET")
         .uri(format!("/execute/{ph}/{sid}/symbols"))
         .body(Body::empty())
         .unwrap();
-    let res = app.clone().oneshot(sym).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        app.clone().oneshot(sym).await.unwrap().status(),
+        StatusCode::OK
+    );
 
     let stat = Request::builder()
         .method("GET")
@@ -136,37 +117,25 @@ async fn terminal_discover_and_execute_extensions() {
     .unwrap();
     assert_eq!(stbody["alive"], true);
 
-    let runs_uri = format!("/execute/{ph}/{sid}/runs");
     let runs = Request::builder()
         .method("GET")
-        .uri(&runs_uri)
+        .uri(format!("/execute/{ph}/{sid}/runs"))
         .body(Body::empty())
         .unwrap();
-    let res = app.clone().oneshot(runs).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        app.clone().oneshot(runs).await.unwrap().status(),
+        StatusCode::OK
+    );
+}
 
-    let plan_uri = format!("/execute/{ph}/{sid}?mode=plan");
-    let plan = Request::builder()
-        .method("POST")
-        .uri(&plan_uri)
-        .header(ACCEPT, "application/json")
-        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Body::from("Profile{}"))
-        .unwrap();
-    let res = app.clone().oneshot(plan).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let plan_body: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(res.into_body(), usize::MAX)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(plan_body["plan"], true);
+#[tokio::test]
+async fn execute_context_expand_http() {
+    let app = test_app(test_state());
+    let (ph, sid) = open_overshow_profile_session(&app).await;
 
-    let ctx_uri = format!("/execute/{ph}/{sid}/context");
     let ctx = Request::builder()
         .method("POST")
-        .uri(&ctx_uri)
+        .uri(format!("/execute/{ph}/{sid}/context"))
         .header(CONTENT_TYPE, "application/json")
         .body(Body::from(
             serde_json::json!({

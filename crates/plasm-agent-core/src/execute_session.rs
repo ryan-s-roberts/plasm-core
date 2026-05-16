@@ -20,10 +20,9 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
-use crate::run_artifacts::{ArtifactPayload, RunArtifactStore};
+use crate::run_artifacts::{ArtifactPayload, RunArtifactId, RunArtifactStore};
 use crate::session_graph_persistence::SessionGraphPersistence;
 use serde::Serialize;
-use uuid::Uuid;
 
 /// Default time-to-live for a session (lazy expiry on lookup).
 const SESSION_TTL: Duration = Duration::from_secs(3600);
@@ -96,8 +95,8 @@ fn run_artifact_hot_bounds() -> RunArtifactHotCacheBounds {
 #[derive(Debug)]
 struct RunArtifactHotCache {
     bounds: RunArtifactHotCacheBounds,
-    order: VecDeque<Uuid>,
-    map: HashMap<Uuid, Arc<SessionRunArtifact>>,
+    order: VecDeque<RunArtifactId>,
+    map: HashMap<RunArtifactId, Arc<SessionRunArtifact>>,
     approx_bytes: usize,
 }
 
@@ -113,7 +112,7 @@ impl RunArtifactHotCache {
 
     fn insert(
         &mut self,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         epoch: GraphEpoch,
         resource_index: u64,
         seq: DeltaSeq,
@@ -160,7 +159,7 @@ impl RunArtifactHotCache {
         1
     }
 
-    fn get(&self, run_id: Uuid) -> Option<Arc<SessionRunArtifact>> {
+    fn get(&self, run_id: RunArtifactId) -> Option<Arc<SessionRunArtifact>> {
         self.map.get(&run_id).cloned()
     }
 
@@ -249,7 +248,7 @@ pub struct GraphEpoch(pub u64);
 
 #[derive(Clone, Debug)]
 pub struct SessionRunArtifact {
-    pub run_id: Uuid,
+    pub run_id: RunArtifactId,
     /// Monotonic per execute session; matches `RunArtifactDocument.resource_index` and `plasm://r/{n}`.
     pub resource_index: u64,
     pub seq: DeltaSeq,
@@ -260,7 +259,7 @@ pub struct SessionRunArtifact {
 /// In-memory run index row (`GET /execute/.../runs` hot cache; evicted runs may still exist in [`RunArtifactStore`]).
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionRunSummary {
-    pub run_id: Uuid,
+    pub run_id: RunArtifactId,
     pub resource_index: u64,
     pub delta_seq: u64,
 }
@@ -319,7 +318,7 @@ impl SessionCore {
 
     pub async fn append_run_artifact(
         &self,
-        run_id: Uuid,
+        run_id: RunArtifactId,
         epoch: GraphEpoch,
         resource_index: u64,
         payload: ArtifactPayload,
@@ -336,7 +335,7 @@ impl SessionCore {
         item
     }
 
-    pub async fn get_run_artifact(&self, run_id: Uuid) -> Option<Arc<SessionRunArtifact>> {
+    pub async fn get_run_artifact(&self, run_id: RunArtifactId) -> Option<Arc<SessionRunArtifact>> {
         let g = self.state.lock().await;
         g.run_artifacts.get(run_id)
     }
@@ -596,7 +595,7 @@ impl ExecuteSession {
                     error = %err,
                     prompt_hash = %self.prompt_hash,
                     session_id = %session_id,
-                    run_id = %a.run_id,
+                    run_id = %a.run_id.to_wire(),
                     "failed to flush session run artifact"
                 );
                 failed.push(a.clone());
@@ -882,7 +881,7 @@ mod tests {
     use crate::run_artifacts::{ArtifactPayload, ArtifactPayloadMetadata};
     use plasm_core::CgsContext;
     use plasm_core::CGS;
-    use uuid::Uuid;
+    use crate::run_artifacts::RunArtifactId;
 
     #[tokio::test]
     async fn reuse_returns_same_session_id_for_same_entry_and_entities() {
@@ -981,7 +980,7 @@ mod tests {
     #[tokio::test]
     async fn session_core_tracks_artifact_and_tip_seq() {
         let core = SessionCore::new();
-        let run_id = Uuid::new_v4();
+        let run_id = RunArtifactId::from_bytes([0xcd; 32]);
         let payload = ArtifactPayload {
             metadata: ArtifactPayloadMetadata::json_default(),
             bytes: axum::body::Bytes::from_static(br#"{"ok":true}"#),

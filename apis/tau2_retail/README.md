@@ -6,7 +6,7 @@ There is **no public HTTP API** for this domain in τ² — state lives in Pytho
 
 **User lookups:** `find_user_id_by_email` / `find_user_id_by_name_zip` are **`kind: query` on `User`** with **`provides: [user_id]`** (subset response). With **`get_user_details`** on the same entity, the runtime can **hydrate** query rows to the full profile — same pattern as disjoint API projections in the Plasm authoring reference (one logical entity, explicit `provides`, optional per-row GET).
 
-**Product ↔ Variant:** `Variant.product_id` is the forward **EntityRef**; **`Product.relations.variants`** (cardinality **many**, **`via_param: product_id`**) is the synthesized inverse used by **`list_variants_by_product`** so `plasm-agent` can run **`product <product_id> variants`** (scope injected from the parent id; list rows hydrate via **`get_item_details`** when not using `--summary`).
+**Product ↔ Variant:** `Variant.product_id` is the forward **EntityRef**; **`Product.relations.variants`** (cardinality **many**, **`via_param: product_id`**) is the synthesized inverse used by **`list_variants_by_product`** so `plasm` can run **`product <product_id> variants`** (scope injected from the parent id; list rows hydrate via **`get_item_details`** when not using `--summary`).
 
 ## Use today
 
@@ -38,7 +38,7 @@ The generator maps each official tool name to CGS entities for `expect.entities_
 
 ## Use later (transport)
 
-Point `plasm-agent --backend` at a shim that implements the paths in `mappings.yaml` (see plan: Phase 2 τ-DB transport).
+Point `plasm --backend` at a shim that implements the paths in `mappings.yaml` (see plan: Phase 2 τ-DB transport).
 
 ## τ² eval (parallel track)
 

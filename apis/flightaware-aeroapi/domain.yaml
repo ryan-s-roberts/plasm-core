@@ -1,0 +1,240 @@
+version: 1
+http_backend: https://aeroapi.flightaware.com/aeroapi
+description: >
+  FlightAware AeroAPI v4 flight discovery: airborne / recently tracked matches and ident-based
+  flight summaries. Wire auth is the AeroAPI key header.
+
+values:
+  nv_aero_string_short:
+    type: string
+    string_semantics: short
+  nv_aero_int:
+    type: integer
+  nv_aero_bool:
+    type: boolean
+  nv_aero_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_aero_json:
+    type: json
+  nv_aero_search_query:
+    type: string
+    string_semantics: short
+    description: >
+      Simplified airborne search DSL (`-key value` pairs per AeroAPI), e.g. lat/long box,
+      idents, airline, altitude, or groundspeed filters.
+  nv_aero_predicate_query:
+    type: string
+    string_semantics: short
+    description: >
+      Advanced airborne search DSL (`{operator key value}` terms), scoped to recent
+      positions per AeroAPI rules.
+  nv_aero_ident_type:
+    type: select
+    allowed_values: [designator, registration, fa_flight_id]
+
+entities:
+  AirborneTrack:
+    id_field: fa_flight_id
+    description: >
+      One flight currently or recently airborne that matched a simplified in-air search
+      (position snapshot, origin/destination refs, and FlightAware’s stable flight id).
+    domain_projection_examples: false
+    fields:
+      fa_flight_id:
+        value_ref: nv_aero_string_short
+        required: true
+      ident:
+        value_ref: nv_aero_string_short
+        required: true
+      ident_icao:
+        value_ref: nv_aero_string_short
+        required: false
+      ident_iata:
+        value_ref: nv_aero_string_short
+        required: false
+      aircraft_type:
+        value_ref: nv_aero_string_short
+        required: false
+      origin_code:
+        value_ref: nv_aero_string_short
+        required: false
+        path: [origin, code]
+      destination_code:
+        value_ref: nv_aero_string_short
+        required: false
+        path: [destination, code]
+      first_position_time:
+        value_ref: nv_aero_date_rfc3339
+        required: false
+      foresight_predictions_available:
+        value_ref: nv_aero_bool
+        required: false
+      last_position:
+        value_ref: nv_aero_json
+        required: false
+
+  AirbornePredicateMatch:
+    id_field: fa_flight_id
+    description: >
+      One flight matching an advanced predicate expression over recent position data
+      (same airborne lifecycle as AirborneTrack, different query language on the wire).
+    domain_projection_examples: false
+    fields:
+      fa_flight_id:
+        value_ref: nv_aero_string_short
+        required: true
+      ident:
+        value_ref: nv_aero_string_short
+        required: true
+      ident_icao:
+        value_ref: nv_aero_string_short
+        required: false
+      ident_iata:
+        value_ref: nv_aero_string_short
+        required: false
+      aircraft_type:
+        value_ref: nv_aero_string_short
+        required: false
+      origin_code:
+        value_ref: nv_aero_string_short
+        required: false
+        path: [origin, code]
+      destination_code:
+        value_ref: nv_aero_string_short
+        required: false
+        path: [destination, code]
+      first_position_time:
+        value_ref: nv_aero_date_rfc3339
+        required: false
+      foresight_predictions_available:
+        value_ref: nv_aero_bool
+        required: false
+      last_position:
+        value_ref: nv_aero_json
+        required: false
+
+  FlightSummary:
+    id_field: fa_flight_id
+    description: >
+      One flight row returned when resolving a flight designator, tail registration, or
+      `fa_flight_id` (schedule, status, and route context as returned for that lookup).
+    domain_projection_examples: false
+    fields:
+      fa_flight_id:
+        value_ref: nv_aero_string_short
+        required: true
+      ident:
+        value_ref: nv_aero_string_short
+        required: true
+      status:
+        value_ref: nv_aero_string_short
+        required: false
+      aircraft_type:
+        value_ref: nv_aero_string_short
+        required: false
+      operator:
+        value_ref: nv_aero_string_short
+        required: false
+      origin_code:
+        value_ref: nv_aero_string_short
+        required: false
+        path: [origin, code]
+      destination_code:
+        value_ref: nv_aero_string_short
+        required: false
+        path: [destination, code]
+      scheduled_out:
+        value_ref: nv_aero_date_rfc3339
+        required: false
+      scheduled_on:
+        value_ref: nv_aero_date_rfc3339
+        required: false
+      estimated_out:
+        value_ref: nv_aero_date_rfc3339
+        required: false
+      estimated_on:
+        value_ref: nv_aero_date_rfc3339
+        required: false
+      diverted:
+        value_ref: nv_aero_bool
+        required: false
+      cancelled:
+        value_ref: nv_aero_bool
+        required: false
+      position_only:
+        value_ref: nv_aero_bool
+        required: false
+      progress_percent:
+        value_ref: nv_aero_int
+        required: false
+
+capabilities:
+  airborne_track_search:
+    kind: search
+    entity: AirborneTrack
+    description: >
+      Discover flights currently or recently airborne using AeroAPI’s simplified `-key value`
+      search syntax.
+    parameters:
+      - name: query
+        value_ref: nv_aero_search_query
+        required: true
+        role: search
+      - name: max_pages
+        value_ref: nv_aero_int
+        required: false
+      - name: cursor
+        value_ref: nv_aero_string_short
+        required: false
+
+  airborne_predicate_match_search:
+    kind: search
+    entity: AirbornePredicateMatch
+    description: >
+      Discover flights using AeroAPI’s advanced `{operator …}` predicate language over
+      recent position snapshots.
+    parameters:
+      - name: query
+        value_ref: nv_aero_predicate_query
+        required: true
+        role: search
+      - name: max_pages
+        value_ref: nv_aero_int
+        required: false
+      - name: cursor
+        value_ref: nv_aero_string_short
+        required: false
+
+  flight_summary_ident_query:
+    kind: query
+    entity: FlightSummary
+    description: >
+      List flight summary rows for a designator, registration, or `fa_flight_id`, optionally
+      constrained by a schedule window and ident interpretation hint.
+    parameters:
+      - name: ident
+        value_ref: nv_aero_string_short
+        required: true
+        role: scope
+      - name: ident_type
+        value_ref: nv_aero_ident_type
+        required: false
+      - name: start
+        value_ref: nv_aero_string_short
+        required: false
+      - name: end
+        value_ref: nv_aero_string_short
+        required: false
+      - name: max_pages
+        value_ref: nv_aero_int
+        required: false
+      - name: cursor
+        value_ref: nv_aero_string_short
+        required: false
+
+auth:
+  scheme: api_key_header
+  header: x-apikey
+  env: FLIGHTAWARE_AEROAPI_KEY
+  hosted_kv: plasm:outbound:v1:catalog:flightaware-aeroapi

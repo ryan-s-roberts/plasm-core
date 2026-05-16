@@ -922,7 +922,7 @@ impl TraceHub {
             }
             out.push(Self::completed_to_summary(c));
         }
-        out.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+        out.sort_by_key(|t| std::cmp::Reverse(t.started_at_ms));
         out.into_iter().skip(offset).take(lim).collect()
     }
 

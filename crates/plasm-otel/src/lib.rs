@@ -153,12 +153,15 @@ fn init_metrics(resource: &Resource) -> anyhow::Result<SdkMeterProvider> {
         .build())
 }
 
-fn init_console_only() -> anyhow::Result<()> {
+fn init_console_only_with_writer<W>(make_writer: W) -> anyhow::Result<()>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+{
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
-        .with_writer(std::io::stderr)
+        .with_writer(make_writer)
         .try_init()
         .map_err(|e| anyhow::anyhow!("tracing subscriber init: {e}"))?;
     Ok(())
@@ -189,7 +192,10 @@ fn stderr_fmt_env_filter(traces_otlp_enabled: bool) -> (EnvFilter, bool) {
     }
 }
 
-fn try_init_otlp(default_service_name: &str) -> anyhow::Result<()> {
+fn try_init_otlp_with_writer<W>(default_service_name: &str, make_writer: W) -> anyhow::Result<()>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+{
     let resource = build_resource(default_service_name);
     let traces = traces_enabled();
     let metrics = metrics_enabled();
@@ -222,7 +228,9 @@ fn try_init_otlp(default_service_name: &str) -> anyhow::Result<()> {
     }
 
     let (fmt_filter, fmt_filter_is_default) = stderr_fmt_env_filter(traces);
-    let fmt = tracing_subscriber::fmt::layer().with_filter(fmt_filter);
+    let fmt = tracing_subscriber::fmt::layer()
+        .with_writer(make_writer)
+        .with_filter(fmt_filter);
 
     let tracer_name: Cow<'static, str> = std::env::var("OTEL_SERVICE_NAME")
         .ok()
@@ -307,15 +315,27 @@ fn try_init_otlp(default_service_name: &str) -> anyhow::Result<()> {
 ///
 /// On failure, falls back to stderr `tracing` only so servers can still start.
 pub fn init(default_service_name: &str) -> anyhow::Result<()> {
+    init_with_fmt_make_writer(default_service_name, std::io::stderr)
+}
+
+/// Like [`init`], but directs the human-readable `tracing-subscriber` **fmt** layer to `make_writer`
+/// (OTLP bridges unchanged). `make_writer` must be [`Clone`] so OTLP init can retry on fallback.
+pub fn init_with_fmt_make_writer<W>(
+    default_service_name: &str,
+    make_writer: W,
+) -> anyhow::Result<()>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
+{
     if otel_disabled() {
-        return init_console_only();
+        return init_console_only_with_writer(make_writer);
     }
 
-    match try_init_otlp(default_service_name) {
+    match try_init_otlp_with_writer(default_service_name, make_writer.clone()) {
         Ok(()) => Ok(()),
         Err(e) => {
             eprintln!("OpenTelemetry init failed ({e}); falling back to console logging only");
-            init_console_only()
+            init_console_only_with_writer(make_writer)
         }
     }
 }

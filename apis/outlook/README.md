@@ -29,7 +29,7 @@ Docs consulted:
 
 ```bash
 export MICROSOFT_GRAPH_ACCESS_TOKEN="..."
-cargo run -p plasm-agent --bin plasm-cgs -- \
+cargo run -p plasm --bin plasm-cgs -- \
   --schema apis/outlook \
   --backend https://graph.microsoft.com \
   message query

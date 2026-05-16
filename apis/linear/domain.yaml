@@ -693,6 +693,7 @@ auth:
   scheme: api_key_header
   header: Authorization
   env: LINEAR_API_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:linear
 values:
   nv_comment_create_issue:
     type: entity_ref

@@ -1,7 +1,7 @@
 [package]
 name = "plasm-agent-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 readme = "README.md"
 
 [features]
@@ -59,7 +59,6 @@ subtle = { workspace = true }
 # even when we only use `InMemoryStorage` at runtime (see auth_framework::storage::memory).
 auth-framework = { workspace = true }
 sqlx = { workspace = true, features = ["migrate", "chrono", "uuid"] }
-pgvector = { workspace = true }
 opentelemetry = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
 
@@ -70,5 +69,5 @@ jsonwebtoken = { workspace = true }
 proptest = { workspace = true }
 serde = { workspace = true }
 serde_urlencoded = { workspace = true }
-testcontainers-modules = { workspace = true, features = ["postgres"] }
+testcontainers-modules = { workspace = true }
 tower = { workspace = true }

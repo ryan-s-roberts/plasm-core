@@ -23,9 +23,9 @@
 |-------|------------------|----------------------|
 | **CGS** | `domain.yaml` | Declares entities and capability **kinds** (`query`, `get`, …). Whether an entity has **both** query and get determines whether **hydration** is eligible — not how HTTP works. |
 | **CML** | `mappings.yaml` | Compiles each capability to HTTP/GraphQL. Optional composable **`pagination:`** (`PaginationConfig`: `params`, `location`, …) on **query** mappings drives multi-request pagination; list decode shape lives in **`response:`** / decoder config. |
-| **Runtime** | `plasm-runtime`, `plasm-agent` | Evaluates CML, loops pages when CLI `--limit`/`--all` (or internal caps) ask for more, decodes rows, merges into `GraphCache`. **LLM execute** uses opaque **`page(pg#)`** continuations (session-scoped) instead of exposing raw API pagination fields. Then (by default) runs **concurrent GET** per row to upgrade **summary → complete** when CGS has a **get** for that entity. |
+| **Runtime** | `plasm-runtime`, `plasm` | Evaluates CML, loops pages when CLI `--limit`/`--all` (or internal caps) ask for more, decodes rows, merges into `GraphCache`. **LLM execute** uses opaque **`page(pg#)`** continuations (session-scoped) instead of exposing raw API pagination fields. Then (by default) runs **concurrent GET** per row to upgrade **summary → complete** when CGS has a **get** for that entity. |
 
-**Pagination wiring** is a **CML** concern; **opaque LLM paging handles** are minted by **`plasm-agent`** execute sessions. **Hydration** is a **runtime** policy gated by **CGS** capability pairs (`query` + `get`).
+**Pagination wiring** is a **CML** concern; **opaque LLM paging handles** are minted by **`plasm`** execute sessions. **Hydration** is a **runtime** policy gated by **CGS** capability pairs (`query` + `get`).
 
 ## CGS (Capability Graph Schema) — domain.yaml
 
@@ -632,7 +632,7 @@ Each capability name from domain.yaml gets one entry:
 
 Pagination is **transparent in the domain model**: `domain.yaml` still uses `kind: query` for list capabilities. HTTP pagination is declared only in **CML** so the execution engine can merge page parameters, decode the configured items path, and loop until completion.
 
-When a mapping includes `pagination`, `plasm-agent` adds **built-in** CLI flags (not from entity fields). **`--limit`** and **`--all`** are always present; starting-position flags are derived from the **`pagination.params`** map (counter / fixed / `from_response` keys and `location`) so **`--help`** only lists what applies to that capability.
+When a mapping includes `pagination`, `plasm` adds **built-in** CLI flags (not from entity fields). **`--limit`** and **`--all`** are always present; starting-position flags are derived from the **`pagination.params`** map (counter / fixed / `from_response` keys and `location`) so **`--help`** only lists what applies to that capability.
 
 **LLM / HTTP MCP execute:** paginated queries return **one upstream page** by default. When more pages exist, the host mints an opaque session handle (`pg1`, `pg2`, …) and surfaces **`has_more`** plus a compact **`page(pgN)`** follow-up (and `_meta.plasm.paging` when MCP meta is enabled). Models continue with **`page(pgN)`** or **`page(pgN, limit=50)`**; transport-specific param names stay out of the prompt.
 
@@ -704,7 +704,7 @@ GraphQL list capabilities use the **same** composable `pagination:` shape as HTT
 
 **Explicit JSON `null` to clear a field:** A key whose value must be a literal `null` in JSON (e.g. clear an optional assignee) is **not** representable if the only way to express it is `Value::Null` inside a CML object (it will be omitted). A future extension could add a dedicated CML/`Value` form for explicit null; replay **`RequestFingerprint`** hashes the compiled `CompiledRequest` body, which after object-omit no longer carries null entries for omitted optionals—aligned with the wire.
 
-### Query result hydration (runtime + `plasm-agent`)
+### Query result hydration (runtime + `plasm`)
 
 This is **not** part of CML or `domain.yaml`. After a **query** succeeds, if the CGS defines a **`get`** capability on the **same entity** as the query’s `entity`, the runtime **defaults** to:
 
@@ -714,7 +714,7 @@ This is **not** part of CML or `domain.yaml`. After a **query** succeeds, if the
 
 **Opt out (list-shaped output only):**
 
-- **`plasm-agent`:** `--summary` on `entity query …` and on **relation** subcommands that dispatch a target `QueryExpr`. The flag exists only when the **queried** entity has a **get** capability.
+- **`plasm`:** `--summary` on `entity query …` and on **relation** subcommands that dispatch a target `QueryExpr`. The flag exists only when the **queried** entity has a **get** capability.
 - **IR / programmatic:** `QueryExpr.hydrate = Some(false)` for one query; or **`ExecutionConfig.hydrate = false`** for the whole engine.
 
 **When hydration does not run:** the entity has **query** but **no** **get** mapping (nothing to upgrade with).

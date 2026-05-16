@@ -1,6 +1,6 @@
 //! Session-scoped exclusive access to a [`GraphCache`] for async execute scopes.
 //!
-//! Callers hold one [`MutexGraphCacheSession`] per HTTP/MCP execute session (plasm-agent) instead of a
+//! Callers hold one [`MutexGraphCacheSession`] per HTTP/MCP execute session (plasm) instead of a
 //! process-global mutex. See cache module invariants **I5** (single writer).
 //!
 //! Hold the [`MutexGuard`](tokio::sync::MutexGuard) from [`Self::lock`] across the full `execute` /

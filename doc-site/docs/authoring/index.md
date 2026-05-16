@@ -11,7 +11,7 @@ Iteratively author, validate, and test a typed agent CLI from an API specificati
 - **mappings.yaml** (CML) — the HTTP wiring: templates mapping each capability to an HTTP call
 - **Runtime query semantics** (no extra YAML file) — **pagination** comes from the CML `pagination` block on list capabilities; **hydration** (default concurrent GET per query row) applies when CGS declares **both** `query` and `get` for the same entity unless the caller passes **`--summary`** / `QueryExpr.hydrate = Some(false)`
 
-For complete schema reference, type tables, operator compatibility, CML expression syntax, variable resolution rules, **CML pagination** (`pagination` block + `plasm-agent --limit` / `--all` and style-specific `--offset` / `--page` / `--cursor`), **default query hydration** (automatic per-row GET when the entity has both query + get; **`--summary`** to skip), and the full execution pipeline, see [reference.md](reference.md).
+For complete schema reference, type tables, operator compatibility, CML expression syntax, variable resolution rules, **CML pagination** (`pagination` block + `plasm --limit` / `--all` and style-specific `--offset` / `--page` / `--cursor`), **default query hydration** (automatic per-row GET when the entity has both query + get; **`--summary`** to skip), and the full execution pipeline, see [reference.md](reference.md).
 
 ## Domain authoring is not deterministic
 
@@ -414,7 +414,7 @@ show_search:
       - [q, { type: var, name: q }]
 ```
 
-CLI: `plasm-agent show search --q "breaking bad"` (verb is `search`, not `query`).
+CLI: `plasm show search --q "breaking bad"` (verb is `search`, not `query`).
 
 **Pattern 5 — Sort + response control (Jikan `GET /v4/anime`)**: Sort field, direction, and embed params annotated with roles.
 
@@ -825,7 +825,7 @@ body:
 
 ### Pagination & hydration (CML + runtime)
 
-**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination (CML)](reference.md#pagination-cml--mappingsyaml-only). **`plasm-agent`** adds `--limit` / `--all` and style-specific `--offset` / `--page` / `--cursor` when the mapping has pagination.
+**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination (CML)](reference.md#pagination-cml--mappingsyaml-only). **`plasm`** adds `--limit` / `--all` and style-specific `--offset` / `--page` / `--cursor` when the mapping has pagination.
 
 **Hydration** — after a **query**, if the entity has both **`query`** and **`get`**, the runtime **by default** fetches full rows via **get** unless **`--summary`** or `QueryExpr.hydrate = Some(false)`. No extra CGS flag — add or omit **get** by design. See [reference.md](reference.md) (**Query result hydration**).
 
@@ -843,20 +843,20 @@ cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
 cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
 
 # Does the CLI generate?
-plasm-agent --schema apis/<api> --help
+plasm --schema apis/<api> --help
 
 # Does the entity have the right subcommands?
-plasm-agent --schema apis/<api> <entity> --help
+plasm --schema apis/<api> <entity> --help
 
 # Are query flags typed correctly?
-plasm-agent --schema apis/<api> <entity> query --help
+plasm --schema apis/<api> <entity> query --help
 # Look for: [possible values: ...] on select fields, --status <status> in Usage for required params
 
 # Does clap reject invalid input?
-plasm-agent --schema apis/<api> <entity> query
+plasm --schema apis/<api> <entity> query
 # Should error: required arguments not provided
 
-plasm-agent --schema apis/<api> <entity> query --status BOGUS
+plasm --schema apis/<api> <entity> query --status BOGUS
 # Should error: invalid value [possible values: ...]
 ```
 
@@ -871,16 +871,16 @@ hermit --specs <path-to-openapi-spec> --port 9090 --use-examples
 BASE=http://localhost:9090/api/v3
 
 # Query
-plasm-agent --schema apis/<api> --backend $BASE <entity> query --<flag> <value>
+plasm --schema apis/<api> --backend $BASE <entity> query --<flag> <value>
 
 # Get by ID
-plasm-agent --schema apis/<api> --backend $BASE <entity> <id>
+plasm --schema apis/<api> --backend $BASE <entity> <id>
 
 # Navigate relation
-plasm-agent --schema apis/<api> --backend $BASE <entity> <id> <relation>
+plasm --schema apis/<api> --backend $BASE <entity> <id> <relation>
 
 # Table output
-plasm-agent --schema apis/<api> --backend $BASE --output table <entity> query --<flag> <value>
+plasm --schema apis/<api> --backend $BASE --output table <entity> query --<flag> <value>
 ```
 
 **If it fails, check:**
@@ -894,11 +894,11 @@ Then fix domain.yaml or mappings.yaml and re-run from Step 4.
 
 ```bash
 # Live — real HTTP calls
-plasm-agent --schema ... --backend https://api.example.com --mode live ...
+plasm --schema ... --backend https://api.example.com --mode live ...
 
 # Hybrid — replay cache hits, live on miss (builds replay corpus)
-plasm-agent --schema ... --backend https://api.example.com --mode hybrid ...
+plasm --schema ... --backend https://api.example.com --mode hybrid ...
 
 # Replay — cached only, no network (deterministic regression)
-plasm-agent --schema ... --mode replay ...
+plasm --schema ... --mode replay ...
 ```

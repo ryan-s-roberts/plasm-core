@@ -923,6 +923,7 @@ auth:
   scheme: api_key_header
   header: PRIVATE-TOKEN
   env: GITLAB_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:gitlab
 values:
   nv_issue_award_emoji_create_project_id:
     type: entity_ref

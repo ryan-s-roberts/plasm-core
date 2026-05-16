@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Notion REST API](https://develo
 
 ```bash
 export NOTION_API_TOKEN=secret_...
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/notion \
   --backend https://api.notion.com \
   --repl
@@ -115,7 +115,7 @@ Notion requires `Notion-Version` on **every** request. All capabilities in `mapp
 ## Verification
 
 - Schema load + `cgs.validate()` are exercised for `apis/notion` in `plasm-core` (`loader::tests::test_apis_split_schemas_smoke`).
-- **Live** calls require a real integration token and pages/databases shared with that integration; exercise with `plasm-agent` in `--mode live` after sharing a test page with the integration.
+- **Live** calls require a real integration token and pages/databases shared with that integration; exercise with `plasm` in `--mode live` after sharing a test page with the integration.
 
 ---
 
@@ -138,4 +138,4 @@ page <page-uuid> get-markdown
 comment query --block_id <page-uuid>
 ```
 
-Exact CLI subcommand names follow `plasm-agent`’s generated command tree from capability names (e.g. `page_get_markdown` → kebab-case per agent rules).
+Exact CLI subcommand names follow `plasm`’s generated command tree from capability names (e.g. `page_get_markdown` → kebab-case per agent rules).

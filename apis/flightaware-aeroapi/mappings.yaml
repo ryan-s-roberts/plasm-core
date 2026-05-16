@@ -1,0 +1,77 @@
+# FlightAware AeroAPI v4 — subset: airborne search + ident flight list.
+# OpenAPI: https://www.flightaware.com/commercial/aeroapi/resources/aeroapi-openapi.yml
+# Auth: header `x-apikey` (see domain.yaml).
+
+x-aero-search-pagination: &aero_search_q
+  - - query
+    - type: var
+      name: query
+  - - max_pages
+    - type: if
+      condition: { type: exists, var: max_pages }
+      then_expr: { type: var, name: max_pages }
+      else_expr: { type: const, value: null }
+  - - cursor
+    - type: if
+      condition: { type: exists, var: cursor }
+      then_expr: { type: var, name: cursor }
+      else_expr: { type: const, value: null }
+
+airborne_track_search:
+  method: GET
+  path:
+    - { type: literal, value: flights }
+    - { type: literal, value: search }
+  response:
+    items: flights
+  query:
+    type: object
+    fields: *aero_search_q
+
+airborne_predicate_match_search:
+  method: GET
+  path:
+    - { type: literal, value: flights }
+    - { type: literal, value: search }
+    - { type: literal, value: advanced }
+  response:
+    items: flights
+  query:
+    type: object
+    fields: *aero_search_q
+
+flight_summary_ident_query:
+  method: GET
+  path:
+    - { type: literal, value: flights }
+    - { type: var, name: ident }
+  response:
+    items: flights
+  query:
+    type: object
+    fields:
+      - - ident_type
+        - type: if
+          condition: { type: exists, var: ident_type }
+          then_expr: { type: var, name: ident_type }
+          else_expr: { type: const, value: null }
+      - - start
+        - type: if
+          condition: { type: exists, var: start }
+          then_expr: { type: var, name: start }
+          else_expr: { type: const, value: null }
+      - - end
+        - type: if
+          condition: { type: exists, var: end }
+          then_expr: { type: var, name: end }
+          else_expr: { type: const, value: null }
+      - - max_pages
+        - type: if
+          condition: { type: exists, var: max_pages }
+          then_expr: { type: var, name: max_pages }
+          else_expr: { type: const, value: null }
+      - - cursor
+        - type: if
+          condition: { type: exists, var: cursor }
+          then_expr: { type: var, name: cursor }
+          else_expr: { type: const, value: null }

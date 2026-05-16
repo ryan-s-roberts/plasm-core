@@ -90,6 +90,7 @@ use crate::{
     ParameterRole, Predicate, QueryExpr, Ref, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -311,7 +312,7 @@ impl fmt::Display for ParseErrorKind {
 }
 
 /// The result of parsing a path expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ParsedExpr {
     /// The composed expression tree.
     pub expr: Expr,

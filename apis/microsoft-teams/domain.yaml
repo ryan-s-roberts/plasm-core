@@ -37,6 +37,7 @@ capabilities:
 auth:
   scheme: bearer_token
   env: MICROSOFT_GRAPH_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:microsoft-teams
 values:
   nv_team_id:
     type: uuid

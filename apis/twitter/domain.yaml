@@ -556,6 +556,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: TWITTER_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:twitter
 values:
   nv_list_owner_id:
     type: entity_ref

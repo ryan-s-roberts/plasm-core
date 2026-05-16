@@ -172,7 +172,7 @@ impl PlasmMetaIndex {
             let fp_id = self.intern_fp(&h.request_fingerprints, &mut delta);
 
             let mut step = Map::new();
-            step.insert("run_id".into(), json!(h.run_id.to_string()));
+            step.insert("run_id".into(), json!(h.run_id.to_wire()));
             step.insert("artifact_uri".into(), json!(h.plasm_uri));
             step.insert(
                 "dict_ref".into(),
@@ -235,12 +235,11 @@ mod tests {
     use super::*;
     use crate::output::LossySummaryFieldNames;
     use crate::run_artifacts::{
-        artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri,
+        artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactId,
     };
     use serde_json::json;
-    use uuid::Uuid;
 
-    fn sample_handle(run: Uuid, ph: &str, sid: &str) -> RunArtifactHandle {
+    fn sample_handle(run: RunArtifactId, ph: &str, sid: &str) -> RunArtifactHandle {
         RunArtifactHandle {
             run_id: run,
             resource_index: 1,
@@ -254,7 +253,7 @@ mod tests {
 
     #[test]
     fn second_build_emits_smaller_index_delta_for_same_paths() {
-        let id = Uuid::nil();
+        let id = RunArtifactId::from_bytes([0u8; 32]);
         let ph = "ab".repeat(32);
         let sid = "a".repeat(32);
         let h = sample_handle(id, &ph, &sid);
@@ -289,7 +288,7 @@ mod tests {
 
     #[test]
     fn steps_contain_dict_ref_and_run_ids() {
-        let id = Uuid::nil();
+        let id = RunArtifactId::from_bytes([0u8; 32]);
         let ph = "ab".repeat(32);
         let sid = "a".repeat(32);
         let h = sample_handle(id, &ph, &sid);
@@ -309,14 +308,14 @@ mod tests {
         assert_eq!(steps.len(), 1);
         let step = steps[0].as_object().expect("step object");
         assert!(step.contains_key("dict_ref"));
-        assert_eq!(step.get("run_id"), Some(&json!(id.to_string())));
+        assert_eq!(step.get("run_id"), Some(&json!(id.to_wire())));
         assert_eq!(step.get("run_step"), Some(&json!(1)));
         assert_eq!(desc_ids.len(), 1);
     }
 
     #[test]
     fn step_includes_lossy_summary_fields_when_provided() {
-        let id = Uuid::nil();
+        let id = RunArtifactId::from_bytes([0u8; 32]);
         let ph = "ab".repeat(32);
         let sid = "a".repeat(32);
         let h = sample_handle(id, &ph, &sid);
@@ -341,7 +340,7 @@ mod tests {
 
     #[test]
     fn plasm_meta_includes_paging_when_has_more() {
-        let id = Uuid::nil();
+        let id = RunArtifactId::from_bytes([0u8; 32]);
         let ph = "ab".repeat(32);
         let sid = "a".repeat(32);
         let h = sample_handle(id, &ph, &sid);

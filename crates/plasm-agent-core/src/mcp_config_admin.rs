@@ -1,7 +1,7 @@
 //! Shared MCP configuration administration over [`crate::mcp_config_repository::McpConfigRepository`]
 //! and [`crate::mcp_transport_auth::McpTransportAuth`] — **no HTTP loopback**.
 //!
-//! Callers (hosted Phoenix adapters, `plasm-appliance`, tests) supply workspace scope identity.
+//! Callers (hosted Phoenix adapters, `plasm-server`, tests) supply workspace scope identity.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;

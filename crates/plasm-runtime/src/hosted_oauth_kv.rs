@@ -268,7 +268,7 @@ pub fn resolve_hosted_bearer_default_no_refresh(raw: &str) -> Result<String, Run
     match classify_hosted_bearer_utf8(trimmed, HOSTED_OAUTH_EXPIRY_SKEW_SECS)? {
         HostedBearerResolution::Ready(t) => Ok(t),
         HostedBearerResolution::NeedsRefresh(_) => Err(RuntimeError::AuthenticationError {
-            message: "OAuth access token expired; hosted refresh requires plasm-agent.".to_string(),
+            message: "OAuth access token expired; hosted refresh requires plasm.".to_string(),
         }),
     }
 }

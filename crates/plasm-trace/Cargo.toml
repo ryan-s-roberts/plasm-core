@@ -1,7 +1,7 @@
 [package]
 name = "plasm-trace"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Canonical MCP / execute session trace segments, events, and totals"
 
 [dependencies]

@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [Gmail REST API v1](https://deve
 ```bash
 # Run against the live API (requires GMAIL_ACCESS_TOKEN in env)
 export GMAIL_ACCESS_TOKEN=ya29.a0...
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/gmail \
   --backend https://gmail.googleapis.com \
   --repl
@@ -67,12 +67,12 @@ To get a token with the `gmail.readonly` scope using the OAuth 2.0 playground:
 
 For production use, implement the full OAuth 2.0 flow with refresh tokens. The `SecretProvider` trait in `plasm-runtime::auth` can be extended to fetch tokens from a token store rather than an env var.
 
-### Debugging OAuth link failures (Phoenix → plasm-agent)
+### Debugging OAuth link failures (Phoenix → plasm)
 
 When outbound connect fails or the token response looks wrong, correlate logs across the boundary:
 
 1. **Phoenix** — On connect, look for `outbound_oauth_prepare`: `oauth_scopes_empty` and `oauth_scope_count`. If `oauth_scopes_empty=true`, the agent uses **OAuth link catalog `default_scopes`** for that `entry_id`, not the CGS list from the DB row.
-2. **plasm-agent** — On `POST /internal/oauth-link/v1/start`, logs use target `plasm_agent::oauth_link` with `oauth.phase=start`, `scopes.source` (`request_body` vs `catalog_default`), `scope_count`, and `scopes_sha256` (SHA-256 of sorted scopes joined by newlines). Set `PLASM_OAUTH_LINK_LOG_SCOPES=1` to log the full scope list at info.
+2. **plasm** — On `POST /internal/oauth-link/v1/start`, logs use target `plasm_agent::oauth_link` with `oauth.phase=start`, `scopes.source` (`request_body` vs `catalog_default`), `scope_count`, and `scopes_sha256` (SHA-256 of sorted scopes joined by newlines). Set `PLASM_OAUTH_LINK_LOG_SCOPES=1` to log the full scope list at info.
 3. **Token exchange** — On callback, the same target logs `oauth.phase=token_exchange` with a **redacted** `TokenEndpointResponseSummary`: top-level JSON keys, presence/length flags for tokens, `scope` / `token_type` / `expires_in` strings from the IdP, RFC 6749 `error` fields when present, and on parse failure `apply_error_kind` (`oidc_id_token_without_access_token`, `missing_access_token`, etc.).
 
 The CGS `oauth:` block in `**domain.yaml`** is the scope catalog; mismatches are usually **propagation** (empty `oauth_scopes` on the auth config, or catalog defaults) — not missing YAML.
@@ -110,7 +110,7 @@ Since both `query` and `get` exist on `Message`, Plasm automatically hydrates: a
 To skip hydration (get just the id/threadId pairs):
 
 ```bash
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --summary
 ```
 
@@ -239,62 +239,62 @@ The runtime cache key becomes `Attachment:<messageId>/<id>`. When fetching an at
 
 ```bash
 # List inbox messages (auto-hydrates to full messages by default)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --labelIds INBOX
 
 # List inbox messages without auto-hydration (id+threadId only, fast)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --labelIds INBOX --summary
 
 # Search for unread messages from a specific sender
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --q "from:alice@example.com is:unread"
 
 # Search for messages with attachments in last 30 days
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --q "has:attachment newer_than:30d" --limit 20
 
 # Get a specific message by ID (full content)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message 19328f4ea78d7abc
 
 # Navigate from a message to its thread (EntityRef auto-resolve)
 # In REPL: message 19328f4ea78d7abc thread-id
 
 # List all threads matching a query
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   thread query --q "subject:invoice is:unread" --all
 
 # Same thread list without per-thread threads.get (id+historyId only; fast)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   thread query --q "subject:invoice is:unread" --summary --limit 20
 
 # List all labels
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   label query
 
 # Get specific label details
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   label INBOX
 
 # Create a new label
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   label create --name "Plasm" --labelListVisibility labelShow
 
 # List drafts
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   draft query
 
 # Get mailbox profile
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   profile get
 
 # Trash a message
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message 19328f4ea78d7abc trash
 
 # Modify labels on a message (mark as read: remove UNREAD)
-# plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+# plasm --schema apis/gmail --backend https://gmail.googleapis.com \
 #   message 19328f4ea78d7abc modify
 # (provide addLabelIds/removeLabelIds in body — write capabilities take --input flags)
 ```
@@ -308,11 +308,11 @@ plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
 Schema loads without panics. All subcommand names, typed flags, and pagination controls verified.
 
 ```bash
-cargo run --bin plasm-agent -- --schema apis/gmail --help
-cargo run --bin plasm-agent -- --schema apis/gmail message --help
-cargo run --bin plasm-agent -- --schema apis/gmail message query --help
-cargo run --bin plasm-agent -- --schema apis/gmail label --help
-cargo run --bin plasm-agent -- --schema apis/gmail profile --help
+cargo run --bin plasm -- --schema apis/gmail --help
+cargo run --bin plasm -- --schema apis/gmail message --help
+cargo run --bin plasm -- --schema apis/gmail message query --help
+cargo run --bin plasm -- --schema apis/gmail label --help
+cargo run --bin plasm -- --schema apis/gmail profile --help
 ```
 
 CLI outputs verified:
@@ -331,17 +331,17 @@ Not yet tested with live credentials. To test with an OAuth 2.0 access token:
 export GMAIL_ACCESS_TOKEN=ya29.a0your_token_here
 
 # Profile check
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com profile get
+plasm --schema apis/gmail --backend https://gmail.googleapis.com profile get
 
 # List labels (minimal scope needed)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com label query
+plasm --schema apis/gmail --backend https://gmail.googleapis.com label query
 
 # List inbox messages (id+threadId only, no hydration)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --labelIds INBOX --summary --limit 10
 
 # List inbox with full message details (auto-hydration fires)
-plasm-agent --schema apis/gmail --backend https://gmail.googleapis.com \
+plasm --schema apis/gmail --backend https://gmail.googleapis.com \
   message query --labelIds INBOX --limit 5
 ```
 

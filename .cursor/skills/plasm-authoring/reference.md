@@ -25,9 +25,9 @@ This is the canonical OSS reference for authoring Plasm API catalogs. The compil
 |-------|------------------|----------------------|
 | **CGS** | `domain.yaml` | Declares entities and capability **kinds** (`query`, `get`, …). Optional **`views:`** declares **composed read-only** DAGs over existing capabilities (see [Composed read views](#composed-read-views)). Whether an entity has **both** query and get determines whether **hydration** is eligible — not how HTTP works. |
 | **CML** | `mappings.yaml` | Compiles each capability to HTTP/GraphQL — or **`transport: view`** for view-backed queries (no outer HTTP template). Optional composable **`pagination:`** (`PaginationConfig`: `params`, `location`, …) on **query** mappings drives multi-request pagination; list decode shape lives in **`response:`** / decoder config. |
-| **Runtime** | `plasm-runtime`, `plasm-agent` | Evaluates CML, executes **views** as internal DAGs (HTTP only for inner nodes), loops pages when execution asks for more rows (postfix limits, session **`page(pg#)`** continuations, or internal caps), decodes rows, merges into `GraphCache`. **LLM / MCP execute** uses opaque **`page(pg#)`** handles instead of exposing raw API pagination field names. Then (by default) runs **concurrent GET** per row to upgrade **summary → complete** when CGS has a **get** for that entity. |
+| **Runtime** | `plasm-runtime`, `plasm` | Evaluates CML, executes **views** as internal DAGs (HTTP only for inner nodes), loops pages when execution asks for more rows (postfix limits, session **`page(pg#)`** continuations, or internal caps), decodes rows, merges into `GraphCache`. **LLM / MCP execute** uses opaque **`page(pg#)`** handles instead of exposing raw API pagination field names. Then (by default) runs **concurrent GET** per row to upgrade **summary → complete** when CGS has a **get** for that entity. |
 
-**Pagination wiring** is a **CML** concern; **opaque LLM paging handles** are minted by **`plasm-agent`** execute sessions. **Hydration** is a **runtime** policy gated by **CGS** capability pairs (`query` + `get`).
+**Pagination wiring** is a **CML** concern; **opaque LLM paging handles** are minted by **`plasm`** execute sessions. **Hydration** is a **runtime** policy gated by **CGS** capability pairs (`query` + `get`).
 
 ## CGS (Capability Graph Schema) — domain.yaml
 

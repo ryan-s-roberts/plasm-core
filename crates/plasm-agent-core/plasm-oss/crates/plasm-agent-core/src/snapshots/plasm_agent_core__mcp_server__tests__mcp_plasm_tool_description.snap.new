@@ -1,0 +1,19 @@
+---
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server.rs
+assertion_line: 2708
+expression: "super::MCP_PLASM_TOOL_DESCRIPTION"
+---
+**Plan Plasm** (dry-run only) with **`program`** and **`logical_session_ref`** from **`plasm_context`**. Each call returns a **reviewable dry-run program plan** (topology + expected shapes). **No live API execution** — use **`plasm_run`** with the same arguments after the plan matches your intent. Follow initialize instructions for syntax plus teaching rows from **`plasm_context`** (each row binds symbols for one capability pick).
+**JSON `program` string:** Use literal newline characters (U+000A) between statements when you have more than one binding—typically one `ident = …` per line, then bare comma-separated roots on the last line(s). Spaces do not separate statements. (Wire JSON may show `\n`; the parsed string must still contain real newlines.)
+
+**Heredoc:** After `<<TAG` on the opener line, start the body on the next line; close with a line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}`). First trimmed-line match closes the heredoc—use a long opaque `TAG` for unconstrained payloads (MIME, markdown, logs).
+
+Full grammar, bracket-render over `rows`, and `.content` rules: see **Plasm syntax guide** in MCP initialize instructions.
+
+**Program:** See initialize **Plasm syntax guide** for full grammar. Prefer **one multi-line `program`** with **literal newlines** between bindings when composing; **single-line** only for one taught `plasm_expr`. Bracket-render yields **`binding.content`** for string slots. Postfix (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]`, `[fields] <<TAG…TAG`) chains on the same surface expr when legal.
+
+**Brace `{…}` predicates:** Entity-ref slots expect DOMAIN constructors, scalar ids, or **`anchor.<relation>`** — not opaque rows unless keys match that entity.
+
+**Continuation:** `next = row.<relation>` continues a taught surface/relation row. A label produced by a row-preserving projection such as `trimmed = row[id,name]` may also be continued (`next = trimmed.<relation>`); aggregate/render/derive/data/for_each labels are not row anchors. Use postfix transforms for shaping rows, or an explicit entity constructor when you no longer have row identity.
+
+Reuse **`logical_session_ref`**. Call **`plasm_context`** again only to append picks or when **`_meta.plasm`** shows stale binding—not every turn.

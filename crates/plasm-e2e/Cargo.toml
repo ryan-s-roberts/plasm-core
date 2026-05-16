@@ -1,7 +1,7 @@
 [package]
 name = "plasm-e2e"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 readme = "README.md"
 
 # End-to-end integration tests using hermit (in-process OpenAPI mock server).
@@ -16,7 +16,7 @@ evm = []
 plasm-core = { path = "../plasm-core" }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
-plasm-agent = { path = "../plasm-agent" }
+plasm = { path = "../plasm" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

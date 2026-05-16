@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Google Calendar API v3](https:/
 
 ```bash
 export GCAL_TOKEN="ya29.your_oauth_access_token"
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/google-calendar \
   --backend https://www.googleapis.com/calendar/v3 \
   --repl
@@ -118,19 +118,19 @@ Event{calendarId=primary}[summary, start_datetime, end_datetime, location]
 export GCAL_TOKEN="ya29.your_oauth_access_token"
 BASE="--schema apis/google-calendar --backend https://www.googleapis.com/calendar/v3"
 
-plasm-agent $BASE calendar query
-plasm-agent $BASE calendar primary
-plasm-agent $BASE event list \
+plasm $BASE calendar query
+plasm $BASE calendar primary
+plasm $BASE event list \
   --calendarId primary \
   --timeMin 2024-01-01T00:00:00Z \
   --timeMax 2024-01-31T23:59:59Z \
   --singleEvents \
   --orderBy startTime \
   --limit 50
-plasm-agent $BASE event list --calendarId primary --q "standup" --limit 20
-plasm-agent $BASE event list --calendarId primary --all
-plasm-agent $BASE event primary/abc123def456
-plasm-agent $BASE --output table event list \
+plasm $BASE event list --calendarId primary --q "standup" --limit 20
+plasm $BASE event list --calendarId primary --all
+plasm $BASE event primary/abc123def456
+plasm $BASE --output table event list \
   --calendarId primary \
   --timeMin 2024-01-15T00:00:00Z \
   --timeMax 2024-01-16T00:00:00Z \

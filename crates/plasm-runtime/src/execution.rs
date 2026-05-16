@@ -39,7 +39,7 @@ fn resolve_query_capability<'a>(
     })
 }
 
-/// Canonical HTTP execute session coordinates supplied by the host (`plasm-agent` HTTP/MCP).
+/// Canonical HTTP execute session coordinates supplied by the host (`plasm` HTTP/MCP).
 ///
 /// These match `/execute/:prompt_hash/:session` path validation and must **not** be confused
 /// with MCP `logical_session_ref` slot aliases (`s0`, …), which are transport-local.

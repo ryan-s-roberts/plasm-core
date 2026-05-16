@@ -52,7 +52,7 @@ Thus HTTP/MCP execute sessions (and projection hydration) use the same pinned ge
 | Phase | Tool | What happens |
 |------|------|----------------|
 | **Authoring** | Edit **`apis/<name>/domain.yaml`** + **`mappings.yaml`** | Source of truth in git. |
-| **Pack (build)** | **`plasm-pack-plugins`** ([`plasm_pack_plugins.rs`](plasm-oss/crates/plasm-agent/src/bin/plasm_pack_plugins.rs)) | One ABI v4 **`plasm-plugin-stub`** cdylib per package; embeds CGS interchange. |
+| **Pack (build)** | **`plasm-pack-plugins`** ([`plasm_pack_plugins.rs`](plasm-oss/crates/plasm/src/bin/plasm_pack_plugins.rs)) | One ABI v4 **`plasm-plugin-stub`** cdylib per package; embeds CGS interchange. |
 | **Runtime** | **`plasm-mcp --plugin-dir <dir>`** | [`plugin_catalog::load_registry_from_plugin_dir`](plasm-oss/crates/plasm-agent-core/src/plugin_catalog.rs) — highest **`version` per `entry_id`**. |
 | **Single schema** | **`--schema <path>`** | One CGS (no plugin dir). |
 
@@ -80,7 +80,7 @@ The stub crate uses **`crate-type = ["cdylib", "rlib"]`** so `cargo test -p plas
 **Compile-only override** (same catalog as YAML/schema path):
 
 ```bash
-# Hosted product binary (control-plane HTTP). For data-plane-only HTTP, use `-p plasm-agent` instead of `-p plasm-mcp-app`.
+# Hosted product binary (control-plane HTTP). For data-plane-only HTTP, use `-p plasm` instead of `-p plasm-mcp-app`.
 cargo run -p plasm-mcp-app --bin plasm-mcp-saas -- --schema apis/dnd5e --http --port 3000 \
   --compile-plugin target/debug/libplasm_plugin_stub.dylib
 ```
@@ -139,7 +139,7 @@ Object keys: `{url-prefix}/execute/{prompt_hash}/{session_id}/{run_id}.json`.
 
 ## Persistent session graph cache (delta + snapshot)
 
-`plasm-agent` can persist session graph/runtime artifacts in an object-store-friendly shape:
+`plasm` can persist session graph/runtime artifacts in an object-store-friendly shape:
 
 |Mode|Configuration|
 |----|-------------|

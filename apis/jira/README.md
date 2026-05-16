@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Jira REST API v3](https://devel
 
 ```bash
 export JIRA_AUTH="Basic $(echo -n 'your@email.com:your_api_token' | base64)"
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/jira \
   --backend https://your-domain.atlassian.net \
   --repl
@@ -227,46 +227,46 @@ Status("In Progress")
 
 ```bash
 # JQL search with pagination
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   issue search --jql "project=MYPROJ AND issuetype=Bug AND status!=Done" --limit 50
 
 # Same search, only fetch a few issue fields (smaller payload)
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   issue search --jql "project=MYPROJ" --fields summary --fields status --fields priority --limit 20
 
 # Create / update / transition / comment (requires write scope on the token)
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   issue create --project_key MYPROJ --issue_type Task --summary "New task from Plasm"
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   issue MYPROJ-42 update --summary "Updated title" --priority_name High
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   issue MYPROJ-42 transition --transition_id "31"
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   comment create --issueIdOrKey MYPROJ-42 --text "Ship it"
 
 # Get a specific issue (extracts nested fields via path: annotations)
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   issue MYPROJ-42
 
 # List all projects
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   project query --all
 
 # Search projects by name
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   project query --query "Platform" --typeKey software
 
 # List versions for a project
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   version project-version-query --projectIdOrKey MYPROJ
 
 # Get comments on an issue
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net \
+plasm --schema apis/jira --backend https://domain.atlassian.net \
   comment query --issueIdOrKey MYPROJ-42
 
 # Navigate issue → comments in REPL
 # (via_params: issueIdOrKey ← Issue.key fires comment_query automatically)
-plasm-agent --schema apis/jira --backend https://domain.atlassian.net --repl
+plasm --schema apis/jira --backend https://domain.atlassian.net --repl
 # plasm> Issue("MYPROJ-42").comments
 ```
 
@@ -301,13 +301,13 @@ Both are injected as the `Authorization` header by the auth scheme declared in `
 Schema loads and CLI generates correctly. All 20 capabilities verified:
 
 ```bash
-cargo run --bin plasm-agent -- --schema apis/jira --help
-cargo run --bin plasm-agent -- --schema apis/jira issue --help
-cargo run --bin plasm-agent -- --schema apis/jira issue search --help
-cargo run --bin plasm-agent -- --schema apis/jira project query --help
-cargo run --bin plasm-agent -- --schema apis/jira worklog query --help
-cargo run --bin plasm-agent -- --schema apis/jira changelog query --help
-cargo run --bin plasm-agent -- --schema apis/jira component query --help
+cargo run --bin plasm -- --schema apis/jira --help
+cargo run --bin plasm -- --schema apis/jira issue --help
+cargo run --bin plasm -- --schema apis/jira issue search --help
+cargo run --bin plasm -- --schema apis/jira project query --help
+cargo run --bin plasm -- --schema apis/jira worklog query --help
+cargo run --bin plasm -- --schema apis/jira changelog query --help
+cargo run --bin plasm -- --schema apis/jira component query --help
 ```
 
 Pagination flags (`--limit`, `--all`, `--offset`) confirmed present on paginated capabilities.

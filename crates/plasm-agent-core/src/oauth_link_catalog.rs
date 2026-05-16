@@ -37,6 +37,8 @@ pub struct OauthLinkCatalog {
 pub(crate) struct OauthProviderConfig {
     pub authorization_endpoint: String,
     pub token_endpoint: String,
+    #[allow(dead_code)]
+    pub device_authorization_endpoint: Option<String>,
     pub default_scopes: Vec<String>,
     pub client_id: String,
     pub client_secret: String,
@@ -45,8 +47,11 @@ pub(crate) struct OauthProviderConfig {
 /// Fully resolved provider for starting OAuth (secret is always materialized here for static or JIT).
 #[derive(Clone, Debug)]
 pub struct OauthResolvedProvider {
-    pub authorization_endpoint: String,
+    /// Browser authorization-code URL when configured.
+    pub authorization_endpoint: Option<String>,
     pub token_endpoint: String,
+    /// RFC 8628 device authorization endpoint when configured.
+    pub device_authorization_endpoint: Option<String>,
     pub default_scopes: Vec<String>,
     pub client_id: String,
     pub client_secret: String,
@@ -79,6 +84,8 @@ struct CatalogFile {
 struct CatalogProviderEntry {
     authorization_endpoint: String,
     token_endpoint: String,
+    #[serde(default)]
+    device_authorization_endpoint: Option<String>,
     #[serde(default)]
     default_scopes: Vec<String>,
     client_id_env: String,
@@ -168,6 +175,7 @@ impl OauthLinkCatalog {
                 OauthProviderConfig {
                     authorization_endpoint: ent.authorization_endpoint,
                     token_endpoint: ent.token_endpoint,
+                    device_authorization_endpoint: ent.device_authorization_endpoint,
                     default_scopes: ent.default_scopes,
                     client_id,
                     client_secret,
@@ -234,8 +242,15 @@ impl OauthLinkCatalog {
                 return Err(OauthResolveError::SecretNotInKv);
             }
             return Ok(OauthResolvedProvider {
-                authorization_endpoint: meta.authorization_endpoint.as_str().to_string(),
+                authorization_endpoint: meta
+                    .authorization_endpoint
+                    .as_ref()
+                    .map(|u| u.as_str().to_string()),
                 token_endpoint: meta.token_endpoint.as_str().to_string(),
+                device_authorization_endpoint: meta
+                    .device_authorization_endpoint
+                    .as_ref()
+                    .map(|u| u.as_str().to_string()),
                 default_scopes: meta.default_scopes,
                 client_id: meta.client_id,
                 client_secret,
@@ -245,8 +260,9 @@ impl OauthLinkCatalog {
             return Err(OauthResolveError::UnknownEntry);
         };
         Ok(OauthResolvedProvider {
-            authorization_endpoint: p.authorization_endpoint.clone(),
+            authorization_endpoint: Some(p.authorization_endpoint.clone()),
             token_endpoint: p.token_endpoint.clone(),
+            device_authorization_endpoint: p.device_authorization_endpoint.clone(),
             default_scopes: p.default_scopes.clone(),
             client_id: p.client_id.clone(),
             client_secret: p.client_secret.clone(),

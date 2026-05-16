@@ -17,7 +17,7 @@ OAuth access tokens use `Bearer <token>`; for those, switch the schema to `beare
 ## Start the REPL
 
 ```bash
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/linear \
   --backend https://api.linear.app \
   --repl
@@ -100,31 +100,31 @@ Phrases with spaces are allowed in shadow args (see grammar in `:help`). Prefer 
 
 ## CLI equivalents (non-REPL)
 
-The same schema drives `**plasm-agent` subcommands** (useful for scripts). Examples:
+The same schema drives `**plasm` subcommands** (useful for scripts). Examples:
 
 ```bash
 # Lists
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   issue query --limit 20
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   issue by-team-query --team <team-uuid> --limit 50
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   workflowstate workflow-state-query --team <team-uuid>
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   cycle query --team <team-uuid>
 
 # Get
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   issue <issue-uuid>
 
 # Writes
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   issue create --team <team-uuid> --title "New bug" --description "Details…"
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   issue <issue-uuid> update --title "Renamed"
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   issue <issue-uuid> delete
-cargo run --bin plasm-agent -- --schema apis/linear --backend https://api.linear.app \
+cargo run --bin plasm -- --schema apis/linear --backend https://api.linear.app \
   comment create --issue <issue-uuid> --body "LGTM"
 ```
 

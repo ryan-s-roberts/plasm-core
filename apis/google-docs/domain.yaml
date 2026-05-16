@@ -139,6 +139,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: GOOGLE_DOCS_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:google-docs
 values:
   nv_document_body:
     type: json

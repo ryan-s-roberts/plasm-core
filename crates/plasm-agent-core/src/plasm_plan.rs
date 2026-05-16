@@ -897,6 +897,12 @@ pub fn parse_plan_value(plan: &serde_json::Value) -> Result<Plan, String> {
     serde_json::from_value(plan.clone()).map_err(|e| format!("invalid serialized plan: {e}"))
 }
 
+/// Deserialize and validate a serialized plan JSON value (HTTP resolved-plan, MCP, CLI).
+pub fn parse_and_validate_plan_json(plan: &serde_json::Value) -> Result<ValidatedPlan, String> {
+    let plan_typed = parse_plan_value(plan)?;
+    validate_plan_artifact(&plan_typed)
+}
+
 /// Parse and validate one program-shaped Plan.
 pub fn validate_plan(plan: &Plan) -> Result<(), String> {
     validate_plan_artifact(plan).map(|_| ())
@@ -1776,12 +1782,10 @@ fn validate_compute_template(
         ));
     }
     match &t.op {
-        ComputeOp::Project { fields } => {
-            if fields.is_empty() {
-                return Err(format!(
-                    "plan.nodes[{node_index}].compute.project.fields must be non-empty"
-                ));
-            }
+        ComputeOp::Project { fields } if fields.is_empty() => {
+            return Err(format!(
+                "plan.nodes[{node_index}].compute.project.fields must be non-empty"
+            ));
         }
         ComputeOp::Filter { predicates } => {
             for (j, p) in predicates.iter().enumerate() {

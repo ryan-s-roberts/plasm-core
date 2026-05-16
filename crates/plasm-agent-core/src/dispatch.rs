@@ -878,7 +878,7 @@ mod tests {
         let cgs = evm_get_cgs();
         let app = build_app(&cgs, crate::cli_builder::AgentCliSurface::CgsClient);
         let matches = app
-            .try_get_matches_from(["plasm-agent", "balance", "0xabc", "--block", "latest"])
+            .try_get_matches_from(["plasm", "balance", "0xabc", "--block", "latest"])
             .unwrap();
         let (_, entity_matches) = matches.subcommand().unwrap();
         let cap = cgs.find_capability("Balance", CapabilityKind::Get).unwrap();
@@ -972,7 +972,7 @@ mod tests {
         let app = build_app(&cgs, crate::cli_builder::AgentCliSurface::CgsClient);
         let matches = app
             .try_get_matches_from([
-                "plasm-agent",
+                "plasm",
                 "transfer",
                 "query",
                 "--from-block",
@@ -1098,7 +1098,7 @@ mod tests {
         let cgs = compound_issue_cli_cgs();
         let app = build_app(&cgs, crate::cli_builder::AgentCliSurface::CgsClient);
         let m = app
-            .try_get_matches_from(["plasm-agent", "issue", "--owner", "o", "--repo", "r", "42"])
+            .try_get_matches_from(["plasm", "issue", "--owner", "o", "--repo", "r", "42"])
             .unwrap();
         let (_, em) = m.subcommand().unwrap();
         let entity = cgs.get_entity("Issue").unwrap();

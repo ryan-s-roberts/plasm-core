@@ -35,10 +35,11 @@
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
 //! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::discovery_human_format::format_discovery_markdown;
 use crate::trace_hub::{CodePlanTrace, McpPlasmTraceSink, PlasmContextTrace};
 use std::time::Duration;
 use tracing::Instrument;
@@ -76,11 +77,8 @@ use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
-use crate::plasm_dag::{
-    compile_plasm_dag_to_plan, compile_plasm_surface_line_to_plan, is_plasm_dag_candidate,
-    split_bare_plasm_roots,
-};
-use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
+use crate::plasm_dag::{compile_plasm_expression_to_plan, split_bare_plasm_roots};
+use crate::plasm_plan::parse_and_validate_plan_json;
 use crate::plasm_plan_run::{
     evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines,
     render_plasm_plan_dry_text, run_plasm_plan, PlasmPlanRunHooks, PlasmPlanRunResult,
@@ -1047,94 +1045,6 @@ fn mcp_typed_discovery_query_from_arguments(
     })
 }
 
-/// MCP entity `description` column: max chars (Unicode scalars).
-const MCP_DISCOVERY_ENTITY_SUMMARY_MAX: usize = 200;
-
-/// Single-line TSV field: collapse whitespace, strip tabs, truncate (Unicode scalars).
-fn mcp_discovery_tsv_field(s: &str, max_chars: usize) -> String {
-    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    let no_tabs = collapsed.replace('\t', " ");
-    let n = no_tabs.chars().count();
-    if n <= max_chars {
-        no_tabs
-    } else {
-        let head: String = no_tabs.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{head}…")
-    }
-}
-
-fn entity_summary_description<'a>(
-    entity_summaries: &'a [plasm_core::discovery::EntitySummary],
-    entity: &str,
-) -> Option<&'a str> {
-    entity_summaries
-        .iter()
-        .find(|e| e.name == entity)
-        .map(|e| e.description.as_str())
-}
-
-fn format_discovery_tsv_body(
-    candidates: &[plasm_core::discovery::RankedCandidate],
-    entity_summaries: &[plasm_core::discovery::EntitySummary],
-) -> String {
-    let mut by_entry: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for c in candidates {
-        by_entry
-            .entry(c.entry_id.clone())
-            .or_default()
-            .insert(c.entity.clone());
-    }
-
-    let mut lines = vec!["api\tentity\tdescription".to_string()];
-    for (eid, entities) in &by_entry {
-        for entity in entities {
-            let description = entity_summary_description(entity_summaries, entity)
-                .map(|raw| mcp_discovery_tsv_field(raw, MCP_DISCOVERY_ENTITY_SUMMARY_MAX))
-                .unwrap_or_default();
-            lines.push(format!(
-                "{}\t{}\t{}",
-                mcp_discovery_tsv_field(eid, 200),
-                mcp_discovery_tsv_field(entity, 200),
-                description,
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
-fn format_discovery_markdown(r: &plasm_core::discovery::DiscoveryResult) -> String {
-    use plasm_core::discovery::Ambiguity;
-
-    let mut s = String::new();
-    if r.candidates.is_empty() {
-        s.push_str("_No matching entities._\n\n");
-    } else {
-        let body = format_discovery_tsv_body(&r.candidates, &r.entity_summaries);
-        s.push_str("```tsv\n");
-        s.push_str(&body);
-        s.push_str("\n```\n\n");
-    }
-
-    if !r.ambiguities.is_empty() {
-        s.push_str("**Same name in more than one `api`**\n\n");
-        for Ambiguity {
-            dimension: _,
-            entry_ids,
-            capability_name,
-            score,
-        } in &r.ambiguities
-        {
-            s.push_str(&format!(
-                "- `{capability_name}` (score {score}) — pick one `api`: {}\n",
-                entry_ids.join(", ")
-            ));
-        }
-        s.push('\n');
-    }
-
-    s
-}
-
 fn mcp_key(runtime: &Arc<dyn McpServer>) -> Result<String, CallToolError> {
     runtime.session_id().ok_or_else(|| {
         CallToolError::from_message(
@@ -1458,17 +1368,13 @@ impl PlasmMcpHandler {
             let plan_name = format!("plasm_dag_call_{call_count}");
             let pipeline = self.plasm.engine.prompt_pipeline();
             let cross = self.plasm.sessions.symbol_map_cross_cache();
-            let compile = if is_plasm_dag_candidate(&expressions) {
-                compile_plasm_dag_to_plan(pipeline, Some(cross), &es, &plan_name, &expressions[0])
-            } else {
-                compile_plasm_surface_line_to_plan(
-                    pipeline,
-                    Some(cross),
-                    &es,
-                    &plan_name,
-                    &expressions[0],
-                )
-            };
+            let compile = compile_plasm_expression_to_plan(
+                pipeline,
+                Some(cross),
+                &es,
+                &plan_name,
+                &expressions[0],
+            );
             let run_result = match compile {
                 Ok(plan) => {
                     if run_live {
@@ -1509,14 +1415,11 @@ impl PlasmMcpHandler {
                             Err(e) => Err(e),
                         }
                     } else {
-                        match parse_plan_value(&plan) {
+                        match parse_and_validate_plan_json(&plan) {
                             Err(e) => Err(e),
-                            Ok(plan_typed) => match validate_plan_artifact(&plan_typed) {
+                            Ok(validated) => match evaluate_validated_plasm_plan_dry(&es, &validated) {
                                 Err(e) => Err(e),
-                                Ok(validated) => {
-                                    match evaluate_validated_plasm_plan_dry(&es, &validated) {
-                                        Err(e) => Err(e),
-                                        Ok(dry) => {
+                                Ok(dry) => {
                                             let dry_text = render_plasm_plan_dry_text(&dry, None);
                                             let guidance = plasm_plan_review_guidance_lines(&dry);
                                             let markdown = format!("```text\n{dry_text}\n```");
@@ -1562,8 +1465,6 @@ impl PlasmMcpHandler {
                                                 run_markdown: Some(markdown),
                                                 run_plasm_meta: Some(meta),
                                             })
-                                        }
-                                    }
                                 }
                             },
                         }
@@ -2195,7 +2096,7 @@ impl ServerHandler for PlasmMcpHandler {
                         let arch = rid.map(|run_id| RunArtifactArchiveRef {
                             prompt_hash: b.prompt_hash.clone(),
                             session_id: b.session_id.clone(),
-                            run_id,
+                            run_id: run_id.to_wire(),
                             resource_index: Some(resource_index),
                         });
                         self.emit_mcp_resource_read_trace(
@@ -2251,7 +2152,7 @@ impl ServerHandler for PlasmMcpHandler {
             let archive = run_id.map(|run_id| RunArtifactArchiveRef {
                 prompt_hash: b.prompt_hash.clone(),
                 session_id: b.session_id.clone(),
-                run_id,
+                run_id: run_id.to_wire(),
                 resource_index: Some(resource_index),
             });
             crate::spans::mcp_resource_read().in_scope(|| {
@@ -2304,7 +2205,7 @@ impl ServerHandler for PlasmMcpHandler {
         let canonical_archive = RunArtifactArchiveRef {
             prompt_hash: prompt_hash.clone(),
             session_id: session_id.clone(),
-            run_id,
+            run_id: run_id.to_wire(),
             resource_index: None,
         };
         let live_sess = self
@@ -2385,7 +2286,7 @@ impl ServerHandler for PlasmMcpHandler {
                 uri = %uri,
                 prompt_hash = %prompt_hash,
                 session_id = %session_id,
-                run_id = %run_id,
+                run_id = %run_id.to_wire(),
                 bytes = payload.bytes.len(),
                 "MCP resources/read"
             );
@@ -2496,7 +2397,8 @@ async fn dispatch_plasm_mcp_call_tool_request(
 
 /// Detect MCP transport sessions that disappeared from the SDK session store (disconnect / DELETE),
 /// finalize logical-session traces that are no longer live, and drop orphaned per-transport state.
-fn spawn_mcp_domain_prompt_session_reporter(
+#[allow(private_interfaces)]
+pub(crate) fn spawn_mcp_domain_prompt_session_reporter(
     server: &HyperServer,
     plasm: Arc<PlasmHostState>,
     session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
@@ -2603,7 +2505,7 @@ fn mcp_trace_idle_finish_ms() -> u64 {
 fn mcp_initialize_result() -> InitializeResult {
     InitializeResult {
         server_info: Implementation {
-            name: "plasm-agent".into(),
+            name: "plasm".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("Plasm agent".into()),
             description: Some(
@@ -2625,6 +2527,36 @@ fn mcp_initialize_result() -> InitializeResult {
         instructions: Some(mcp_server_initialize_instructions()),
         meta: None,
     }
+}
+
+/// Build MCP Streamable HTTP server (not started) for merging with discovery routes on one port.
+pub fn build_mcp_hyper_server_for_merge(plasm: Arc<PlasmHostState>) -> HyperServer {
+    let handler_struct = PlasmMcpHandler::new(Arc::clone(&plasm));
+    let session_states = Arc::clone(&handler_struct.session_states);
+    let handler = handler_struct.to_mcp_server_handler();
+    let auth_provider: Option<Arc<dyn rust_mcp_sdk::auth::AuthProvider>> =
+        if plasm.mcp_config_repository().is_some() || plasm.incoming_auth.is_some() {
+            Some(Arc::new(
+                crate::mcp_stream_auth::PlasmMcpApiKeyAuthProvider::new(Arc::clone(&plasm)),
+            ))
+        } else {
+            None
+        };
+    let server = hyper_server::create_server(
+        mcp_initialize_result(),
+        handler,
+        HyperServerOptions {
+            host: "0.0.0.0".into(),
+            port: 0,
+            event_store: Some(Arc::new(InMemoryEventStore::default())),
+            health_endpoint: Some("/health".into()),
+            sse_support: false,
+            auth: auth_provider,
+            ..Default::default()
+        },
+    );
+    spawn_mcp_domain_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
+    server
 }
 
 /// Run Streamable HTTP MCP on `host`:`port` (default MCP path `/mcp` from the SDK).
@@ -2938,7 +2870,7 @@ mod tests {
             }],
         };
         assert_snapshot!(
-            super::format_discovery_markdown(&r),
+            crate::discovery_human_format::format_discovery_markdown(&r),
             @"
 ```tsv
 api\tentity\tdescription

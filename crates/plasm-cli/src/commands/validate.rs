@@ -269,6 +269,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                             Some(q)
                         }
                         RelationMaterialization::FromParentGet { .. }
+                        | RelationMaterialization::GetScopedBindings { .. }
                         | RelationMaterialization::Unavailable => None,
                     }
                 } else {

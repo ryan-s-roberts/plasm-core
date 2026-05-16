@@ -370,6 +370,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: GCAL_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:google-calendar
 values:
   nv_calendar_access_role:
     type: select

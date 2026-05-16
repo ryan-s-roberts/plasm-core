@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [ClickUp REST API v2](https://cl
 ```bash
 # Run against the live API (requires CLICKUP_API_TOKEN in env)
 export CLICKUP_API_TOKEN=pk_...
-cargo run --bin plasm-agent -- \
+cargo run --bin plasm -- \
   --schema apis/clickup \
   --backend https://api.clickup.com/api \
   --repl
@@ -191,47 +191,47 @@ The runtime transparently handles the single-object-under-key envelope pattern: 
 
 ```bash
 # List all workspaces (one for personal accounts)
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   team query
 
 # Get the authenticated user
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   user get-me
 
 # List spaces in a workspace
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   space query --team_id 9011608233
 
 # List folders in a space
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   folder query --space_id 90112426319
 
 # Query workspace-wide tasks (paginated, first page)
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   task query --team_id 9011608233
 
 # Query all tasks in a list
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   task list-task-query --list_id <list_id> --all
 
 # Query tasks ordered by due date, with subtasks
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   task query --team_id 9011608233 --order_by due_date --subtasks true
 
 # List goals for a workspace
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   goal query --team_id 9011608233
 
 # Get a specific task by ID
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   task 9az123xyz
 
 # List tags in a space
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   tag query --space_id 90112426319
 
 # List workspace members
-plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
+plasm --schema apis/clickup --backend https://api.clickup.com/api \
   member query --team_id 9011608233
 ```
 
@@ -244,10 +244,10 @@ plasm-agent --schema apis/clickup --backend https://api.clickup.com/api \
 Schema loads without panics. All subcommand names, typed flags, and help text verified.
 
 ```bash
-cargo run --bin plasm-agent -- --schema apis/clickup team --help
-cargo run --bin plasm-agent -- --schema apis/clickup task --help
-cargo run --bin plasm-agent -- --schema apis/clickup task query --help
-cargo run --bin plasm-agent -- --schema apis/clickup space --help
+cargo run --bin plasm -- --schema apis/clickup team --help
+cargo run --bin plasm -- --schema apis/clickup task --help
+cargo run --bin plasm -- --schema apis/clickup task query --help
+cargo run --bin plasm -- --schema apis/clickup space --help
 ```
 
 ### Against the live ClickUp API

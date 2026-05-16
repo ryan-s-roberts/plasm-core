@@ -22,6 +22,8 @@ pub enum MetaBuildError {
     BadSecretKeyRef,
     #[error("client_id must be non-empty")]
     EmptyClientId,
+    #[error("OAuth provider needs at least one of authorization_endpoint or device_authorization_endpoint")]
+    MissingOAuthEndpoints,
 }
 
 impl OAuthEndpointUrl {
@@ -88,8 +90,13 @@ impl<'de> Deserialize<'de> for OauthClientSecretKvRef {
 /// Runtime upsert: metadata only; user-facing secret fetched from KV using `client_secret_key` at OAuth start.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RuntimeOauthProviderMeta {
-    pub authorization_endpoint: OAuthEndpointUrl,
+    /// Authorization-code URL (browser redirect flow). Omitted for device-only providers.
+    #[serde(default)]
+    pub authorization_endpoint: Option<OAuthEndpointUrl>,
     pub token_endpoint: OAuthEndpointUrl,
+    /// RFC 8628 device authorization endpoint (outbound device flow).
+    #[serde(default)]
+    pub device_authorization_endpoint: Option<OAuthEndpointUrl>,
     #[serde(default)]
     pub default_scopes: Vec<String>,
     pub client_id: String,
@@ -104,8 +111,42 @@ impl RuntimeOauthProviderMeta {
         client_id: &str,
         client_secret_key: &str,
     ) -> Result<Self, MetaBuildError> {
-        let authorization_endpoint = OAuthEndpointUrl::try_new(authorization_endpoint)?;
+        Self::try_from_parts(
+            Some(authorization_endpoint),
+            token_endpoint,
+            None::<&str>,
+            default_scopes,
+            client_id,
+            client_secret_key,
+        )
+    }
+
+    /// Build runtime metadata for Postgres pull / HTTP upsert. At least one of
+    /// `authorization_endpoint` or `device_authorization_endpoint` must resolve to a valid URL.
+    pub fn try_from_parts(
+        authorization_endpoint: Option<&str>,
+        token_endpoint: &str,
+        device_authorization_endpoint: Option<&str>,
+        default_scopes: Vec<String>,
+        client_id: &str,
+        client_secret_key: &str,
+    ) -> Result<Self, MetaBuildError> {
         let token_endpoint = OAuthEndpointUrl::try_new(token_endpoint)?;
+
+        let authorization_endpoint = match authorization_endpoint {
+            Some(s) if !s.trim().is_empty() => Some(OAuthEndpointUrl::try_new(s)?),
+            _ => None,
+        };
+
+        let device_authorization_endpoint = match device_authorization_endpoint {
+            Some(s) if !s.trim().is_empty() => Some(OAuthEndpointUrl::try_new(s)?),
+            _ => None,
+        };
+
+        if authorization_endpoint.is_none() && device_authorization_endpoint.is_none() {
+            return Err(MetaBuildError::MissingOAuthEndpoints);
+        }
+
         let client_id = client_id.trim();
         if client_id.is_empty() {
             return Err(MetaBuildError::EmptyClientId);
@@ -114,6 +155,7 @@ impl RuntimeOauthProviderMeta {
         Ok(Self {
             authorization_endpoint,
             token_endpoint,
+            device_authorization_endpoint,
             default_scopes,
             client_id: client_id.to_string(),
             client_secret_key,
@@ -140,5 +182,29 @@ mod tests {
             Err(MetaBuildError::BadSecretKeyRef)
         );
         assert!(OauthClientSecretKvRef::try_new("plasm:outbound:x").is_ok());
+    }
+
+    #[test]
+    fn runtime_meta_requires_auth_or_device_endpoint() {
+        assert_eq!(
+            RuntimeOauthProviderMeta::try_from_parts(
+                None,
+                "https://example.com/token",
+                None,
+                vec![],
+                "cid",
+                "plasm:outbound:test",
+            ),
+            Err(MetaBuildError::MissingOAuthEndpoints)
+        );
+        assert!(RuntimeOauthProviderMeta::try_from_parts(
+            None,
+            "https://example.com/token",
+            Some("https://example.com/device"),
+            vec![],
+            "cid",
+            "plasm:outbound:test",
+        )
+        .is_ok());
     }
 }

@@ -6,11 +6,11 @@ Later waves (not authored here yet) should add **channels**, **tabs**, **chats**
 
 ```bash
 export MICROSOFT_GRAPH_ACCESS_TOKEN="…"   # OAuth 2.0 access token for Graph (delegated user)
-cargo run -p plasm-agent --bin plasm-cgs -- \
+cargo run -p plasm --bin plasm-cgs -- \
   --schema apis/microsoft-teams \
   --backend https://graph.microsoft.com \
   team query
-cargo run -p plasm-agent --bin plasm-cgs -- \
+cargo run -p plasm --bin plasm-cgs -- \
   --schema apis/microsoft-teams \
   --backend https://graph.microsoft.com \
   team "<team-guid>"
@@ -39,6 +39,6 @@ Microsoft Graph often returns **`@odata.nextLink`** (absolute URL) for the next 
 
 ```bash
 cargo run -p plasm-cli --bin plasm -- schema validate apis/microsoft-teams
-cargo run -p plasm-agent --bin plasm-cgs -- --schema apis/microsoft-teams --backend https://graph.microsoft.com --help
+cargo run -p plasm --bin plasm-cgs -- --schema apis/microsoft-teams --backend https://graph.microsoft.com --help
 cargo run -p plasm-eval -- coverage --schema apis/microsoft-teams --cases apis/microsoft-teams/eval/cases.yaml
 ```

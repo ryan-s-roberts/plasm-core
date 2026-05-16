@@ -442,6 +442,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: GOOGLE_SHEETS_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:google-sheets
 values:
   nv_developer_metadata_spreadsheet_id:
     type: entity_ref

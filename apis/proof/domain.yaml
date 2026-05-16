@@ -3,6 +3,7 @@ http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
   env: PROOF_API_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:proof
   # Omit PROOF_API_TOKEN when the session already bound the doc via document_share_bind (share flows).
   optional_env: true
 

@@ -20,7 +20,7 @@ Configure **transport keys** and **incoming auth** when you enforce multi-tenant
 
 ## What you are running
 
-- **`plasm-mcp`** from the **`plasm-agent`** crate exposes MCP tools, discovery, health checks, and optional **`/internal/*`** routes for MCP config/API keys when a SQL URL resolves. See [OSS appliance MCP persistence](../reference/oss-appliance-mcp-persistence.md).
+- **`plasm-mcp`** from the **`plasm`** crate exposes MCP tools, discovery, health checks, and optional **`/internal/*`** routes for MCP config/API keys when a SQL URL resolves. See [OSS appliance MCP persistence](../reference/oss-appliance-mcp-persistence.md).
 - **Bearer keys:** MCP HTTP clients use **Bearer** API keys once tenant MCP rows exist; behavior when **no** configs are loaded is documented in **`AGENTS.md`** (local anonymous mode).
 
 ---

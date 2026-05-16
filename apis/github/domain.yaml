@@ -3676,6 +3676,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: GITHUB_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:github
 values:
   nv_auth_user_repos_query_affiliation:
     type: string

@@ -1,4 +1,4 @@
-//! Remote HTTP terminal for `plasm-cgs`: discovery, execute sessions, plan/run, mirror hooks.
+//! Remote HTTP terminal for `plasm`: discovery, client-owned context symbols, plan/run.
 //!
 //! See `docs/plasm-cgs-remote-terminal.md` in the parent repo.
 
@@ -10,31 +10,59 @@ use reqwest::header::{
 use reqwest::redirect::Policy;
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::http_discovery::TerminalDiscoverBody;
-use crate::http_execute::{CapabilitySeed, CreateExecuteSessionBody, ExecuteSessionContextBody};
+use crate::http_execute::{
+    build_capability_exposure_plan, CapabilitySeed, CreateExecuteSessionBody,
+    CreateExecuteSessionResponse, ExecuteSessionContextBody,
+};
+use crate::plasm_plan::parse_and_validate_plan_json;
+use crate::resolved_plan_http::{
+    ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
+    RESOLVED_PLAN_CONTENT_TYPE,
+};
+use crate::terminal_session::ClientSymbolSession;
+use crate::terminal_state::{
+    format_qualified_capabilities, merge_and_write_latest_discovery, mint_client_session_id,
+    read_current_session_pointer, resolve_capability_seeds, resolve_current_session,
+    write_current_session_pointer, write_session_file,
+    ExecutionBinding,
+};
+
+/// Default HTTP origin written by `plasm init` when `--server` is omitted.
+pub const DEFAULT_PLASM_HTTP_ORIGIN: &str = "http://127.0.0.1:3000";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct TerminalProfile {
-    server: Option<String>,
-    api_key: Option<String>,
-    bearer_token: Option<String>,
+pub struct TerminalProfile {
+    pub server: Option<String>,
+    pub api_key: Option<String>,
+    pub bearer_token: Option<String>,
+}
+
+/// Auth view for HTTP helpers shared with [`crate::terminal_session`].
+pub struct TerminalProfileRef<'a> {
+    inner: &'a TerminalProfile,
+}
+
+impl<'a> TerminalProfileRef<'a> {
+    pub fn new(inner: &'a TerminalProfile) -> Self {
+        Self { inner }
+    }
+
+    pub fn apply_auth_headers(&self, headers: &mut HeaderMap) -> Result<()> {
+        apply_auth_headers(headers, self.inner)
+    }
 }
 
 #[derive(Parser)]
 #[command(
-    name = "plasm-cgs",
-    about = "Remote Plasm terminal (HTTP execute / discovery protocol)"
+    name = "plasm",
+    version = env!("CARGO_PKG_VERSION"),
+    about = "Remote Plasm terminal — search, context, run (HTTP). Run `plasm init` once, then `doctor` if needed.",
 )]
 struct Cli {
-    /// Plasm HTTP server origin (e.g. http://127.0.0.1:3000). Overrides profile / `PLASM_CGS_SERVER`.
-    /// Overrides `PLASM_CGS_SERVER` and profile `server`.
-    #[arg(long, global = true)]
-    server: Option<String>,
-    /// Profile name under `~/.plasm/cgs/profiles/<name>.json`.
     #[arg(long, global = true, default_value = "default")]
     profile: String,
     #[command(subcommand)]
@@ -43,112 +71,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Verify inbound auth against `GET /v1/incoming-auth/context`.
-    Whoami,
-    /// Intent-native discovery (`POST /v1/terminal/discover`).
-    Search {
-        /// Natural-language intent (quote words if needed).
-        #[arg(required = true)]
-        intent: String,
+    Init {
         #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// Open execute session (`POST /execute` → follow 303, then `GET` session JSON).
-    Open {
-        #[arg(long)]
-        entry: String,
-        #[arg(long, value_delimiter = ',')]
-        entities: Vec<String>,
-        #[arg(long)]
-        intent: Option<String>,
-    },
-    /// Append federated / expanded seeds (`POST /execute/{prompt_hash}/{session}/context`).
-    Context {
-        #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
-        /// `entry_id:entity` pairs (e.g. `--seed overshow:Profile`, repeatable).
-        #[arg(long = "seed", action = clap::ArgAction::Append)]
-        seeds: Vec<String>,
-        #[arg(long)]
-        intent: Option<String>,
-    },
-    /// Run Plasm lines (`POST /execute/...`); body from stdin unless `--file`.
-    Run {
-        #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
-        /// `plan` or `run` (also `X-Plasm-Run-Mode`).
-        #[arg(long, default_value = "run")]
-        mode: String,
-        #[arg(long, default_value = "text/toon")]
-        accept: String,
-        #[arg(long)]
-        file: Option<PathBuf>,
-    },
-    /// Structured symbols (`GET /execute/.../symbols`).
-    Symbols {
-        #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
-    },
-    /// Session status (`GET /execute/.../status`).
-    Status {
-        #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
-    },
-    /// Run index from session hot cache (`GET /execute/.../runs`).
-    Runs {
-        #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
-    },
-    /// Fetch run artifact JSON (`GET /execute/.../artifacts/{run_id}`).
-    Artifact {
-        #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        run_id: String,
-    },
-    /// Store API key / bearer in profile JSON (optional helper).
-    AuthSet {
+        server: Option<String>,
         #[arg(long)]
         api_key: Option<String>,
         #[arg(long)]
         bearer_token: Option<String>,
     },
-    /// Print local mirror directory for a session (creates layout).
-    MirrorPath {
+    Doctor,
+    Search {
+        #[arg(required = true)]
+        intent: String,
         #[arg(long)]
-        prompt_hash: String,
-        #[arg(long)]
-        session: String,
+        limit: Option<usize>,
     },
-    /// Repair local mirror from server run index + artifact GETs.
-    MirrorPull {
+    Context {
         #[arg(long)]
-        prompt_hash: String,
+        new: bool,
         #[arg(long)]
-        session: String,
+        verbose: bool,
+        intent: Option<String>,
+        capabilities: Vec<String>,
     },
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    Run {
+        #[arg(long, default_value = "run")]
+        mode: String,
+        #[arg(long, default_value = "text/plain")]
+        accept: String,
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
 }
 
 fn profile_path(name: &str) -> PathBuf {
-    home_dir()
+    crate::terminal_state::home_dir()
         .join(".plasm/cgs/profiles")
         .join(format!("{name}.json"))
 }
@@ -172,57 +129,40 @@ fn save_profile(name: &str, prof: &TerminalProfile) -> Result<()> {
     Ok(())
 }
 
-fn resolve_server(cli: Option<&str>, profile: &TerminalProfile) -> Result<String> {
-    if let Some(s) = cli {
-        let t = s.trim();
-        if !t.is_empty() {
-            return Ok(t.trim_end_matches('/').to_string());
-        }
-    }
-    if let Ok(s) = std::env::var("PLASM_CGS_SERVER") {
-        let t = s.trim();
-        if !t.is_empty() {
-            return Ok(t.trim_end_matches('/').to_string());
-        }
-    }
-    if let Some(ref s) = profile.server {
-        let t = s.trim();
-        if !t.is_empty() {
-            return Ok(t.trim_end_matches('/').to_string());
-        }
-    }
-    Err(anyhow!(
-        "missing server: pass --server, set PLASM_CGS_SERVER, or add \"server\" to the profile JSON"
-    ))
+fn normalize_http_origin(s: &str) -> String {
+    s.trim().trim_end_matches('/').to_string()
+}
+
+fn require_configured_server(profile: &TerminalProfile) -> Result<String> {
+    profile
+        .server
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(normalize_http_origin)
+        .ok_or_else(|| {
+            anyhow!(
+                "Plasm is not configured. Run `plasm init` first (e.g. `plasm init --server http://127.0.0.1:3000`)."
+            )
+        })
 }
 
 fn resolve_api_key(profile: &TerminalProfile) -> Option<String> {
-    std::env::var("PLASM_CGS_API_KEY")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            profile
-                .api_key
-                .as_ref()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
+    profile
+        .api_key
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn resolve_bearer(profile: &TerminalProfile) -> Option<String> {
-    std::env::var("PLASM_CGS_BEARER_TOKEN")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            profile
-                .bearer_token
-                .as_ref()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
+    profile
+        .bearer_token
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
-fn apply_auth_headers(headers: &mut HeaderMap, profile: &TerminalProfile) -> Result<()> {
+pub fn apply_auth_headers(headers: &mut HeaderMap, profile: &TerminalProfile) -> Result<()> {
     let api_key = resolve_api_key(profile);
     let bearer = resolve_bearer(profile);
     match (api_key, bearer) {
@@ -245,32 +185,58 @@ fn apply_auth_headers(headers: &mut HeaderMap, profile: &TerminalProfile) -> Res
     Ok(())
 }
 
-fn server_slug(server: &str) -> String {
-    let h = Sha256::digest(server.as_bytes());
-    hex::encode(h)[..12].to_string()
-}
-
-fn session_mirror_dir(server: &str, prompt_hash: &str, session: &str) -> PathBuf {
-    home_dir()
-        .join(".plasm/cgs/servers")
-        .join(server_slug(server))
-        .join("sessions")
-        .join(prompt_hash)
-        .join(session)
-}
-
-fn write_mirror_meta(
-    server: &str,
-    prompt_hash: &str,
-    session: &str,
-    label: &str,
-    bytes: &[u8],
-) -> Result<PathBuf> {
-    let dir = session_mirror_dir(server, prompt_hash, session);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(label);
-    std::fs::write(&path, bytes)?;
-    Ok(path)
+fn run_init(
+    profile_name: &str,
+    profile: &mut TerminalProfile,
+    server: Option<String>,
+    api_key: Option<String>,
+    bearer_token: Option<String>,
+) -> Result<()> {
+    if let Some(s) = server {
+        let t = s.trim();
+        if t.is_empty() {
+            return Err(anyhow!("init: --server must not be empty"));
+        }
+        profile.server = Some(normalize_http_origin(t));
+    } else if profile
+        .server
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        profile.server = Some(DEFAULT_PLASM_HTTP_ORIGIN.to_string());
+    }
+    if let Some(k) = api_key {
+        profile.api_key = Some(k);
+    }
+    if let Some(b) = bearer_token {
+        profile.bearer_token = Some(b);
+    }
+    let path = profile_path(profile_name);
+    save_profile(profile_name, profile)?;
+    println!("configured {}", path.display());
+    println!("  server: {}", profile.server.as_deref().unwrap_or("(none)"));
+    println!(
+        "  api_key: {}",
+        if profile.api_key.as_ref().is_some_and(|s| !s.is_empty()) {
+            "set"
+        } else {
+            "unset"
+        }
+    );
+    println!(
+        "  bearer_token: {}",
+        if profile
+            .bearer_token
+            .as_ref()
+            .is_some_and(|s| !s.is_empty())
+        {
+            "set"
+        } else {
+            "unset"
+        }
+    );
+    Ok(())
 }
 
 fn read_program_body(path: Option<&PathBuf>) -> Result<Vec<u8>> {
@@ -321,68 +287,400 @@ async fn send_bytes(
     Ok((status, hdrs, bytes))
 }
 
-/// Entry point for the `plasm-cgs` binary.
+async fn http_create_session(
+    client: &Client,
+    server: &str,
+    profile: &TerminalProfile,
+    entry_id: &str,
+    entities: Vec<String>,
+    intent: Option<String>,
+) -> Result<CreateExecuteSessionResponse> {
+    let body_json = serde_json::to_vec(&CreateExecuteSessionBody {
+        entry_id: entry_id.to_string(),
+        entities,
+        principal: None,
+        logical_session_id: None,
+        context_intent: intent,
+        ranked_capabilities: None,
+    })?;
+    let create_client = Client::builder()
+        .redirect(Policy::none())
+        .build()
+        .map_err(|e| anyhow!("http client (no redirect): {e}"))?;
+    let url = format!("{}/execute", server.trim_end_matches('/'));
+    let mut headers = HeaderMap::new();
+    apply_auth_headers(&mut headers, profile)?;
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let res = create_client
+        .post(url)
+        .headers(headers)
+        .body(body_json)
+        .send()
+        .await?;
+    let st = res.status();
+    if st != StatusCode::SEE_OTHER {
+        let b = res.bytes().await?;
+        return Err(anyhow!(
+            "open session: expected 303, got {st}: {}",
+            String::from_utf8_lossy(&b)
+        ));
+    }
+    let loc = res
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| anyhow!("open session: missing Location header"))?;
+    let session_url = if loc.starts_with("http") {
+        loc.to_string()
+    } else {
+        format!("{}{}", server.trim_end_matches('/'), loc)
+    };
+    let mut gh = HeaderMap::new();
+    apply_auth_headers(&mut gh, profile)?;
+    gh.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    let get = client.get(&session_url).headers(gh).send().await?;
+    let gst = get.status();
+    let session_body = get.bytes().await?.to_vec();
+    if !gst.is_success() {
+        return Err(anyhow!(
+            "open session: GET failed {gst}: {}",
+            String::from_utf8_lossy(&session_body)
+        ));
+    }
+    serde_json::from_slice(&session_body).map_err(|e| anyhow!("open session: invalid JSON: {e}"))
+}
+
+async fn http_post_context(
+    client: &Client,
+    server: &str,
+    profile: &TerminalProfile,
+    prompt_hash: &str,
+    session: &str,
+    intent: Option<String>,
+    seeds: Vec<CapabilitySeed>,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&ExecuteSessionContextBody { intent, seeds })?;
+    let path = format!("/execute/{prompt_hash}/{session}/context");
+    let (st, _, body) = send_bytes(
+        client,
+        server,
+        profile,
+        Method::POST,
+        &path,
+        Some("application/json"),
+        Some("application/json"),
+        Some(payload),
+    )
+    .await?;
+    if !st.is_success() {
+        return Err(anyhow!(
+            "context: HTTP {st}: {}",
+            String::from_utf8_lossy(&body)
+        ));
+    }
+    Ok(())
+}
+
+fn context_seeds_after_open(seeds: &[CapabilitySeed], primary_entry_id: &str) -> Vec<CapabilitySeed> {
+    seeds
+        .iter()
+        .filter(|s| s.entry_id != primary_entry_id)
+        .cloned()
+        .collect()
+}
+
+/// Lazy server execute binding for HTTP run/plan (opaque; symbols stay on the client).
+async fn ensure_execution_binding(
+    client: &Client,
+    server: &str,
+    profile: &TerminalProfile,
+    sym: &mut ClientSymbolSession,
+) -> Result<ExecutionBinding> {
+    if let Some(ex) = sym.execution.clone() {
+        return Ok(ex);
+    }
+    let seeds: Vec<CapabilitySeed> = sym
+        .capabilities
+        .iter()
+        .map(|(api, entity)| CapabilitySeed {
+            entry_id: api.clone(),
+            entity: entity.clone(),
+        })
+        .collect();
+    let plan = build_capability_exposure_plan(&seeds)
+        .ok_or_else(|| anyhow!("empty capability set for execution binding"))?;
+    let primary_api = plan.primary_entry_id.clone();
+    let primary_entities = plan
+        .seeds_by_entry
+        .get(&primary_api)
+        .cloned()
+        .ok_or_else(|| anyhow!("missing entities for execution binding"))?;
+    let created = http_create_session(
+        client,
+        server,
+        profile,
+        &primary_api,
+        primary_entities,
+        Some(sym.intent.clone()),
+    )
+    .await?;
+    let ph = created.prompt_hash.clone();
+    let sid = created.session.clone();
+    let follow_on = context_seeds_after_open(&seeds, &primary_api);
+    if !follow_on.is_empty() {
+        http_post_context(
+            client,
+            server,
+            profile,
+            &ph,
+            &sid,
+            Some(sym.intent.clone()),
+            follow_on,
+        )
+        .await?;
+    }
+    let binding = ExecutionBinding {
+        prompt_hash: ph,
+        session: sid,
+    };
+    sym.execution = Some(binding.clone());
+    sym.persist(server)?;
+    Ok(binding)
+}
+
+fn print_context_summary(capabilities: &[(String, String)], mirror: &Path, rows_added: usize) {
+    println!(
+        "Active context: {}",
+        format_qualified_capabilities(capabilities)
+    );
+    if rows_added > 0 {
+        eprintln!("mirror: {} (+{rows_added} rows)", mirror.display());
+    } else {
+        eprintln!("mirror: {}", mirror.display());
+    }
+}
+
+async fn run_context_command(
+    client: &Client,
+    server: &str,
+    profile: &TerminalProfile,
+    new_session: bool,
+    verbose: bool,
+    intent_arg: Option<String>,
+    capability_names: Vec<String>,
+) -> Result<()> {
+    let discovery = crate::terminal_state::read_latest_discovery(server)?;
+    let seeds = resolve_capability_seeds(&capability_names, discovery.as_ref())?;
+
+    let resolved_intent = intent_arg
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            discovery
+                .as_ref()
+                .and_then(|d| d.intent.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        });
+
+    let mut sym = if new_session {
+        let id = mint_client_session_id();
+        let intent = resolved_intent.clone().ok_or_else(|| {
+            anyhow!("context: pass an intent string as the first argument, or run `plasm search` first")
+        })?;
+        ClientSymbolSession::new(id, intent)
+    } else if let Some(id) = read_current_session_pointer(server)? {
+        ClientSymbolSession::load_from_disk(server, &id)?
+    } else {
+        let id = mint_client_session_id();
+        let intent = resolved_intent.clone().ok_or_else(|| {
+            anyhow!("context: pass an intent string as the first argument, or run `plasm search` first")
+        })?;
+        ClientSymbolSession::new(id, intent)
+    };
+
+    if let Some(intent) = resolved_intent {
+        sym.intent = intent;
+    }
+
+    let prof_ref = TerminalProfileRef::new(profile);
+    for api in seeds.iter().map(|s| s.entry_id.as_str()).collect::<std::collections::HashSet<_>>() {
+        sym.ensure_catalog(client, server, &prof_ref, api).await?;
+    }
+
+    let tsv_delta = sym.expose_seeds(&seeds)?;
+    let (mirror_path, rows_added) = if tsv_delta.is_empty() {
+        (
+            crate::terminal_state::domain_tsv_path(server, &sym.client_session_id),
+            0,
+        )
+    } else {
+        sym.append_rendered_tsv(server, &tsv_delta)?
+    };
+
+    if verbose && !tsv_delta.is_empty() {
+        println!("\n--- client exposure ---\n{tsv_delta}");
+    }
+
+    sym.persist(server)?;
+    write_current_session_pointer(server, &sym.client_session_id)?;
+
+    print_context_summary(&sym.capabilities, &mirror_path, rows_added);
+    Ok(())
+}
+
+fn extract_run_id_from_response(headers: &HeaderMap, body: &[u8]) -> Option<String> {
+    if let Some(rid) = headers
+        .get("x-plasm-run-id")
+        .and_then(|v| v.to_str().ok())
+    {
+        return Some(rid.to_string());
+    }
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    v.get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("steps"))
+        .and_then(|s| s.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|step| step.get("run_id"))
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+}
+
+async fn mirror_run_snapshot(
+    client: &Client,
+    server: &str,
+    profile: &TerminalProfile,
+    client_session_id: &str,
+    prompt_hash: &str,
+    session: &str,
+    run_id: &str,
+) -> Result<PathBuf> {
+    let path = format!("/execute/{prompt_hash}/{session}/artifacts/{run_id}");
+    let (st, _, body) = send_bytes(
+        client,
+        server,
+        profile,
+        Method::GET,
+        &path,
+        Some("application/json"),
+        None,
+        None,
+    )
+    .await?;
+    if !st.is_success() {
+        return Err(anyhow!("artifact GET failed HTTP {st}"));
+    }
+    let run_dir = crate::terminal_state::client_session_dir(server, client_session_id)
+        .join("runs")
+        .join(run_id);
+    std::fs::create_dir_all(&run_dir)?;
+    let snap = run_dir.join("snapshot.txt");
+    let text = serde_json::to_string_pretty(&serde_json::from_slice::<serde_json::Value>(&body)?)
+        .unwrap_or_else(|_| String::from_utf8_lossy(&body).into_owned());
+    std::fs::write(&snap, &text)?;
+    let latest = crate::terminal_state::client_session_dir(server, client_session_id)
+        .join("latest_run.txt");
+    std::fs::write(latest, format!("runs/{run_id}/snapshot.txt\n"))?;
+    Ok(snap)
+}
+
+async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()> {
+    let p = profile_path(profile_name);
+    println!("plasm remote — diagnostics");
+    println!();
+    println!("Profile: {}", p.display());
+    println!("  exists: {}", p.exists());
+    println!();
+    let origin = match require_configured_server(profile) {
+        Ok(o) => o,
+        Err(e) => {
+            println!("HTTP API origin: (not configured)");
+            println!("  {e}");
+            println!();
+            println!("Agent flow: `plasm init` → `search` → `context \"intent\" Cap …` → `run`");
+            return Ok(());
+        }
+    };
+    println!("HTTP API origin: {origin}");
+    println!("  resolved from: profile");
+    println!(
+        "  api_key: {}",
+        if resolve_api_key(profile).is_some() {
+            "set"
+        } else {
+            "unset"
+        }
+    );
+    println!(
+        "  bearer_token: {}",
+        if resolve_bearer(profile).is_some() {
+            "set"
+        } else {
+            "unset"
+        }
+    );
+    println!();
+    let client = Client::builder()
+        .build()
+        .map_err(|e| anyhow!("http client: {e}"))?;
+    match send_bytes(
+        &client,
+        &origin,
+        profile,
+        Method::GET,
+        "/v1/health",
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok((st, _, _)) => println!("  GET /v1/health -> {st}"),
+        Err(e) => println!("  GET /v1/health -> error: {e}"),
+    }
+    println!();
+    println!("Agent flow: `search` → `context \"intent\" Cap …` → `run`");
+    println!("Local state: ~/.plasm/cgs/servers/<slug>/current_session.txt → sessions/<client_session_id>/");
+    Ok(())
+}
+
+/// Entry point for the `plasm` binary.
 pub async fn run_terminal() -> Result<()> {
     crate::init_agent_runtime().map_err(|e| anyhow!("{e}"))?;
     let cli = Cli::parse();
     let mut profile = load_profile(cli.profile.as_str())?;
-    let server = resolve_server(cli.server.as_deref(), &profile)?;
-    let client = Client::builder()
-        .build()
-        .map_err(|e| anyhow!("http client: {e}"))?;
 
     match cli.cmd {
-        Cmd::AuthSet {
+        Cmd::Init {
+            server,
             api_key,
             bearer_token,
-        } => {
-            if api_key.is_none() && bearer_token.is_none() {
-                return Err(anyhow!("auth-set: pass --api-key and/or --bearer-token"));
-            }
-            if let Some(k) = api_key {
-                profile.api_key = Some(k);
-            }
-            if let Some(b) = bearer_token {
-                profile.bearer_token = Some(b);
-            }
-            save_profile(cli.profile.as_str(), &profile)?;
-            println!(
-                "updated profile {}",
-                profile_path(cli.profile.as_str()).display()
-            );
-            Ok(())
-        }
-        Cmd::Whoami => {
-            let (st, _, body) = send_bytes(
-                &client,
-                &server,
-                &profile,
-                Method::GET,
-                "/v1/incoming-auth/context",
-                Some("application/json"),
-                None,
-                None,
-            )
-            .await?;
-            if !st.is_success() {
-                eprintln!("whoami: HTTP {}", st);
-                std::io::stdout().write_all(&body)?;
-                std::process::exit(1);
-            }
-            std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
-        }
+        } => run_init(
+            cli.profile.as_str(),
+            &mut profile,
+            server,
+            api_key,
+            bearer_token,
+        ),
+        Cmd::Doctor => run_doctor(cli.profile.as_str(), &profile).await,
         Cmd::Search { intent, limit } => {
             let utterance = intent.trim().to_string();
             if utterance.is_empty() {
                 return Err(anyhow!("search: intent text required"));
             }
+            let server = require_configured_server(&profile)?;
+            let client = Client::builder()
+                .build()
+                .map_err(|e| anyhow!("http client: {e}"))?;
             let payload = serde_json::to_vec(&TerminalDiscoverBody {
-                intent: utterance,
+                intent: utterance.clone(),
                 limit,
                 allowed_entry_ids: vec![],
-                enable_embeddings: false,
             })?;
             let (st, _, body) = send_bytes(
                 &client,
@@ -390,7 +688,7 @@ pub async fn run_terminal() -> Result<()> {
                 &profile,
                 Method::POST,
                 "/v1/terminal/discover",
-                Some("application/json"),
+                Some("text/plain"),
                 Some("application/json"),
                 Some(payload),
             )
@@ -400,140 +698,91 @@ pub async fn run_terminal() -> Result<()> {
                 std::io::stdout().write_all(&body)?;
                 std::process::exit(1);
             }
+            let md = String::from_utf8_lossy(&body);
+            let disc =
+                crate::terminal_state::discovery_from_search_markdown(&md, &utterance)?;
+            let path = merge_and_write_latest_discovery(&server, &disc)?;
+            eprintln!("discovery cache: {}", path.display());
             std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
-        }
-        Cmd::Open {
-            entry,
-            entities,
-            intent,
-        } => {
-            if entities.is_empty() {
-                return Err(anyhow!("open: --entities required (comma-separated)"));
+            if !body.ends_with(b"\n") {
+                println!();
             }
-            let body_json = serde_json::to_vec(&CreateExecuteSessionBody {
-                entry_id: entry,
-                entities,
-                principal: None,
-                logical_session_id: None,
-                context_intent: intent,
-                ranked_capabilities: None,
-            })?;
-            // POST /execute returns 303 + Location; default reqwest follows redirects (GET) and we would only see 200.
-            let create_client = Client::builder()
-                .redirect(Policy::none())
-                .build()
-                .map_err(|e| anyhow!("http client (no redirect): {e}"))?;
-            let url = format!("{}/execute", server.trim_end_matches('/'));
-            let mut headers = HeaderMap::new();
-            apply_auth_headers(&mut headers, &profile)?;
-            headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            let res = create_client
-                .post(url)
-                .headers(headers)
-                .body(body_json)
-                .send()
-                .await?;
-            let st = res.status();
-            if st != StatusCode::SEE_OTHER {
-                let b = res.bytes().await?;
-                eprintln!("open: expected 303, got {st}");
-                std::io::stdout().write_all(&b)?;
-                std::process::exit(1);
-            }
-            let loc = res
-                .headers()
-                .get(reqwest::header::LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| anyhow!("open: missing Location header"))?;
-            let session_url = if loc.starts_with("http") {
-                loc.to_string()
-            } else {
-                format!("{}{}", server.trim_end_matches('/'), loc)
-            };
-            let mut gh = HeaderMap::new();
-            apply_auth_headers(&mut gh, &profile)?;
-            gh.insert(ACCEPT, HeaderValue::from_static("application/json"));
-            let get = client.get(&session_url).headers(gh).send().await?;
-            let gst = get.status();
-            let session_body = get.bytes().await?.to_vec();
-            if !gst.is_success() {
-                eprintln!("open: GET session failed {gst}");
-                std::io::stdout().write_all(&session_body)?;
-                std::process::exit(1);
-            }
-            // Mirror session JSON for agents / resume.
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&session_body) {
-                if let (Some(ph), Some(sid)) = (
-                    v.get("prompt_hash").and_then(|x| x.as_str()),
-                    v.get("session").and_then(|x| x.as_str()),
-                ) {
-                    let p = write_mirror_meta(&server, ph, sid, "session.json", &session_body)?;
-                    eprintln!("mirror: {}", p.display());
-                }
-            }
-            std::io::stdout().write_all(&session_body)?;
-            println!();
             Ok(())
         }
         Cmd::Context {
-            prompt_hash,
-            session,
-            seeds,
+            new,
+            verbose,
             intent,
+            capabilities,
         } => {
-            let mut cap_seeds = Vec::new();
-            for s in seeds {
-                let (eid, ent) = s
-                    .split_once(':')
-                    .ok_or_else(|| anyhow!("context: seeds must be entry_id:entity (got {s:?})"))?;
-                cap_seeds.push(CapabilitySeed {
-                    entry_id: eid.trim().to_string(),
-                    entity: ent.trim().to_string(),
-                });
-            }
-            if cap_seeds.is_empty() {
-                return Err(anyhow!("context: pass at least one --seed entry_id:entity"));
-            }
-            let payload = serde_json::to_vec(&ExecuteSessionContextBody {
-                intent,
-                seeds: cap_seeds,
-            })?;
-            let path = format!("/execute/{prompt_hash}/{session}/context");
-            let (st, _, body) = send_bytes(
+            let server = require_configured_server(&profile)?;
+            let client = Client::builder()
+                .build()
+                .map_err(|e| anyhow!("http client: {e}"))?;
+            run_context_command(
                 &client,
                 &server,
                 &profile,
-                Method::POST,
-                &path,
-                Some("application/json"),
-                Some("application/json"),
-                Some(payload),
+                new,
+                verbose,
+                intent,
+                capabilities,
             )
-            .await?;
-            if !st.is_success() {
-                eprintln!("context: HTTP {}", st);
-                std::io::stdout().write_all(&body)?;
-                std::process::exit(1);
-            }
-            std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
+            .await
         }
         Cmd::Run {
-            prompt_hash,
-            session,
             mode,
             accept,
             file,
         } => {
+            let server = require_configured_server(&profile)?;
+            let meta = resolve_current_session(&server)?;
+            let mut sym = ClientSymbolSession::load_from_disk(&server, &meta.client_session_id)?;
             let body = read_program_body(file.as_ref())?;
             if body.is_empty() {
                 return Err(anyhow!("run: empty program (stdin or --file)"));
             }
-            let path = format!("/execute/{prompt_hash}/{session}?mode={}", mode.trim());
+            let line = String::from_utf8(body).map_err(|_| anyhow!("run: program must be UTF-8"))?;
+            let program = line.trim().to_string();
+            let plan_json = sym
+                .compile_program_to_plan(&program)
+                .context("compile program to plan")?;
+            parse_and_validate_plan_json(&plan_json).map_err(|e| anyhow!("plan: {e}"))?;
+            let plan_bytes = serde_json::to_vec_pretty(&plan_json)
+                .map_err(|e| anyhow!("plan json: {e}"))?;
+            let _ = write_session_file(
+                server.as_str(),
+                &sym.client_session_id,
+                "latest_program.plasm",
+                program.as_bytes(),
+            );
+            let _ = write_session_file(
+                server.as_str(),
+                &sym.client_session_id,
+                "latest_plan.json",
+                &plan_bytes,
+            );
+            let client = Client::builder()
+                .build()
+                .map_err(|e| anyhow!("http client: {e}"))?;
+            let binding = ensure_execution_binding(&client, &server, &profile, &mut sym).await?;
+            let ph = binding.prompt_hash.trim();
+            let sid = binding.session.trim();
+            let mode_trim = mode.trim().to_lowercase();
+            let run_mode = if mode_trim == "plan" {
+                ResolvedPlanRunMode::Plan
+            } else {
+                ResolvedPlanRunMode::Run
+            };
+            let req = ResolvedPlanRequest {
+                protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
+                client_session_id: sym.client_session_id.clone(),
+                catalog_pins: sym.catalog_pins(),
+                mode: run_mode,
+                source_program: program,
+                plan: plan_json,
+            };
+            let path = format!("/execute/{ph}/{sid}/plan");
             let mut headers = HeaderMap::new();
             apply_auth_headers(&mut headers, &profile)?;
             headers.insert(
@@ -542,7 +791,8 @@ pub async fn run_terminal() -> Result<()> {
             );
             headers.insert(
                 CONTENT_TYPE,
-                HeaderValue::from_static("text/plain; charset=utf-8"),
+                HeaderValue::from_str(RESOLVED_PLAN_CONTENT_TYPE)
+                    .map_err(|e| anyhow!("content-type: {e}"))?,
             );
             let url = format!(
                 "{}/{}",
@@ -552,211 +802,50 @@ pub async fn run_terminal() -> Result<()> {
             let res = client
                 .post(url)
                 .headers(headers)
-                .body(body.clone())
+                .body(serde_json::to_vec(&req).map_err(|e| anyhow!("request json: {e}"))?)
                 .send()
                 .await?;
             let st = res.status();
             let rh = res.headers().clone();
             let out = res.bytes().await?.to_vec();
-            // Mirror (no secrets): program + response + selected headers.
-            let _ = write_mirror_meta(
-                &server,
-                &prompt_hash,
-                &session,
-                "latest_request.plasm",
-                &body,
-            );
-            let _ = write_mirror_meta(&server, &prompt_hash, &session, "latest_response.bin", &out);
-            let hdr_dump = format!("{st}\n{:?}", rh);
-            let _ = write_mirror_meta(
-                &server,
-                &prompt_hash,
-                &session,
-                "latest_response_headers.txt",
-                hdr_dump.as_bytes(),
-            );
-            if let Some(rid) = rh.get("x-plasm-run-id").and_then(|v| v.to_str().ok()) {
-                let run_dir = session_mirror_dir(&server, &prompt_hash, &session)
-                    .join("runs")
-                    .join(rid);
-                std::fs::create_dir_all(&run_dir)?;
-                let _ = std::fs::write(run_dir.join("request.plasm"), &body);
-                let _ = std::fs::write(run_dir.join("response.bin"), &out);
-                let _ = std::fs::write(run_dir.join("response_headers.txt"), hdr_dump.as_bytes());
-                eprintln!("mirror run: {}", run_dir.display());
-            }
+            let label = if mode_trim == "plan" {
+                "latest_plan.txt"
+            } else {
+                "latest_result.txt"
+            };
+            let mirror_resp = write_session_file(
+                server.as_str(),
+                &sym.client_session_id,
+                label,
+                &out,
+            )?;
+            eprintln!("mirror: {}", mirror_resp.display());
             if !st.is_success() {
                 eprintln!("run: HTTP {}", st);
+                std::io::stdout().write_all(&out)?;
+                std::process::exit(1);
             }
             std::io::stdout().write_all(&out)?;
             if !out.ends_with(b"\n") {
                 println!();
             }
-            if !st.is_success() {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
-        Cmd::Symbols {
-            prompt_hash,
-            session,
-        } => {
-            let path = format!("/execute/{prompt_hash}/{session}/symbols");
-            let (st, _, body) = send_bytes(
-                &client,
-                &server,
-                &profile,
-                Method::GET,
-                &path,
-                Some("application/json"),
-                None,
-                None,
-            )
-            .await?;
-            if !st.is_success() {
-                eprintln!("symbols: HTTP {}", st);
-                std::io::stdout().write_all(&body)?;
-                std::process::exit(1);
-            }
-            std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
-        }
-        Cmd::Status {
-            prompt_hash,
-            session,
-        } => {
-            let path = format!("/execute/{prompt_hash}/{session}/status");
-            let (st, _, body) = send_bytes(
-                &client,
-                &server,
-                &profile,
-                Method::GET,
-                &path,
-                Some("application/json"),
-                None,
-                None,
-            )
-            .await?;
-            if !st.is_success() {
-                eprintln!("status: HTTP {}", st);
-                std::io::stdout().write_all(&body)?;
-                std::process::exit(1);
-            }
-            std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
-        }
-        Cmd::Runs {
-            prompt_hash,
-            session,
-        } => {
-            let path = format!("/execute/{prompt_hash}/{session}/runs");
-            let (st, _, body) = send_bytes(
-                &client,
-                &server,
-                &profile,
-                Method::GET,
-                &path,
-                Some("application/json"),
-                None,
-                None,
-            )
-            .await?;
-            if !st.is_success() {
-                eprintln!("runs: HTTP {}", st);
-                std::io::stdout().write_all(&body)?;
-                std::process::exit(1);
-            }
-            std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
-        }
-        Cmd::Artifact {
-            prompt_hash,
-            session,
-            run_id,
-        } => {
-            let path = format!("/execute/{prompt_hash}/{session}/artifacts/{run_id}");
-            let (st, _, body) = send_bytes(
-                &client,
-                &server,
-                &profile,
-                Method::GET,
-                &path,
-                Some("application/json"),
-                None,
-                None,
-            )
-            .await?;
-            if !st.is_success() {
-                eprintln!("artifact: HTTP {}", st);
-                std::io::stdout().write_all(&body)?;
-                std::process::exit(1);
-            }
-            std::io::stdout().write_all(&body)?;
-            println!();
-            Ok(())
-        }
-        Cmd::MirrorPath {
-            prompt_hash,
-            session,
-        } => {
-            let p = session_mirror_dir(&server, &prompt_hash, &session);
-            std::fs::create_dir_all(&p)?;
-            println!("{}", p.display());
-            Ok(())
-        }
-        Cmd::MirrorPull {
-            prompt_hash,
-            session,
-        } => {
-            let path = format!("/execute/{prompt_hash}/{session}/runs");
-            let (st, _, body) = send_bytes(
-                &client,
-                &server,
-                &profile,
-                Method::GET,
-                &path,
-                Some("application/json"),
-                None,
-                None,
-            )
-            .await?;
-            if !st.is_success() {
-                return Err(anyhow!("mirror-pull: list runs failed HTTP {st}"));
-            }
-            let v: serde_json::Value = serde_json::from_slice(&body)?;
-            let runs = v
-                .get("runs")
-                .and_then(|r| r.as_array())
-                .ok_or_else(|| anyhow!("mirror-pull: unexpected runs JSON"))?;
-            let base = session_mirror_dir(&server, &prompt_hash, &session);
-            for r in runs {
-                let rid = r
-                    .get("run_id")
-                    .and_then(|x| x.as_str())
-                    .ok_or_else(|| anyhow!("mirror-pull: run without run_id"))?;
-                let art_path = format!("/execute/{prompt_hash}/{session}/artifacts/{rid}");
-                let (ast, _, abytes) = send_bytes(
-                    &client,
-                    &server,
-                    &profile,
-                    Method::GET,
-                    &art_path,
-                    Some("application/json"),
-                    None,
-                    None,
-                )
-                .await?;
-                if !ast.is_success() {
-                    eprintln!("mirror-pull: skip run {rid} (HTTP {ast})");
-                    continue;
+            if mode_trim != "plan" {
+                if let Some(rid) = extract_run_id_from_response(&rh, &out) {
+                    match mirror_run_snapshot(
+                        &client,
+                        &server,
+                        &profile,
+                        &sym.client_session_id,
+                        ph,
+                        sid,
+                        &rid,
+                    )
+                    .await
+                    {
+                        Ok(p) => eprintln!("mirror run snapshot: {}", p.display()),
+                        Err(e) => eprintln!("mirror run snapshot: {e}"),
+                    }
                 }
-                let run_dir = base.join("runs").join(rid);
-                std::fs::create_dir_all(&run_dir)?;
-                std::fs::write(run_dir.join("snapshot.json"), &abytes)?;
-                println!("{}", run_dir.join("snapshot.json").display());
             }
             Ok(())
         }

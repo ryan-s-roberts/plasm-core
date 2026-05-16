@@ -27,7 +27,7 @@ Multi-entry catalogs: **`just build-plugins`** then **`--plugin-dir target/plasm
 ```bash
 export PLASM_AUTH_JWT_SECRET='<long random string>'
 just build-plugins
-cargo run -p plasm-agent --bin plasm-mcp -- --plugin-dir target/plasm-plugins --backend http://localhost:1080 \
+cargo run -p plasm --bin plasm-mcp -- --plugin-dir target/plasm-plugins --backend http://localhost:1080 \
   --http --port 3001 --mcp --mcp-port 3000
 ```
 

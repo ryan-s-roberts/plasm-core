@@ -381,6 +381,7 @@ oauth:
 auth:
   scheme: bearer_token
   env: REDDIT_ACCESS_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:reddit
 values:
   nv_comment_author:
     type: entity_ref
