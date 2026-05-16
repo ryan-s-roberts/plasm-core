@@ -576,7 +576,7 @@ fn audit_batch(events: &[AuditEvent]) -> anyhow::Result<RecordBatch> {
         mcp_session_id.push(ev.mcp_session_id.clone());
         plasm_prompt_hash.push(ev.plasm_prompt_hash.clone());
         plasm_execute_session.push(ev.plasm_execute_session.clone());
-        run_id.push(ev.run_id.map(|u| u.to_string()));
+        run_id.push(ev.run_id.clone());
         call_index.push(ev.call_index);
         line_index.push(ev.line_index);
         tenant_id.push(ev.tenant_id.clone());
@@ -664,7 +664,7 @@ fn trace_batch(rows: &[TraceSpanRow]) -> anyhow::Result<RecordBatch> {
         mcp_session_id.push(row.mcp_session_id.clone());
         plasm_prompt_hash.push(row.plasm_prompt_hash.clone());
         plasm_execute_session.push(row.plasm_execute_session.clone());
-        run_id.push(row.run_id.map(|u| u.to_string()));
+        run_id.push(row.run_id.clone());
         call_index.push(row.call_index);
         line_index.push(row.line_index);
         span_name.push(row.span_name.clone());
@@ -1405,7 +1405,7 @@ fn decode_audit_row(batch: &RecordBatch, row: usize) -> anyhow::Result<AuditEven
     let mcp_session_id = opt_string_col(batch, "mcp_session_id", row);
     let plasm_prompt_hash = opt_string_col(batch, "plasm_prompt_hash", row);
     let plasm_execute_session = opt_string_col(batch, "plasm_execute_session", row);
-    let run_id = opt_uuid_col(batch, "run_id", row);
+    let run_id = opt_string_col(batch, "run_id", row);
     let call_index = opt_i64_col(batch, "call_index", row);
     let line_index = opt_i64_col(batch, "line_index", row);
     let tenant_id = opt_string_col(batch, "tenant_id", row);
@@ -1451,7 +1451,7 @@ fn decode_trace_row(batch: &RecordBatch, row: usize) -> anyhow::Result<TraceSpan
     let mcp_session_id = opt_string_col(batch, "mcp_session_id", row);
     let plasm_prompt_hash = opt_string_col(batch, "plasm_prompt_hash", row);
     let plasm_execute_session = opt_string_col(batch, "plasm_execute_session", row);
-    let run_id = opt_uuid_col(batch, "run_id", row);
+    let run_id = opt_string_col(batch, "run_id", row);
     let call_index = opt_i64_col(batch, "call_index", row);
     let line_index = opt_i64_col(batch, "line_index", row);
     let span_name = string_col(batch, "span_name", row)?;
@@ -1599,10 +1599,6 @@ fn ts_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<DateTim
 fn uuid_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<Uuid> {
     let s = string_col(batch, name, row)?;
     Uuid::parse_str(&s).map_err(|e| anyhow::anyhow!("{e}"))
-}
-
-fn opt_uuid_col(batch: &RecordBatch, name: &str, row: usize) -> Option<Uuid> {
-    opt_string_col(batch, name, row).and_then(|s| Uuid::parse_str(&s).ok())
 }
 
 #[async_trait]

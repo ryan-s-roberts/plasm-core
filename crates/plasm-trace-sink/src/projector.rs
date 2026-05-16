@@ -32,7 +32,7 @@ pub fn project_trace_spans(ev: &AuditEvent) -> Vec<TraceSpanRow> {
         mcp_session_id: ev.mcp_session_id.clone(),
         plasm_prompt_hash: ev.plasm_prompt_hash.clone(),
         plasm_execute_session: ev.plasm_execute_session.clone(),
-        run_id: ev.run_id,
+        run_id: ev.run_id.clone(),
         call_index: ev.call_index,
         line_index: ev.line_index,
         span_name: "plasm_line".to_string(),
