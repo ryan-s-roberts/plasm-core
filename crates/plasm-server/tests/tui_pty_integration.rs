@@ -9,8 +9,8 @@
 //!
 //! Requires `PLASM_TUI_PTY_TESTS=1` and `--features tui_pty_tests`.
 //!
-//! **One suite, one boot:** a single `#[test]` avoids four cold `pg-embed` starts (multiplied wall
-//! time and watchdog pain).
+//! **One suite, one boot:** a single `#[test]` avoids multiple cold `pg-embed` starts (multiplied wall
+//! time and watchdog pain). OAuth wizard Esc-cancel is covered inside that suite.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -47,16 +47,32 @@ fn pick_free_tcp_port() -> u16 {
         .port()
 }
 
-/// Returns `(postgres_port, listen_port)` — two distinct ports free at allocation time.
-fn pick_appliance_listen_pair() -> (u16, u16) {
-    for _ in 0..64 {
-        let pg = pick_free_tcp_port();
-        let listen = pick_free_tcp_port();
-        if pg != listen {
-            return (pg, listen);
-        }
+/// Strip CI / developer Postgres URLs so embedded pg-embed owns loopback `DATABASE_URL`.
+fn clear_external_postgres_env(cmd: &mut CommandBuilder) {
+    for key in [
+        "DATABASE_URL",
+        "PLASM_MCP_CONFIG_DATABASE_URL",
+        "PLASM_AUTH_STORAGE_URL",
+    ] {
+        cmd.env_remove(key);
     }
-    panic!("could not pick two distinct free TCP ports");
+}
+
+/// Strip OTLP env inherited from the test runner (can block boot before the TUI draws).
+fn clear_otel_export_env(cmd: &mut CommandBuilder) {
+    for key in [
+        "OTEL_SDK_DISABLED",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_TRACES_EXPORTER",
+        "OTEL_METRICS_EXPORTER",
+        "OTEL_LOGS_EXPORTER",
+    ] {
+        cmd.env_remove(key);
+    }
+    cmd.env("OTEL_SDK_DISABLED", "true");
 }
 
 fn require_pty_env() {
@@ -148,7 +164,7 @@ fn embedded_pg_temp_parent() -> PathBuf {
 }
 
 fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, PathBuf) {
-    let (pg_port, listen_port) = pick_appliance_listen_pair();
+    let listen_port = pick_free_tcp_port();
     let schema = schema_path();
     let data_root = tempfile::Builder::new()
         .prefix("plasm-server-pty-")
@@ -156,29 +172,22 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
         .expect("temp appliance data root");
     // `PLASM_APPLIANCE_DIAG_LOG` must stay outside `{data_dir}/postgres` (PGDATA); beside `postgres/` is fine.
     let diag_log = data_root.path().join("appliance-diag.log");
-    let database_url = format!(
-        "postgresql://postgres:plasm_embedded_local_dev@127.0.0.1:{pg_port}/plasm_appliance"
-    );
 
     let mut cmd = CommandBuilder::new(bin_path());
     cmd.cwd(repo_root());
     cmd.env("NO_COLOR", "1");
-    cmd.env("DATABASE_URL", database_url.as_str());
+    clear_external_postgres_env(&mut cmd);
+    clear_otel_export_env(&mut cmd);
     cmd.env(
         "AUTH_STORAGE_ENCRYPTION_KEY",
         TEST_AUTH_STORAGE_ENCRYPTION_KEY,
     );
     cmd.arg("--data-dir");
     cmd.arg(data_root.path().as_os_str());
-    cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", "120");
+    // Cold CI: first pg-embed binary download + initdb can exceed 120s.
+    cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", "300");
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
     cmd.env("PLASM_APPLIANCE_BOOT_TRACE_STDERR", "1");
-    // The child inherits the test runner's environment. If any `OTEL_*` exporter endpoint is set,
-    // `plasm_otel::init_with_fmt_make_writer` runs OTLP bootstrap on the **main** thread before the
-    // boot UI thread can draw — that can block on network I/O for a long time. The PTY then stays
-    // silent; `ratatui-testlib` uses blocking reads in `update_state`, so the harness never reaches
-    // its per-wait timeout and appears hung forever.
-    cmd.env("OTEL_SDK_DISABLED", "true");
 
     cmd.arg("--schema");
     cmd.arg(schema.as_os_str());
@@ -191,12 +200,24 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
 
 fn wait_run_shell(harness: &mut TuiTestHarness, diag: &Path) {
     // RUN title uses `q quit`; BOOT footer uses `q cancel` — avoids matching BOOT chrome only.
-    if let Err(e) = harness.wait_for_text("q quit") {
-        let tail = read_tail(diag, DIAG_TAIL_MAX);
-        panic!(
-            "wait for RUN shell (q quit): {e}\n--- PLASM_APPLIANCE_DIAG_LOG ({:?}) tail ---\n{tail}",
-            diag
-        );
+    // `wait_for_text` alone can block forever in ratatui-testlib when the PTY is idle; tickle keys.
+    let deadline = Instant::now() + Duration::from_secs(360);
+    loop {
+        harness
+            .send_key(KeyCode::Char('1'))
+            .expect("tickle PTY while waiting for RUN shell");
+        if harness.screen_contents().contains("q quit") {
+            return;
+        }
+        if deadline <= Instant::now() {
+            let tail = read_tail(diag, DIAG_TAIL_MAX);
+            let screen = harness.screen_contents();
+            panic!(
+                "timeout waiting for RUN shell (q quit); last screen:\n{screen}\n--- PLASM_APPLIANCE_DIAG_LOG ({:?}) tail ---\n{tail}",
+                diag
+            );
+        }
+        std::thread::sleep(Duration::from_millis(150));
     }
 }
 
@@ -269,6 +290,17 @@ fn tui_pty_full_suite() {
         .wait_for_text("Connected APIs (OAuth)")
         .expect("OAuth tab");
 
+    harness
+        .send_key(KeyCode::Char('n'))
+        .expect("new provider wizard");
+    harness
+        .wait_for_text("OAuth — new provider")
+        .expect("wizard chrome");
+    harness.send_key(KeyCode::Esc).expect("cancel wizard");
+    harness
+        .wait_for_text("OAuth provider wizard cancelled")
+        .expect("cancel status");
+
     harness.send_key(KeyCode::Right).expect("tab to Keys");
     harness
         .wait_for_text("a add   r rotate")
@@ -304,41 +336,6 @@ fn tui_pty_full_suite() {
     harness.send_keys(&label).expect("type key label");
     harness.send_key(KeyCode::Enter).expect("submit label");
     wait_provision_outcome(&mut harness, &diag_log);
-
-    harness.send_key(KeyCode::Char('q')).expect("quit");
-    let status = harness.wait_exit().expect("wait_exit");
-    assert!(
-        status.success(),
-        "plasm-server should exit cleanly after q (got {status:?})"
-    );
-}
-
-/// OAuth tab: open upsert wizard (`n`), cancel with Esc — no DB write expected.
-#[test]
-fn tui_pty_oauth_wizard_esc_cancel() {
-    require_pty_env();
-    let mut harness = build_harness();
-    let (_listen_port, _data, diag_log) = spawn_appliance(&mut harness);
-    wait_run_shell(&mut harness, &diag_log);
-
-    harness.send_key(KeyCode::Right).expect("tab to Clients");
-    harness.send_key(KeyCode::Right).expect("tab to APIs");
-    harness.send_key(KeyCode::Right).expect("tab to OAuth");
-    harness
-        .wait_for_text("Connected APIs (OAuth)")
-        .expect("OAuth tab");
-
-    harness
-        .send_key(KeyCode::Char('n'))
-        .expect("new provider wizard");
-    harness
-        .wait_for_text("OAuth — new provider")
-        .expect("wizard chrome");
-
-    harness.send_key(KeyCode::Esc).expect("cancel wizard");
-    harness
-        .wait_for_text("OAuth provider wizard cancelled")
-        .expect("cancel status");
 
     harness.send_key(KeyCode::Char('q')).expect("quit");
     let status = harness.wait_exit().expect("wait_exit");
