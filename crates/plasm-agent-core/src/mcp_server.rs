@@ -2634,29 +2634,48 @@ mod tests {
         assert_eq!(super::plasm_invocation_char_count("a", Some("#c")), 1 + 2);
     }
 
-    /// Model-facing copy; update with `just update-insta-snapshots` or `INSTA_UPDATE=1 cargo test -p plasm-agent-core mcp_`.
+    /// Serialize Insta reads/writes under `src/snapshots` (parallel `cargo nextest` threads otherwise flake).
+    fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
+        static INSTA_SNAPSHOT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = INSTA_SNAPSHOT_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut settings = insta::Settings::clone_current();
+        settings.set_snapshot_path(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"),
+        );
+        settings.bind(f)
+    }
+
+    /// Model-facing copy; update with `just update-insta-snapshots` (not `INSTA_UPDATE=always` in your shell).
     #[test]
     fn mcp_plasm_tool_description_snapshot() {
-        insta::assert_snapshot!(
-            "mcp_plasm_tool_description",
-            super::MCP_PLASM_TOOL_DESCRIPTION
-        );
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!(
+                "mcp_plasm_tool_description",
+                super::MCP_PLASM_TOOL_DESCRIPTION
+            );
+        });
     }
 
     #[test]
     fn mcp_plasm_run_tool_description_snapshot() {
-        insta::assert_snapshot!(
-            "mcp_plasm_run_tool_description",
-            super::MCP_PLASM_RUN_TOOL_DESCRIPTION
-        );
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!(
+                "mcp_plasm_run_tool_description",
+                super::MCP_PLASM_RUN_TOOL_DESCRIPTION
+            );
+        });
     }
 
     #[test]
     fn mcp_server_initialize_instructions_snapshot() {
-        insta::assert_snapshot!(
-            "mcp_server_initialize_instructions",
-            super::mcp_server_initialize_instructions()
-        );
+        with_insta_snapshots(|| {
+            insta::assert_snapshot!(
+                "mcp_server_initialize_instructions",
+                super::mcp_server_initialize_instructions()
+            );
+        });
     }
 
     #[test]
@@ -2683,14 +2702,16 @@ mod tests {
 
     #[test]
     fn plasm_context_tool_description_snapshot() {
-        let tools = super::PlasmMcpHandler::plasm_tools();
-        let context = tools
-            .iter()
-            .find(|t| t.name == "plasm_context")
-            .and_then(|t| t.description.as_ref())
-            .expect("plasm_context description")
-            .clone();
-        insta::assert_snapshot!("plasm_context_tool_description", context);
+        with_insta_snapshots(|| {
+            let tools = super::PlasmMcpHandler::plasm_tools();
+            let context = tools
+                .iter()
+                .find(|t| t.name == "plasm_context")
+                .and_then(|t| t.description.as_ref())
+                .expect("plasm_context description")
+                .clone();
+            insta::assert_snapshot!("plasm_context_tool_description", context);
+        });
     }
 
     #[test]
