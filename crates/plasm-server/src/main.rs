@@ -84,10 +84,6 @@ struct ServeCli {
     no_tui: bool,
 }
 
-fn env_os_nonempty(key: &str) -> bool {
-    std::env::var_os(key).is_some_and(|v| !v.is_empty())
-}
-
 fn env_str_nonempty(key: &str) -> bool {
     std::env::var(key)
         .ok()

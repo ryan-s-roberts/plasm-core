@@ -219,16 +219,55 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     (listen_port, data_root, diag_log)
 }
 
-/// Poll the PTY for any of `needles` (one non-blocking `update_state` per iteration).
+/// Nudge Crossterm to redraw without a tight `update_state` read loop (BOOT spam can block there).
+fn nudge_pty(harness: &mut TuiTestHarness) {
+    let _ = harness.send_key(KeyCode::Char('1'));
+}
+
+/// Wait until `PLASM_APPLIANCE_DIAG_LOG` contains any needle (bootstrap progress without PTY drain).
+fn wait_diag_until(diag: &Path, needles: &[&str], timeout: Duration, label: &str) {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut last_progress = started;
+    while Instant::now() < deadline {
+        if let Some(tail) = diag_has_fatal(diag) {
+            panic!("bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG while waiting for {label}:\n{tail}");
+        }
+        let tail = read_tail(diag, 8 * 1024);
+        if needles.iter().any(|n| tail.contains(n)) {
+            eprintln!(
+                "appliance-pty: diag ready for {label} after {:?}",
+                started.elapsed()
+            );
+            return;
+        }
+        let now = Instant::now();
+        if now.duration_since(last_progress) >= Duration::from_secs(15) {
+            last_progress = now;
+            eprintln!(
+                "appliance-pty: still waiting for {label} ({:?} elapsed) — diag tail:\n{tail}",
+                started.elapsed()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    panic!(
+        "timeout waiting for {label} in PLASM_APPLIANCE_DIAG_LOG (needles={needles:?}, timeout {timeout:?})\n--- tail ---\n{}",
+        read_tail(diag, DIAG_TAIL_MAX)
+    );
+}
+
+/// Poll the PTY screen for any of `needles` (always `nudge_pty`, never bare `update_state`).
 fn wait_for_screen(
     harness: &mut TuiTestHarness,
     needles: &[&str],
     timeout: Duration,
     diag: &Path,
     label: &str,
-    tickle: bool,
 ) {
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut last_progress = started;
     while Instant::now() < deadline {
         if let Some(tail) = diag_has_fatal(diag) {
             let screen = harness.screen_contents();
@@ -236,20 +275,25 @@ fn wait_for_screen(
                 "bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG while waiting for {label};\n--- tail ---\n{tail}\n--- screen ---\n{screen}"
             );
         }
-        if tickle {
-            harness
-                .send_key(KeyCode::Char('1'))
-                .expect("tickle PTY while polling screen");
-        } else {
-            harness
-                .update_state()
-                .expect("update_state while polling screen");
-        }
+        nudge_pty(harness);
         let screen = harness.screen_contents();
         if needles.iter().any(|n| screen.contains(n)) {
+            eprintln!(
+                "appliance-pty: screen matched {label} after {:?}",
+                started.elapsed()
+            );
             return;
         }
-        std::thread::sleep(Duration::from_millis(150));
+        let now = Instant::now();
+        if now.duration_since(last_progress) >= Duration::from_secs(15) {
+            last_progress = now;
+            eprintln!(
+                "appliance-pty: still waiting for screen {label} ({:?} elapsed); last screen snippet:\n{}",
+                started.elapsed(),
+                screen.chars().take(800).collect::<String>()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
     let tail = read_tail(diag, DIAG_TAIL_MAX);
     let screen = harness.screen_contents();
@@ -307,21 +351,26 @@ fn wait_tcp_listen(port: u16, timeout: Duration, diag: &Path) {
 
 fn wait_run_shell(harness: &mut TuiTestHarness, listen_port: u16, diag: &Path) {
     wait_tcp_listen(listen_port, Duration::from_secs(300), diag);
-    wait_for_screen(
-        harness,
-        &["q: quit", "[Status]"],
-        Duration::from_secs(60),
+    wait_diag_until(
         diag,
-        "RUN shell",
-        false,
+        &["embedded postgres: server ready"],
+        Duration::from_secs(300),
+        "embedded Postgres",
     );
+    wait_diag_until(
+        diag,
+        &["phase: control station ready"],
+        Duration::from_secs(300),
+        "control station",
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    wait_for_screen(harness, &["q: quit"], Duration::from_secs(45), diag, "RUN footer");
     wait_for_screen(
         harness,
         &["policy store (project_mcp_*)"],
-        Duration::from_secs(60),
+        Duration::from_secs(45),
         diag,
         "MCP policy store ready",
-        false,
     );
 }
 
@@ -344,7 +393,6 @@ fn wait_provision_outcome(harness: &mut TuiTestHarness, diag: &Path) {
         Duration::from_secs(120),
         diag,
         "API key provision",
-        false,
     );
     let screen = harness.screen_contents();
     if screen.contains("API key provision failed")
@@ -357,10 +405,21 @@ fn wait_provision_outcome(harness: &mut TuiTestHarness, diag: &Path) {
     }
 }
 
+/// Emit stderr every 30s so CircleCI `no_output_timeout` does not kill a slow pg-embed boot.
+fn spawn_heartbeat() -> std::thread::JoinHandle<()> {
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            eprintln!("appliance-pty: heartbeat (test still running)");
+        }
+    })
+}
+
 /// One PTY session: RUN banner, tabs, help overlay, Keys provision, quit — **single** embedded Postgres boot.
 #[test]
 fn tui_pty_full_suite() {
     require_pty_env();
+    let _heartbeat = spawn_heartbeat();
     eprintln!("appliance-pty: tui_pty_full_suite starting");
     let mut harness = build_harness();
     let (listen_port, _data, diag_log) = spawn_appliance(&mut harness);
@@ -374,7 +433,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "tab rail listen port",
-        false,
     );
 
     wait_for_screen(
@@ -383,7 +441,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "Status tab: Listeners",
-        false,
     );
     wait_for_screen(
         &mut harness,
@@ -393,7 +450,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "Status tab: unified listener URL",
-        false,
     );
 
     harness.send_key(KeyCode::Right).expect("tab to Clients");
@@ -403,7 +459,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "Clients tab",
-        false,
     );
 
     harness.send_key(KeyCode::Right).expect("tab to APIs");
@@ -413,7 +468,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "APIs tab",
-        false,
     );
 
     harness.send_key(KeyCode::Right).expect("tab to OAuth");
@@ -423,7 +477,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "OAuth tab",
-        false,
     );
 
     harness
@@ -435,7 +488,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "OAuth wizard",
-        false,
     );
     harness.send_key(KeyCode::Esc).expect("cancel wizard");
     wait_for_screen(
@@ -444,7 +496,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "wizard cancel notice",
-        false,
     );
 
     harness.send_key(KeyCode::Right).expect("tab to Keys");
@@ -454,7 +505,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "Keys tab",
-        false,
     );
 
     navigate_to_status_tab(&mut harness);
@@ -465,7 +515,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "help footer extension",
-        false,
     );
     harness
         .send_key(KeyCode::Right)
@@ -476,7 +525,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "Clients after help",
-        false,
     );
 
     harness.send_key(KeyCode::Right).expect("to APIs");
@@ -488,7 +536,6 @@ fn tui_pty_full_suite() {
         Duration::from_secs(15),
         &diag_log,
         "Keys tab for provision",
-        false,
     );
 
     let label = format!(
