@@ -1,7 +1,7 @@
 #[cfg(feature = "sse")]
-use super::http_utils::handle_sse_connection;
+use super::http_utils::{handle_sse_connection, query_param};
 use super::http_utils::{
-    accepts_event_stream, error_response, query_param, validate_mcp_protocol_version_header,
+    accepts_event_stream, error_response, validate_mcp_protocol_version_header,
 };
 use super::types::GenericBody;
 use crate::auth::AuthInfo;
@@ -280,6 +280,7 @@ impl McpHttpHandler {
         handle(request, state).await
     }
 
+    #[cfg(feature = "sse")]
     async fn internal_handle_sse_message(
         request: http::Request<&str>,
         state: Arc<McpAppState>,

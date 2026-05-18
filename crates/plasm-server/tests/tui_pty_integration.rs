@@ -12,7 +12,7 @@
 //! **One suite, one boot:** a single `#[test]` avoids multiple cold `pg-embed` starts (multiplied wall
 //! time and watchdog pain). OAuth wizard Esc-cancel is covered inside that suite.
 
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -84,7 +84,6 @@ fn require_pty_env() {
 }
 
 fn bin_path() -> PathBuf {
-    // Compile-time (normal `cargo test`) and runtime (`rtk cargo`, some nextest paths).
     if let Some(p) = option_env!("CARGO_BIN_EXE_plasm_server") {
         return PathBuf::from(p);
     }
@@ -134,10 +133,10 @@ fn repo_root() -> PathBuf {
 }
 
 fn schema_path() -> PathBuf {
-    let p = repo_root().join("apis/dnd5e");
+    let p = repo_root().join("fixtures/schemas/overshow_tools");
     assert!(
         p.exists(),
-        "missing schema path {p:?}; ensure apis/ symlink (plasm-oss/apis) is present"
+        "missing schema path {p:?}; run tests from the monorepo root"
     );
     p
 }
@@ -145,8 +144,8 @@ fn schema_path() -> PathBuf {
 fn build_harness() -> TuiTestHarness {
     TuiTestHarness::builder()
         .with_size(120, 40)
-        // Fail fast for a wedged harness; pathological hangs rely on `scripts/appliance-tui-pty-tests.sh`.
-        .with_timeout(Duration::from_secs(100))
+        // Cold pg-embed + BOOT→RUN handoff can exceed 100s on CI.
+        .with_timeout(Duration::from_secs(420))
         .with_poll_interval(Duration::from_millis(150))
         .build()
         .expect("TuiTestHarness::builder")
@@ -165,12 +164,12 @@ fn embedded_pg_temp_parent() -> PathBuf {
 
 fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, PathBuf) {
     let listen_port = pick_free_tcp_port();
+    let pg_port = pick_free_tcp_port();
     let schema = schema_path();
     let data_root = tempfile::Builder::new()
         .prefix("plasm-server-pty-")
         .tempdir_in(embedded_pg_temp_parent())
         .expect("temp appliance data root");
-    // `PLASM_APPLIANCE_DIAG_LOG` must stay outside `{data_dir}/postgres` (PGDATA); beside `postgres/` is fine.
     let diag_log = data_root.path().join("appliance-diag.log");
 
     let mut cmd = CommandBuilder::new(bin_path());
@@ -184,10 +183,9 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     );
     cmd.arg("--data-dir");
     cmd.arg(data_root.path().as_os_str());
-    // Cold CI: first pg-embed binary download + initdb can exceed 120s.
     cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", "300");
+    cmd.env("PLASM_EMBEDDED_POSTGRES_PORT", pg_port.to_string());
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
-    cmd.env("PLASM_APPLIANCE_BOOT_TRACE_STDERR", "1");
 
     cmd.arg("--schema");
     cmd.arg(schema.as_os_str());
@@ -198,27 +196,95 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     (listen_port, data_root, diag_log)
 }
 
-fn wait_run_shell(harness: &mut TuiTestHarness, diag: &Path) {
-    // RUN title uses `q quit`; BOOT footer uses `q cancel` — avoids matching BOOT chrome only.
-    // `wait_for_text` alone can block forever in ratatui-testlib when the PTY is idle; tickle keys.
-    let deadline = Instant::now() + Duration::from_secs(360);
-    loop {
-        harness
-            .send_key(KeyCode::Char('1'))
-            .expect("tickle PTY while waiting for RUN shell");
-        if harness.screen_contents().contains("q quit") {
-            return;
-        }
-        if deadline <= Instant::now() {
-            let tail = read_tail(diag, DIAG_TAIL_MAX);
+/// Poll the PTY for any of `needles` (one non-blocking `update_state` per iteration).
+fn wait_for_screen(
+    harness: &mut TuiTestHarness,
+    needles: &[&str],
+    timeout: Duration,
+    diag: &Path,
+    label: &str,
+    tickle: bool,
+) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(tail) = diag_has_fatal(diag) {
             let screen = harness.screen_contents();
             panic!(
-                "timeout waiting for RUN shell (q quit); last screen:\n{screen}\n--- PLASM_APPLIANCE_DIAG_LOG ({:?}) tail ---\n{tail}",
-                diag
+                "bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG while waiting for {label};\n--- tail ---\n{tail}\n--- screen ---\n{screen}"
             );
+        }
+        if tickle {
+            harness
+                .send_key(KeyCode::Char('1'))
+                .expect("tickle PTY while polling screen");
+        } else {
+            harness
+                .update_state()
+                .expect("update_state while polling screen");
+        }
+        let screen = harness.screen_contents();
+        if needles.iter().any(|n| screen.contains(n)) {
+            return;
         }
         std::thread::sleep(Duration::from_millis(150));
     }
+    let tail = read_tail(diag, DIAG_TAIL_MAX);
+    let screen = harness.screen_contents();
+    panic!(
+        "timeout waiting for {label} (needles={needles:?}); last screen:\n{screen}\n--- PLASM_APPLIANCE_DIAG_LOG ({diag:?}) tail ---\n{tail}"
+    );
+}
+
+fn diag_has_fatal(diag: &Path) -> Option<String> {
+    let tail = read_tail(diag, 8 * 1024);
+    if tail.contains("bootstrap failed")
+        || tail.contains("FATAL:")
+        || tail.contains("Fatal")
+        || tail.contains("fatal:")
+    {
+        Some(tail)
+    } else {
+        None
+    }
+}
+
+/// Wait until HTTP+MCP bind succeeds (survives BOOT redraw spam on the PTY).
+fn wait_tcp_listen(port: u16, timeout: Duration, diag: &Path) {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(tail) = diag_has_fatal(diag) {
+            panic!("bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG:\n{tail}");
+        }
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let tail = read_tail(diag, DIAG_TAIL_MAX);
+    panic!(
+        "timeout waiting for TCP listen on {addr} (timeout {timeout:?})\n--- PLASM_APPLIANCE_DIAG_LOG ({diag:?}) tail ---\n{tail}"
+    );
+}
+
+fn wait_run_shell(harness: &mut TuiTestHarness, listen_port: u16, diag: &Path) {
+    wait_tcp_listen(listen_port, Duration::from_secs(300), diag);
+    wait_for_screen(
+        harness,
+        &["q: quit", "[Status]"],
+        Duration::from_secs(60),
+        diag,
+        "RUN shell",
+        false,
+    );
+    wait_for_screen(
+        harness,
+        &["policy store (project_mcp_*)"],
+        Duration::from_secs(60),
+        diag,
+        "MCP policy store ready",
+        false,
+    );
 }
 
 fn navigate_to_status_tab(harness: &mut TuiTestHarness) {
@@ -230,27 +296,26 @@ fn navigate_to_status_tab(harness: &mut TuiTestHarness) {
 }
 
 fn wait_provision_outcome(harness: &mut TuiTestHarness, diag: &Path) {
-    // Assert only definitive provision strings (`provisioned key_id=` / `provision error:`), not footer chrome.
-    let deadline = Instant::now() + Duration::from_secs(35);
-    loop {
-        // `ratatui-testlib` reads the PTY in blocking mode; if the app does not emit bytes between
-        // draws, a bare `update_state` can stall forever. Nudge Crossterm with an inert key (`1`
-        // is a no-op on the Keys tab outside the add prompt) so the RUN loop polls + redraws.
-        harness
-            .send_key(KeyCode::Char('1'))
-            .expect("tickle PTY while waiting for provision");
-        let screen = harness.screen_contents();
-        if screen.contains("provisioned key_id=") || screen.contains("provision error:") {
-            return;
-        }
-        if deadline <= Instant::now() {
-            let tail = read_tail(diag, DIAG_TAIL_MAX);
-            panic!(
-                "timeout waiting for provision result; last screen:\n{screen}\n--- PLASM_APPLIANCE_DIAG_LOG ({:?}) tail ---\n{tail}",
-                diag
-            );
-        }
-        std::thread::sleep(Duration::from_millis(120));
+    wait_for_screen(
+        harness,
+        &[
+            "API key provisioned",
+            "API key provision failed",
+            "Wait for the appliance config refresh",
+        ],
+        Duration::from_secs(120),
+        diag,
+        "API key provision",
+        false,
+    );
+    let screen = harness.screen_contents();
+    if screen.contains("API key provision failed")
+        || screen.contains("Wait for the appliance config refresh")
+    {
+        panic!(
+            "API key provision did not succeed; screen:\n{screen}\n--- PLASM_APPLIANCE_DIAG_LOG ({diag:?}) tail ---\n{}",
+            read_tail(diag, DIAG_TAIL_MAX)
+        );
     }
 }
 
@@ -260,70 +325,130 @@ fn tui_pty_full_suite() {
     require_pty_env();
     let mut harness = build_harness();
     let (listen_port, _data, diag_log) = spawn_appliance(&mut harness);
-    wait_run_shell(&mut harness, &diag_log);
+    wait_run_shell(&mut harness, listen_port, &diag_log);
 
-    harness
-        .wait_for_text(&format!("listen:{listen_port}"))
-        .expect("unified listen port in tab rail");
+    wait_for_screen(
+        &mut harness,
+        &[&format!("listen:{listen_port} (HTTP+MCP)")],
+        Duration::from_secs(15),
+        &diag_log,
+        "tab rail listen port",
+        false,
+    );
 
-    harness
-        .wait_for_text("Listeners")
-        .expect("Status tab: Listeners");
-    harness
-        .wait_for_text(&format!(
+    wait_for_screen(
+        &mut harness,
+        &["Listeners"],
+        Duration::from_secs(15),
+        &diag_log,
+        "Status tab: Listeners",
+        false,
+    );
+    wait_for_screen(
+        &mut harness,
+        &[&format!(
             "HTTP+MCP   http://127.0.0.1:{listen_port}  (MCP: /mcp)"
-        ))
-        .expect("Status tab: unified listener URL");
+        )],
+        Duration::from_secs(15),
+        &diag_log,
+        "Status tab: unified listener URL",
+        false,
+    );
 
     harness.send_key(KeyCode::Right).expect("tab to Clients");
-    harness
-        .wait_for_text("Streamable MCP URL")
-        .expect("Clients tab");
+    wait_for_screen(
+        &mut harness,
+        &["Authorization: Bearer"],
+        Duration::from_secs(15),
+        &diag_log,
+        "Clients tab",
+        false,
+    );
 
     harness.send_key(KeyCode::Right).expect("tab to APIs");
-    harness
-        .wait_for_text("Space toggle")
-        .expect("APIs tab hint");
+    wait_for_screen(
+        &mut harness,
+        &["Filter catalogues"],
+        Duration::from_secs(15),
+        &diag_log,
+        "APIs tab",
+        false,
+    );
 
     harness.send_key(KeyCode::Right).expect("tab to OAuth");
-    harness
-        .wait_for_text("Connected APIs (OAuth)")
-        .expect("OAuth tab");
+    wait_for_screen(
+        &mut harness,
+        &["Providers"],
+        Duration::from_secs(15),
+        &diag_log,
+        "OAuth tab",
+        false,
+    );
 
     harness
         .send_key(KeyCode::Char('n'))
         .expect("new provider wizard");
-    harness
-        .wait_for_text("OAuth — new provider")
-        .expect("wizard chrome");
+    wait_for_screen(
+        &mut harness,
+        &["New OAuth provider"],
+        Duration::from_secs(15),
+        &diag_log,
+        "OAuth wizard",
+        false,
+    );
     harness.send_key(KeyCode::Esc).expect("cancel wizard");
-    harness
-        .wait_for_text("OAuth provider wizard cancelled")
-        .expect("cancel status");
+    wait_for_screen(
+        &mut harness,
+        &["OAuth wizard cancelled"],
+        Duration::from_secs(15),
+        &diag_log,
+        "wizard cancel notice",
+        false,
+    );
 
     harness.send_key(KeyCode::Right).expect("tab to Keys");
-    harness
-        .wait_for_text("a add   r rotate")
-        .expect("Keys tab hint");
+    wait_for_screen(
+        &mut harness,
+        &["a: add", "Keys"],
+        Duration::from_secs(15),
+        &diag_log,
+        "Keys tab",
+        false,
+    );
 
     navigate_to_status_tab(&mut harness);
     harness.send_key(KeyCode::Char('?')).expect("help");
-    harness
-        .wait_for_text("Keys: a r d c")
-        .expect("help footer extension");
+    wait_for_screen(
+        &mut harness,
+        &["Keys: a r d c"],
+        Duration::from_secs(15),
+        &diag_log,
+        "help footer extension",
+        false,
+    );
     harness
         .send_key(KeyCode::Right)
         .expect("dismiss help + tab to Clients");
-    harness
-        .wait_for_text("Streamable MCP URL")
-        .expect("Clients after help");
+    wait_for_screen(
+        &mut harness,
+        &["Authorization: Bearer"],
+        Duration::from_secs(15),
+        &diag_log,
+        "Clients after help",
+        false,
+    );
 
     harness.send_key(KeyCode::Right).expect("to APIs");
     harness.send_key(KeyCode::Right).expect("to OAuth");
     harness.send_key(KeyCode::Right).expect("to Keys");
-    harness
-        .wait_for_text("a add   r rotate")
-        .expect("Keys tab for provision");
+    wait_for_screen(
+        &mut harness,
+        &["a: add", "Keys"],
+        Duration::from_secs(15),
+        &diag_log,
+        "Keys tab for provision",
+        false,
+    );
 
     let label = format!(
         "ptyk{}",

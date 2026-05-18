@@ -425,7 +425,7 @@ impl HyperServer {
             "http"
         };
 
-        let mut server_url = format!(
+        let server_url = format!(
             "\n• Streamable HTTP {} is available at {}://{}{}",
             server_type,
             protocol,
