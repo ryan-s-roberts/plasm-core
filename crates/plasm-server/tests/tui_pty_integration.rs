@@ -47,15 +47,27 @@ fn pick_free_tcp_port() -> u16 {
         .port()
 }
 
-/// Strip CI / developer Postgres URLs so embedded pg-embed owns loopback `DATABASE_URL`.
+/// Strip CI / developer Postgres env so `--data-dir` + embedded pg-embed own the session.
 fn clear_external_postgres_env(cmd: &mut CommandBuilder) {
     for key in [
         "DATABASE_URL",
         "PLASM_MCP_CONFIG_DATABASE_URL",
         "PLASM_AUTH_STORAGE_URL",
+        "PGDATA",
+        "PGHOST",
+        "PGPORT",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGDATABASE",
+        "POSTGRES_URL",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "PLASM_EMBEDDED_POSTGRES_DATA_DIR",
+        "PLASM_LOCAL_STATE_DIR",
     ] {
         cmd.env_remove(key);
     }
+    cmd.env("PLASM_EMBEDDED_POSTGRES", "1");
 }
 
 /// Strip OTLP env inherited from the test runner (can block boot before the TUI draws).
@@ -185,7 +197,18 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     cmd.arg(data_root.path().as_os_str());
     cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", "300");
     cmd.env("PLASM_EMBEDDED_POSTGRES_PORT", pg_port.to_string());
+    cmd.env("PLASM_EMBEDDED_POSTGRES_PERSISTENT", "0");
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
+    cmd.env(
+        "RUST_LOG",
+        "info,plasm_appliance_boot=info,plasm_agent=info,pg_embed=info",
+    );
+
+    eprintln!(
+        "appliance-pty: spawn plasm-server listen_port={listen_port} embedded_pg_port={pg_port} data_dir={} diag_log={}",
+        data_root.path().display(),
+        diag_log.display(),
+    );
 
     cmd.arg("--schema");
     cmd.arg(schema.as_os_str());
@@ -251,13 +274,28 @@ fn diag_has_fatal(diag: &Path) -> Option<String> {
 /// Wait until HTTP+MCP bind succeeds (survives BOOT redraw spam on the PTY).
 fn wait_tcp_listen(port: u16, timeout: Duration, diag: &Path) {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut last_progress = started;
     while Instant::now() < deadline {
         if let Some(tail) = diag_has_fatal(diag) {
             panic!("bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG:\n{tail}");
         }
         if TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok() {
+            eprintln!(
+                "appliance-pty: HTTP listen ready on {addr} after {:?}",
+                started.elapsed()
+            );
             return;
+        }
+        let now = Instant::now();
+        if now.duration_since(last_progress) >= Duration::from_secs(20) {
+            last_progress = now;
+            eprintln!(
+                "appliance-pty: still waiting for {addr} ({:?} elapsed) — diag tail:\n{}",
+                started.elapsed(),
+                read_tail(diag, 2 * 1024)
+            );
         }
         std::thread::sleep(Duration::from_millis(200));
     }
@@ -323,9 +361,12 @@ fn wait_provision_outcome(harness: &mut TuiTestHarness, diag: &Path) {
 #[test]
 fn tui_pty_full_suite() {
     require_pty_env();
+    eprintln!("appliance-pty: tui_pty_full_suite starting");
     let mut harness = build_harness();
     let (listen_port, _data, diag_log) = spawn_appliance(&mut harness);
+    eprintln!("appliance-pty: waiting for embedded Postgres + HTTP (see diag log if slow)");
     wait_run_shell(&mut harness, listen_port, &diag_log);
+    eprintln!("appliance-pty: RUN shell ready, exercising tabs");
 
     wait_for_screen(
         &mut harness,

@@ -60,10 +60,9 @@ struct ServeCli {
     /// Root directory for on-disk appliance state when explicit env vars are unset.
     ///
     /// Sets `PLASM_EMBEDDED_POSTGRES_DATA_DIR` to `{dir}/postgres` (pg-embed **reuses** an existing
-    /// cluster there; keep only Postgres files under `postgres/`) and `PLASM_LOCAL_STATE_DIR` to
-    /// `{dir}/local` (default OSS trace archive + run-artifact dirs under that tree — see
-    /// `docs/oss-core-trace-artifacts.md`). Existing non-empty `PLASM_EMBEDDED_POSTGRES_DATA_DIR`,
-    /// `PGDATA`, or `PLASM_LOCAL_STATE_DIR` are left unchanged.
+    /// cluster there; keep only Postgres files under `postgres/`) and clears inherited `PGDATA`.
+    /// Sets `PLASM_LOCAL_STATE_DIR` to `{dir}/local` when unset (OSS trace archive + run-artifact
+    /// dirs — see `docs/oss-core-trace-artifacts.md`).
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
     /// CGS schema path (exactly one of `--schema` or `--plugin-dir` required unless `--migrate-mcp-config-db`).
@@ -102,11 +101,12 @@ fn apply_serve_data_dir_env_defaults(cli: &ServeCli) -> std::io::Result<()> {
         return Ok(());
     };
     std::fs::create_dir_all(root)?;
-    if !env_os_nonempty("PLASM_EMBEDDED_POSTGRES_DATA_DIR") && !env_os_nonempty("PGDATA") {
-        let pg = root.join("postgres");
-        std::fs::create_dir_all(&pg)?;
-        std::env::set_var("PLASM_EMBEDDED_POSTGRES_DATA_DIR", pg.as_os_str());
-    }
+    // `--data-dir` owns the appliance tree: always pin embedded PG under `{root}/postgres`
+    // so inherited PGDATA / PLASM_EMBEDDED_POSTGRES_DATA_DIR from the shell cannot leak in.
+    let pg = root.join("postgres");
+    std::fs::create_dir_all(&pg)?;
+    std::env::set_var("PLASM_EMBEDDED_POSTGRES_DATA_DIR", pg.as_os_str());
+    std::env::remove_var("PGDATA");
     if !env_str_nonempty("PLASM_LOCAL_STATE_DIR") {
         let local = root.join("local");
         std::fs::create_dir_all(&local)?;
