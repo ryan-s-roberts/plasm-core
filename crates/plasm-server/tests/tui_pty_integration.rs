@@ -25,6 +25,40 @@ const TEST_AUTH_STORAGE_ENCRYPTION_KEY: &str = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh
 /// Max bytes of `PLASM_APPLIANCE_DIAG_LOG` to include in failure messages.
 const DIAG_TAIL_MAX: usize = 16 * 1024;
 
+/// Bootstrap milestones for failure messages (avoid drowning in pg_embed/sqlx noise).
+const BOOT_MILESTONES: &[(&str, &str)] = &[
+    ("embedded postgres: server ready", "embedded Postgres up"),
+    ("plasm HTTP+MCP unified listening", "HTTP+MCP listening"),
+    ("phase: run UI handoff", "supervisor sent RUN handoff"),
+    ("phase: control station ready", "control station ready (diag)"),
+    ("RUN UI first frame not observed", "RUN handshake timeout (fatal)"),
+    ("bootstrap failed", "bootstrap failed (fatal)"),
+];
+
+/// Plain stderr milestones mirrored in the PTY scrollback (always visible in CI output).
+const PTY_BOOT_MILESTONES: &[(&str, &str)] = &[
+    (
+        "[plasm-server] bootstrap: sent RUN handoff to UI thread",
+        "supervisor sent RUN handoff (stderr)",
+    ),
+    (
+        "[plasm-server] bootstrap: UI received RUN handoff",
+        "UI received RUN handoff (stderr)",
+    ),
+    (
+        "[plasm-server] bootstrap: emitted RunEntered",
+        "UI emitted RunEntered (stderr)",
+    ),
+    (
+        "[plasm-server] bootstrap: RUN UI RunEntered received",
+        "supervisor got RunEntered (stderr)",
+    ),
+    (
+        "[plasm-server] bootstrap: control station ready",
+        "control station ready (stderr)",
+    ),
+];
+
 fn read_tail(path: &Path, max: usize) -> String {
     match std::fs::read(path) {
         Ok(bytes) => {
@@ -37,6 +71,35 @@ fn read_tail(path: &Path, max: usize) -> String {
         }
         Err(e) => format!("(could not read {:?}: {e})", path),
     }
+}
+
+fn diag_boot_milestone_report(diag: &Path, screen: &str) -> String {
+    let full = read_tail(diag, 512 * 1024);
+    let mut lines = Vec::new();
+    lines.push(format!("diag log: {}", diag.display()));
+    for (needle, label) in BOOT_MILESTONES {
+        let mark = if full.contains(needle) { "ok" } else { "MISSING" };
+        lines.push(format!("  [{mark}] {label}"));
+    }
+    for (needle, label) in PTY_BOOT_MILESTONES {
+        let mark = if screen.contains(needle) { "ok" } else { "MISSING" };
+        lines.push(format!("  [{mark}] {label} (PTY)"));
+    }
+    lines.push("--- last plasm_appliance_boot / plasm-server lines (diag) ---".into());
+    let mut boot_lines = 0usize;
+    for line in full.lines().rev() {
+        if line.contains("plasm_appliance_boot")
+            || line.contains("[plasm-server]")
+            || line.contains("plasm_agent::embedded_postgres")
+        {
+            lines.push(format!("  {line}"));
+            boot_lines += 1;
+            if boot_lines >= 8 {
+                break;
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 fn pick_free_tcp_port() -> u16 {
@@ -199,9 +262,11 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     cmd.env("PLASM_EMBEDDED_POSTGRES_PORT", pg_port.to_string());
     cmd.env("PLASM_EMBEDDED_POSTGRES_PERSISTENT", "0");
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
+    // Child must see this so BOOT skips redraws that deadlock PTY handoff (see boot.rs).
+    cmd.env("PLASM_TUI_PTY_TESTS", "1");
     cmd.env(
         "RUST_LOG",
-        "info,plasm_appliance_boot=info,plasm_agent=info,pg_embed=info",
+        "warn,plasm_appliance_boot=info,plasm_agent=info,plasm_agent_core=warn,pg_embed=warn,sqlx=warn",
     );
 
     eprintln!(
@@ -229,16 +294,31 @@ fn nudge_pty(harness: &mut TuiTestHarness) {
     let _ = harness.send_key(KeyCode::Char('1'));
 }
 
-/// Wait until `PLASM_APPLIANCE_DIAG_LOG` contains any needle (bootstrap progress without PTY drain).
-fn wait_diag_until(diag: &Path, needles: &[&str], timeout: Duration, label: &str) {
+/// Wait until `PLASM_APPLIANCE_DIAG_LOG` contains any needle; drain the PTY when `harness` is set.
+fn wait_diag_until(
+    harness: Option<&mut TuiTestHarness>,
+    diag: &Path,
+    needles: &[&str],
+    timeout: Duration,
+    label: &str,
+) {
     let started = Instant::now();
     let deadline = started + timeout;
     let mut last_progress = started;
     while Instant::now() < deadline {
-        if let Some(tail) = diag_has_fatal(diag) {
-            panic!("bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG while waiting for {label}:\n{tail}");
+        if let Some(h) = harness {
+            drain_pty(h);
         }
-        let tail = read_tail(diag, 8 * 1024);
+        if let Some(tail) = diag_has_fatal(diag) {
+            let screen = harness
+                .map(|h| h.screen_contents())
+                .unwrap_or_default();
+            panic!(
+                "bootstrap fatal while waiting for {label}\n{}\n--- diag tail ---\n{tail}",
+                diag_boot_milestone_report(diag, &screen)
+            );
+        }
+        let tail = read_tail(diag, 32 * 1024);
         if needles.iter().any(|n| tail.contains(n)) {
             eprintln!(
                 "appliance-pty: diag ready for {label} after {:?}",
@@ -249,16 +329,23 @@ fn wait_diag_until(diag: &Path, needles: &[&str], timeout: Duration, label: &str
         let now = Instant::now();
         if now.duration_since(last_progress) >= Duration::from_secs(15) {
             last_progress = now;
+            let screen = harness
+                .map(|h| h.screen_contents())
+                .unwrap_or_default();
             eprintln!(
-                "appliance-pty: still waiting for {label} ({:?} elapsed) — diag tail:\n{tail}",
-                started.elapsed()
+                "appliance-pty: still waiting for {label} ({:?} elapsed)\n{}",
+                started.elapsed(),
+                diag_boot_milestone_report(diag, &screen)
             );
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    let screen = harness
+        .map(|h| h.screen_contents())
+        .unwrap_or_default();
     panic!(
-        "timeout waiting for {label} in PLASM_APPLIANCE_DIAG_LOG (needles={needles:?}, timeout {timeout:?})\n--- tail ---\n{}",
-        read_tail(diag, DIAG_TAIL_MAX)
+        "timeout waiting for {label} in PLASM_APPLIANCE_DIAG_LOG (needles={needles:?}, timeout {timeout:?})\n{}",
+        diag_boot_milestone_report(diag, &screen)
     );
 }
 
@@ -322,12 +409,20 @@ fn diag_has_fatal(diag: &Path) -> Option<String> {
 }
 
 /// Wait until HTTP+MCP bind succeeds (survives BOOT redraw spam on the PTY).
-fn wait_tcp_listen(port: u16, timeout: Duration, diag: &Path) {
+fn wait_tcp_listen(
+    harness: Option<&mut TuiTestHarness>,
+    port: u16,
+    timeout: Duration,
+    diag: &Path,
+) {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let started = Instant::now();
     let deadline = started + timeout;
     let mut last_progress = started;
     while Instant::now() < deadline {
+        if let Some(h) = harness {
+            drain_pty(h);
+        }
         if let Some(tail) = diag_has_fatal(diag) {
             panic!("bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG:\n{tail}");
         }
@@ -355,65 +450,83 @@ fn wait_tcp_listen(port: u16, timeout: Duration, diag: &Path) {
     );
 }
 
-/// Wait for async RUN handshake in the diag log, then drain the PTY so RUN draws can complete.
+/// RUN is ready when the supervisor logged handoff complete (diag or stderr in PTY).
+fn run_handoff_complete(diag_tail: &str, screen: &str) -> bool {
+    diag_tail.contains("phase: control station ready")
+        || screen.contains("[plasm-server] bootstrap: control station ready")
+        || screen.contains("q: quit")
+        || screen.contains("q quit")
+}
+
+/// Wait for BOOT→RUN handshake, draining the PTY throughout.
 fn wait_run_handoff(harness: &mut TuiTestHarness, diag: &Path, timeout: Duration) {
-    wait_diag_until(
-        diag,
-        &["phase: control station ready"],
-        timeout,
-        "control station ready",
-    );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(90);
+    let deadline = started + timeout;
     let mut last_progress = started;
     while Instant::now() < deadline {
+        if let Some(tail) = diag_has_fatal(diag) {
+            let screen = harness.screen_contents();
+            panic!(
+                "bootstrap fatal during RUN handoff\n{}\n--- diag tail ---\n{tail}",
+                diag_boot_milestone_report(diag, &screen)
+            );
+        }
         drain_pty(harness);
+        let tail = read_tail(diag, 32 * 1024);
         let screen = harness.screen_contents();
-        if screen.contains("q: quit") || screen.contains("q quit") {
+        if run_handoff_complete(&tail, &screen) {
             eprintln!(
-                "appliance-pty: RUN footer visible after {:?}",
+                "appliance-pty: RUN handoff complete after {:?}",
                 started.elapsed()
             );
             return;
+        }
+        if tail.contains("RUN UI first frame not observed") {
+            panic!(
+                "plasm-server gave up waiting for RUN UI\n{}",
+                diag_boot_milestone_report(diag, &screen)
+            );
         }
         let now = Instant::now();
         if now.duration_since(last_progress) >= Duration::from_secs(15) {
             last_progress = now;
             eprintln!(
-                "appliance-pty: draining PTY for RUN frame ({:?} elapsed); screen snippet:\n{}",
+                "appliance-pty: waiting for RUN handoff ({:?} elapsed)\n{}",
                 started.elapsed(),
-                screen.chars().take(600).collect::<String>()
+                diag_boot_milestone_report(diag, &screen)
             );
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(100));
     }
-    eprintln!(
-        "appliance-pty: warning: RUN footer not visible after {:?} of PTY drain; continuing",
-        started.elapsed()
+    let screen = harness.screen_contents();
+    panic!(
+        "timeout waiting for RUN handoff ({timeout:?})\n{}",
+        diag_boot_milestone_report(diag, &screen)
     );
 }
 
 fn wait_run_shell(harness: &mut TuiTestHarness, listen_port: u16, diag: &Path) {
-    wait_tcp_listen(listen_port, Duration::from_secs(300), diag);
+    wait_tcp_listen(
+        Some(harness),
+        listen_port,
+        Duration::from_secs(300),
+        diag,
+    );
     wait_diag_until(
+        Some(harness),
         diag,
         &["embedded postgres: server ready"],
         Duration::from_secs(300),
         "embedded Postgres",
     );
     wait_diag_until(
+        Some(harness),
         diag,
         &["plasm HTTP+MCP unified listening"],
         Duration::from_secs(300),
         "HTTP+MCP listener",
     );
-    wait_diag_until(
-        diag,
-        &["phase: run UI handoff"],
-        Duration::from_secs(120),
-        "run UI handoff",
-    );
-    wait_run_handoff(harness, diag, Duration::from_secs(300));
+    wait_run_handoff(harness, diag, Duration::from_secs(120));
     wait_for_screen(harness, &["q: quit"], Duration::from_secs(45), diag, "RUN footer");
     wait_for_screen(
         harness,

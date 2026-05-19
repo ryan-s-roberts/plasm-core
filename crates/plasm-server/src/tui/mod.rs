@@ -3224,6 +3224,7 @@ pub(crate) fn run_running_mode(
     // deadlock BOOT→RUN handoff waiting on this frame.
     if let Some(ref tx) = ui_evt_tx {
         let _ = tx.send(UiEvent::RunEntered);
+        crate::stderr_log::line("[plasm-server] bootstrap: emitted RunEntered to supervisor");
     }
     let mut model = RunState::new();
     if let Some(ref bridge) = admin_bridge {
