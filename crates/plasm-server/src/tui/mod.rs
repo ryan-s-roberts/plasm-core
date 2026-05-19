@@ -3220,7 +3220,11 @@ pub(crate) fn run_running_mode(
     admin_bridge: Option<AdminBridge>,
     log_rx: Option<crossbeam_channel::Receiver<String>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut run_entered_sent = false;
+    // Signal the async supervisor before the first draw so a full PTY pipe cannot
+    // deadlock BOOT→RUN handoff waiting on this frame.
+    if let Some(ref tx) = ui_evt_tx {
+        let _ = tx.send(UiEvent::RunEntered);
+    }
     let mut model = RunState::new();
     if let Some(ref bridge) = admin_bridge {
         enqueue_refresh_if_idle(&mut model, bridge);
@@ -3266,13 +3270,6 @@ pub(crate) fn run_running_mode(
         terminal.draw(|frame| {
             render_running_frame(frame, &mut model, host_state.as_ref(), listen_port)
         })?;
-
-        if !run_entered_sent {
-            if let Some(ref tx) = ui_evt_tx {
-                let _ = tx.send(UiEvent::RunEntered);
-            }
-            run_entered_sent = true;
-        }
 
         if event::poll(Duration::from_millis(120))? {
             if let Event::Key(key) = event::read()? {

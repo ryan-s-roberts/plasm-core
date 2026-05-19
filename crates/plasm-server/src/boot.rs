@@ -342,6 +342,7 @@ pub fn run_appliance_shell(
 
     let inner = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut model = BootModel::new();
+        let mut dirty = true;
 
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
@@ -358,7 +359,10 @@ pub fn run_appliance_shell(
                     return Ok(());
                 }
                 Ok(BootstrapUiMsg::Shutdown) => return Ok(()),
-                Ok(other) => model.apply(other),
+                Ok(other) => {
+                    model.apply(other);
+                    dirty = true;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     crate::stderr_log::line(
@@ -374,7 +378,7 @@ pub fn run_appliance_shell(
 
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
-                    Event::Resize(_, _) => {}
+                    Event::Resize(_, _) => dirty = true,
                     Event::Key(key) => {
                         let raw_quit = matches!(key.code, KeyCode::Char('\x03'))
                             || (key.modifiers.contains(KeyModifiers::CONTROL)
@@ -386,7 +390,10 @@ pub fn run_appliance_shell(
                             }
                         } else {
                             match key.code {
-                                KeyCode::Char('?') => model.show_help = !model.show_help,
+                                KeyCode::Char('?') => {
+                                    model.show_help = !model.show_help;
+                                    dirty = true;
+                                }
                                 KeyCode::Char('q') => {
                                     boot_cancel.store(true, Ordering::SeqCst);
                                     if model.fatal.is_some() {
@@ -401,7 +408,10 @@ pub fn run_appliance_shell(
                 }
             }
 
-            terminal.draw(|f| draw_boot_frame(f, &model, listen_port))?;
+            if dirty {
+                terminal.draw(|f| draw_boot_frame(f, &model, listen_port))?;
+                dirty = false;
+            }
         }
     })();
 

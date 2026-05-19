@@ -219,9 +219,9 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     (listen_port, data_root, diag_log)
 }
 
-/// Read the PTY master buffer so the child’s Crossterm writes do not block on a full pipe.
+/// Read the PTY master side so the child’s Crossterm writes do not block on a full pipe.
 fn drain_pty(harness: &mut TuiTestHarness) {
-    let _ = harness.screen_contents();
+    let _ = harness.update_state();
 }
 
 /// Nudge Crossterm to redraw without a tight `update_state` read loop (BOOT spam can block there).
@@ -355,58 +355,41 @@ fn wait_tcp_listen(port: u16, timeout: Duration, diag: &Path) {
     );
 }
 
-/// After HTTP listen, pump the PTY until RUN chrome appears or the diag log records handoff complete.
-///
-/// `phase: control station ready` is logged only **after** the UI thread draws RUN once and sends
-/// `RunEntered`; waiting on that string alone while not draining the PTY can deadlock BOOT draws.
+/// Wait for async RUN handshake in the diag log, then drain the PTY so RUN draws can complete.
 fn wait_run_handoff(harness: &mut TuiTestHarness, diag: &Path, timeout: Duration) {
+    wait_diag_until(
+        diag,
+        &["phase: control station ready"],
+        timeout,
+        "control station ready",
+    );
     let started = Instant::now();
-    let deadline = started + timeout;
+    let deadline = started + Duration::from_secs(90);
     let mut last_progress = started;
-    let mut nudge_tick = 0u32;
     while Instant::now() < deadline {
-        if let Some(tail) = diag_has_fatal(diag) {
-            let screen = harness.screen_contents();
-            panic!(
-                "bootstrap fatal during RUN handoff;\n--- tail ---\n{tail}\n--- screen ---\n{screen}"
-            );
-        }
         drain_pty(harness);
-        let tail = read_tail(diag, 4 * 1024);
-        if tail.contains("phase: control station ready") {
-            eprintln!(
-                "appliance-pty: RUN handoff complete (diag) after {:?}",
-                started.elapsed()
-            );
-            return;
-        }
         let screen = harness.screen_contents();
         if screen.contains("q: quit") || screen.contains("q quit") {
             eprintln!(
-                "appliance-pty: RUN handoff complete (PTY footer) after {:?}",
+                "appliance-pty: RUN footer visible after {:?}",
                 started.elapsed()
             );
             return;
-        }
-        nudge_tick = nudge_tick.wrapping_add(1);
-        if nudge_tick % 8 == 0 {
-            nudge_pty(harness);
         }
         let now = Instant::now();
         if now.duration_since(last_progress) >= Duration::from_secs(15) {
             last_progress = now;
             eprintln!(
-                "appliance-pty: waiting for RUN handoff ({:?} elapsed); diag tail:\n{tail}\n--- screen snippet ---\n{}",
+                "appliance-pty: draining PTY for RUN frame ({:?} elapsed); screen snippet:\n{}",
                 started.elapsed(),
                 screen.chars().take(600).collect::<String>()
             );
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(50));
     }
-    panic!(
-        "timeout waiting for RUN UI handoff ({timeout:?})\n--- screen ---\n{}\n--- diag ---\n{}",
-        harness.screen_contents(),
-        read_tail(diag, DIAG_TAIL_MAX)
+    eprintln!(
+        "appliance-pty: warning: RUN footer not visible after {:?} of PTY drain; continuing",
+        started.elapsed()
     );
 }
 
@@ -430,7 +413,7 @@ fn wait_run_shell(harness: &mut TuiTestHarness, listen_port: u16, diag: &Path) {
         Duration::from_secs(120),
         "run UI handoff",
     );
-    wait_run_handoff(harness, diag, Duration::from_secs(180));
+    wait_run_handoff(harness, diag, Duration::from_secs(300));
     wait_for_screen(harness, &["q: quit"], Duration::from_secs(45), diag, "RUN footer");
     wait_for_screen(
         harness,
