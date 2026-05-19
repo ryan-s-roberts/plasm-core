@@ -3703,6 +3703,72 @@ mod tests {
         );
     }
 
+    fn line_text(line: &ratatui::text::Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn run_footer_includes_quit_hint() {
+        let global = [
+            chrome::FooterItem::new("←/→", "tab"),
+            chrome::FooterItem::new("q", "quit"),
+        ];
+        let text = line_text(&chrome::footer_line(&global, &[], None, None, None));
+        assert!(text.contains("q: quit"));
+    }
+
+    #[test]
+    fn help_overlay_documents_keys_tab_shortcuts() {
+        assert!(FOOTER_HELP_OVERLAY.contains("Keys: a r d c"));
+    }
+
+    #[test]
+    fn clients_curl_snippet_uses_bearer_header() {
+        assert!(mcp_curl_snippet(4100).contains("Authorization: Bearer"));
+    }
+
+    #[test]
+    fn apis_filter_bar_heading() {
+        let text = line_text(&chrome::filter_bar_line(
+            "Filter catalogues (/)",
+            "",
+            false,
+        ));
+        assert!(text.contains("Filter catalogues"));
+    }
+
+    #[test]
+    fn keys_tab_footer_includes_add() {
+        let mut state = RunState::new();
+        state.screen = RunScreen::Keys;
+        let items = screen_footer_items(&state);
+        assert!(
+            items
+                .iter()
+                .any(|i| i.key == "a" && i.desc.contains("add"))
+        );
+    }
+
+    #[test]
+    fn oauth_wizard_esc_sets_cancel_notice() {
+        let mut state = RunState::new();
+        state.screen = RunScreen::OAuth;
+        state.resources.snapshot.oauth_providers = vec![sample_oauth_provider("github")];
+        state.resources.snapshot.oauth_surface = OAuthSurfaceState::Ready;
+        let deps = test_deps(None);
+
+        update(&mut state, UiMsg::Key(key(KeyCode::Char('n'))), &deps);
+        assert!(matches!(state.mode, InputMode::OAuthWizard(_)));
+
+        update(&mut state, UiMsg::Key(key(KeyCode::Esc)), &deps);
+        assert!(matches!(state.mode, InputMode::Normal));
+        let notice = state.notice.expect("wizard cancel notice");
+        assert_eq!(notice.title, "OAuth wizard cancelled");
+    }
+
     #[test]
     fn notice_panel_wraps_long_bind_failure() {
         let notice = device_bind_error_notice(

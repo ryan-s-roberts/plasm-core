@@ -22,6 +22,7 @@ members = [
     "crates/plasm-discovery",
     "crates/plasm-server",
 ]
+exclude = ["crates/plasm-server-pty-tests"]
 resolver = "2"
 
 # Single SemVer for the OSS workspace (see plasm-oss/RELEASING.md).

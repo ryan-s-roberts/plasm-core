@@ -9,10 +9,12 @@
 //!   `127.0.0.1`, or with **no TCP host** (e.g. Unix socket) — embedded autostart is skipped so we do
 //!   not overwrite your URLs.
 //!
-//! **Connection:** prefers `DATABASE_URL` (`postgresql://…` on loopback). If unset, uses
-//! `PLASM_EMBEDDED_POSTGRES_USER` (default `postgres`), optional password env/file,
-//! `PLASM_EMBEDDED_POSTGRES_PORT` (optional fixed port; otherwise an ephemeral loopback port), and
-//! `PLASM_EMBEDDED_POSTGRES_DATABASE` (default [`DEFAULT_EMBEDDED_PG_DATABASE`]).
+//! **Connection:** autostart picks an **ephemeral loopback port** (or `PLASM_EMBEDDED_POSTGRES_PORT`
+//! when set) and then writes `DATABASE_URL` / `PLASM_AUTH_STORAGE_URL`. A pre-set loopback
+//! `DATABASE_URL` may supply user/database/password but **not** the listener port — avoids
+//! colliding with a stale appliance on a fixed port. Use `PLASM_EMBEDDED_POSTGRES_USER` (default
+//! `postgres`), optional password env/file, and `PLASM_EMBEDDED_POSTGRES_DATABASE` (default
+//! [`DEFAULT_EMBEDDED_PG_DATABASE`]).
 //!
 //! **Timeouts:** `PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS` caps pg-embed `initdb` / `pg_ctl` waits
 //! (default **240** seconds — first-time binary download + init can be slow on cold caches).
@@ -290,10 +292,31 @@ fn pick_free_loopback_tcp_port() -> Result<u16, Box<dyn std::error::Error>> {
 /// Listener port for pg-embed: explicit `PLASM_EMBEDDED_POSTGRES_PORT`, else an ephemeral port.
 #[cfg(feature = "embedded_postgres")]
 fn embedded_listener_port(explicit: Option<u16>) -> Result<u16, Box<dyn std::error::Error>> {
-    match explicit {
-        Some(p) => Ok(p),
-        None => pick_free_loopback_tcp_port(),
+    let port = match explicit {
+        Some(p) => p,
+        None => pick_free_loopback_tcp_port()?,
+    };
+    ensure_loopback_port_available(port)?;
+    Ok(port)
+}
+
+/// Fail fast when the chosen port is already bound (common when a stale appliance holds 55432).
+#[cfg(feature = "embedded_postgres")]
+fn ensure_loopback_port_available(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    use std::net::TcpListener;
+    match TcpListener::bind((std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port)) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!(
+            "embedded postgres: loopback port {port} is not available ({e}); \
+             stop the other Postgres listener or set PLASM_EMBEDDED_POSTGRES_PORT"
+        )
+        .into()),
     }
+}
+
+#[cfg(feature = "embedded_postgres")]
+fn loopback_postgres_url_host_ok(host: &str) -> bool {
+    host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 /// When reusing a data directory, align `postgresql.conf` `port` with the chosen listener.
@@ -371,69 +394,89 @@ fn build_postgresql_url(
     Ok(u.to_string())
 }
 
+/// Connection parameters for **starting** an embedded cluster.
+///
+/// Does **not** take `DATABASE_URL`'s TCP port — a loopback URL from a prior appliance run is a
+/// frequent source of `Address already in use` on the default cache port. User/database may still
+/// be borrowed from a loopback URL; listener port is always ephemeral unless
+/// `PLASM_EMBEDDED_POSTGRES_PORT` is set.
 #[cfg(feature = "embedded_postgres")]
-fn parse_database_url() -> Result<(String, String, u16, String), Box<dyn std::error::Error>> {
-    let raw = std::env::var("DATABASE_URL").map_err(|_| {
-        "embedded postgres: DATABASE_URL is unset; use PLASM_EMBEDDED_POSTGRES_* fallbacks"
-    })?;
-    let u = url::Url::parse(raw.trim()).map_err(|e| e.to_string())?;
-    let scheme = u.scheme();
-    if scheme != "postgres" && scheme != "postgresql" {
-        return Err("embedded postgres: DATABASE_URL must use postgres:// or postgresql://".into());
-    }
-    let host = u.host_str().ok_or(
-        "embedded postgres: DATABASE_URL must use a TCP host (localhost or 127.0.0.1) for pg-embed",
-    )?;
-    if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-        return Err(format!(
-            "embedded postgres: host must be localhost, 127.0.0.1, or ::1 (got {host})"
-        )
-        .into());
-    }
-    let user = if u.username().is_empty() {
-        "postgres".to_string()
-    } else {
-        u.username().to_string()
-    };
-    let password = u.password().unwrap_or("").to_string();
-    let port = match u.port() {
-        Some(p) => p,
-        None => pick_free_loopback_tcp_port()?,
-    };
-    let path = u.path().trim_start_matches('/');
-    let database = if path.is_empty() {
-        return Err(
-            "embedded postgres: DATABASE_URL must include a database name in the path".into(),
-        );
-    } else {
-        path.to_string()
-    };
-    Ok((user, password, port, database))
-}
-
-#[cfg(feature = "embedded_postgres")]
-fn resolve_connection() -> Result<(String, String, u16, String), Box<dyn std::error::Error>> {
-    if std::env::var("DATABASE_URL")
-        .ok()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-    {
-        return parse_database_url();
-    }
-    let user = std::env::var("PLASM_EMBEDDED_POSTGRES_USER")
+fn resolve_embedded_cluster_connection(
+) -> Result<(String, String, u16, String), Box<dyn std::error::Error>> {
+    let mut user = std::env::var("PLASM_EMBEDDED_POSTGRES_USER")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "postgres".to_string());
-    let password = read_password_from_env()?;
+    let mut password = read_password_from_env()?;
+    let mut database = std::env::var("PLASM_EMBEDDED_POSTGRES_DATABASE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_EMBEDDED_PG_DATABASE.to_string());
+
+    if let Ok(raw) = std::env::var("DATABASE_URL") {
+        let s = raw.trim();
+        if !s.is_empty() {
+            if let Ok(u) = url::Url::parse(s) {
+                let scheme = u.scheme();
+                if (scheme == "postgres" || scheme == "postgresql")
+                    && u.host_str().is_some_and(loopback_postgres_url_host_ok)
+                {
+                    if !u.username().is_empty() {
+                        user = u.username().to_string();
+                    }
+                    if let Some(p) = u.password() {
+                        password = p.to_string();
+                    }
+                    let path = u.path().trim_start_matches('/');
+                    if !path.is_empty() {
+                        database = path.to_string();
+                    }
+                }
+            }
+        }
+    }
+
     let explicit_port = std::env::var("PLASM_EMBEDDED_POSTGRES_PORT")
         .ok()
         .and_then(|s| s.parse().ok());
     let port = embedded_listener_port(explicit_port)?;
-    let database = std::env::var("PLASM_EMBEDDED_POSTGRES_DATABASE")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_EMBEDDED_PG_DATABASE.to_string());
     Ok((user, password, port, database))
+}
+
+#[cfg(feature = "embedded_postgres")]
+async fn start_embedded_db_with_retry(
+    pg: &mut PgEmbed,
+    database_dir: &std::path::Path,
+    persistent: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match pg.start_db().await {
+        Ok(()) => return Ok(()),
+        Err(first) if !persistent => {
+            tracing::warn!(
+                %first,
+                dir = %database_dir.display(),
+                "embedded postgres: start failed on non-persistent cluster; re-init after cleanup"
+            );
+            if database_dir.exists() {
+                std::fs::remove_dir_all(database_dir).map_err(|e| {
+                    format!(
+                        "embedded postgres: could not remove {:?} after start failure: {e}",
+                        database_dir
+                    )
+                })?;
+            }
+            std::fs::create_dir_all(database_dir)?;
+            pg.setup()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+            sync_postgresql_conf_port(database_dir, pg.pg_settings.port)?;
+            pg.start_db()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+            Ok(())
+        }
+        Err(e) => Err(e.to_string().into()),
+    }
 }
 
 impl EmbeddedPostgresGuard {
@@ -486,20 +529,20 @@ impl EmbeddedPostgresGuard {
             let _pg_embed_setup_lock = PgEmbedSetupExclusiveLock::acquire().await?;
 
             let database_dir = database_dir_from_env()?;
-            let (user, password, port, database) = resolve_connection()?;
+            let persistent = persistent_from_env();
+            let (user, password, port, database) = resolve_embedded_cluster_connection()?;
             std::env::set_var("PLASM_EMBEDDED_POSTGRES_PORT", port.to_string());
-            sync_postgresql_conf_port(&database_dir, port)?;
             let password = embedded_superuser_password_for_pg_embed(password);
 
             info!(port, "embedded postgres: listener port selected");
 
             let pg_settings = PgSettings {
-                database_dir,
+                database_dir: database_dir.clone(),
                 port,
                 user: user.clone(),
                 password: password.clone(),
                 auth_method: PgAuthMethod::Plain,
-                persistent: persistent_from_env(),
+                persistent,
                 timeout: timeout_from_env(),
                 migration_dir: None,
             };
@@ -522,10 +565,8 @@ impl EmbeddedPostgresGuard {
             pg.setup()
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
-
-            pg.start_db()
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+            sync_postgresql_conf_port(&database_dir, port)?;
+            start_embedded_db_with_retry(&mut pg, &database_dir, persistent).await?;
 
             if !pg
                 .database_exists(&database)
@@ -570,6 +611,47 @@ impl EmbeddedPostgresGuard {
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
             Ok(())
+        }
+    }
+}
+
+#[cfg(all(test, feature = "embedded_postgres"))]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn embedded_cluster_ignores_database_url_port() {
+        let _guard = env_lock().lock().unwrap();
+        let prior_url = std::env::var("DATABASE_URL").ok();
+        let prior_port = std::env::var("PLASM_EMBEDDED_POSTGRES_PORT").ok();
+        std::env::set_var(
+            "DATABASE_URL",
+            "postgresql://postgres:secret@127.0.0.1:55432/plasm_appliance",
+        );
+        std::env::remove_var("PLASM_EMBEDDED_POSTGRES_PORT");
+
+        let (user, password, port, database) =
+            resolve_embedded_cluster_connection().expect("resolve");
+        assert_eq!(user, "postgres");
+        assert_eq!(password, "secret");
+        assert_eq!(database, "plasm_appliance");
+        assert_ne!(port, 55432, "must not reuse stale DATABASE_URL port");
+
+        if let Some(v) = prior_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = prior_port {
+            std::env::set_var("PLASM_EMBEDDED_POSTGRES_PORT", v);
+        } else {
+            std::env::remove_var("PLASM_EMBEDDED_POSTGRES_PORT");
         }
     }
 }

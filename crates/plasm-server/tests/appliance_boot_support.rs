@@ -1,4 +1,4 @@
-//! Shared bootstrap polling for appliance integration tests (diag log + TCP; no PTY during boot).
+//! Shared bootstrap polling for appliance integration tests (diag log + TCP).
 
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -9,8 +9,8 @@ pub const TEST_AUTH_STORAGE_ENCRYPTION_KEY: &str =
 
 pub const BOOTSTRAP_WAIT: Duration = Duration::from_secs(600);
 pub const BOOTSTRAP_PROGRESS_INTERVAL: Duration = Duration::from_secs(15);
-pub const DIAG_TAIL_MAX: usize = 16 * 1024;
 pub const EMBEDDED_PG_TIMEOUT_SECS: &str = "300";
+/// `plasm_appliance_boot` / `plasm_agent` at `info` so milestones land in `PLASM_APPLIANCE_DIAG_LOG`.
 pub const APPLIANCE_TEST_RUST_LOG: &str =
     "warn,plasm_appliance_boot=info,plasm_agent=info,plasm_agent_core=warn,pg_embed=warn,sqlx=warn";
 
@@ -43,55 +43,15 @@ const OTEL_EXPORT_ENV_KEYS: &[&str] = &[
     "OTEL_LOGS_EXPORTER",
 ];
 
-/// Must match `tracing::info!(target: "plasm_appliance_boot", …)` in `plasm-server` `main.rs`.
-pub const LOG_PHASE_START_UNIFIED_HTTP_MCP: &str = "phase: start unified HTTP+MCP listener";
-pub const LOG_PHASE_CONTROL_STATION_READY: &str = "phase: control station ready";
+/// Must match `tracing` lines in `plasm-server` `main.rs` (`target: plasm_appliance_boot`).
 pub const LOG_PHASE_HEADLESS_LISTENER: &str = "phase: headless listener running";
 pub const LOG_EMBEDDED_PG_READY: &str = "embedded postgres: server ready";
-pub const LOG_EMBEDDED_PG_PORT: &str = "embedded postgres: listener port selected";
-pub const LOG_RUN_UI_HANDOFF: &str = "phase: run UI handoff";
 pub const LOG_RUN_HANDSHAKE_TIMEOUT: &str = "RUN UI RunEntered not observed within 120s";
 
-pub const BOOT_SUCCESS_MILESTONES: &[(&str, &str)] = &[
-    (LOG_EMBEDDED_PG_PORT, "embedded PG port chosen"),
+const HEADLESS_MILESTONES: &[(&str, &str)] = &[
     (LOG_EMBEDDED_PG_READY, "embedded Postgres up"),
-    (LOG_PHASE_START_UNIFIED_HTTP_MCP, "HTTP+MCP listener started (diag)"),
-    (LOG_RUN_UI_HANDOFF, "supervisor sent RUN handoff"),
-    (LOG_PHASE_CONTROL_STATION_READY, "control station ready (TUI diag)"),
-    (LOG_PHASE_HEADLESS_LISTENER, "headless listener running (diag)"),
+    (LOG_PHASE_HEADLESS_LISTENER, "headless listener running"),
 ];
-
-/// Plain stderr milestones (PTY mode only).
-pub const PTY_BOOT_MILESTONES: &[(&str, &str)] = &[
-    (
-        "[plasm-server] bootstrap: sent RUN handoff to UI thread",
-        "supervisor sent RUN handoff (stderr)",
-    ),
-    (
-        "[plasm-server] bootstrap: UI received RUN handoff",
-        "UI received RUN handoff (stderr)",
-    ),
-    (
-        "[plasm-server] bootstrap: emitted RunEntered",
-        "UI emitted RunEntered (stderr)",
-    ),
-    (
-        "[plasm-server] bootstrap: RUN UI RunEntered received",
-        "supervisor got RunEntered (stderr)",
-    ),
-    (
-        "[plasm-server] bootstrap: control station ready",
-        "control station ready (stderr)",
-    ),
-];
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BootstrapMode {
-    /// TUI: unified listener + RUN handoff in diag.
-    Tui,
-    /// `--no-tui`: headless listener milestone in diag.
-    Headless,
-}
 
 pub fn read_tail(path: &Path, max: usize) -> String {
     match std::fs::read(path) {
@@ -107,33 +67,32 @@ pub fn read_tail(path: &Path, max: usize) -> String {
     }
 }
 
-pub fn diag_boot_milestone_report(diag: &Path, screen: &str, include_pty_stderr: bool) -> String {
+/// One-line progress for periodic eprintln (no diag tail dump).
+pub fn bootstrap_progress_line(diag: &Path, http_up: bool, elapsed: Duration) -> String {
+    let tail = read_tail(diag, 64 * 1024);
+    let missing: Vec<&str> = HEADLESS_MILESTONES
+        .iter()
+        .filter(|(needle, _)| !tail.contains(*needle))
+        .map(|(_, label)| *label)
+        .collect();
+    if missing.is_empty() {
+        format!("appliance-boot: waiting {elapsed:?} http={http_up} (milestones ok)")
+    } else {
+        format!(
+            "appliance-boot: waiting {elapsed:?} http={http_up} missing: {}",
+            missing.join(", ")
+        )
+    }
+}
+
+/// Full milestone report for panic / timeout messages.
+pub fn diag_boot_milestone_report(diag: &Path) -> String {
     let full = read_tail(diag, 512 * 1024);
     let mut lines = Vec::new();
     lines.push(format!("diag log: {}", diag.display()));
-    for (needle, label) in BOOT_SUCCESS_MILESTONES {
+    for (needle, label) in HEADLESS_MILESTONES {
         let mark = if full.contains(needle) { "ok" } else { "MISSING" };
         lines.push(format!("  [{mark}] {label}"));
-    }
-    if include_pty_stderr {
-        for (needle, label) in PTY_BOOT_MILESTONES {
-            let mark = if screen.contains(needle) { "ok" } else { "MISSING" };
-            lines.push(format!("  [{mark}] {label} (PTY)"));
-        }
-    }
-    lines.push("--- last plasm_appliance_boot / plasm-server lines (diag) ---".into());
-    let mut boot_lines = 0usize;
-    for line in full.lines().rev() {
-        if line.contains("plasm_appliance_boot")
-            || line.contains("[plasm-server]")
-            || line.contains("plasm_agent::embedded_postgres")
-        {
-            lines.push(format!("  {line}"));
-            boot_lines += 1;
-            if boot_lines >= 8 {
-                break;
-            }
-        }
     }
     lines.join("\n")
 }
@@ -158,44 +117,14 @@ pub fn diag_has_fatal(diag: &Path) -> Option<String> {
     }
 }
 
-fn bootstrap_complete(mode: BootstrapMode, tail: &str, http_up: bool) -> bool {
-    if !http_up || !tail.contains(LOG_EMBEDDED_PG_READY) {
-        return false;
-    }
-    match mode {
-        BootstrapMode::Tui => {
-            tail.contains(LOG_PHASE_START_UNIFIED_HTTP_MCP)
-                && tail.contains(LOG_PHASE_CONTROL_STATION_READY)
-        }
-        BootstrapMode::Headless => tail.contains(LOG_PHASE_HEADLESS_LISTENER),
-    }
+fn bootstrap_complete(tail: &str, http_up: bool) -> bool {
+    http_up
+        && tail.contains(LOG_EMBEDDED_PG_READY)
+        && tail.contains(LOG_PHASE_HEADLESS_LISTENER)
 }
 
-fn bootstrap_diag_progress(
-    diag: &Path,
-    listen_port: u16,
-    mode: BootstrapMode,
-    elapsed: Duration,
-    diag_tail: &str,
-    include_pty_stderr: bool,
-) {
-    let addr = SocketAddr::from(([127, 0, 0, 1], listen_port));
-    let http_up = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok();
-    eprintln!(
-        "appliance-boot: waiting ({elapsed:?}) mode={mode:?} http_connect={http_up}\n{}",
-        diag_boot_milestone_report(diag, "", include_pty_stderr)
-    );
-    if !diag_tail.is_empty() {
-        eprintln!(
-            "appliance-boot: diag excerpt:\n{}",
-            diag_tail.chars().take(1200).collect::<String>()
-        );
-    }
-}
-
-/// Poll `PLASM_APPLIANCE_DIAG_LOG` and HTTP until bootstrap is complete (no PTY I/O).
-pub fn wait_bootstrap_ready(listen_port: u16, diag: &Path, mode: BootstrapMode) {
-    let include_pty = mode == BootstrapMode::Tui;
+/// Poll `PLASM_APPLIANCE_DIAG_LOG` and HTTP until headless bootstrap is complete.
+pub fn wait_bootstrap_ready(listen_port: u16, diag: &Path) {
     let started = Instant::now();
     let deadline = started + BOOTSTRAP_WAIT;
     let mut last_progress = started;
@@ -205,21 +134,21 @@ pub fn wait_bootstrap_ready(listen_port: u16, diag: &Path, mode: BootstrapMode) 
         if let Some(tail) = diag_has_fatal(diag) {
             panic!(
                 "bootstrap fatal\n{}\n--- diag tail ---\n{tail}",
-                diag_boot_milestone_report(diag, "", include_pty)
+                diag_boot_milestone_report(diag)
             );
         }
         let tail = read_tail(diag, 64 * 1024);
         if tail.contains(LOG_RUN_HANDSHAKE_TIMEOUT) {
             panic!(
                 "plasm-server gave up waiting for RUN UI RunEntered\n{}",
-                diag_boot_milestone_report(diag, "", include_pty)
+                diag_boot_milestone_report(diag)
             );
         }
 
         let http_up = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok();
-        if bootstrap_complete(mode, &tail, http_up) {
+        if bootstrap_complete(&tail, http_up) {
             eprintln!(
-                "appliance-boot: bootstrap ready ({mode:?}) after {:?}",
+                "appliance-boot: bootstrap ready after {:?}",
                 started.elapsed()
             );
             return;
@@ -228,13 +157,16 @@ pub fn wait_bootstrap_ready(listen_port: u16, diag: &Path, mode: BootstrapMode) 
         let now = Instant::now();
         if now.duration_since(last_progress) >= BOOTSTRAP_PROGRESS_INTERVAL {
             last_progress = now;
-            bootstrap_diag_progress(diag, listen_port, mode, started.elapsed(), &tail, include_pty);
+            eprintln!(
+                "{}",
+                bootstrap_progress_line(diag, http_up, started.elapsed())
+            );
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     panic!(
-        "timeout waiting for bootstrap ({BOOTSTRAP_WAIT:?}, mode={mode:?})\n{}",
-        diag_boot_milestone_report(diag, "", include_pty)
+        "timeout waiting for bootstrap ({BOOTSTRAP_WAIT:?})\n{}",
+        diag_boot_milestone_report(diag)
     );
 }
 
@@ -248,16 +180,26 @@ pub fn make_appliance_data_root(prefix: &str) -> (tempfile::TempDir, PathBuf) {
 }
 
 pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("canonicalize repo root from CARGO_MANIFEST_DIR/../../..")
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for rel in ["../../..", "../../../..", "../../../../.."] {
+        let candidate = manifest.join(rel);
+        let Ok(root) = candidate.canonicalize() else {
+            continue;
+        };
+        if root.join("fixtures/schemas/overshow_tools").is_dir() {
+            return root;
+        }
+    }
+    panic!(
+        "monorepo root not found from {}; expected fixtures/schemas/overshow_tools",
+        manifest.display()
+    );
 }
 
 pub fn schema_path() -> PathBuf {
     let p = repo_root().join("fixtures/schemas/overshow_tools");
     assert!(
-        p.exists(),
+        p.is_dir(),
         "missing schema path {p:?}; run tests from the monorepo root"
     );
     p
@@ -330,18 +272,60 @@ fn clear_otel_export_env(cmd: &mut std::process::Command) {
     cmd.env("OTEL_SDK_DISABLED", "true");
 }
 
+pub fn clear_inherited_postgres_urls(cmd: &mut std::process::Command) {
+    for key in [
+        "DATABASE_URL",
+        "PLASM_MCP_CONFIG_DATABASE_URL",
+        "PLASM_AUTH_STORAGE_URL",
+    ] {
+        cmd.env_remove(key);
+    }
+}
+
 pub fn apply_appliance_test_env(cmd: &mut std::process::Command, diag_log: &Path) {
     cmd.env("NO_COLOR", "1");
     clear_external_postgres_env(cmd);
+    clear_inherited_postgres_urls(cmd);
     clear_otel_export_env(cmd);
     cmd.env(
         "AUTH_STORAGE_ENCRYPTION_KEY",
         TEST_AUTH_STORAGE_ENCRYPTION_KEY,
     );
     cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", EMBEDDED_PG_TIMEOUT_SECS);
-    cmd.env("PLASM_EMBEDDED_POSTGRES_PERSISTENT", "0");
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log);
     cmd.env("RUST_LOG", APPLIANCE_TEST_RUST_LOG);
+}
+
+/// Environment pairs for `testty::PtySession::spawn_with_size` (PTY quit smoke).
+pub fn appliance_pty_spawn_env(diag_log: &Path) -> Vec<(String, String)> {
+    let mut pairs = vec![
+        ("NO_COLOR".into(), "1".into()),
+        ("PLASM_EMBEDDED_POSTGRES".into(), "1".into()),
+        ("OTEL_SDK_DISABLED".into(), "true".into()),
+        (
+            "AUTH_STORAGE_ENCRYPTION_KEY".into(),
+            TEST_AUTH_STORAGE_ENCRYPTION_KEY.into(),
+        ),
+        (
+            "PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS".into(),
+            EMBEDDED_PG_TIMEOUT_SECS.into(),
+        ),
+        (
+            "PLASM_APPLIANCE_DIAG_LOG".into(),
+            diag_log.display().to_string(),
+        ),
+        ("RUST_LOG".into(), APPLIANCE_TEST_RUST_LOG.into()),
+    ];
+    for key in [
+        "DATABASE_URL",
+        "PLASM_MCP_CONFIG_DATABASE_URL",
+        "PLASM_AUTH_STORAGE_URL",
+        "PLASM_EMBEDDED_POSTGRES_PORT",
+        "PGDATA",
+    ] {
+        pairs.push(((*key).into(), String::new()));
+    }
+    pairs
 }
 
 pub fn push_appliance_cli_args(
@@ -353,51 +337,4 @@ pub fn push_appliance_cli_args(
     cmd.arg("--data-dir").arg(data_dir);
     cmd.arg("--schema").arg(schema);
     cmd.arg("--port").arg(listen_port.to_string());
-}
-
-#[cfg(feature = "tui_pty_tests")]
-pub fn clear_external_postgres_env_pty(cmd: &mut portable_pty::CommandBuilder) {
-    for key in EXTERNAL_POSTGRES_ENV_KEYS {
-        cmd.env_remove(key);
-    }
-    cmd.env("PLASM_EMBEDDED_POSTGRES", "1");
-}
-
-#[cfg(feature = "tui_pty_tests")]
-fn clear_otel_export_env_pty(cmd: &mut portable_pty::CommandBuilder) {
-    for key in OTEL_EXPORT_ENV_KEYS {
-        cmd.env_remove(key);
-    }
-    cmd.env("OTEL_SDK_DISABLED", "true");
-}
-
-#[cfg(feature = "tui_pty_tests")]
-pub fn apply_appliance_test_env_pty(cmd: &mut portable_pty::CommandBuilder, diag_log: &Path) {
-    cmd.env("NO_COLOR", "1");
-    clear_external_postgres_env_pty(cmd);
-    clear_otel_export_env_pty(cmd);
-    cmd.env(
-        "AUTH_STORAGE_ENCRYPTION_KEY",
-        TEST_AUTH_STORAGE_ENCRYPTION_KEY,
-    );
-    cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", EMBEDDED_PG_TIMEOUT_SECS);
-    cmd.env("PLASM_EMBEDDED_POSTGRES_PERSISTENT", "0");
-    cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
-    cmd.env("PLASM_TUI_PTY_TESTS", "1");
-    cmd.env("RUST_LOG", APPLIANCE_TEST_RUST_LOG);
-}
-
-#[cfg(feature = "tui_pty_tests")]
-pub fn push_appliance_cli_args_pty(
-    cmd: &mut portable_pty::CommandBuilder,
-    data_dir: &std::ffi::OsStr,
-    schema: &std::ffi::OsStr,
-    listen_port: u16,
-) {
-    cmd.arg("--data-dir");
-    cmd.arg(data_dir);
-    cmd.arg("--schema");
-    cmd.arg(schema);
-    cmd.arg("--port");
-    cmd.arg(listen_port.to_string());
 }

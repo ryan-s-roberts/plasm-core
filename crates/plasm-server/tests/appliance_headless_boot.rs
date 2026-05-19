@@ -8,8 +8,8 @@ use std::panic::AssertUnwindSafe;
 use std::process::{Child, Command, Stdio};
 
 use appliance_boot_support::{
-    apply_appliance_test_env, bin_path, make_appliance_data_root, push_appliance_cli_args,
-    pick_free_tcp_port, repo_root, schema_path, wait_bootstrap_ready, BootstrapMode,
+    apply_appliance_test_env, bin_path, make_appliance_data_root, pick_free_tcp_port,
+    push_appliance_cli_args, repo_root, schema_path, wait_bootstrap_ready,
 };
 
 fn spawn_headless_appliance() -> (u16, tempfile::TempDir, std::path::PathBuf, Child) {
@@ -40,7 +40,7 @@ fn spawn_headless_appliance() -> (u16, tempfile::TempDir, std::path::PathBuf, Ch
 fn appliance_headless_boot_smoke() {
     let (listen_port, _data, diag_log, mut child) = spawn_headless_appliance();
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        wait_bootstrap_ready(listen_port, &diag_log, BootstrapMode::Headless);
+        wait_bootstrap_ready(listen_port, &diag_log);
     }));
     let _ = child.kill();
     let _ = child.wait();

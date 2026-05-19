@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "plasm-server-pty-tests"
+version = "0.1.0"
+edition = "2021"
+description = "PTY quit smoke for plasm-server (testty; standalone — avoids ratatui unicode-width pin)"
+publish = false
+
+[dev-dependencies]
+tempfile = "3"
+testty = "0.9"
+
+[[test]]
+name = "tui_pty_quit_smoke"
+path = "tests/tui_pty_quit_smoke.rs"
+harness = true

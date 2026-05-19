@@ -103,6 +103,17 @@ fn apply_serve_data_dir_env_defaults(cli: &ServeCli) -> std::io::Result<()> {
     std::fs::create_dir_all(&pg)?;
     std::env::set_var("PLASM_EMBEDDED_POSTGRES_DATA_DIR", pg.as_os_str());
     std::env::remove_var("PGDATA");
+    // Inherited loopback DATABASE_URL ports (e.g. a prior appliance on 55432) must not steer
+    // embedded pg-embed bind — listener port is chosen at autostart, then URLs are rewritten.
+    if EmbeddedPostgresGuard::will_autostart_embedded_postgres() {
+        for key in [
+            "DATABASE_URL",
+            "PLASM_MCP_CONFIG_DATABASE_URL",
+            "PLASM_AUTH_STORAGE_URL",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
     if !env_str_nonempty("PLASM_LOCAL_STATE_DIR") {
         let local = root.join("local");
         std::fs::create_dir_all(&local)?;
@@ -815,7 +826,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             crossbeam_channel::bounded::<String>(appliance_log::APPLIANCE_LOG_CHANNEL_CAP);
         // Telemetry init (`plasm_otel`, OTLP, etc.) runs on the main thread. Do **not** install it
         // before the boot UI thread starts: PTY-based tests (and humans) otherwise see a silent
-        // terminal while `ratatui-testlib` blocks on the first PTY read with no timeout progress.
+        // terminal while a PTY harness blocks on the first read with no timeout progress.
         (Some(tx), Some(rx))
     };
 

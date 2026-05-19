@@ -10,17 +10,9 @@ publish = false
 #   cargo build -p plasm-server --no-default-features
 default = ["embedded_postgres"]
 embedded_postgres = ["plasm/embedded_postgres"]
-# Opt-in: compile `tests/tui_pty_integration.rs` (PTY + ratatui-testlib).
-tui_pty_tests = []
-
 [[bin]]
 name = "plasm-server"
 path = "src/main.rs"
-
-[[test]]
-name = "tui_pty_integration"
-path = "tests/tui_pty_integration.rs"
-required-features = ["tui_pty_tests"]
 
 [[test]]
 name = "appliance_headless_boot"
@@ -47,6 +39,4 @@ auth-framework = { workspace = true }
 arboard = "3"
 
 [dev-dependencies]
-ratatui-testlib = { version = "0.1", default-features = false, features = ["mvp"] }
-portable-pty = "0.8"
 tempfile = { workspace = true }

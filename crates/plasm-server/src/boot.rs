@@ -343,9 +343,6 @@ pub fn run_appliance_shell(
     let inner = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut model = BootModel::new();
         let mut dirty = true;
-        // PTY integration tests: never block the UI thread in BOOT redraws (full pipe → no RUN handoff).
-        let skip_boot_tui = std::env::var("PLASM_TUI_PTY_TESTS").as_deref() == Ok("1");
-
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(BootstrapUiMsg::Running(handoff)) => {
@@ -414,12 +411,8 @@ pub fn run_appliance_shell(
             }
 
             if dirty {
-                if skip_boot_tui {
-                    dirty = false;
-                } else {
-                    terminal.draw(|f| draw_boot_frame(f, &model, listen_port))?;
-                    dirty = false;
-                }
+                terminal.draw(|f| draw_boot_frame(f, &model, listen_port))?;
+                dirty = false;
             }
         }
     })();
