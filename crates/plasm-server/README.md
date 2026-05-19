@@ -2,7 +2,7 @@
 
 Primary OSS distribution binary: in-process [`plasm-agent-core`](../plasm-agent-core) kernel, **one** concurrent HTTP+MCP listener (path-routed: discovery/execute + Streamable MCP on `/mcp`), and a Ratatui control station.
 
-**Compile-time:** this crate **defaults to** [`plasm`](../plasm)'s **`embedded_postgres`** feature (bundles **pg-embed**). At runtime embedded Postgres **autostarts** (no env required): cache data dir, port **55432**, database **`plasm_appliance`**, superuser password **`plasm_embedded_local_dev`** when none is set (pg-embed `initdb --pwfile` cannot be empty). Opt out **`PLASM_EMBEDDED_POSTGRES=0`**, or set a non-loopback Postgres URL (`DATABASE_URL` / `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL`). Slim binary without pg-embed: **`cargo build -p plasm-server --no-default-features`**.
+**Compile-time:** this crate **defaults to** [`plasm`](../plasm)'s **`embedded_postgres`** feature (bundles **pg-embed**). At runtime embedded Postgres **autostarts** (no env required): cache data dir, an **ephemeral loopback port** (override with `PLASM_EMBEDDED_POSTGRES_PORT`), database **`plasm_appliance`**, superuser password **`plasm_embedded_local_dev`** when none is set (pg-embed `initdb --pwfile` cannot be empty). Opt out **`PLASM_EMBEDDED_POSTGRES=0`**, or set a non-loopback Postgres URL (`DATABASE_URL` / `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL`). Slim binary without pg-embed: **`cargo build -p plasm-server --no-default-features`**.
 
 From the **workspace root** (monorepo or `plasm-oss` checkout):
 

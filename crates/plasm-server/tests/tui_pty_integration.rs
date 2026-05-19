@@ -239,7 +239,6 @@ fn embedded_pg_temp_parent() -> PathBuf {
 
 fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, PathBuf) {
     let listen_port = pick_free_tcp_port();
-    let pg_port = pick_free_tcp_port();
     let schema = schema_path();
     let data_root = tempfile::Builder::new()
         .prefix("plasm-server-pty-")
@@ -259,7 +258,6 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     cmd.arg("--data-dir");
     cmd.arg(data_root.path().as_os_str());
     cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", "300");
-    cmd.env("PLASM_EMBEDDED_POSTGRES_PORT", pg_port.to_string());
     cmd.env("PLASM_EMBEDDED_POSTGRES_PERSISTENT", "0");
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
     // Child must see this so BOOT skips redraws that deadlock PTY handoff (see boot.rs).
@@ -270,7 +268,7 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
     );
 
     eprintln!(
-        "appliance-pty: spawn plasm-server listen_port={listen_port} embedded_pg_port={pg_port} data_dir={} diag_log={}",
+        "appliance-pty: spawn plasm-server listen_port={listen_port} embedded_pg_port=ephemeral data_dir={} diag_log={}",
         data_root.path().display(),
         diag_log.display(),
     );

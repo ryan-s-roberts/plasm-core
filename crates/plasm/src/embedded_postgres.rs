@@ -11,7 +11,7 @@
 //!
 //! **Connection:** prefers `DATABASE_URL` (`postgresql://…` on loopback). If unset, uses
 //! `PLASM_EMBEDDED_POSTGRES_USER` (default `postgres`), optional password env/file,
-//! `PLASM_EMBEDDED_POSTGRES_PORT` (default [`DEFAULT_EMBEDDED_PG_PORT`]), and
+//! `PLASM_EMBEDDED_POSTGRES_PORT` (optional fixed port; otherwise an ephemeral loopback port), and
 //! `PLASM_EMBEDDED_POSTGRES_DATABASE` (default [`DEFAULT_EMBEDDED_PG_DATABASE`]).
 //!
 //! **Timeouts:** `PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS` caps pg-embed `initdb` / `pg_ctl` waits
@@ -281,6 +281,54 @@ fn default_embedded_data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 #[cfg(feature = "embedded_postgres")]
+fn pick_free_loopback_tcp_port() -> Result<u16, Box<dyn std::error::Error>> {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+/// Listener port for pg-embed: explicit `PLASM_EMBEDDED_POSTGRES_PORT`, else an ephemeral port.
+#[cfg(feature = "embedded_postgres")]
+fn embedded_listener_port(explicit: Option<u16>) -> Result<u16, Box<dyn std::error::Error>> {
+    match explicit {
+        Some(p) => Ok(p),
+        None => pick_free_loopback_tcp_port(),
+    }
+}
+
+/// When reusing a data directory, align `postgresql.conf` `port` with the chosen listener.
+#[cfg(feature = "embedded_postgres")]
+fn sync_postgresql_conf_port(
+    database_dir: &std::path::Path,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let conf_path = database_dir.join("postgresql.conf");
+    if !conf_path.is_file() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&conf_path)?;
+    let port_line = format!("port = {port}");
+    let mut replaced = false;
+    let mut out = String::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('#') && trimmed.starts_with("port") && trimmed.contains('=') {
+            out.push_str(&port_line);
+            replaced = true;
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    if !replaced {
+        out.push_str(&port_line);
+        out.push('\n');
+    }
+    std::fs::write(conf_path, out)?;
+    Ok(())
+}
+
+#[cfg(feature = "embedded_postgres")]
 fn database_dir_from_env() -> Result<PathBuf, Box<dyn std::error::Error>> {
     for key in ["PLASM_EMBEDDED_POSTGRES_DATA_DIR", "PGDATA"] {
         if let Ok(p) = std::env::var(key) {
@@ -348,7 +396,10 @@ fn parse_database_url() -> Result<(String, String, u16, String), Box<dyn std::er
         u.username().to_string()
     };
     let password = u.password().unwrap_or("").to_string();
-    let port = u.port().unwrap_or(DEFAULT_EMBEDDED_PG_PORT);
+    let port = match u.port() {
+        Some(p) => p,
+        None => pick_free_loopback_tcp_port()?,
+    };
     let path = u.path().trim_start_matches('/');
     let database = if path.is_empty() {
         return Err(
@@ -374,10 +425,10 @@ fn resolve_connection() -> Result<(String, String, u16, String), Box<dyn std::er
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "postgres".to_string());
     let password = read_password_from_env()?;
-    let port: u16 = std::env::var("PLASM_EMBEDDED_POSTGRES_PORT")
+    let explicit_port = std::env::var("PLASM_EMBEDDED_POSTGRES_PORT")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_EMBEDDED_PG_PORT);
+        .and_then(|s| s.parse().ok());
+    let port = embedded_listener_port(explicit_port)?;
     let database = std::env::var("PLASM_EMBEDDED_POSTGRES_DATABASE")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -436,7 +487,11 @@ impl EmbeddedPostgresGuard {
 
             let database_dir = database_dir_from_env()?;
             let (user, password, port, database) = resolve_connection()?;
+            std::env::set_var("PLASM_EMBEDDED_POSTGRES_PORT", port.to_string());
+            sync_postgresql_conf_port(&database_dir, port)?;
             let password = embedded_superuser_password_for_pg_embed(password);
+
+            info!(port, "embedded postgres: listener port selected");
 
             let pg_settings = PgSettings {
                 database_dir,
