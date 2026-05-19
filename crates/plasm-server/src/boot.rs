@@ -368,6 +368,10 @@ pub fn run_appliance_shell(
                 }
             }
 
+            if boot_cancel.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
                     Event::Resize(_, _) => {}

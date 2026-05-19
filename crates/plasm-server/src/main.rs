@@ -1063,6 +1063,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tx.send(boot::BootstrapUiMsg::PhaseDone(6));
 
         let admin_bridge = crate::appliance_admin_bridge::spawn_admin_router(Arc::clone(&state));
+        tracing::info!(target: "plasm_appliance_boot", "phase: run UI handoff");
         let _ = tx.send(boot::BootstrapUiMsg::Running(boot::RunningHandoff {
             state: Arc::clone(&state),
             admin_bridge,
@@ -1092,8 +1093,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(_) => {
                         running.store(false, Ordering::SeqCst);
+                        boot_cancel.store(true, Ordering::SeqCst);
                         unified_srv.abort();
-                        let _ = join_ui_thread(ui_handle).await;
+                        tracing::error!(
+                            target: "plasm_appliance_boot",
+                            "RUN UI first frame not observed within 120s"
+                        );
+                        stderr_log::line(
+                            "[plasm-server] fatal: timeout waiting for RUN UI first frame (120s)",
+                        );
+                        match tokio::time::timeout(Duration::from_secs(5), join_ui_thread(ui_handle))
+                            .await
+                        {
+                            Ok(Ok(())) => {}
+                            _ => stderr_log::line(
+                                "[plasm-server] warning: UI thread did not exit within 5s after RUN handshake timeout",
+                            ),
+                        }
                         return Err("timeout waiting for RUN UI first frame (120s)".into());
                     }
                 }
