@@ -22,6 +22,40 @@ use uuid::Uuid;
 
 pub const TRACE_SINK_TEST_CATALOG_URL_ENV: &str = "PLASM_TRACE_SINK_TEST_CATALOG_URL";
 
+/// Quick auth/connect probe so a stale shell `PLASM_TRACE_SINK_TEST_CATALOG_URL` (e.g. loopback
+/// embedded appliance on 55432 with a non-`postgres` password) does not fail the suite hard.
+async fn catalog_url_reachable(url: &str) -> bool {
+    use std::time::Duration;
+    match tokio::time::timeout(
+        Duration::from_secs(8),
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(5))
+            .connect(url),
+    )
+    .await
+    {
+        Ok(Ok(pool)) => {
+            pool.close().await;
+            true
+        }
+        Ok(Err(e)) => {
+            eprintln!(
+                "plasm-trace-sink tests: ignoring {TRACE_SINK_TEST_CATALOG_URL_ENV} ({e}); \
+                 will use testcontainers or skip"
+            );
+            false
+        }
+        Err(_) => {
+            eprintln!(
+                "plasm-trace-sink tests: ignoring {TRACE_SINK_TEST_CATALOG_URL_ENV} (connect timed out); \
+                 will use testcontainers or skip"
+            );
+            false
+        }
+    }
+}
+
 /// Keeps the Postgres container alive until the end of the test.
 #[allow(dead_code)]
 pub struct ContainerDrop(pub ContainerAsync<Postgres>);
@@ -31,7 +65,7 @@ pub struct ContainerDrop(pub ContainerAsync<Postgres>);
 pub async fn trace_sink_test_catalog_url() -> Option<(Option<ContainerDrop>, String)> {
     if let Ok(url) = std::env::var(TRACE_SINK_TEST_CATALOG_URL_ENV) {
         let url = url.trim().to_string();
-        if !url.is_empty() {
+        if !url.is_empty() && catalog_url_reachable(&url).await {
             return Some((None, url));
         }
     }
