@@ -22,6 +22,10 @@ name = "tui_pty_integration"
 path = "tests/tui_pty_integration.rs"
 required-features = ["tui_pty_tests"]
 
+[[test]]
+name = "appliance_headless_boot"
+path = "tests/appliance_headless_boot.rs"
+
 [dependencies]
 plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
 plasm = { path = "../plasm", default-features = false }
