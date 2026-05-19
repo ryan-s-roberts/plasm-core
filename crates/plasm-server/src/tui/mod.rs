@@ -3223,8 +3223,13 @@ pub(crate) fn run_running_mode(
     // Signal the async supervisor before the first draw so a full PTY pipe cannot
     // deadlock BOOT→RUN handoff waiting on this frame.
     if let Some(ref tx) = ui_evt_tx {
-        let _ = tx.send(UiEvent::RunEntered);
-        crate::stderr_log::line("[plasm-server] bootstrap: emitted RunEntered to supervisor");
+        if let Err(e) = tx.send(UiEvent::RunEntered) {
+            crate::stderr_log::line(format!(
+                "[plasm-server] bootstrap: failed to send RunEntered to supervisor: {e}"
+            ));
+        } else {
+            crate::stderr_log::line("[plasm-server] bootstrap: emitted RunEntered to supervisor");
+        }
     }
     let mut model = RunState::new();
     if let Some(ref bridge) = admin_bridge {

@@ -19,8 +19,9 @@ use portable_pty::CommandBuilder;
 use ratatui_testlib::{KeyCode, TuiTestHarness};
 
 use appliance_boot_support::{
-    bin_path, diag_boot_milestone_report, diag_has_fatal, embedded_pg_temp_parent, read_tail,
-    repo_root, schema_path, wait_bootstrap_ready, DIAG_TAIL_MAX, TEST_AUTH_STORAGE_ENCRYPTION_KEY,
+    apply_appliance_test_env_pty, bin_path, diag_boot_milestone_report, diag_has_fatal,
+    make_appliance_data_root, push_appliance_cli_args_pty, read_tail, repo_root, schema_path,
+    wait_bootstrap_ready, BootstrapMode, BOOTSTRAP_PROGRESS_INTERVAL, DIAG_TAIL_MAX,
 };
 
 /// Max `update_state` rounds per PTY drain (ratatui-testlib reads until dry each call).
@@ -43,72 +44,19 @@ fn build_harness() -> TuiTestHarness {
         .expect("TuiTestHarness::builder")
 }
 
-/// Strip CI / developer Postgres env so `--data-dir` + embedded pg-embed own the session.
-fn clear_external_postgres_env(cmd: &mut CommandBuilder) {
-    for key in [
-        "DATABASE_URL",
-        "PLASM_MCP_CONFIG_DATABASE_URL",
-        "PLASM_AUTH_STORAGE_URL",
-        "PGDATA",
-        "PGHOST",
-        "PGPORT",
-        "PGUSER",
-        "PGPASSWORD",
-        "PGDATABASE",
-        "POSTGRES_URL",
-        "POSTGRES_HOST",
-        "POSTGRES_PORT",
-        "PLASM_EMBEDDED_POSTGRES_DATA_DIR",
-        "PLASM_LOCAL_STATE_DIR",
-    ] {
-        cmd.env_remove(key);
-    }
-    cmd.env("PLASM_EMBEDDED_POSTGRES", "1");
-}
-
-fn clear_otel_export_env(cmd: &mut CommandBuilder) {
-    for key in [
-        "OTEL_SDK_DISABLED",
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-        "OTEL_TRACES_EXPORTER",
-        "OTEL_METRICS_EXPORTER",
-        "OTEL_LOGS_EXPORTER",
-    ] {
-        cmd.env_remove(key);
-    }
-    cmd.env("OTEL_SDK_DISABLED", "true");
-}
-
 fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, PathBuf) {
     let listen_port = appliance_boot_support::pick_free_tcp_port();
     let schema = schema_path();
-    let data_root = tempfile::Builder::new()
-        .prefix("plasm-server-pty-")
-        .tempdir_in(embedded_pg_temp_parent())
-        .expect("temp appliance data root");
-    let diag_log = data_root.path().join("appliance-diag.log");
+    let (data_root, diag_log) = make_appliance_data_root("plasm-server-pty-");
 
     let mut cmd = CommandBuilder::new(bin_path());
     cmd.cwd(repo_root());
-    cmd.env("NO_COLOR", "1");
-    clear_external_postgres_env(&mut cmd);
-    clear_otel_export_env(&mut cmd);
-    cmd.env(
-        "AUTH_STORAGE_ENCRYPTION_KEY",
-        TEST_AUTH_STORAGE_ENCRYPTION_KEY,
-    );
-    cmd.arg("--data-dir");
-    cmd.arg(data_root.path().as_os_str());
-    cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", "300");
-    cmd.env("PLASM_EMBEDDED_POSTGRES_PERSISTENT", "0");
-    cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log.as_os_str());
-    cmd.env("PLASM_TUI_PTY_TESTS", "1");
-    cmd.env(
-        "RUST_LOG",
-        "warn,plasm_appliance_boot=info,plasm_agent=info,plasm_agent_core=warn,pg_embed=warn,sqlx=warn",
+    apply_appliance_test_env_pty(&mut cmd, &diag_log);
+    push_appliance_cli_args_pty(
+        &mut cmd,
+        data_root.path().as_os_str(),
+        schema.as_os_str(),
+        listen_port,
     );
 
     eprintln!(
@@ -116,11 +64,6 @@ fn spawn_appliance(harness: &mut TuiTestHarness) -> (u16, tempfile::TempDir, Pat
         data_root.path().display(),
         diag_log.display(),
     );
-
-    cmd.arg("--schema");
-    cmd.arg(schema.as_os_str());
-    cmd.arg("--port");
-    cmd.arg(listen_port.to_string());
 
     harness.spawn(cmd).expect("spawn plasm-server in PTY");
     (listen_port, data_root, diag_log)
@@ -165,12 +108,12 @@ fn wait_for_screen(
             return;
         }
         let now = Instant::now();
-        if now.duration_since(last_progress) >= Duration::from_secs(15) {
+        if now.duration_since(last_progress) >= BOOTSTRAP_PROGRESS_INTERVAL {
             last_progress = now;
             eprintln!(
                 "appliance-pty: still waiting for screen {label} ({:?} elapsed)\n{}",
                 started.elapsed(),
-                diag_boot_milestone_report(diag, &screen)
+                diag_boot_milestone_report(diag, &screen, true)
             );
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -183,7 +126,7 @@ fn wait_for_screen(
 }
 
 fn wait_run_shell(harness: &mut TuiTestHarness, listen_port: u16, diag: &Path) {
-    wait_bootstrap_ready(listen_port, diag);
+    wait_bootstrap_ready(listen_port, diag, BootstrapMode::Tui);
     drain_pty_bounded(harness);
     wait_for_screen(harness, &["q: quit"], Duration::from_secs(45), diag, "RUN footer");
     wait_for_screen(

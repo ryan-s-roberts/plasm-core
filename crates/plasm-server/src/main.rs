@@ -719,6 +719,25 @@ type BlockingUiJoinOut = Result<
     tokio::task::JoinError,
 >;
 
+fn init_appliance_runtime_headless() -> Result<(), Box<dyn std::error::Error>> {
+    match std::env::var_os("PLASM_APPLIANCE_DIAG_LOG") {
+        Some(ref raw) if !raw.is_empty() => {
+            let path = Path::new(raw);
+            match appliance_log::ApplianceDiagFileMakeWriter::open(path) {
+                Ok(w) => plasm_agent_core::init_agent_runtime_with_fmt_writer(w),
+                Err(e) => {
+                    stderr_log::line(format!(
+                        "plasm-server: could not open PLASM_APPLIANCE_DIAG_LOG ({}): {e}; continuing without diag file sink",
+                        path.display()
+                    ));
+                    plasm_agent_core::init_agent_runtime()
+                }
+            }
+        }
+        _ => plasm_agent_core::init_agent_runtime(),
+    }
+}
+
 fn flatten_blocking_ui_join(
     res: BlockingUiJoinOut,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -786,7 +805,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut embedded_pg: Option<EmbeddedPostgresGuard> = None;
 
     let (appliance_log_tx, mut appliance_log_rx) = if cli.no_tui {
-        if let Err(e) = plasm_agent_core::init_agent_runtime() {
+        if let Err(e) = init_appliance_runtime_headless() {
             eprintln_exit_error(&*e);
             return Err(e);
         }
@@ -1102,10 +1121,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         unified_srv.abort();
                         tracing::error!(
                             target: "plasm_appliance_boot",
-                            "RUN UI first frame not observed within 120s"
+                            "RUN UI RunEntered not observed within 120s"
                         );
                         stderr_log::line(
-                            "[plasm-server] fatal: timeout waiting for RUN UI first frame (120s)",
+                            "[plasm-server] fatal: timeout waiting for RUN UI RunEntered (120s)",
                         );
                         match tokio::time::timeout(Duration::from_secs(5), join_ui_thread(ui_handle))
                             .await
@@ -1115,7 +1134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "[plasm-server] warning: UI thread did not exit within 5s after RUN handshake timeout",
                             ),
                         }
-                        return Err("timeout waiting for RUN UI first frame (120s)".into());
+                        return Err("timeout waiting for RUN UI RunEntered (120s)".into());
                     }
                 }
             }
