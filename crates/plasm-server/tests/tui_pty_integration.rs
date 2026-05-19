@@ -294,9 +294,13 @@ fn nudge_pty(harness: &mut TuiTestHarness) {
     let _ = harness.send_key(KeyCode::Char('1'));
 }
 
-/// Wait until `PLASM_APPLIANCE_DIAG_LOG` contains any needle; drain the PTY when `harness` is set.
+fn pty_screen(harness: &mut TuiTestHarness) -> String {
+    harness.screen_contents()
+}
+
+/// Wait until `PLASM_APPLIANCE_DIAG_LOG` contains any needle; drain the PTY each poll.
 fn wait_diag_until(
-    harness: Option<&mut TuiTestHarness>,
+    harness: &mut TuiTestHarness,
     diag: &Path,
     needles: &[&str],
     timeout: Duration,
@@ -306,13 +310,9 @@ fn wait_diag_until(
     let deadline = started + timeout;
     let mut last_progress = started;
     while Instant::now() < deadline {
-        if let Some(h) = harness {
-            drain_pty(h);
-        }
+        drain_pty(harness);
         if let Some(tail) = diag_has_fatal(diag) {
-            let screen = harness
-                .map(|h| h.screen_contents())
-                .unwrap_or_default();
+            let screen = pty_screen(harness);
             panic!(
                 "bootstrap fatal while waiting for {label}\n{}\n--- diag tail ---\n{tail}",
                 diag_boot_milestone_report(diag, &screen)
@@ -329,9 +329,7 @@ fn wait_diag_until(
         let now = Instant::now();
         if now.duration_since(last_progress) >= Duration::from_secs(15) {
             last_progress = now;
-            let screen = harness
-                .map(|h| h.screen_contents())
-                .unwrap_or_default();
+            let screen = pty_screen(harness);
             eprintln!(
                 "appliance-pty: still waiting for {label} ({:?} elapsed)\n{}",
                 started.elapsed(),
@@ -340,9 +338,7 @@ fn wait_diag_until(
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    let screen = harness
-        .map(|h| h.screen_contents())
-        .unwrap_or_default();
+    let screen = pty_screen(harness);
     panic!(
         "timeout waiting for {label} in PLASM_APPLIANCE_DIAG_LOG (needles={needles:?}, timeout {timeout:?})\n{}",
         diag_boot_milestone_report(diag, &screen)
@@ -410,7 +406,7 @@ fn diag_has_fatal(diag: &Path) -> Option<String> {
 
 /// Wait until HTTP+MCP bind succeeds (survives BOOT redraw spam on the PTY).
 fn wait_tcp_listen(
-    harness: Option<&mut TuiTestHarness>,
+    harness: &mut TuiTestHarness,
     port: u16,
     timeout: Duration,
     diag: &Path,
@@ -420,9 +416,7 @@ fn wait_tcp_listen(
     let deadline = started + timeout;
     let mut last_progress = started;
     while Instant::now() < deadline {
-        if let Some(h) = harness {
-            drain_pty(h);
-        }
+        drain_pty(harness);
         if let Some(tail) = diag_has_fatal(diag) {
             panic!("bootstrap fatal in PLASM_APPLIANCE_DIAG_LOG:\n{tail}");
         }
@@ -506,21 +500,16 @@ fn wait_run_handoff(harness: &mut TuiTestHarness, diag: &Path, timeout: Duration
 }
 
 fn wait_run_shell(harness: &mut TuiTestHarness, listen_port: u16, diag: &Path) {
-    wait_tcp_listen(
-        Some(harness),
-        listen_port,
-        Duration::from_secs(300),
-        diag,
-    );
+    wait_tcp_listen(harness, listen_port, Duration::from_secs(300), diag);
     wait_diag_until(
-        Some(harness),
+        harness,
         diag,
         &["embedded postgres: server ready"],
         Duration::from_secs(300),
         "embedded Postgres",
     );
     wait_diag_until(
-        Some(harness),
+        harness,
         diag,
         &["plasm HTTP+MCP unified listening"],
         Duration::from_secs(300),
