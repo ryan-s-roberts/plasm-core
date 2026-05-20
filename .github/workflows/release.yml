@@ -40,20 +40,18 @@ jobs:
             -p plasm-server --bin plasm-server \
             -p plasm --bin plasm \
             -p plasm-cli --bin plasm-cgs
-      - name: Package tarball
+      - name: Package release tarballs
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           ver="${TAG#v}"
-          out="plasm-oss-${ver}-${{ matrix.triple }}.tar.gz"
-          mkdir -p pack
-          cp target/release/plasm target/release/plasm-server target/release/plasm-cgs pack/
-          tar -czvf "$out" -C pack plasm plasm-server plasm-cgs
+          mkdir -p dist
+          bash scripts/ci/oss-release-pack-native.sh "${ver}" "${{ matrix.triple }}" dist
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.triple }}
-          path: plasm-oss-*.tar.gz
+          path: dist/plasm-*.tar.gz
 
   publish:
     needs: build
@@ -69,8 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p upload
-          find artifacts -type f -name 'plasm-oss-*.tar.gz' -exec cp {} upload/ \;
-          (cd upload && sha256sum plasm-oss-*.tar.gz > SHA256SUMS)
+          find artifacts -type f -name 'plasm-*.tar.gz' ! -name 'plasm-oss-*.tar.gz' -exec cp {} upload/ \;
+          (cd upload && sha256sum plasm-*.tar.gz > SHA256SUMS)
       - uses: softprops/action-gh-release@v2
         with:
           files: upload/*

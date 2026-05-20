@@ -1,0 +1,25 @@
+# APIs packed into OSS appliance release tarballs (`plasm-pack-plugins --package-list`).
+# One directory name per line under `apis/<name>/`. Keep in sync with monorepo `deploy/packaged-apis.txt`.
+
+clickup
+cloudflare
+discord
+github
+gitlab
+gmail
+google-calendar
+google-docs
+google-drive
+google-sheets
+jira
+linear
+linkedin
+pokeapi
+proof
+notion
+outlook
+slack
+tavily
+vultr
+hackernews
+reddit
