@@ -19,7 +19,7 @@ jobs:
   build:
     needs: verify-version
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - os: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
             triple: aarch64-unknown-linux-gnu
           - os: macos-latest
             triple: aarch64-apple-darwin
-          - os: macos-13
+          - os: macos-15-intel
             triple: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
@@ -41,13 +41,10 @@ jobs:
             -p plasm --bin plasm \
             -p plasm-cli --bin plasm-cgs
       - name: Package release tarballs
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          ver="${TAG#v}"
           mkdir -p dist
-          bash scripts/ci/oss-release-pack-native.sh "${ver}" "${{ matrix.triple }}" dist
+          bash scripts/ci/oss-release-pack-native.sh "${{ matrix.triple }}" dist
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.triple }}

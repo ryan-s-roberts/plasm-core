@@ -8,9 +8,11 @@ Each supported Rust triple gets **three** tarballs on [GitHub Releases](https://
 
 | Asset | Contents |
 |-------|----------|
-| `plasm-appliance-{version}-{triple}.tar.gz` | `plasm-server` + `plugins/` (ABI v4 cdylibs from [`scripts/oss-packaged-apis.txt`](scripts/oss-packaged-apis.txt)) |
-| `plasm-{version}-{triple}.tar.gz` | `plasm` remote HTTP terminal client |
-| `plasm-cgs-{version}-{triple}.tar.gz` | `plasm-cgs` schema/dev CLI |
+| `plasm-appliance-{triple}.tar.gz` | `plasm-server` + `plugins/` (ABI v4 cdylibs from [`scripts/oss-packaged-apis.txt`](scripts/oss-packaged-apis.txt)) |
+| `plasm-{triple}.tar.gz` | `plasm` remote HTTP terminal client |
+| `plasm-cgs-{triple}.tar.gz` | `plasm-cgs` schema/dev CLI |
+
+SemVer is on the **Git tag** only (e.g. `v0.1.1`), not repeated in asset filenames.
 
 Plus **`SHA256SUMS`** for all assets.
 

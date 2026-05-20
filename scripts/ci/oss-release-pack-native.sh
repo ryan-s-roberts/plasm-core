@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # Pack three OSS release tarballs from a `cargo build --release` in the workspace root.
-# Usage: oss-release-pack-native.sh <version> <rust-triple> <output-dir>
+# Usage: oss-release-pack-native.sh <rust-triple> <output-dir>
 #
 # Optional env:
 #   PLASM_RELEASE_WORKSPACE_ROOT — monorepo root (default: auto-detect plasm-core vs parent monorepo)
 #
-# Writes:
-#   plasm-appliance-<ver>-<triple>.tar.gz  (plasm-server + plugins/)
-#   plasm-<ver>-<triple>.tar.gz            (plasm client)
-#   plasm-cgs-<ver>-<triple>.tar.gz        (plasm-cgs)
+# Writes (version is the Git release tag, not in filenames):
+#   plasm-appliance-<triple>.tar.gz  (plasm-server + plugins/)
+#   plasm-<triple>.tar.gz            (plasm client)
+#   plasm-cgs-<triple>.tar.gz        (plasm-cgs)
 
 set -euo pipefail
 
-ver="${1:?oss-release-pack-native: version required}"
-triple="${2:?oss-release-pack-native: rust triple required}"
-out_dir="${3:?oss-release-pack-native: output dir required}"
+triple="${1:?oss-release-pack-native: rust triple required}"
+out_dir="${2:?oss-release-pack-native: output dir required}"
 
 oss_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
@@ -114,9 +113,9 @@ cp "${release_dir}/plasm-cgs" "${cgs}/"
 
 mkdir -p "${out_dir}"
 
-appliance_out="${out_dir}/plasm-appliance-${ver}-${triple}.tar.gz"
-client_out="${out_dir}/plasm-${ver}-${triple}.tar.gz"
-cgs_out="${out_dir}/plasm-cgs-${ver}-${triple}.tar.gz"
+appliance_out="${out_dir}/plasm-appliance-${triple}.tar.gz"
+client_out="${out_dir}/plasm-${triple}.tar.gz"
+cgs_out="${out_dir}/plasm-cgs-${triple}.tar.gz"
 
 tar -czf "${appliance_out}" -C "${appliance}" .
 tar -czf "${client_out}" -C "${client}" plasm

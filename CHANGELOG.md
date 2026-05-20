@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-21
+
+### Fixed
+
+- **Release CI:** Docker `BUILDPLATFORM`/`TARGETPLATFORM` for Circle Linux builds; native pack uses monorepo `target/` when built from the private repo.
+- **GHA:** replace queued `macos-13` runner with `macos-15-intel` for x86_64 Apple builds.
+
+### Changed
+
+- **Release asset names:** drop SemVer from tarball filenames (version is the Git tag only), e.g. `plasm-appliance-x86_64-unknown-linux-gnu.tar.gz`.
+
+### Note
+
+- **v0.1.0** shipped only GitHub source archives (no product binaries); use **v0.1.1** or later for downloads.
+
 ## [0.1.0] - 2026-05-20
 
 ### Added

@@ -40,9 +40,7 @@ if os.path.isfile(sums_path):
         if len(parts) == 2:
             checksums[parts[1].strip()] = parts[0].strip()
 
-triple_re = re.compile(
-    r"^plasm(?:-appliance|-cgs)?-" + re.escape(ver) + r"-(.+)\.tar\.gz$"
-)
+triple_re = re.compile(r"^plasm(?:-appliance|-cgs)?-(.+)\.tar\.gz$")
 
 by_triple = defaultdict(dict)
 
@@ -56,7 +54,7 @@ for a in assets:
         product = "appliance"
     elif name.startswith("plasm-cgs-"):
         product = "cgs"
-    elif name.startswith(f"plasm-{ver}-"):
+    elif name.startswith("plasm-") and not name.startswith("plasm-appliance-"):
         product = "client"
     else:
         continue
