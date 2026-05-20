@@ -4,49 +4,25 @@
 //! the same backend call the appliance TUI issues via `AdminJob::ProvisionApiKey` — it does **not**
 //! exercise Ratatui/Crossterm or PTY redraw behavior.
 //!
-//! Override with `PLASM_MCP_ADMIN_TEST_DATABASE_URL=postgres://...` to use an existing server.
+//! Override with `PLASM_TEST_POSTGRES_URL=postgres://...` to use an existing server.
+
+mod support;
 
 use std::sync::Arc;
 
 use plasm_agent_core::auth_framework_host;
 use plasm_agent_core::mcp_config_admin::{McpConfigAdminService, McpConfigScope};
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
-use testcontainers_modules::testcontainers::{
-    core::{wait::LogWaitStrategy, IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
-    GenericImage, ImageExt,
-};
-
-async fn postgres_url() -> Option<String> {
-    if let Ok(url) = std::env::var("PLASM_MCP_ADMIN_TEST_DATABASE_URL") {
-        let t = url.trim();
-        if !t.is_empty() {
-            return Some(t.to_string());
-        }
-    }
-    let Ok(container) = GenericImage::new("postgres", "16")
-        .with_wait_for(WaitFor::log(
-            LogWaitStrategy::stderr("database system is ready to accept connections").with_times(2),
-        ))
-        .with_exposed_port(5432.tcp())
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .start()
-        .await
-    else {
-        eprintln!("mcp_config_admin integration: skipping (no Docker / Postgres container)");
-        return None;
-    };
-    let port = container.get_host_port_ipv4(5432).await.ok()?;
-    // Match HTTP integration tests: mapped port on loopback avoids flaky `get_host()` names.
-    Some(format!(
-        "postgres://postgres:postgres@127.0.0.1:{port}/postgres"
-    ))
-}
+use support::postgres::{integration_postgres_url, INTEGRATION_POSTGRES_URL_ENV};
 
 #[tokio::test]
 async fn singleton_allowlist_and_keys_roundtrip() {
-    let Some(db_url) = postgres_url().await else {
+    const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+    let Some((_, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
+        eprintln!(
+            "mcp_config_admin integration: skipping (no Docker / Postgres). \
+             Set {INTEGRATION_POSTGRES_URL_ENV} or ensure Docker is running."
+        );
         return;
     };
     let repo = Arc::new(

@@ -21,39 +21,23 @@ use plasm_core::loader::load_schema;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync},
-};
 use uuid::Uuid;
+
+#[path = "../../plasm-agent-core/tests/support/postgres.rs"]
+mod integration_postgres;
+
+use integration_postgres::{integration_postgres_url, PostgresKeepAlive};
 
 const TEST_JWT_SECRET: &str = "inbound-oauth-test-secret-012345678901234567890123";
 
 #[allow(dead_code)]
-struct ContainerDrop(ContainerAsync<Postgres>);
+struct ContainerDrop(PostgresKeepAlive);
 
 async fn oauth_test_postgres_url() -> Option<(Option<ContainerDrop>, String)> {
-    if let Ok(url) = std::env::var("PLASM_MCP_CONFIG_TEST_DATABASE_URL") {
-        let url = url.trim().to_string();
-        if !url.is_empty() {
-            return Some((None, url));
-        }
-    }
     const START_TIMEOUT: Duration = Duration::from_secs(45);
-    let node = match tokio::time::timeout(START_TIMEOUT, Postgres::default().start()).await {
-        Ok(Ok(n)) => n,
-        Ok(Err(e)) => {
-            eprintln!("skip inbound_oauth tests: postgres failed ({e})");
-            return None;
-        }
-        Err(_) => {
-            eprintln!("skip inbound_oauth tests: postgres start timeout");
-            return None;
-        }
-    };
-    let port = node.get_host_port_ipv4(5432).await.ok()?;
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    Some((Some(ContainerDrop(node)), url))
+    integration_postgres_url(START_TIMEOUT)
+        .await
+        .map(|(k, url)| (Some(ContainerDrop(k)), url))
 }
 
 fn dnd5e_registry() -> Arc<InMemoryCgsRegistry> {

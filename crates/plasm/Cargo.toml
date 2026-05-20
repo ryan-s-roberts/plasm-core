@@ -78,6 +78,7 @@ proptest = { workspace = true }
 serde = { workspace = true }
 serde_urlencoded = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
+sqlx = { workspace = true, features = ["postgres"] }
 tower = { workspace = true }
 axum = { workspace = true }
 http = { workspace = true }

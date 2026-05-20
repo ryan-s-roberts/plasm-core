@@ -1,8 +1,7 @@
 //! Shared helpers for HTTP integration tests.
 //!
-//! SqlCatalog metadata uses **Postgres** only. Tests use `PLASM_TRACE_SINK_TEST_CATALOG_URL` if set,
-//! else start **Postgres** via [testcontainers](https://crates.io/crates/testcontainers-modules)
-//! when Docker is available. If neither works, individual tests **return early** (skip).
+//! SqlCatalog metadata uses **Postgres** only. Tests use [`PLASM_TEST_POSTGRES_URL`](../../plasm-agent-core/tests/support/postgres.rs)
+//! when set and reachable, else **testcontainers** when Docker is available. If neither works, tests **return early** (skip).
 
 use std::sync::Arc;
 
@@ -14,112 +13,22 @@ use plasm_trace_sink::model::AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT;
 use plasm_trace_sink::persisted::PersistedTraceSink;
 use plasm_trace_sink::state::AppState;
 use serde_json::{json, Value};
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync},
-};
 use uuid::Uuid;
 
-pub const TRACE_SINK_TEST_CATALOG_URL_ENV: &str = "PLASM_TRACE_SINK_TEST_CATALOG_URL";
-/// When set to `1`/`true`/`yes`, honor [`TRACE_SINK_TEST_CATALOG_URL_ENV`] after a connect probe.
-/// CI and default local runs use testcontainers only so a shell-exported appliance JDBC URL
-/// (trust/`pg_hba` quirks, wrong password for Iceberg JDBC) cannot wedge the suite.
-const TRACE_SINK_TEST_CATALOG_URL_FORCE_ENV: &str = "PLASM_TRACE_SINK_TEST_CATALOG_URL_FORCE";
+#[path = "../../../plasm-agent-core/tests/support/postgres.rs"]
+mod integration_postgres;
 
-fn forced_env_catalog_url_enabled() -> bool {
-    std::env::var(TRACE_SINK_TEST_CATALOG_URL_FORCE_ENV)
-        .ok()
-        .map(|s| {
-            matches!(
-                s.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes"
-            )
-        })
-        .unwrap_or(false)
-}
-
-/// Quick auth/connect probe (same URL string Iceberg SqlCatalog will use).
-async fn catalog_url_reachable(url: &str) -> bool {
-    use std::time::Duration;
-    match tokio::time::timeout(
-        Duration::from_secs(8),
-        sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(Duration::from_secs(5))
-            .connect(url),
-    )
-    .await
-    {
-        Ok(Ok(pool)) => {
-            pool.close().await;
-            true
-        }
-        Ok(Err(e)) => {
-            eprintln!(
-                "plasm-trace-sink tests: ignoring {TRACE_SINK_TEST_CATALOG_URL_ENV} ({e}); \
-                 will use testcontainers or skip"
-            );
-            false
-        }
-        Err(_) => {
-            eprintln!(
-                "plasm-trace-sink tests: ignoring {TRACE_SINK_TEST_CATALOG_URL_ENV} (connect timed out); \
-                 will use testcontainers or skip"
-            );
-            false
-        }
-    }
-}
+use integration_postgres::{integration_postgres_url, PostgresKeepAlive, INTEGRATION_POSTGRES_URL_ENV};
 
 /// Keeps the Postgres container alive until the end of the test.
 #[allow(dead_code)]
-pub struct ContainerDrop(pub ContainerAsync<Postgres>);
+pub struct ContainerDrop(pub PostgresKeepAlive);
 
-/// Postgres JDBC URL for SqlCatalog: env override, else a throwaway Docker container.
-/// Returns [`None`] when testcontainers cannot start Postgres (no Docker, timeout, etc.).
+/// Postgres JDBC/catalog URL for SqlCatalog: shared integration helper.
 pub async fn trace_sink_test_catalog_url() -> Option<(Option<ContainerDrop>, String)> {
-    if forced_env_catalog_url_enabled() {
-        if let Ok(url) = std::env::var(TRACE_SINK_TEST_CATALOG_URL_ENV) {
-            let url = url.trim().to_string();
-            if !url.is_empty() && catalog_url_reachable(&url).await {
-                return Some((None, url));
-            }
-        }
-    }
-
     const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
-    let node = match tokio::time::timeout(START_TIMEOUT, Postgres::default().start()).await {
-        Ok(Ok(n)) => n,
-        Ok(Err(e)) => {
-            eprintln!(
-                "skip plasm-trace-sink integration tests: Postgres testcontainer failed ({e}). \
-                 Set {TRACE_SINK_TEST_CATALOG_URL_ENV} or ensure Docker is running."
-            );
-            return None;
-        }
-        Err(_) => {
-            eprintln!(
-                "skip plasm-trace-sink integration tests: Postgres testcontainer start timed out after {START_TIMEOUT:?}. \
-                 Set {TRACE_SINK_TEST_CATALOG_URL_ENV} or fix Docker."
-            );
-            return None;
-        }
-    };
-    let port = match node.get_host_port_ipv4(5432).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("skip plasm-trace-sink integration tests: postgres port mapping failed: {e}");
-            return None;
-        }
-    };
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    if !catalog_url_reachable(&url).await {
-        eprintln!(
-            "skip plasm-trace-sink integration tests: Postgres testcontainer not ready ({url})"
-        );
-        return None;
-    }
-    Some((Some(ContainerDrop(node)), url))
+    let (keep, url) = integration_postgres_url(START_TIMEOUT).await?;
+    Some((Some(ContainerDrop(keep)), url))
 }
 
 /// Temp warehouse dir + Postgres catalog + [`PersistedTraceSink`] wiring.

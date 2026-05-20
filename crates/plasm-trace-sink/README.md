@@ -137,7 +137,7 @@ cargo build -p plasm-trace-sink
 cargo test -p plasm-trace-sink
 ```
 
-HTTP integration tests require **Postgres** for SqlCatalog: either **Docker** (testcontainers) or set **`PLASM_TRACE_SINK_TEST_CATALOG_URL`** to an empty database. If neither is available, those tests exit early without failing.
+HTTP integration tests require **Postgres** for SqlCatalog: **Docker** (testcontainers) by default, or set optional **`PLASM_TEST_POSTGRES_URL`** to a reachable empty database (see [env-profiles.md](https://github.com/ryan-s-roberts/plasm/blob/main/docs/env-profiles.md) in the product monorepo). CI clears dev shell vars via `scripts/ci/clear-integration-test-env.sh`. If neither Docker nor the override works, those tests exit early without failing.
 
 Docker image (from repo root):
 

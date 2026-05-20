@@ -14,7 +14,7 @@ pub const EMBEDDED_PG_TIMEOUT_SECS: &str = "300";
 pub const APPLIANCE_TEST_RUST_LOG: &str =
     "warn,plasm_appliance_boot=info,plasm_agent=info,plasm_agent_core=warn,pg_embed=warn,sqlx=warn";
 
-/// Keep in sync with `scripts/appliance-tui-pty-tests.sh` unset list.
+/// Keep in sync with `scripts/ci/clear-integration-test-env.sh` (appliance child env uses this subset).
 pub const EXTERNAL_POSTGRES_ENV_KEYS: &[&str] = &[
     "DATABASE_URL",
     "PLASM_MCP_CONFIG_DATABASE_URL",
