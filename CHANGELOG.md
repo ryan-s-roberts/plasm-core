@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **OSS release platforms:** publish `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and `x86_64-apple-darwin` (drop Linux arm64). Intel macOS GHA installs ONNX Runtime via Homebrew for `ort` linking.
+
 ## [0.1.1] - 2026-05-21
 
 ### Fixed

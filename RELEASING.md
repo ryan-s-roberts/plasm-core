@@ -16,7 +16,7 @@ SemVer is on the **Git tag** only (e.g. `v0.1.1`), not repeated in asset filenam
 
 Plus **`SHA256SUMS`** for all assets.
 
-**Targets:** `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` (**9** tarballs per release). Intel macOS (`x86_64-apple-darwin`) is not published — `ort`/ONNX has no prebuilt for that triple; use the Apple Silicon build under Rosetta or build from source.
+**Targets:** `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin` (**9** tarballs per release). **Linux arm64** (`aarch64-unknown-linux-gnu`) is not published — use the x86_64 Linux build on amd64 hosts/containers. Intel macOS builds link ONNX Runtime from Homebrew in GHA (`ORT_LIB_LOCATION`).
 
 The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 
