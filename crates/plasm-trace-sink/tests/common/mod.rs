@@ -21,9 +21,24 @@ use testcontainers_modules::{
 use uuid::Uuid;
 
 pub const TRACE_SINK_TEST_CATALOG_URL_ENV: &str = "PLASM_TRACE_SINK_TEST_CATALOG_URL";
+/// When set to `1`/`true`/`yes`, honor [`TRACE_SINK_TEST_CATALOG_URL_ENV`] after a connect probe.
+/// CI and default local runs use testcontainers only so a shell-exported appliance JDBC URL
+/// (trust/`pg_hba` quirks, wrong password for Iceberg JDBC) cannot wedge the suite.
+const TRACE_SINK_TEST_CATALOG_URL_FORCE_ENV: &str = "PLASM_TRACE_SINK_TEST_CATALOG_URL_FORCE";
 
-/// Quick auth/connect probe so a stale shell `PLASM_TRACE_SINK_TEST_CATALOG_URL` (e.g. loopback
-/// embedded appliance on 55432 with a non-`postgres` password) does not fail the suite hard.
+fn forced_env_catalog_url_enabled() -> bool {
+    std::env::var(TRACE_SINK_TEST_CATALOG_URL_FORCE_ENV)
+        .ok()
+        .map(|s| {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Quick auth/connect probe (same URL string Iceberg SqlCatalog will use).
 async fn catalog_url_reachable(url: &str) -> bool {
     use std::time::Duration;
     match tokio::time::timeout(
@@ -63,10 +78,12 @@ pub struct ContainerDrop(pub ContainerAsync<Postgres>);
 /// Postgres JDBC URL for SqlCatalog: env override, else a throwaway Docker container.
 /// Returns [`None`] when testcontainers cannot start Postgres (no Docker, timeout, etc.).
 pub async fn trace_sink_test_catalog_url() -> Option<(Option<ContainerDrop>, String)> {
-    if let Ok(url) = std::env::var(TRACE_SINK_TEST_CATALOG_URL_ENV) {
-        let url = url.trim().to_string();
-        if !url.is_empty() && catalog_url_reachable(&url).await {
-            return Some((None, url));
+    if forced_env_catalog_url_enabled() {
+        if let Ok(url) = std::env::var(TRACE_SINK_TEST_CATALOG_URL_ENV) {
+            let url = url.trim().to_string();
+            if !url.is_empty() && catalog_url_reachable(&url).await {
+                return Some((None, url));
+            }
         }
     }
 
@@ -96,6 +113,12 @@ pub async fn trace_sink_test_catalog_url() -> Option<(Option<ContainerDrop>, Str
         }
     };
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    if !catalog_url_reachable(&url).await {
+        eprintln!(
+            "skip plasm-trace-sink integration tests: Postgres testcontainer not ready ({url})"
+        );
+        return None;
+    }
     Some((Some(ContainerDrop(node)), url))
 }
 
