@@ -19,17 +19,16 @@ jobs:
   build:
     needs: verify-version
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             triple: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
+          # Intel macOS omitted: ort/fastembed has no x86_64-apple-darwin prebuilt ONNX (use aarch64 + Rosetta).
           - os: macos-latest
             triple: aarch64-apple-darwin
-          - os: macos-15-intel
-            triple: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
