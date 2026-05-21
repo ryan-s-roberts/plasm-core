@@ -1,24 +1,24 @@
-//! CPU-bound `fastembed` calls behind `spawn_blocking` + a small semaphore.
+//! CPU-bound `fastembed` calls behind `spawn_blocking` + a small semaphore (`local-embeddings` only).
 
+#[cfg(feature = "local-embeddings")]
 use std::sync::{Arc, Mutex as StdMutex};
 
+#[cfg(feature = "local-embeddings")]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+#[cfg(feature = "local-embeddings")]
 use tokio::sync::Semaphore;
 
+use crate::embedding_store::DEFAULT_EMBEDDING_MODEL_ID;
 use crate::types::DiscoveryError;
 
-/// Stable id for rows in [`crate::embedding_store::CatalogEmbeddingStore`] (must match [`BlockingEmbedder`] weights).
-pub const DEFAULT_EMBEDDING_MODEL_ID: &str = "all-MiniLM-L6-v2";
-
-/// Dimension for [`DEFAULT_EMBEDDING_MODEL_ID`] (`fastembed::EmbeddingModel::AllMiniLML6V2`) — must match Postgres `vector(N)`.
-pub const DEFAULT_EMBEDDING_VECTOR_DIM: usize = 384;
-
+#[cfg(feature = "local-embeddings")]
 pub struct BlockingEmbedder {
     model: EmbeddingModel,
     semaphore: Arc<Semaphore>,
     inner: Arc<StdMutex<Option<TextEmbedding>>>,
 }
 
+#[cfg(feature = "local-embeddings")]
 impl BlockingEmbedder {
     pub fn new(model: EmbeddingModel, max_concurrent_blocking: usize) -> Self {
         let permits = max_concurrent_blocking.max(1);

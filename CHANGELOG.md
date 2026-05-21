@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-21
+
+### Changed
+
+- **OSS release binaries:** typed discovery is **lexical-only** (`fastembed` / ONNX behind Cargo feature `local-embeddings`; not linked in CI release builds). `enable_embeddings` defaults **false**; release MCP schema documents the constraint.
+- **Release CI:** remove ONNX Runtime `brew install` from GHA and Circle macOS Intel legs (no longer required for packaging).
+
 ## [0.1.2] - 2026-05-21
 
 ### Changed

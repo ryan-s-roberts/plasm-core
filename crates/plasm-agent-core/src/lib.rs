@@ -15,6 +15,7 @@ pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
 mod discovery_embedding_chunks;
+#[cfg(feature = "local-embeddings")]
 pub mod discovery_embedding_reconcile;
 pub mod discovery_embedding_repository;
 mod discovery_human_format;

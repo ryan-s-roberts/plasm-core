@@ -403,8 +403,14 @@ pub async fn attach_discovery_embedding_background(mut state: PlasmHostState) {
         crate::discovery_embedding_repository::maybe_connect_discovery_embedding_store().await
     {
         state.oss.discovery_embedding = Some(repo.clone());
+        #[cfg(feature = "local-embeddings")]
         crate::discovery_embedding_reconcile::spawn_discovery_embedding_reconcile_background(
             state, repo,
+        );
+        #[cfg(not(feature = "local-embeddings"))]
+        tracing::info!(
+            "discovery embedding store configured but `local-embeddings` feature disabled; \
+             skipping background reconcile (lexical-only discovery)"
         );
     }
 }

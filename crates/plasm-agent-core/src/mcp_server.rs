@@ -750,7 +750,7 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "enable_embeddings".into(),
             json_schema_bool_type(
-                "Typed mode: when **true** (default), use local fastembed recall (CPU, downloads model on first use). Set **false** for lexical-only.",
+                "Typed mode: when **true**, request local embedding rerank (requires binary built with `local-embeddings`; OSS release builds are lexical-only). Default **false**.",
             ),
         );
         discover_props.insert(
@@ -1025,7 +1025,7 @@ fn mcp_typed_discovery_query_from_arguments(
     let enable_embeddings = obj
         .get("enable_embeddings")
         .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+        .unwrap_or(false);
     let allowed_entry_ids = match obj.get("allowed_entry_ids") {
         Some(serde_json::Value::Array(a)) => a
             .iter()

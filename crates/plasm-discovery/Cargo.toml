@@ -5,6 +5,10 @@ edition.workspace = true
 readme = "README.md"
 description = "Typed, graph-aware discovery with optional local fastembed recall"
 
+[features]
+default = []
+local-embeddings = ["dep:fastembed"]
+
 [dependencies]
 plasm-core = { path = "../plasm-core" }
 serde = { workspace = true }
@@ -14,6 +18,6 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 opentelemetry = { workspace = true }
-fastembed = { workspace = true }
+fastembed = { workspace = true, optional = true }
 indexmap = { workspace = true }
 inflection = { workspace = true }

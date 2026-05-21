@@ -32,12 +32,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install ONNX Runtime (Intel macOS)
-        if: matrix.triple == 'x86_64-apple-darwin'
-        run: |
-          brew install onnxruntime
-          echo "ORT_LIB_LOCATION=$(brew --prefix onnxruntime)/lib" >> "${GITHUB_ENV}"
-          echo "ORT_LIB_PROFILE=release" >> "${GITHUB_ENV}"
       - name: Build release binaries
         run: |
           cargo build --release \

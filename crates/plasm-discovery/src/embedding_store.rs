@@ -1,5 +1,11 @@
 //! Optional Postgres-backed catalog line embeddings for typed discovery.
 
+/// Stable model id for [`CatalogEmbeddingStore`] rows (matches `local-embeddings` / fastembed weights when enabled).
+pub const DEFAULT_EMBEDDING_MODEL_ID: &str = "all-MiniLM-L6-v2";
+
+/// Vector dimension for [`DEFAULT_EMBEDDING_MODEL_ID`] — must match Postgres `vector(N)` when persisted.
+pub const DEFAULT_EMBEDDING_VECTOR_DIM: usize = 384;
+
 use std::collections::HashMap;
 
 use async_trait::async_trait;

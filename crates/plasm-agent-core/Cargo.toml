@@ -10,6 +10,8 @@ default = []
 local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-compile/evm"]
+# CPU fastembed + ONNX for typed-discovery rerank and Postgres embedding reconcile (not in OSS release binaries).
+local-embeddings = ["dep:fastembed", "plasm-discovery/local-embeddings"]
 
 [lib]
 name = "plasm_agent_core"
@@ -17,14 +19,14 @@ path = "src/lib.rs"
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
-plasm-discovery = { path = "../plasm-discovery" }
+plasm-discovery = { path = "../plasm-discovery", default-features = false }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm-trace = { path = "../plasm-trace" }
 plasm-plugin-host = { path = "../plasm-plugin-host" }
 plasm-observability-contracts = { path = "../plasm-observability-contracts" }
 plasm-otel = { path = "../plasm-otel" }
-fastembed = { workspace = true }
+fastembed = { workspace = true, optional = true }
 arc-swap = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }

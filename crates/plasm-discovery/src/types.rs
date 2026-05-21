@@ -70,7 +70,7 @@ fn default_max_options() -> usize {
 }
 
 fn default_enable_embeddings() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

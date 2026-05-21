@@ -10,11 +10,10 @@ use plasm_core::schema::{CapabilityKind, CGS};
 use tracing::{debug_span, info_span, Instrument};
 
 use crate::decompose::{decompose, tokenize};
-use crate::embedder::{cosine_sim, BlockingEmbedder, DEFAULT_EMBEDDING_MODEL_ID};
-use crate::embedding_store::{CatalogEmbeddingLineKey, CatalogEmbeddingStore};
-use crate::index::{
-    discovery_embed_line_text, qualifier_supported, CatalogIndex, PhraseHit, PhraseSource,
-};
+#[cfg(feature = "local-embeddings")]
+use crate::embedder::{cosine_sim, BlockingEmbedder};
+use crate::embedding_store::CatalogEmbeddingStore;
+use crate::index::{qualifier_supported, CatalogIndex, PhraseHit, PhraseSource};
 use crate::metrics;
 use crate::types::{
     evidence_codes, ClarificationAnswer, ClarificationDimension, ClarificationOption,
@@ -140,9 +139,137 @@ fn apply_relation_intent_boosts(
     }
 }
 
+#[cfg(feature = "local-embeddings")]
+async fn apply_embedding_rerank(
+    discovery: &TypedDiscovery,
+    enable_embeddings: bool,
+    utterance: &str,
+    hypotheses: &mut [TargetHypothesis],
+) {
+    if let (true, false, Some(embedder)) = (
+        enable_embeddings,
+        hypotheses.is_empty(),
+        discovery.embedder.as_ref().cloned(),
+    ) {
+        let t_embed = Instant::now();
+        metrics::record_embed_cache("miss");
+        let lines: Vec<String> = hypotheses
+            .iter()
+            .map(|h| {
+                discovery_embed_line_text(
+                    h.entry_id.as_str(),
+                    h.entity.as_str(),
+                    h.matched_phrase.as_str(),
+                )
+            })
+            .collect();
+
+        let lookup_keys: Vec<Option<CatalogEmbeddingLineKey>> = hypotheses
+            .iter()
+            .enumerate()
+            .map(|(i, h)| {
+                discovery
+                    .catalog_hash_for_entry(h.entry_id.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|hash| CatalogEmbeddingLineKey::new(hash.to_string(), lines[i].clone()))
+            })
+            .collect();
+
+        let mut seen_fetch: HashSet<CatalogEmbeddingLineKey> = HashSet::new();
+        let mut fetch_keys: Vec<CatalogEmbeddingLineKey> = Vec::new();
+        for k in lookup_keys.iter().filter_map(|x| x.as_ref()) {
+            if seen_fetch.insert(k.clone()) {
+                fetch_keys.push(k.clone());
+            }
+        }
+
+        let mut hyp_vecs: Vec<Option<Vec<f32>>> = vec![None; hypotheses.len()];
+        if let (Some(store), false) = (discovery.embedding_store.as_ref(), fetch_keys.is_empty()) {
+            match store
+                .fetch_embeddings(DEFAULT_EMBEDDING_MODEL_ID, &fetch_keys)
+                .await
+            {
+                Ok(map) => {
+                    for (i, lk) in lookup_keys.iter().enumerate() {
+                        if let Some(k) = lk {
+                            if let Some(v) = map.get(k) {
+                                hyp_vecs[i] = Some(v.clone());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "typed discovery: catalog embedding store fetch failed; using local embedder for catalog lines"
+                    );
+                }
+            }
+        }
+
+        let missing_any = hyp_vecs.iter().any(|v| v.is_none());
+        let t_batch = Instant::now();
+        let embed_outcome = if missing_any {
+            let mut batch = vec![utterance.to_string()];
+            batch.extend(lines.iter().cloned());
+            embedder.embed_batch(batch).await
+        } else {
+            embedder.embed_batch(vec![utterance.to_string()]).await
+        };
+
+        match embed_outcome {
+            Ok(vecs) if vecs.len() == 1 && !missing_any => {
+                let qv = &vecs[0];
+                for (i, h) in hypotheses.iter_mut().enumerate() {
+                    let Some(hv) = hyp_vecs[i].as_ref() else {
+                        continue;
+                    };
+                    let sim = cosine_sim(qv, hv);
+                    h.score += 30.0 * sim;
+                    if sim > 0.01 {
+                        h.evidence.push(DiscoveryEvidence::new(
+                            evidence_codes::EMBEDDING_SIM,
+                            format!("{sim:.4}"),
+                        ));
+                    }
+                }
+                metrics::record_embed_batch_duration(t_batch.elapsed());
+            }
+            Ok(vecs) if missing_any && vecs.len() == hypotheses.len() + 1 => {
+                let qv = &vecs[0];
+                for (i, h) in hypotheses.iter_mut().enumerate() {
+                    let hv: &[f32] = match hyp_vecs[i].as_deref() {
+                        Some(s) => s,
+                        None => vecs.get(i + 1).map(|v| v.as_slice()).unwrap_or(&[]),
+                    };
+                    if hv.is_empty() {
+                        continue;
+                    }
+                    let sim = cosine_sim(qv, hv);
+                    h.score += 30.0 * sim;
+                    if sim > 0.01 {
+                        h.evidence.push(DiscoveryEvidence::new(
+                            evidence_codes::EMBEDDING_SIM,
+                            format!("{sim:.4}"),
+                        ));
+                    }
+                }
+                metrics::record_embed_batch_duration(t_batch.elapsed());
+            }
+            Ok(_) => metrics::record_embed_cache("error"),
+            Err(e) => {
+                metrics::record_embed_cache("error");
+                tracing::warn!(error = %e, "typed discovery embedding failed; continuing lexical-only");
+            }
+        }
+        let _ = t_embed;
+    }
+}
+
 /// Async typed discovery over one or more loaded CGS graphs.
 pub struct TypedDiscovery {
     indexes: Vec<CatalogIndex>,
+    #[cfg(feature = "local-embeddings")]
     embedder: Option<Arc<BlockingEmbedder>>,
     embedding_store: Option<Arc<dyn CatalogEmbeddingStore>>,
     /// Max clarification / ready options per response.
@@ -168,6 +295,7 @@ impl TypedDiscovery {
         metrics::record_index_build("success", t0.elapsed());
         metrics::record_index_sizes(total_ent, total_cap);
 
+        #[cfg(feature = "local-embeddings")]
         let embedder = if enable_embeddings {
             Some(Arc::new(BlockingEmbedder::new(
                 fastembed::EmbeddingModel::AllMiniLML6V2,
@@ -176,9 +304,12 @@ impl TypedDiscovery {
         } else {
             None
         };
+        #[cfg(not(feature = "local-embeddings"))]
+        let _ = enable_embeddings;
 
         Self {
             indexes,
+            #[cfg(feature = "local-embeddings")]
             embedder,
             embedding_store,
             max_options: 8,
@@ -289,13 +420,17 @@ impl TypedDiscovery {
             return Err(DiscoveryError::EmptyUtterance);
         }
 
+        #[cfg(feature = "local-embeddings")]
+        let model_id = self
+            .embedder
+            .as_ref()
+            .map(|e| e.model_id())
+            .unwrap_or("none");
+        #[cfg(not(feature = "local-embeddings"))]
+        let model_id = "none";
         let span = info_span!(
             "plasm.discovery.discover",
-            model_id = self
-                .embedder
-                .as_ref()
-                .map(|e| e.model_id())
-                .unwrap_or("none"),
+            model_id = model_id,
             entry_count = self.indexes.len() as i64,
         );
         async { self.discover_inner_body(query, utterance).await }
@@ -423,125 +558,14 @@ impl TypedDiscovery {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        if let (true, false, Some(embedder)) = (
+        #[cfg(feature = "local-embeddings")]
+        apply_embedding_rerank(
+            self,
             query.enable_embeddings,
-            hypotheses.is_empty(),
-            self.embedder.as_ref().cloned(),
-        ) {
-            let t_embed = Instant::now();
-            metrics::record_embed_cache("miss");
-            let lines: Vec<String> = hypotheses
-                .iter()
-                .map(|h| {
-                    discovery_embed_line_text(
-                        h.entry_id.as_str(),
-                        h.entity.as_str(),
-                        h.matched_phrase.as_str(),
-                    )
-                })
-                .collect();
-
-            let lookup_keys: Vec<Option<CatalogEmbeddingLineKey>> = hypotheses
-                .iter()
-                .enumerate()
-                .map(|(i, h)| {
-                    self.catalog_hash_for_entry(h.entry_id.as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(|hash| {
-                            CatalogEmbeddingLineKey::new(hash.to_string(), lines[i].clone())
-                        })
-                })
-                .collect();
-
-            let mut seen_fetch: HashSet<CatalogEmbeddingLineKey> = HashSet::new();
-            let mut fetch_keys: Vec<CatalogEmbeddingLineKey> = Vec::new();
-            for k in lookup_keys.iter().filter_map(|x| x.as_ref()) {
-                if seen_fetch.insert(k.clone()) {
-                    fetch_keys.push(k.clone());
-                }
-            }
-
-            let mut hyp_vecs: Vec<Option<Vec<f32>>> = vec![None; hypotheses.len()];
-            if let (Some(store), false) = (self.embedding_store.as_ref(), fetch_keys.is_empty()) {
-                match store
-                    .fetch_embeddings(DEFAULT_EMBEDDING_MODEL_ID, &fetch_keys)
-                    .await
-                {
-                    Ok(map) => {
-                        for (i, lk) in lookup_keys.iter().enumerate() {
-                            if let Some(k) = lk {
-                                if let Some(v) = map.get(k) {
-                                    hyp_vecs[i] = Some(v.clone());
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "typed discovery: catalog embedding store fetch failed; using local embedder for catalog lines"
-                        );
-                    }
-                }
-            }
-
-            let missing_any = hyp_vecs.iter().any(|v| v.is_none());
-            let t_batch = Instant::now();
-            let embed_outcome = if missing_any {
-                let mut batch = vec![utterance.to_string()];
-                batch.extend(lines.iter().cloned());
-                embedder.embed_batch(batch).await
-            } else {
-                embedder.embed_batch(vec![utterance.to_string()]).await
-            };
-
-            match embed_outcome {
-                Ok(vecs) if vecs.len() == 1 && !missing_any => {
-                    let qv = &vecs[0];
-                    for (i, h) in hypotheses.iter_mut().enumerate() {
-                        let Some(hv) = hyp_vecs[i].as_ref() else {
-                            continue;
-                        };
-                        let sim = cosine_sim(qv, hv);
-                        h.score += 30.0 * sim;
-                        if sim > 0.01 {
-                            h.evidence.push(DiscoveryEvidence::new(
-                                evidence_codes::EMBEDDING_SIM,
-                                format!("{sim:.4}"),
-                            ));
-                        }
-                    }
-                    metrics::record_embed_batch_duration(t_batch.elapsed());
-                }
-                Ok(vecs) if missing_any && vecs.len() == hypotheses.len() + 1 => {
-                    let qv = &vecs[0];
-                    for (i, h) in hypotheses.iter_mut().enumerate() {
-                        let hv: &[f32] = match hyp_vecs[i].as_deref() {
-                            Some(s) => s,
-                            None => vecs.get(i + 1).map(|v| v.as_slice()).unwrap_or(&[]),
-                        };
-                        if hv.is_empty() {
-                            continue;
-                        }
-                        let sim = cosine_sim(qv, hv);
-                        h.score += 30.0 * sim;
-                        if sim > 0.01 {
-                            h.evidence.push(DiscoveryEvidence::new(
-                                evidence_codes::EMBEDDING_SIM,
-                                format!("{sim:.4}"),
-                            ));
-                        }
-                    }
-                    metrics::record_embed_batch_duration(t_batch.elapsed());
-                }
-                Ok(_) => metrics::record_embed_cache("error"),
-                Err(e) => {
-                    metrics::record_embed_cache("error");
-                    tracing::warn!(error = %e, "typed discovery embedding failed; continuing lexical-only");
-                }
-            }
-            let _ = t_embed;
-        }
+            utterance,
+            &mut hypotheses,
+        )
+        .await;
 
         hypotheses.sort_by(|a, b| {
             b.score
