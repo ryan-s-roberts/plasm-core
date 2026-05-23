@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-23
+
+### Fixed
+
+- **`plasm-server`:** reconcile appliance DB env after `.env` load so embedded PostgreSQL autostarts and `project_mcp_*` sqlx migrations run on first launch (no manual `mcp migrate-db` when a cwd `.env` sets `DATABASE_URL`).
+- **`plasm-server`:** fatal bootstrap when embedded PG started but MCP policy store did not attach; Status tab shows concrete errors (ASCII markers, no stderr corruption during alternate-screen TUI).
+- **Embedded Postgres:** set `PLASM_MCP_CONFIG_DATABASE_URL` alongside `DATABASE_URL` / `PLASM_AUTH_STORAGE_URL` on autostart.
+
+### Changed
+
+- **`plasm-runtime`:** apply request-identity override for entity decoders when a row id is present (not only `implicit_request_identity` entities).
+
 ## [0.1.4] - 2026-05-21
 
 ### Changed

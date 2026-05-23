@@ -480,6 +480,47 @@ async fn start_embedded_db_with_retry(
 }
 
 impl EmbeddedPostgresGuard {
+    /// `PLASM_EMBEDDED_POSTGRES=0` (and aliases) disables embedded autostart.
+    pub fn embedded_postgres_explicitly_disabled() -> bool {
+        #[cfg(not(feature = "embedded_postgres"))]
+        {
+            true
+        }
+        #[cfg(feature = "embedded_postgres")]
+        {
+            explicit_embedded_opt_out()
+        }
+    }
+
+    /// True when a configured `postgres:` URL points at a non-loopback host (or non-TCP), so embedded autostart is skipped.
+    pub fn env_urls_skip_embedded_autostart() -> bool {
+        #[cfg(not(feature = "embedded_postgres"))]
+        {
+            false
+        }
+        #[cfg(feature = "embedded_postgres")]
+        {
+            postgres_env_urls_skip_embedded_autostart()
+        }
+    }
+
+    /// Remove `DATABASE_URL` / `PLASM_*` URLs that would prevent appliance embedded Postgres from starting.
+    pub fn clear_env_urls_blocking_embedded_autostart() {
+        #[cfg(feature = "embedded_postgres")]
+        {
+            if explicit_embedded_opt_out() {
+                return;
+            }
+            for key in [
+                "DATABASE_URL",
+                "PLASM_MCP_CONFIG_DATABASE_URL",
+                "PLASM_AUTH_STORAGE_URL",
+            ] {
+                std::env::remove_var(key);
+            }
+        }
+    }
+
     /// Whether this binary will try to start embedded Postgres (`embedded_postgres` feature off → always false).
     pub fn will_autostart_embedded_postgres() -> bool {
         #[cfg(not(feature = "embedded_postgres"))]
@@ -592,6 +633,13 @@ impl EmbeddedPostgresGuard {
                 .unwrap_or(true)
             {
                 std::env::set_var("PLASM_AUTH_STORAGE_URL", &url);
+            }
+            if std::env::var("PLASM_MCP_CONFIG_DATABASE_URL")
+                .ok()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
+                std::env::set_var("PLASM_MCP_CONFIG_DATABASE_URL", &url);
             }
 
             info!("embedded postgres: server ready");

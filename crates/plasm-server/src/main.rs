@@ -159,6 +159,60 @@ fn apply_appliance_layout_env_defaults(cli: &ServeCli) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Re-pin appliance Postgres paths and undo `.env` URLs that block embedded autostart (loaded after layout).
+fn reconcile_appliance_db_env(cli: &ServeCli) {
+    if EmbeddedPostgresGuard::embedded_postgres_explicitly_disabled() {
+        return;
+    }
+    let root = resolve_appliance_root(cli);
+    let pg = root.join("postgres");
+    let _ = std::fs::create_dir_all(&pg);
+    std::env::set_var("PLASM_EMBEDDED_POSTGRES_DATA_DIR", pg.as_os_str());
+    std::env::remove_var("PGDATA");
+    let any_db_url = env_str_nonempty("DATABASE_URL")
+        || env_str_nonempty("PLASM_MCP_CONFIG_DATABASE_URL")
+        || env_str_nonempty("PLASM_AUTH_STORAGE_URL");
+    if cli.migrate_mcp_config_db || EmbeddedPostgresGuard::env_urls_skip_embedded_autostart() || any_db_url
+    {
+        EmbeddedPostgresGuard::clear_env_urls_blocking_embedded_autostart();
+    }
+}
+
+fn policy_store_handoff_detail(state: &plasm_agent_core::server_state::PlasmHostState) -> Option<String> {
+    if state.mcp_config_repository().is_some() {
+        return None;
+    }
+    if let Some(reason) = EmbeddedPostgresGuard::embedded_autostart_skip_reason() {
+        return Some(format!(
+            "Embedded PostgreSQL was skipped: {reason}. A cwd `.env` DATABASE_URL may override the appliance; use PLASM_EMBEDDED_POSTGRES=0 only when using an external database intentionally."
+        ));
+    }
+    if plasm_agent_core::mcp_config_repository::mcp_config_database_url().is_none() {
+        return Some(
+            "No postgres URL is set (DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL / PLASM_AUTH_STORAGE_URL)."
+                .into(),
+        );
+    }
+    Some(
+        "project_mcp_* connect/migrate did not complete during engine bootstrap (see Logs tab)."
+            .into(),
+    )
+}
+
+fn redact_postgres_url_for_display(url: &str) -> String {
+    let t = url.trim();
+    if let Some(at) = t.find('@') {
+        if let Some(scheme) = t.find("://") {
+            let creds = &t[scheme + 3..at];
+            if let Some(colon) = creds.find(':') {
+                let user = &creds[..colon];
+                return format!("{}://{}:***{}", &t[..scheme + 3], user, &t[at..]);
+            }
+        }
+    }
+    t.to_string()
+}
+
 const LOCAL_AUTH_STORAGE_KEY_RELATIVE_PATH: &str = "bootstrap-secrets/AUTH_STORAGE_ENCRYPTION_KEY";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -611,15 +665,23 @@ async fn bootstrap_appliance_core(
     send(boot::BootstrapUiMsg::PhaseDone(1));
     check_cancel()?;
 
+    let mut embedded_autostarted = false;
     if EmbeddedPostgresGuard::will_autostart_embedded_postgres() {
         send(boot::BootstrapUiMsg::PhaseEnter(2));
         phase_line("embedded PostgreSQL");
         match EmbeddedPostgresGuard::try_start_from_env().await {
             Ok(eg) => {
                 *embedded_slot = eg;
+                embedded_autostarted = true;
                 send(boot::BootstrapUiMsg::Detail(
                     "embedded PostgreSQL ready".into(),
                 ));
+                if let Ok(url) = std::env::var("DATABASE_URL") {
+                    send(boot::BootstrapUiMsg::Detail(format!(
+                        "postgres listener: {}",
+                        redact_postgres_url_for_display(&url)
+                    )));
+                }
                 send(boot::BootstrapUiMsg::PhaseDone(2));
             }
             Err(e) => {
@@ -673,6 +735,20 @@ async fn bootstrap_appliance_core(
     };
     send(boot::BootstrapUiMsg::PhaseDone(3));
     check_cancel()?;
+
+    if embedded_autostarted && app_state.mcp_config_repository().is_none() {
+        let msg = "embedded PostgreSQL started but project_mcp_* policy store is not attached \
+                   (connect/migrate failed or DATABASE_URL missing after bootstrap)"
+            .to_string();
+        report_fatal(&msg);
+        send(boot::BootstrapUiMsg::Fatal(msg));
+        return Err(BootstrapStopped::Fatal);
+    }
+    if app_state.mcp_config_repository().is_some() {
+        send(boot::BootstrapUiMsg::Detail(
+            "project_mcp_* policy store connected (migrations applied)".into(),
+        ));
+    }
 
     send(boot::BootstrapUiMsg::PhaseEnter(4));
     phase_line("attach OSS extensions");
@@ -809,6 +885,7 @@ fn flatten_blocking_ui_join(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut root = RootCli::parse();
     apply_serve_cli_release_defaults(&mut root.serve);
+    plasm_agent_core::dotenv_safe::load_from_cwd_parents();
     if let Err(e) = apply_appliance_layout_env_defaults(&root.serve) {
         eprintln!("plasm-server: appliance data directory: {e}");
         std::process::exit(1);
@@ -819,6 +896,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln_exit_error(&*e);
             return Err(e);
         }
+        reconcile_appliance_db_env(&root.serve);
         if let Err(e) = run_migrate_mcp_config_db().await {
             eprintln_exit_error(&*e);
             return Err(Box::new(std::io::Error::other(format!("{e}"))));
@@ -863,6 +941,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln_exit_error(&*e);
             return Err(e);
         }
+        reconcile_appliance_db_env(&cli);
         (None, None)
     } else {
         let (tx, rx) =
@@ -1024,6 +1103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             return Err(e);
         }
+        reconcile_appliance_db_env(&cli);
 
         let tx_ref = tx.clone();
         let bootstrap_out = tokio::select! {
@@ -1138,9 +1218,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let admin_bridge = crate::appliance_admin_bridge::spawn_admin_router(Arc::clone(&state));
         tracing::info!(target: "plasm_appliance_boot", "phase: run UI handoff");
         stderr_log::line("[plasm-server] bootstrap: sent RUN handoff to UI thread");
+        let policy_store_detail = policy_store_handoff_detail(state.as_ref());
         let _ = tx.send(boot::BootstrapUiMsg::Running(boot::RunningHandoff {
             state: Arc::clone(&state),
             admin_bridge,
+            policy_store_detail,
         }));
 
         tokio::select! {
@@ -1314,6 +1396,48 @@ mod tests {
         ] {
             std::env::remove_var(key);
         }
+    }
+
+    #[test]
+    fn reconcile_appliance_db_env_clears_dotenv_external_database_url() {
+        let _guard = env_lock().lock().expect("env lock");
+        let _env = EnvGuard::new(&[
+            "DATABASE_URL",
+            "PLASM_MCP_CONFIG_DATABASE_URL",
+            "PLASM_AUTH_STORAGE_URL",
+            "PLASM_EMBEDDED_POSTGRES",
+            "PLASM_EMBEDDED_POSTGRES_DATA_DIR",
+            "PGDATA",
+        ]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var(
+            "DATABASE_URL",
+            "postgresql://user:pass@db.example.com:5432/plasm",
+        );
+        let cli = ServeCli {
+            data_dir: Some(temp.path().to_path_buf()),
+            schema: None,
+            plugin_dir: None,
+            port: 3000,
+            symbol_tuning: None,
+            migrate_mcp_config_db: false,
+            no_tui: true,
+        };
+        reconcile_appliance_db_env(&cli);
+        assert!(
+            EmbeddedPostgresGuard::will_autostart_embedded_postgres(),
+            "external DATABASE_URL from dotenv must not block embedded autostart"
+        );
+        assert!(
+            !env_str_nonempty("DATABASE_URL"),
+            "reconcile should clear inherited DATABASE_URL for appliance embedded mode"
+        );
+        assert!(
+            std::env::var("PLASM_EMBEDDED_POSTGRES_DATA_DIR")
+                .unwrap()
+                .contains("postgres"),
+            "reconcile should pin embedded data dir under appliance root"
+        );
     }
 
     #[test]

@@ -2509,8 +2509,14 @@ impl ExecutionEngine {
                 // the decoder extracts only the fields present in the response, and
                 // the cache's additive merge preserves existing fields from other
                 // projections (e.g. url, timestamps from page_get).
-                let decoder =
-                    create_entity_decoder(&invoke.target.entity_type, cgs, None, None, None);
+                let rid = invoke.target.simple_id().map(|s| s.as_str());
+                let decoder = create_entity_decoder(
+                    &invoke.target.entity_type,
+                    cgs,
+                    None,
+                    rid,
+                    Some(&ref_to_identity_ambient(&invoke.target)),
+                );
                 let decoded = decode_entities(&decoder, &response).unwrap_or_default();
 
                 let timestamp = current_timestamp();
@@ -5256,10 +5262,8 @@ fn create_entity_decoder(
                 .collect();
             decoder = decoder.with_id_path(PathExpr::new(segments));
         }
-        if entity.implicit_request_identity {
-            if let Some(rid) = request_identity {
-                decoder = decoder.with_request_identity_override(rid);
-            }
+        if let Some(rid) = request_identity {
+            decoder = decoder.with_request_identity_override(rid);
         }
     }
     decoder

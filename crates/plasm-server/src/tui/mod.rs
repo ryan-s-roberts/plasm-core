@@ -908,6 +908,7 @@ struct RunState {
     resources: ResourceState,
     notice: Option<RunNotice>,
     show_help: bool,
+    policy_bootstrap_detail: Option<String>,
 }
 
 impl RunState {
@@ -922,6 +923,7 @@ impl RunState {
             resources: ResourceState::default(),
             notice: None,
             show_help: false,
+            policy_bootstrap_detail: None,
         }
     }
 
@@ -2381,49 +2383,51 @@ fn render_running_frame(
                     ]));
                 }
                 McpConfigSurfaceState::PolicyStoreUnavailable => {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ⧗ ", err_emphasis_style()),
-                        Span::styled("ERROR — MCP policy store offline", err_emphasis_style()),
-                    ]));
-                    lines.push(Line::from(vec![
-                        Span::styled("  ⚠ ", err_emphasis_style()),
-                        Span::styled(
-                            "project_mcp_* not reachable (database missing or migrations failed).",
-                            err_emphasis_style(),
-                        ),
-                    ]));
-                    lines.push(Line::from(vec![
-                        Span::styled("  ⊗ ", err_emphasis_style()),
-                        Span::styled(
-                            "Transport API keys and API allowlists are disabled until this is fixed.",
-                            err_emphasis_style(),
-                        ),
-                    ]));
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(vec![
-                        Span::styled("  ➜ ", dim_style()),
-                        Span::raw("tenant / workspace / project: "),
-                        Span::styled(
-                            format!(
-                                "{} / {} / {}",
-                                scope.tenant_id, scope.workspace_slug, scope.project_slug
-                            ),
+                    lines.push(Line::from(Span::styled(
+                        "  ! ERROR: MCP policy store offline",
+                        err_emphasis_style(),
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        "  ! project_mcp_* not reachable (database missing or migrations failed).",
+                        err_emphasis_style(),
+                    )));
+                    if let Some(detail) = model.policy_bootstrap_detail.as_deref() {
+                        lines.push(Line::from(""));
+                        for sentence in detail.split(". ").filter(|s| !s.is_empty()) {
+                            let mut s = sentence.to_string();
+                            if !s.ends_with('.') {
+                                s.push('.');
+                            }
+                            lines.push(Line::from(Span::styled(
+                                format!("  > {s}"),
+                                dim_style(),
+                            )));
+                        }
+                    }
+                    if let Some(skip) =
+                        plasm_agent::embedded_postgres::EmbeddedPostgresGuard::embedded_autostart_skip_reason()
+                    {
+                        lines.push(Line::from(Span::styled(
+                            format!("  > Storage tab: embedded PG skipped ({skip})"),
                             dim_style(),
-                        ),
-                    ]));
+                        )));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "  x Transport API keys and API allowlists are disabled until fixed.",
+                        err_emphasis_style(),
+                    )));
                     lines.push(Line::from(""));
-                    lines.push(Line::from(vec![
-                        Span::styled("  ➜ ", dim_style()),
-                        Span::raw("Try: "),
-                        Span::styled(
-                            "plasm-server mcp migrate-db",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            " — embedded Postgres autostart + Storage tab for URLs / disk.",
-                            dim_style(),
-                        ),
-                    ]));
+                    lines.push(Line::from(format!(
+                        "  tenant / workspace / project: {} / {} / {}",
+                        scope.tenant_id, scope.workspace_slug, scope.project_slug
+                    )));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(
+                        "  > Fix: restart after embedded PG starts, or run: plasm-server mcp migrate-db",
+                    ));
+                    lines.push(Line::from(
+                        "  > See Logs tab for bootstrap / sqlx details.",
+                    ));
                 }
             }
             lines.push(Line::from(""));
@@ -3218,6 +3222,7 @@ pub(crate) fn run_running_mode(
     ui_evt_tx: Option<Sender<UiEvent>>,
     listen_port: u16,
     admin_bridge: Option<AdminBridge>,
+    policy_bootstrap_detail: Option<String>,
     log_rx: Option<crossbeam_channel::Receiver<String>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Signal the async supervisor before the first draw so a full PTY pipe cannot
@@ -3232,6 +3237,7 @@ pub(crate) fn run_running_mode(
         }
     }
     let mut model = RunState::new();
+    model.policy_bootstrap_detail = policy_bootstrap_detail;
     if let Some(ref bridge) = admin_bridge {
         enqueue_refresh_if_idle(&mut model, bridge);
     }
@@ -3315,7 +3321,16 @@ pub fn run_control_station(
     };
     let _guard = scopeguard::guard((), |_| restore_terminal());
 
-    let result = run_running_mode(&mut terminal, state, running, None, listen_port, None, None);
+    let result = run_running_mode(
+        &mut terminal,
+        state,
+        running,
+        None,
+        listen_port,
+        None,
+        None,
+        None,
+    );
 
     drop(_guard);
     let _ = terminal.show_cursor();

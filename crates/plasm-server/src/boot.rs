@@ -28,6 +28,8 @@ pub const BOOT_PHASE_COUNT: usize = 8;
 pub struct RunningHandoff {
     pub state: Arc<PlasmHostState>,
     pub admin_bridge: AdminBridge,
+    /// When the policy store did not attach (embedded skipped or migrate failed before fatal).
+    pub policy_store_detail: Option<String>,
 }
 
 /// Rolling BOOT Detail log capacity (FIFO trim).
@@ -331,10 +333,12 @@ pub fn run_appliance_shell(
     enable_raw_mode()?;
     let mut buffer = stdout();
     execute!(buffer, EnterAlternateScreen)?;
+    crate::stderr_log::set_alternate_screen_active(true);
     let backend = CrosstermBackend::new(buffer);
     let mut terminal = Terminal::new(backend)?;
 
     let restore_terminal = || {
+        crate::stderr_log::set_alternate_screen_active(false);
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
     };
@@ -356,6 +360,7 @@ pub fn run_appliance_shell(
                         ui_evt_tx.clone(),
                         listen_port,
                         Some(handoff.admin_bridge),
+                        handoff.policy_store_detail,
                         log_rx,
                     )?;
                     return Ok(());
