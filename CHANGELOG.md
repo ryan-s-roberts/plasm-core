@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-21
+
+### Changed
+
+- **`plasm-server`:** default appliance root to `~/.plasm/appliance` (or `PLASM_APPLIANCE_DIR`); auto `--plugin-dir` when `{appliance}/plugins` exists so `plasm-server` runs without flags after the OSS installer layout.
+
 ## [0.1.3] - 2026-05-21
 
 ### Changed

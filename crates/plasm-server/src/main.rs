@@ -57,18 +57,20 @@ enum TopCommand {
 
 #[derive(Parser, Debug, Clone)]
 struct ServeCli {
-    /// Root directory for on-disk appliance state when explicit env vars are unset.
+    /// Appliance state root (default: `$PLASM_APPLIANCE_DIR` or `~/.plasm/appliance`).
     ///
-    /// Sets `PLASM_EMBEDDED_POSTGRES_DATA_DIR` to `{dir}/postgres` (pg-embed **reuses** an existing
-    /// cluster there; keep only Postgres files under `postgres/`) and clears inherited `PGDATA`.
-    /// Sets `PLASM_LOCAL_STATE_DIR` to `{dir}/local` when unset (OSS trace archive + run-artifact
-    /// dirs — see `docs/oss-core-trace-artifacts.md`).
+    /// Always applied before boot: sets `PLASM_EMBEDDED_POSTGRES_DATA_DIR` to `{dir}/postgres`
+    /// (pg-embed **reuses** an existing cluster there; keep only Postgres files under `postgres/`)
+    /// and clears inherited `PGDATA`. Sets `PLASM_LOCAL_STATE_DIR` to `{dir}/local` when unset.
+    /// Override with `--data-dir` or `PLASM_APPLIANCE_DIR` (same path as `install.sh`).
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
     /// CGS schema path (exactly one of `--schema` or `--plugin-dir` required unless `--migrate-mcp-config-db`).
+    ///
+    /// When omitted, uses `{appliance}/plugins` if that directory exists (OSS installer default).
     #[arg(long, value_name = "PATH", group = "catalog")]
     schema: Option<PathBuf>,
-    /// Packed plugin directory (ABI v4).
+    /// Packed plugin directory (ABI v4). Defaults to `{appliance}/plugins` when present.
     #[arg(long, value_name = "DIR", group = "catalog")]
     plugin_dir: Option<PathBuf>,
     /// TCP port for HTTP discovery/execute and MCP Streamable HTTP (`/mcp`) on **one** listener.
@@ -91,12 +93,47 @@ fn env_str_nonempty(key: &str) -> bool {
         .is_some()
 }
 
-/// Applies [`ServeCli::data_dir`] by setting process env before embedded Postgres or host bootstrap.
-fn apply_serve_data_dir_env_defaults(cli: &ServeCli) -> std::io::Result<()> {
-    let Some(root) = cli.data_dir.as_ref() else {
-        return Ok(());
-    };
-    std::fs::create_dir_all(root)?;
+const DEFAULT_APPLIANCE_DIR_NAME: &str = ".plasm/appliance";
+const DEFAULT_PLUGINS_DIR_NAME: &str = "plugins";
+
+/// OSS installer layout: `PLASM_APPLIANCE_DIR` or `~/.plasm/appliance` (see `install.sh`).
+fn default_appliance_root() -> PathBuf {
+    if let Ok(p) = std::env::var("PLASM_APPLIANCE_DIR") {
+        let p = p.trim();
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|h| h.join(DEFAULT_APPLIANCE_DIR_NAME))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_APPLIANCE_DIR_NAME))
+}
+
+fn resolve_appliance_root(cli: &ServeCli) -> PathBuf {
+    cli.data_dir
+        .clone()
+        .unwrap_or_else(default_appliance_root)
+}
+
+/// Default `--plugin-dir` to `{appliance}/plugins` when the OSS installer laid out plugins there.
+fn apply_serve_cli_release_defaults(cli: &mut ServeCli) {
+    if cli.migrate_mcp_config_db {
+        return;
+    }
+    if cli.schema.is_some() || cli.plugin_dir.is_some() {
+        return;
+    }
+    let plugins = resolve_appliance_root(cli).join(DEFAULT_PLUGINS_DIR_NAME);
+    if plugins.is_dir() {
+        cli.plugin_dir = Some(plugins);
+    }
+}
+
+/// Applies the appliance layout by setting process env before embedded Postgres or host bootstrap.
+fn apply_appliance_layout_env_defaults(cli: &ServeCli) -> std::io::Result<()> {
+    let root = resolve_appliance_root(cli);
+    std::fs::create_dir_all(&root)?;
     // `--data-dir` owns the appliance tree: always pin embedded PG under `{root}/postgres`
     // so inherited PGDATA / PLASM_EMBEDDED_POSTGRES_DATA_DIR from the shell cannot leak in.
     let pg = root.join("postgres");
@@ -309,8 +346,14 @@ fn validate_serve_catalog(cli: &ServeCli) {
     match (&cli.schema, &cli.plugin_dir) {
         (Some(_), None) | (None, Some(_)) => {}
         _ => {
+            let root = resolve_appliance_root(cli);
+            let plugins = root.join(DEFAULT_PLUGINS_DIR_NAME);
             eprintln!(
                 "plasm-server: pass exactly one of --schema PATH or --plugin-dir DIR (unless --migrate-mcp-config-db)"
+            );
+            eprintln!(
+                "plasm-server: after install.sh, plugins are usually at {}",
+                plugins.display()
             );
             std::process::exit(1);
         }
@@ -764,10 +807,10 @@ fn flatten_blocking_ui_join(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root = RootCli::parse();
-
-    if let Err(e) = apply_serve_data_dir_env_defaults(&root.serve) {
-        eprintln!("plasm-server: --data-dir: {e}");
+    let mut root = RootCli::parse();
+    apply_serve_cli_release_defaults(&mut root.serve);
+    if let Err(e) = apply_appliance_layout_env_defaults(&root.serve) {
+        eprintln!("plasm-server: appliance data directory: {e}");
         std::process::exit(1);
     }
 

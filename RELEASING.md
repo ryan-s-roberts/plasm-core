@@ -56,37 +56,35 @@ Runner requirements:
 
 [`scripts/ci/verify-release-tag-matches-workspace-version.sh`](scripts/ci/verify-release-tag-matches-workspace-version.sh) fails the release job if `vA.B.C` ≠ `[workspace.package] version`.
 
-## Install UX (get.plasm.tools)
+## Install UX (plasm.tools)
 
-Static install content lives in the monorepo at [`get-plasm-tools/`](../get-plasm-tools/) (deploy to **`https://get.plasm.tools`**):
+Install plane is deployed from **[`portal/`](../portal/)** (Kubernetes `plasm-portal` chart). Manifest sources are generated in this monorepo at [`get-plasm-tools/`](../get-plasm-tools/) and copied into `portal/public/install/`.
 
-| URL | File |
-|-----|------|
-| `/` | `index.html` |
-| `/install.sh` | `install.sh` |
-| `/oss-release.json` | `oss-release.json` |
+| URL | Path in repo |
+|-----|----------------|
+| `https://plasm.tools/get/` | `portal/public/get/index.html` |
+| `https://plasm.tools/install/install.sh` | `portal/public/install/install.sh` |
+| `https://plasm.tools/install/oss-release.json` | `portal/public/install/oss-release.json` |
 
 After CI finishes the GitHub release:
 
 ```bash
 # From monorepo root (requires gh + python3):
-bash scripts/ci/generate-oss-release-json.sh vX.Y.Z get-plasm-tools/oss-release.json
-
-# From plasm-core checkout only:
-bash scripts/ci/generate-oss-release-json.sh vX.Y.Z /path/to/oss-release.json
+bash scripts/ci/generate-oss-release-json.sh vX.Y.Z
+bash scripts/portal/sync-install-from-sources.sh
 ```
 
-Commit and deploy the updated manifest. Install examples:
+Commit `portal/public/install/*`, push `main` — CI builds `plasm-portal`; Argo syncs. Install examples:
 
 ```bash
 # Appliance (default): plasm-server + plugins
-curl -fsSL https://get.plasm.tools/install.sh | bash
+curl -fsSL https://plasm.tools/install/install.sh | bash
 
 # Remote HTTP client only
-curl -fsSL https://get.plasm.tools/install.sh | bash -s -- --product client
+curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --product client
 
 # Schema CLI
-curl -fsSL https://get.plasm.tools/install.sh | bash -s -- --product cgs
+curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --product cgs
 ```
 
 Platform notes: [`docs/oss-binary-platforms.md`](../docs/oss-binary-platforms.md).
