@@ -4,15 +4,16 @@ This repository contains the OSS Plasm compiler/runtime workspace and curated AP
 
 ## API Authoring
 
-`plasm-core` owns CGS / CML / catalog authoring doctrine. When creating or editing an API catalog, follow the local skill suite under `.cursor/skills/`:
+`plasm-core` owns CGS / CML / catalog authoring doctrine. When creating or editing an API catalog, follow the local skill suite under `skills/`:
 
-- [.cursor/skills/plasm-authoring/SKILL.md](.cursor/skills/plasm-authoring/SKILL.md) — primary workflow (read spec → model → map → validate → e2e test → eval).
-- [.cursor/skills/plasm-authoring/reference.md](.cursor/skills/plasm-authoring/reference.md) — deep CGS / CML reference.
-- [.cursor/skills/plasm-catalog-e2e-test/SKILL.md](.cursor/skills/plasm-catalog-e2e-test/SKILL.md) — Hermit, live, and sandbox transport testing.
-- [.cursor/skills/plasm-catalog-polish/SKILL.md](.cursor/skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop.
-- [.cursor/skills/plasm-catalog-score/SKILL.md](.cursor/skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
-- [.cursor/skills/plasm-catalog-reprint/SKILL.md](.cursor/skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration of weak catalogs.
-- [.cursor/skills/plasm-catalog-retro/SKILL.md](.cursor/skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
+- [skills/plasm-authoring/SKILL.md](skills/plasm-authoring/SKILL.md) — primary workflow (read spec → model → map → validate → e2e test → eval).
+- [skills/plasm-authoring/reference.md](skills/plasm-authoring/reference.md) — deep CGS / CML reference.
+- [skills/plasm-catalog-e2e-test/SKILL.md](skills/plasm-catalog-e2e-test/SKILL.md) — Hermit, live, and sandbox transport testing.
+- [skills/plasm-catalog-polish/SKILL.md](skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop.
+- [skills/plasm-catalog-score/SKILL.md](skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
+- [skills/plasm-catalog-reprint/SKILL.md](skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration of weak catalogs.
+- [skills/plasm-catalog-retro/SKILL.md](skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
+- [skills/plasm-forge/SKILL.md](skills/plasm-forge/SKILL.md) — entry redirect to the skill suite above.
 - [.cursor/agents/plasm-forge.md](.cursor/agents/plasm-forge.md) — Cursor agent (**Plasm forge**) that drives the loop autonomously.
 
 API authoring is semi-autonomous. Agents may read specs, design entities, edit YAML, run validation, test against mocks and sandboxes, and add eval cases, but `domain.yaml` is a semantic CGS model, not a deterministic OpenAPI dump.

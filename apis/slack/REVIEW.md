@@ -1,6 +1,6 @@
 # Slack toolkit — CGS completeness and ergonomics review
 
-This document applies the [plasm-authoring skill](../../.cursor/skills/plasm-authoring/SKILL.md): **gaps are expressed as proposed entities, relations, and capabilities**, not as a flat Slack method inventory. Slack’s wire API is RPC (`family.method`); authoritative external reference is the [Slack Web API methods](https://api.slack.com/methods) index and per-method pages (scopes, token types). There is no first-party OpenAPI spec in this repo; third-party OpenAPI conversions are optional cross-checks only.
+This document applies the [plasm-authoring skill](../../skills/plasm-authoring/SKILL.md): **gaps are expressed as proposed entities, relations, and capabilities**, not as a flat Slack method inventory. Slack’s wire API is RPC (`family.method`); authoritative external reference is the [Slack Web API methods](https://api.slack.com/methods) index and per-method pages (scopes, token types). There is no first-party OpenAPI spec in this repo; third-party OpenAPI conversions are optional cross-checks only.
 
 **Review date:** 2026-04-12 · **Last follow-up sweep:** 2026-04-12
 

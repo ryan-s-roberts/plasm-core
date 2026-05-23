@@ -39,7 +39,7 @@ Each row is one **`capabilities.<id>`** in `domain.yaml` with a matching **`mapp
 | `comment_get` | get | Comment | `comment(id)` | done |
 | `comment_create` | create | Comment | `commentCreate(input: CommentCreateInput!)` | done |
 
-**Partial (mutations):** CML templates use `if exists` / `else null` for optional GraphQL inputs; **`eval_cml` omits `Value::Null` keys** in `type: object` bodies, and the **HTTP client still strips** any remaining JSON `null` entries before POST—omitted optional Plasm args do **not** appear as `"field": null` on the wire (partial `IssueUpdateInput`). See [reference.md](../../.cursor/skills/plasm-authoring/reference.md) (CML object + HTTP JSON body notes).
+**Partial (mutations):** CML templates use `if exists` / `else null` for optional GraphQL inputs; **`eval_cml` omits `Value::Null` keys** in `type: object` bodies, and the **HTTP client still strips** any remaining JSON `null` entries before POST—omitted optional Plasm args do **not** appear as `"field": null` on the wire (partial `IssueUpdateInput`). See [reference.md](../../skills/plasm-authoring/reference.md) (CML object + HTTP JSON body notes).
 
 **Children on read:** `issue_get` uses `children(first: 250, includeArchived: true)` so sub-issues stay visible if archived; deeper pagination is not wired in this slice.
 

@@ -100,7 +100,7 @@ Slack messages are identified by their `ts` (timestamp) field — a decimal stri
 
 When the API returns them on message objects, the domain also exposes optional **`channel`** and **`user`** as `entity_ref` fields (`Channel`, `User`) for navigation and predicates — they do not replace the need for `channel` on capabilities when addressing a message by `ts` alone.
 
-### Ergonomics (CGS / [plasm-authoring](../../.cursor/skills/plasm-authoring/SKILL.md))
+### Ergonomics (CGS / [plasm-authoring](../../skills/plasm-authoring/SKILL.md))
 
 | Topic | Model in this schema |
 |--------|------------------------|

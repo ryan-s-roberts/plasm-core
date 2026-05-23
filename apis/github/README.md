@@ -80,7 +80,7 @@ Scoped capabilities that take a `repository` `entity_ref` splat into the same `o
 
 ### Issue comments and `via_param` (authoring guide)
 
-The [Plasm authoring reference](../../.cursor/skills/plasm-authoring/reference.md) allows **at most one** `via_param` on a relation (single scope parameter wired from the parent). GitHub’s per-issue comments endpoint needs **three** scope values (`owner`, `repo`, `issue_number`), so this schema does **not** declare an `Issue → IssueComment` relation for auto-traversal.
+The [Plasm authoring reference](../../skills/plasm-authoring/reference.md) allows **at most one** `via_param` on a relation (single scope parameter wired from the parent). GitHub’s per-issue comments endpoint needs **three** scope values (`owner`, `repo`, `issue_number`), so this schema does **not** declare an `Issue → IssueComment` relation for auto-traversal.
 
 List comments with the scoped capability on `IssueComment` instead:
 
@@ -389,7 +389,7 @@ Commit `message` is read from nested `commit.message`; branch and tag `commit_sh
 
 **Repository list rows** decode to compound `Repository` refs (`owner` + `repo`); `owner` comes from `owner.login` and `repo` from the wire `name` field via `path:` in `domain.yaml`, so query→`repo_get` hydration resolves `/repos/{owner}/{repo}`.
 
-**No `Issue → IssueComment` relation** — Multi-parameter sub-resource scope is not expressible as a single `via_param` today; use `issue_comment_query` / `repo_comment_query` explicitly (see [`reference.md`](../../.cursor/skills/plasm-authoring/reference.md), section *via_param — sub-resource traversal*).
+**No `Issue → IssueComment` relation** — Multi-parameter sub-resource scope is not expressible as a single `via_param` today; use `issue_comment_query` / `repo_comment_query` explicitly (see [`reference.md`](../../skills/plasm-authoring/reference.md), section *via_param — sub-resource traversal*).
 
 **Organization / gist / notification modelling vs OpenAPI** — Cross-checked against [github/rest-api-description](https://github.com/github/rest-api-description) (`descriptions/api.github.com/api.github.com.json`). `Notification` omits nested `repository` and `subject` objects from the thread schema (scalar fields only). `Gist` declares an `owner` relation; list/get responses include `owner` as a nested user object. `gist_query` maps to `GET /gists` (authenticated user’s gists); `GET /gists/public` and starred variants are not mapped yet.
 

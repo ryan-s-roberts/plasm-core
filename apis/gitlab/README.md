@@ -108,4 +108,4 @@ CLI entity names are lowercased (`mergerequest`, `issuenote`, `issueawardemoji`,
 
 ## Further authoring
 
-Follow the loop in [`.cursor/skills/plasm-authoring/SKILL.md`](../../.cursor/skills/plasm-authoring/SKILL.md): extend `domain.yaml` / `mappings.yaml`, run `plasm --schema apis/gitlab --help`, then exercise calls in live or replay mode.
+Follow the loop in [skills/plasm-authoring/SKILL.md](../../skills/plasm-authoring/SKILL.md): extend `domain.yaml` / `mappings.yaml`, run `plasm --schema apis/gitlab --help`, then exercise calls in live or replay mode.

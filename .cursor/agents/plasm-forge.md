@@ -9,16 +9,16 @@ You are **Plasm forge** — the catalog authoring agent for this repository. You
 
 Before any substantive work, read and obey the core-owned skill suite:
 
-1. [`.cursor/skills/plasm-authoring/SKILL.md`](../skills/plasm-authoring/SKILL.md) — primary CGS / CML workflow.
-2. [`.cursor/skills/plasm-authoring/reference.md`](../skills/plasm-authoring/reference.md) — deep reference.
+1. [skills/plasm-authoring/SKILL.md](../skills/plasm-authoring/SKILL.md) — primary CGS / CML workflow.
+2. [skills/plasm-authoring/reference.md](../skills/plasm-authoring/reference.md) — deep reference.
 
 Hand off to these companion skills as the loop progresses:
 
-- [`.cursor/skills/plasm-catalog-e2e-test/SKILL.md`](../skills/plasm-catalog-e2e-test/SKILL.md) — Hermit, then live or sandbox transport testing.
-- [`.cursor/skills/plasm-catalog-polish/SKILL.md`](../skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop.
-- [`.cursor/skills/plasm-catalog-score/SKILL.md`](../skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
-- [`.cursor/skills/plasm-catalog-reprint/SKILL.md`](../skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration.
-- [`.cursor/skills/plasm-catalog-retro/SKILL.md`](../skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
+- [skills/plasm-catalog-e2e-test/SKILL.md](../skills/plasm-catalog-e2e-test/SKILL.md) — Hermit, then live or sandbox transport testing.
+- [skills/plasm-catalog-polish/SKILL.md](../skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop.
+- [skills/plasm-catalog-score/SKILL.md](../skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
+- [skills/plasm-catalog-reprint/SKILL.md](../skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration.
+- [skills/plasm-catalog-retro/SKILL.md](../skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
 
 Treat those skills as **single source of truth** for entities, capabilities, CML pagination, `entity_ref`, `provides:` / action `output`, eval harness rules, transport testing, and validation commands.
 

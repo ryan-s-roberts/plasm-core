@@ -1,21 +1,22 @@
 # Claude Code Instructions
 
-Claude should follow the same Plasm authoring loop as Cursor and Codex. CGS / CML / catalog authoring doctrine is owned by `plasm-core` and lives in this submodule's `.cursor/skills/` tree.
+Claude should follow the same Plasm authoring loop as Cursor and Codex. CGS / CML / catalog authoring doctrine is owned by `plasm-core` and lives in this repository's `skills/` tree.
 
 Before creating or changing an API catalog, read:
 
 - [AGENTS.md](AGENTS.md)
-- [.cursor/skills/plasm-authoring/SKILL.md](.cursor/skills/plasm-authoring/SKILL.md)
-- [.cursor/skills/plasm-authoring/reference.md](.cursor/skills/plasm-authoring/reference.md)
+- [skills/plasm-authoring/SKILL.md](skills/plasm-authoring/SKILL.md)
+- [skills/plasm-authoring/reference.md](skills/plasm-authoring/reference.md)
+- [skills/plasm-forge/SKILL.md](skills/plasm-forge/SKILL.md)
 - [.cursor/agents/plasm-forge.md](.cursor/agents/plasm-forge.md)
 
 Use these companion skills for follow-on work:
 
-- [.cursor/skills/plasm-catalog-e2e-test/SKILL.md](.cursor/skills/plasm-catalog-e2e-test/SKILL.md) — Hermit then live / sandbox transport testing.
-- [.cursor/skills/plasm-catalog-polish/SKILL.md](.cursor/skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop.
-- [.cursor/skills/plasm-catalog-score/SKILL.md](.cursor/skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
-- [.cursor/skills/plasm-catalog-reprint/SKILL.md](.cursor/skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration.
-- [.cursor/skills/plasm-catalog-retro/SKILL.md](.cursor/skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
+- [skills/plasm-catalog-e2e-test/SKILL.md](skills/plasm-catalog-e2e-test/SKILL.md) — Hermit then live / sandbox transport testing.
+- [skills/plasm-catalog-polish/SKILL.md](skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop.
+- [skills/plasm-catalog-score/SKILL.md](skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
+- [skills/plasm-catalog-reprint/SKILL.md](skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration.
+- [skills/plasm-catalog-retro/SKILL.md](skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
 
 ## API Authoring Contract
 

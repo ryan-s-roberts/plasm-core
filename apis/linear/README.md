@@ -158,7 +158,7 @@ cargo run -p plasm-eval -- coverage --schema apis/linear --cases apis/linear/eva
 
 ## Pagination
 
-List mappings use `**first` / `after**`, `**pageInfo.hasNextPage**`, `**endCursor**`, with `**response_prefix**` (e.g. `[data, issues, pageInfo]`) and `**body_merge_path: [variables]**`. See [GraphQL (`transport: graphql`)](../../.cursor/skills/plasm-authoring/reference.md).
+List mappings use `**first` / `after**`, `**pageInfo.hasNextPage**`, `**endCursor**`, with `**response_prefix**` (e.g. `[data, issues, pageInfo]`) and `**body_merge_path: [variables]**`. See [GraphQL (`transport: graphql`)](../../skills/plasm-authoring/reference.md).
 
 ## GraphQL errors
 
