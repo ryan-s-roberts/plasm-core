@@ -84,13 +84,11 @@ bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
 Install examples:
 
 ```bash
-# Appliance (default): plasm-server + plugins
+# Default: plasm-server + plugins, plasm, and plasm-cgs
 curl -fsSL https://plasm.tools/install/install.sh | bash
 
-# Remote HTTP client only
+# Single product (optional)
 curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --product client
-
-# Schema CLI
 curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --product cgs
 ```
 
