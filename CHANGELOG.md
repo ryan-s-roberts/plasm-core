@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-05-23
+
+### Fixed
+
+- **`plasm-server`:** squash `plasm-agent-core` sqlx to one idempotent migration (`20260601000000_plasm_agent_schema`); drop ledger repair so fresh embedded Postgres boots cleanly.
+- **`plasm-server`:** typed MCP policy attach (`McpPolicyAttachOutcome`), appliance bootstrap gate, and scrollable Overview with `config_surface_from_host` at RUN handoff (no garbled trace-hub / `enabledts` overlap).
+
 ## [0.1.6] - 2026-05-23
 
 ### Added
