@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-05-23
+
+### Fixed
+
+- **Release:** declare `rayon`, `criterion`, and `aho-corasick` in the OSS workspace `Cargo.toml` so standalone `plasm-core` CI builds succeed (v0.1.8 tag missed these entries).
+
 ## [0.1.8] - 2026-05-23
 
 ### Added
