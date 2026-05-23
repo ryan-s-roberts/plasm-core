@@ -25,6 +25,7 @@ use crate::trace_sink_emit::TraceIngestClient;
 use auth_framework::storage::AuthStorage;
 use auth_framework::AuthFramework;
 use plasm_discovery::embedding_store::CatalogEmbeddingStore;
+use plasm_discovery::CatalogIndexCache;
 use plasm_plugin_host::PluginManager;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
 use std::collections::HashMap;
@@ -77,6 +78,11 @@ pub struct PlasmOssHostState {
     pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
     /// Optional Postgres-backed typed-discovery embeddings (CGS `catalog_cgs_hash` rows).
     pub discovery_embedding: Option<Arc<DiscoveryEmbeddingRepository>>,
+    /// Memoized [`CatalogIndex`](plasm_discovery::index::CatalogIndex) per `(entry_id, catalog_cgs_hash)`.
+    pub discovery_index_cache: Arc<CatalogIndexCache>,
+    /// Shared ONNX embedder for typed discovery + background reconcile (`local-embeddings` only).
+    #[cfg(feature = "local-embeddings")]
+    pub discovery_embedder: Arc<plasm_discovery::BlockingEmbedder>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -150,6 +156,15 @@ impl PlasmHostState {
             .discovery_embedding
             .clone()
             .map(|r| r as Arc<dyn CatalogEmbeddingStore>)
+    }
+
+    pub fn discovery_index_cache(&self) -> &CatalogIndexCache {
+        &self.oss.discovery_index_cache
+    }
+
+    #[cfg(feature = "local-embeddings")]
+    pub fn discovery_embedder(&self) -> Arc<plasm_discovery::BlockingEmbedder> {
+        self.oss.discovery_embedder.clone()
     }
 
     /// Outbound HTTP credentials: [`PlasmOssHostState::outbound_secret_provider`] when wired; otherwise [`EnvSecretProvider`].

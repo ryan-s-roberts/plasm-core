@@ -112,9 +112,7 @@ fn default_appliance_root() -> PathBuf {
 }
 
 fn resolve_appliance_root(cli: &ServeCli) -> PathBuf {
-    cli.data_dir
-        .clone()
-        .unwrap_or_else(default_appliance_root)
+    cli.data_dir.clone().unwrap_or_else(default_appliance_root)
 }
 
 /// Default `--plugin-dir` to `{appliance}/plugins` when the OSS installer laid out plugins there.
@@ -173,7 +171,9 @@ fn reconcile_appliance_db_env(cli: &ServeCli) {
     let any_db_url = env_str_nonempty("DATABASE_URL")
         || env_str_nonempty("PLASM_MCP_CONFIG_DATABASE_URL")
         || env_str_nonempty("PLASM_AUTH_STORAGE_URL");
-    if cli.migrate_mcp_config_db || EmbeddedPostgresGuard::env_urls_skip_embedded_autostart() || any_db_url
+    if cli.migrate_mcp_config_db
+        || EmbeddedPostgresGuard::env_urls_skip_embedded_autostart()
+        || any_db_url
     {
         EmbeddedPostgresGuard::clear_env_urls_blocking_embedded_autostart();
     }
@@ -1246,10 +1246,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let admin_bridge = crate::appliance_admin_bridge::spawn_admin_router(Arc::clone(&state));
         tracing::info!(target: "plasm_appliance_boot", "phase: run UI handoff");
         stderr_log::line("[plasm-server] bootstrap: sent RUN handoff to UI thread");
-        let policy_store_detail = policy_store_handoff_detail(
-            mcp_policy_attach,
-            state.mcp_config_repository().is_some(),
-        );
+        let policy_store_detail =
+            policy_store_handoff_detail(mcp_policy_attach, state.mcp_config_repository().is_some());
         send_bootstrap_ui(
             Some(&tx),
             boot::BootstrapUiMsg::Running(boot::RunningHandoff {

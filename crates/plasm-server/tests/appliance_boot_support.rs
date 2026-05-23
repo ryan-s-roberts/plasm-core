@@ -4,8 +4,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub const TEST_AUTH_STORAGE_ENCRYPTION_KEY: &str =
-    "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=";
+pub const TEST_AUTH_STORAGE_ENCRYPTION_KEY: &str = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=";
 
 pub const BOOTSTRAP_WAIT: Duration = Duration::from_secs(600);
 pub const BOOTSTRAP_PROGRESS_INTERVAL: Duration = Duration::from_secs(15);
@@ -94,7 +93,11 @@ pub fn diag_boot_milestone_report(diag: &Path) -> String {
     let mut lines = Vec::new();
     lines.push(format!("diag log: {}", diag.display()));
     for (needle, label) in HEADLESS_MILESTONES {
-        let mark = if full.contains(needle) { "ok" } else { "MISSING" };
+        let mark = if full.contains(needle) {
+            "ok"
+        } else {
+            "MISSING"
+        };
         lines.push(format!("  [{mark}] {label}"));
     }
     lines.join("\n")
@@ -121,9 +124,7 @@ pub fn diag_has_fatal(diag: &Path) -> Option<String> {
 }
 
 fn bootstrap_complete(tail: &str, http_up: bool) -> bool {
-    http_up
-        && tail.contains(LOG_EMBEDDED_PG_READY)
-        && tail.contains(LOG_PHASE_HEADLESS_LISTENER)
+    http_up && tail.contains(LOG_EMBEDDED_PG_READY) && tail.contains(LOG_PHASE_HEADLESS_LISTENER)
 }
 
 /// Poll `PLASM_APPLIANCE_DIAG_LOG` and HTTP until headless bootstrap is complete.
@@ -294,7 +295,10 @@ pub fn apply_appliance_test_env(cmd: &mut std::process::Command, diag_log: &Path
         "AUTH_STORAGE_ENCRYPTION_KEY",
         TEST_AUTH_STORAGE_ENCRYPTION_KEY,
     );
-    cmd.env("PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS", EMBEDDED_PG_TIMEOUT_SECS);
+    cmd.env(
+        "PLASM_EMBEDDED_POSTGRES_TIMEOUT_SECS",
+        EMBEDDED_PG_TIMEOUT_SECS,
+    );
     cmd.env("PLASM_APPLIANCE_DIAG_LOG", diag_log);
     cmd.env("RUST_LOG", APPLIANCE_TEST_RUST_LOG);
 }

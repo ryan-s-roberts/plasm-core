@@ -387,7 +387,12 @@ impl RunArtifactStore {
         }
     }
 
-    pub async fn get(&self, prompt_hash: &str, session_id: &str, run_id: RunArtifactId) -> Option<Vec<u8>> {
+    pub async fn get(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Option<Vec<u8>> {
         let payload = self.get_payload(prompt_hash, session_id, run_id).await?;
         Some(payload.bytes.to_vec())
     }
@@ -657,12 +662,7 @@ impl FsRunArtifactBackend {
         let sid = run_artifact_fs_segment(session_id)?;
         let fname_owned = run_artifact_blob_filename(run_id);
         let fname = run_artifact_fs_segment(&fname_owned)?;
-        Ok(self
-            .root
-            .join("execute")
-            .join(ph)
-            .join(sid)
-            .join(fname))
+        Ok(self.root.join("execute").join(ph).join(sid).join(fname))
     }
 
     fn resource_index_path(
@@ -1198,7 +1198,11 @@ async fn run_artifact_gc_pass(
 }
 
 /// Canonical MCP / logical URI for a run artifact.
-pub fn plasm_run_resource_uri(prompt_hash: &str, session_id: &str, run_id: &RunArtifactId) -> String {
+pub fn plasm_run_resource_uri(
+    prompt_hash: &str,
+    session_id: &str,
+    run_id: &RunArtifactId,
+) -> String {
     format!(
         "plasm://execute/{prompt_hash}/{session_id}/run/{}",
         run_id.to_wire()

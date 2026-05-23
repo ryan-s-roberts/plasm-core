@@ -1,10 +1,12 @@
 //! Phrase + lexical indexes over one CGS catalog.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use aho_corasick::AhoCorasick;
 use inflection::{plural, singular};
 use plasm_core::schema::CGS;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhraseSource {
@@ -28,6 +30,8 @@ pub struct CatalogIndex {
     #[allow(dead_code)]
     pub catalog_hash: String,
     phrase_to_hits: HashMap<String, Vec<PhraseHit>>,
+    phrase_patterns: Vec<String>,
+    phrase_matcher: Option<AhoCorasick>,
     pub cgs: Arc<CGS>,
 }
 
@@ -213,44 +217,112 @@ fn insert_phrase_with_inflection_alias(
     }
 }
 
-impl CatalogIndex {
-    pub fn build(entry_id: String, cgs: Arc<CGS>) -> Self {
-        let catalog_hash = cgs.catalog_cgs_hash_hex();
-        let mut phrase_to_hits: HashMap<String, Vec<PhraseHit>> = HashMap::new();
-        let eid = entry_id.clone();
+fn merge_phrase_maps(
+    dest: &mut HashMap<String, Vec<PhraseHit>>,
+    src: HashMap<String, Vec<PhraseHit>>,
+) {
+    for (k, hits) in src {
+        dest.entry(k).or_default().extend(hits);
+    }
+}
 
-        for (ename, ent) in cgs.entities.iter() {
-            let entity_s = ename.to_string();
-            let key = norm_phrase(&entity_s);
-            if !key.is_empty() {
-                insert_phrase_with_inflection_alias(
-                    &mut phrase_to_hits,
-                    key.clone(),
-                    PhraseHit {
-                        entry_id: eid.clone(),
-                        entity: entity_s.clone(),
-                        phrase: entity_s.clone(),
-                        source: PhraseSource::EntityName,
-                    },
-                );
+fn build_entity_phrase_map(
+    eid: &str,
+    ename: &plasm_core::identity::EntityName,
+    ent: &plasm_core::schema::EntityDef,
+) -> HashMap<String, Vec<PhraseHit>> {
+    let mut phrase_to_hits: HashMap<String, Vec<PhraseHit>> = HashMap::new();
+    let entity_s = ename.to_string();
+
+    let key = norm_phrase(&entity_s);
+    if !key.is_empty() {
+        insert_phrase_with_inflection_alias(
+            &mut phrase_to_hits,
+            key.clone(),
+            PhraseHit {
+                entry_id: eid.to_string(),
+                entity: entity_s.clone(),
+                phrase: entity_s.clone(),
+                source: PhraseSource::EntityName,
+            },
+        );
+    }
+    if let Some(spaced) = camel_case_word_spaced(&entity_s) {
+        let sk = norm_phrase(&spaced);
+        if !sk.is_empty() && sk != key {
+            insert_phrase_with_inflection_alias(
+                &mut phrase_to_hits,
+                sk,
+                PhraseHit {
+                    entry_id: eid.to_string(),
+                    entity: entity_s.clone(),
+                    phrase: entity_s.clone(),
+                    source: PhraseSource::EntityName,
+                },
+            );
+        }
+    }
+    for a in &ent.expression_aliases {
+        let k = norm_phrase(a);
+        if k.is_empty() {
+            continue;
+        }
+        insert_phrase_with_inflection_alias(
+            &mut phrase_to_hits,
+            k.clone(),
+            PhraseHit {
+                entry_id: eid.to_string(),
+                entity: entity_s.clone(),
+                phrase: a.clone(),
+                source: PhraseSource::ExpressionAlias,
+            },
+        );
+    }
+    if let Some(d) = &ent.discovery {
+        for n in &d.names {
+            let k = norm_phrase(n);
+            if k.is_empty() {
+                continue;
             }
-            if let Some(spaced) = camel_case_word_spaced(&entity_s) {
-                let sk = norm_phrase(&spaced);
-                if !sk.is_empty() && sk != key {
-                    insert_phrase_with_inflection_alias(
-                        &mut phrase_to_hits,
-                        sk,
-                        PhraseHit {
-                            entry_id: eid.clone(),
-                            entity: entity_s.clone(),
-                            phrase: entity_s.clone(),
-                            source: PhraseSource::EntityName,
-                        },
-                    );
-                }
-            }
-            for a in &ent.expression_aliases {
-                let k = norm_phrase(a);
+            insert_phrase_with_inflection_alias(
+                &mut phrase_to_hits,
+                k.clone(),
+                PhraseHit {
+                    entry_id: eid.to_string(),
+                    entity: entity_s.clone(),
+                    phrase: n.clone(),
+                    source: PhraseSource::DiscoveryName,
+                },
+            );
+        }
+    }
+
+    let entity_key = norm_phrase(&entity_s);
+    for tok in description_tokens(ent.description.as_str()) {
+        if tok == entity_key || is_catalog_slug_token(&tok, eid) {
+            continue;
+        }
+        insert_phrase_with_inflection_alias(
+            &mut phrase_to_hits,
+            tok.clone(),
+            PhraseHit {
+                entry_id: eid.to_string(),
+                entity: entity_s.clone(),
+                phrase: tok.clone(),
+                source: PhraseSource::DiscoveryName,
+            },
+        );
+    }
+    phrase_to_hits
+}
+
+fn build_capability_phrase_map(eid: &str, cgs: &CGS) -> HashMap<String, Vec<PhraseHit>> {
+    let mut phrase_to_hits: HashMap<String, Vec<PhraseHit>> = HashMap::new();
+    for cap in cgs.capabilities.values() {
+        let domain = cap.domain.to_string();
+        if let Some(d) = &cap.discovery {
+            for t in &d.target_terms {
+                let k = norm_phrase(t);
                 if k.is_empty() {
                     continue;
                 }
@@ -258,78 +330,62 @@ impl CatalogIndex {
                     &mut phrase_to_hits,
                     k.clone(),
                     PhraseHit {
-                        entry_id: eid.clone(),
-                        entity: entity_s.clone(),
-                        phrase: a.clone(),
-                        source: PhraseSource::ExpressionAlias,
-                    },
-                );
-            }
-            if let Some(d) = &ent.discovery {
-                for n in &d.names {
-                    let k = norm_phrase(n);
-                    if k.is_empty() {
-                        continue;
-                    }
-                    insert_phrase_with_inflection_alias(
-                        &mut phrase_to_hits,
-                        k.clone(),
-                        PhraseHit {
-                            entry_id: eid.clone(),
-                            entity: entity_s.clone(),
-                            phrase: n.clone(),
-                            source: PhraseSource::DiscoveryName,
-                        },
-                    );
-                }
-            }
-
-            let entity_key = norm_phrase(&entity_s);
-            for tok in description_tokens(ent.description.as_str()) {
-                if tok == entity_key || is_catalog_slug_token(&tok, &eid) {
-                    continue;
-                }
-                insert_phrase_with_inflection_alias(
-                    &mut phrase_to_hits,
-                    tok.clone(),
-                    PhraseHit {
-                        entry_id: eid.clone(),
-                        entity: entity_s.clone(),
-                        phrase: tok.clone(),
-                        source: PhraseSource::DiscoveryName,
+                        entry_id: eid.to_string(),
+                        entity: domain.clone(),
+                        phrase: t.clone(),
+                        source: PhraseSource::CapabilityTargetTerm,
                     },
                 );
             }
         }
+    }
+    phrase_to_hits
+}
 
-        for cap in cgs.capabilities.values() {
-            let domain = cap.domain.to_string();
-            if let Some(d) = &cap.discovery {
-                for t in &d.target_terms {
-                    let k = norm_phrase(t);
-                    if k.is_empty() {
-                        continue;
-                    }
-                    insert_phrase_with_inflection_alias(
-                        &mut phrase_to_hits,
-                        k.clone(),
-                        PhraseHit {
-                            entry_id: eid.clone(),
-                            entity: domain.clone(),
-                            phrase: t.clone(),
-                            source: PhraseSource::CapabilityTargetTerm,
-                        },
-                    );
-                }
-            }
-        }
+fn finish_phrase_index(
+    entry_id: String,
+    catalog_hash: String,
+    cgs: Arc<CGS>,
+    phrase_to_hits: HashMap<String, Vec<PhraseHit>>,
+) -> CatalogIndex {
+    let patterns: Vec<String> = phrase_to_hits.keys().cloned().collect();
+    let phrase_matcher = if patterns.is_empty() {
+        None
+    } else {
+        Some(AhoCorasick::new(&patterns).expect("phrase patterns"))
+    };
 
-        Self {
-            entry_id,
-            catalog_hash,
-            phrase_to_hits,
-            cgs,
+    CatalogIndex {
+        entry_id,
+        catalog_hash,
+        phrase_to_hits,
+        phrase_patterns: patterns,
+        phrase_matcher,
+        cgs,
+    }
+}
+
+impl CatalogIndex {
+    pub fn build(entry_id: String, cgs: Arc<CGS>) -> Self {
+        let catalog_hash = cgs.catalog_cgs_hash_hex();
+        let eid = entry_id.clone();
+
+        let entity_items: Vec<_> = cgs.entities.iter().collect();
+        let entity_maps: Vec<HashMap<String, Vec<PhraseHit>>> = entity_items
+            .par_iter()
+            .map(|(ename, ent)| build_entity_phrase_map(eid.as_str(), ename, ent))
+            .collect();
+
+        let mut phrase_to_hits: HashMap<String, Vec<PhraseHit>> = HashMap::new();
+        for m in entity_maps {
+            merge_phrase_maps(&mut phrase_to_hits, m);
         }
+        merge_phrase_maps(
+            &mut phrase_to_hits,
+            build_capability_phrase_map(eid.as_str(), cgs.as_ref()),
+        );
+
+        finish_phrase_index(entry_id, catalog_hash, cgs, phrase_to_hits)
     }
 
     pub fn lookup_phrase(&self, phrase: &str) -> Vec<PhraseHit> {
@@ -340,20 +396,36 @@ impl CatalogIndex {
     /// Any phrase key contained as substring in `utterance` (normalized), longest keys first.
     pub fn scan_utterance(&self, utterance_lower: &str) -> Vec<PhraseHit> {
         let u = norm_phrase(utterance_lower);
-        let mut keys: Vec<&String> = self.phrase_to_hits.keys().collect();
-        keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
-        let mut seen = HashMap::<(String, String, String), ()>::new();
+        if u.is_empty() || self.phrase_to_hits.is_empty() {
+            return Vec::new();
+        }
+
+        let Some(matcher) = &self.phrase_matcher else {
+            return Vec::new();
+        };
+
+        let mut seen: HashSet<(String, String, String)> = HashSet::new();
         let mut out = Vec::new();
-        for k in keys {
-            if u.contains(k.as_str()) {
-                for h in self.phrase_to_hits.get(k).into_iter().flatten() {
+
+        for mat in matcher.find_iter(&u) {
+            let k = &self.phrase_patterns[mat.pattern().as_usize()];
+            if let Some(hits) = self.phrase_to_hits.get(k) {
+                for h in hits {
                     let sig = (h.entry_id.clone(), h.entity.clone(), h.phrase.clone());
-                    if seen.insert(sig, ()).is_none() {
+                    if seen.insert(sig) {
                         out.push(h.clone());
                     }
                 }
             }
         }
+
+        // Preserve longest-key-first ordering for callers that depend on tie semantics.
+        out.sort_by(|a, b| {
+            b.phrase
+                .len()
+                .cmp(&a.phrase.len())
+                .then_with(|| a.entity.cmp(&b.entity))
+        });
         out
     }
 

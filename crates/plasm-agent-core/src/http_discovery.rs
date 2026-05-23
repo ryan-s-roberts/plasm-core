@@ -246,7 +246,16 @@ async fn post_discover_typed(
     );
     let reg = st.catalog.snapshot();
     let emb = st.discovery_embedding_store();
-    match run_typed_catalog_discovery(&reg, query, emb).await {
+    match run_typed_catalog_discovery(
+        &reg,
+        query,
+        emb,
+        Some(st.discovery_index_cache()),
+        #[cfg(feature = "local-embeddings")]
+        Some(st.discovery_embedder()),
+    )
+    .await
+    {
         Ok(out) => Json(out).into_response(),
         Err(e) => {
             tracing::debug!(error = %e, "typed discovery failed");

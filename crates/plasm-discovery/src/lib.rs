@@ -6,19 +6,21 @@ use async_trait::async_trait;
 
 mod decompose;
 #[cfg(feature = "local-embeddings")]
-mod embedder;
+pub mod embedder;
 pub mod embedding_store;
 mod engine;
 pub mod index;
+pub mod index_cache;
 mod metrics;
 mod types;
 
+#[cfg(feature = "local-embeddings")]
+pub use embedder::BlockingEmbedder;
 pub use embedding_store::{
     CatalogEmbeddingLineKey, DEFAULT_EMBEDDING_MODEL_ID, DEFAULT_EMBEDDING_VECTOR_DIM,
 };
-#[cfg(feature = "local-embeddings")]
-pub use embedder::BlockingEmbedder;
 pub use engine::TypedDiscovery;
+pub use index_cache::CatalogIndexCache;
 pub use types::*;
 
 /// Stepwise discovery: single-shot [`Self::discover`] or clarification follow-ups.

@@ -1765,6 +1765,9 @@ pub struct CGS {
     /// Capability names grouped by [`CapabilitySchema::domain`] (lazy; reset on [`CGS`] clone).
     #[serde(skip, default = "new_capability_names_by_domain_lock")]
     capability_names_by_domain: OnceLock<Arc<IndexMap<String, Vec<CapabilityName>>>>,
+    /// Cached SHA-256 hex digest of canonical JSON (lazy; reset on [`CGS`] clone).
+    #[serde(skip, default = "new_catalog_hash_lock")]
+    catalog_hash_hex: OnceLock<String>,
 }
 
 fn new_capability_index_lock() -> OnceLock<Arc<CgsCapabilityIndex>> {
@@ -1772,6 +1775,10 @@ fn new_capability_index_lock() -> OnceLock<Arc<CgsCapabilityIndex>> {
 }
 
 fn new_capability_names_by_domain_lock() -> OnceLock<Arc<IndexMap<String, Vec<CapabilityName>>>> {
+    OnceLock::new()
+}
+
+fn new_catalog_hash_lock() -> OnceLock<String> {
     OnceLock::new()
 }
 
@@ -1793,6 +1800,7 @@ impl Clone for CGS {
             views: self.views.clone(),
             capability_index: OnceLock::new(),
             capability_names_by_domain: OnceLock::new(),
+            catalog_hash_hex: OnceLock::new(),
         }
     }
 }
@@ -1942,6 +1950,7 @@ impl CGS {
             views: IndexMap::new(),
             capability_index: new_capability_index_lock(),
             capability_names_by_domain: new_capability_names_by_domain_lock(),
+            catalog_hash_hex: new_catalog_hash_lock(),
         }
     }
 
@@ -1979,9 +1988,13 @@ impl CGS {
 
     /// Stable hex digest (SHA-256) of canonical JSON for this CGS, used for session pinning and plugin integrity.
     pub fn catalog_cgs_hash_hex(&self) -> String {
-        let v = serde_json::to_vec(self).expect("CGS JSON serialization for catalog hash");
-        let digest = Sha256::digest(&v);
-        hex::encode(digest)
+        self.catalog_hash_hex
+            .get_or_init(|| {
+                let v = serde_json::to_vec(self).expect("CGS JSON serialization for catalog hash");
+                let digest = Sha256::digest(&v);
+                hex::encode(digest)
+            })
+            .clone()
     }
 
     /// When [`Self::oauth`] is set and lists a requirement for `capability`, returns whether
@@ -2570,7 +2583,9 @@ impl CGS {
 
         self.validate_views()?;
 
-        crate::cgs_expression_validate::validate_cgs_expression_surface(self)?;
+        if !crate::loader::plasm_cgs_fast_load_enabled() {
+            crate::cgs_expression_validate::validate_cgs_expression_surface(self)?;
+        }
 
         if matches!(self.auth.as_ref(), Some(AuthScheme::None)) && self.oauth.is_some() {
             return Err(SchemaError::AuthNoneIncompatibleWithOauthExtension);

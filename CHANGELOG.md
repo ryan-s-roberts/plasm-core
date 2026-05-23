@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-23
+
+### Added
+
+- **Performance:** Criterion benches for CGS load and typed discovery index (`plasm-core/benches/schema_load`, `plasm-discovery/benches/index_build`).
+- **Performance:** `CatalogIndexCache` on the agent host; OTEL `plasm.discovery.index_cache_total`.
+- **Performance:** `PLASM_CGS_FAST_LOAD=1` skips expression-surface DOMAIN bundle synthesis at load (structural validate only).
+- **Performance:** `PLASM_DISCOVERY_EMBED_CONCURRENCY` env for shared ONNX embedder pool sizing.
+
+### Changed
+
+- **Performance:** Cache `catalog_cgs_hash_hex` on `CGS` via `OnceLock`; store hash in registry metadata at insert.
+- **Performance:** Aho-Corasick substring scan for typed discovery; parallel entity index build (`rayon`).
+- **Performance:** Incremental Postgres embedding reconcile (missing-line upsert + stale-line delete, no full delete/refill).
+- **Performance:** Move capability mappings at assemble time (`swap_remove`); single `finalize_cgs_load` in pack-plugins.
+- **Performance:** Parallel legacy capability scoring per catalog entry.
+
 ## [0.1.7] - 2026-05-23
 
 ### Fixed

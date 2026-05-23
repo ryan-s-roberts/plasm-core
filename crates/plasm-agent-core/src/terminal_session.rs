@@ -3,11 +3,11 @@
 use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexMap;
 use plasm_core::prompt_render::domain_tsv_table_from_wrapped_prompt;
+use plasm_core::CgsContext;
 use plasm_core::{
     discovery::derive_intent_exposure_surface_batch, DomainExposureSession, PromptPipelineConfig,
     SymbolMapCrossRequestCache, CGS,
 };
-use plasm_core::CgsContext;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,8 @@ use crate::http_execute::{build_capability_exposure_plan, CapabilitySeed};
 use crate::plasm_dag::compile_plasm_expression_to_plan;
 use crate::plasm_plan_run::{expand_program_surface_for_session_lower, parse_plasm_surface_line};
 use crate::terminal_state::{
-    append_domain_tsv_wave, catalog_cache_path, domain_tsv_path, write_session_meta,
-    CatalogPin, ExecutionBinding, SessionMeta,
+    append_domain_tsv_wave, catalog_cache_path, domain_tsv_path, write_session_meta, CatalogPin,
+    ExecutionBinding, SessionMeta,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +103,10 @@ impl ClientSymbolSession {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, serde_json::to_string_pretty(&self.to_symbol_state_file())?)?;
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&self.to_symbol_state_file())?,
+        )?;
         let meta = SessionMeta {
             client_session_id: self.client_session_id.clone(),
             intent: self.intent.clone(),
@@ -174,10 +177,8 @@ impl ClientSymbolSession {
             }
         }
         self.write_catalog_cache(server, entry_id, &cgs)?;
-        self.catalog_digests
-            .insert(entry_id.to_string(), digest);
-        self.catalogs
-            .insert(entry_id.to_string(), Arc::new(cgs));
+        self.catalog_digests.insert(entry_id.to_string(), digest);
+        self.catalogs.insert(entry_id.to_string(), Arc::new(cgs));
         Ok(())
     }
 
@@ -284,20 +285,9 @@ impl ClientSymbolSession {
                         entities,
                         None,
                     );
-                    exp.expose_surface(
-                        &layer_refs,
-                        cgs.clone(),
-                        entry_id.as_str(),
-                        &refs,
-                        delta,
-                    );
+                    exp.expose_surface(&layer_refs, cgs.clone(), entry_id.as_str(), &refs, delta);
                 } else {
-                    exp.expose_entities(
-                        &layer_refs,
-                        cgs.clone(),
-                        entry_id.as_str(),
-                        &refs,
-                    );
+                    exp.expose_entities(&layer_refs, cgs.clone(), entry_id.as_str(), &refs);
                 }
             } else {
                 if use_intent {
@@ -330,15 +320,8 @@ impl ClientSymbolSession {
                 .exposure
                 .as_ref()
                 .ok_or_else(|| anyhow!("exposure missing after expose"))?;
-            let added: Vec<&str> = exp.entities[n0..]
-                .iter()
-                .map(|s| s.as_str())
-                .collect();
-            all_new_entity_names.extend(
-                added
-                    .iter()
-                    .map(|s| (*s).to_string()),
-            );
+            let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
+            all_new_entity_names.extend(added.iter().map(|s| (*s).to_string()));
         }
 
         if all_new_entity_names.is_empty() {
@@ -356,12 +339,8 @@ impl ClientSymbolSession {
                 .iter()
                 .next()
                 .ok_or_else(|| anyhow!("no catalogs loaded"))?;
-            self.pipeline.render_domain_exposure_delta(
-                cgs,
-                exp,
-                &added_refs,
-                Some(&self.sym_cross),
-            )
+            self.pipeline
+                .render_domain_exposure_delta(cgs, exp, &added_refs, Some(&self.sym_cross))
         } else {
             self.pipeline.render_domain_exposure_delta_federated(
                 &by_entry,
@@ -372,11 +351,9 @@ impl ClientSymbolSession {
         };
 
         let mode = self.pipeline.render_mode;
-        let tsv = domain_tsv_table_from_wrapped_prompt(
-            &rendered,
-            mode.markdown_fence_info_string(),
-        )
-        .unwrap_or(rendered);
+        let tsv =
+            domain_tsv_table_from_wrapped_prompt(&rendered, mode.markdown_fence_info_string())
+                .unwrap_or(rendered);
         Ok(tsv)
     }
 
@@ -401,8 +378,8 @@ impl ClientSymbolSession {
 
     pub fn load_from_disk(server: &str, client_session_id: &str) -> Result<Self> {
         let path = crate::terminal_state::symbol_state_path(server, client_session_id);
-        let raw = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let raw =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         let file: SymbolStateFile =
             serde_json::from_str(&raw).map_err(|e| anyhow!("symbol_state.json: {e}"))?;
         let mut sess = ClientSymbolSession::new(file.client_session_id, file.intent);
@@ -424,7 +401,11 @@ impl ClientSymbolSession {
         Ok(sess)
     }
 
-    pub fn append_rendered_tsv(&self, server: &str, tsv_fragment: &str) -> Result<(PathBuf, usize)> {
+    pub fn append_rendered_tsv(
+        &self,
+        server: &str,
+        tsv_fragment: &str,
+    ) -> Result<(PathBuf, usize)> {
         let path = domain_tsv_path(server, &self.client_session_id);
         let first = !path.exists() || path.metadata().map(|m| m.len()).unwrap_or(0) == 0;
         let rows = append_domain_tsv_wave(&path, tsv_fragment, first)?;
@@ -453,10 +434,9 @@ impl ClientSymbolSession {
             .get(&primary_api)
             .ok_or_else(|| anyhow!("missing primary cgs"))?
             .clone();
-        let exposure = self
-            .exposure
-            .clone()
-            .ok_or_else(|| anyhow!("client session has no symbol exposure — run `plasm context` first"))?;
+        let exposure = self.exposure.clone().ok_or_else(|| {
+            anyhow!("client session has no symbol exposure — run `plasm context` first")
+        })?;
         let entities = exposure.entities.clone();
         let catalog_cgs_hash = cgs.catalog_cgs_hash_hex();
         Ok(ExecuteSession::new(
@@ -504,12 +484,8 @@ impl ClientSymbolSession {
     #[allow(dead_code)]
     pub fn parse_line_for_display(&self, line: &str) -> Result<String> {
         let session = self.build_execute_session_for_parse()?;
-        let parsed = parse_plasm_surface_line(
-            &session,
-            Some(&self.sym_cross),
-            &self.pipeline,
-            line.trim(),
-        )?;
+        let parsed =
+            parse_plasm_surface_line(&session, Some(&self.sym_cross), &self.pipeline, line.trim())?;
         if session.contexts_by_entry.len() <= 1 {
             Ok(crate::expr_display::expr_display_resolved(
                 &parsed.expr,
@@ -555,8 +531,7 @@ mod tests {
         sess.catalog_digests.insert("overshow".into(), digest);
         sess.capabilities
             .push(("overshow".into(), "Profile".into()));
-        sess.rebuild_exposure_from_capabilities()
-            .expect("expose");
+        sess.rebuild_exposure_from_capabilities().expect("expose");
         let plan = sess
             .compile_program_to_plan("Profile{}")
             .expect("compile Profile{}");

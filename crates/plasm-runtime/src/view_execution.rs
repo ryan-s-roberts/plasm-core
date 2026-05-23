@@ -600,11 +600,8 @@ async fn execute_view_scoped(
         let ViewOutputBinding::Computed { template } = binding else {
             continue;
         };
-        let v = crate::view_template::render_view_computed_template(
-            template,
-            &scope,
-            &fields_plain,
-        )?;
+        let v =
+            crate::view_template::render_view_computed_template(template, &scope, &fields_plain)?;
         fields_plain.insert(fname.clone(), v);
     }
 

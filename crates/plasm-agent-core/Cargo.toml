@@ -63,6 +63,7 @@ auth-framework = { workspace = true }
 sqlx = { workspace = true, features = ["migrate", "chrono", "uuid"] }
 opentelemetry = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
+futures = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

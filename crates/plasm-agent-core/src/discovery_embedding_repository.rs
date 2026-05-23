@@ -119,6 +119,48 @@ impl DiscoveryEmbeddingRepository {
         Ok(())
     }
 
+    /// Delete specific embed lines for a catalog hash (incremental reconcile).
+    pub async fn delete_lines_for_hash(
+        &self,
+        catalog_cgs_hash: &str,
+        embedding_model_id: &str,
+        lines: &[String],
+    ) -> Result<(), sqlx::Error> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        for chunk in lines.chunks(emb_chunks::FETCH_KEY_PAIRS) {
+            sqlx::query(
+                r#"DELETE FROM plasm_catalog_discovery_embeddings e
+                   WHERE e.catalog_cgs_hash = $1
+                     AND e.embedding_model_id = $2
+                     AND e.line_text IN (SELECT * FROM unnest($3::text[]) AS t(line))"#,
+            )
+            .bind(catalog_cgs_hash)
+            .bind(embedding_model_id)
+            .bind(chunk)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn list_line_texts_for_hash(
+        &self,
+        catalog_cgs_hash: &str,
+        embedding_model_id: &str,
+    ) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            r#"SELECT line_text FROM plasm_catalog_discovery_embeddings
+               WHERE catalog_cgs_hash = $1 AND embedding_model_id = $2"#,
+        )
+        .bind(catalog_cgs_hash)
+        .bind(embedding_model_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     pub async fn upsert_line(
         &self,
         catalog_cgs_hash: &str,

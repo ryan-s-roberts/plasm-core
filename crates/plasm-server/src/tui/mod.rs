@@ -28,9 +28,9 @@ use crate::appliance_admin_bridge::{
     config_surface_from_host, AdminBridge, AdminCompletion, AdminCorr, AdminJob,
     McpConfigSurfaceState, OAuthSurfaceState, PolicyStoreUnavailableReason, RefreshedUiData,
 };
-use crate::appliance_mode::PolicyStoreBootstrapDetail;
 use crate::appliance_log;
 use crate::appliance_mcp_admin::appliance_mcp_scope;
+use crate::appliance_mode::PolicyStoreBootstrapDetail;
 use crate::boot::UiEvent;
 use crate::oauth_upsert_wizard::{OAuthUpsertStep, OAuthUpsertWizard};
 
@@ -2422,10 +2422,7 @@ fn build_overview_lines(
                 if let Some(detail) = model.policy_bootstrap_detail.as_ref() {
                     lines.push(Line::from(""));
                     for line in detail.display_lines() {
-                        lines.push(Line::from(Span::styled(
-                            format!("  > {line}"),
-                            dim_style(),
-                        )));
+                        lines.push(Line::from(Span::styled(format!("  > {line}"), dim_style())));
                     }
                 }
                 lines.push(Line::from(Span::styled(
@@ -2436,9 +2433,7 @@ fn build_overview_lines(
                 lines.push(Line::from(
                     "  > Fix: wipe ~/.plasm/appliance/postgres and restart, or run: plasm-server mcp migrate-db",
                 ));
-                lines.push(Line::from(
-                    "  > See Logs tab for bootstrap / sqlx details.",
-                ));
+                lines.push(Line::from("  > See Logs tab for bootstrap / sqlx details."));
             }
         },
     }
@@ -3804,11 +3799,7 @@ mod tests {
 
     #[test]
     fn apis_filter_bar_heading() {
-        let text = line_text(&chrome::filter_bar_line(
-            "Filter catalogues (/)",
-            "",
-            false,
-        ));
+        let text = line_text(&chrome::filter_bar_line("Filter catalogues (/)", "", false));
         assert!(text.contains("Filter catalogues"));
     }
 
@@ -3817,11 +3808,7 @@ mod tests {
         let mut state = RunState::new();
         state.screen = RunScreen::Keys;
         let items = screen_footer_items(&state);
-        assert!(
-            items
-                .iter()
-                .any(|i| i.key == "a" && i.desc.contains("add"))
-        );
+        assert!(items.iter().any(|i| i.key == "a" && i.desc.contains("add")));
     }
 
     #[test]
@@ -3890,11 +3877,7 @@ mod tests {
             reason: PolicyStoreUnavailableReason::NeverAttached,
         };
         let lines = build_overview_lines(&model, &model.resources.snapshot, &host, 3001);
-        let rendered = lines
-            .iter()
-            .map(line_text)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
         assert!(!rendered.contains("enabledts"));
         assert!(rendered.contains("Trace hub:"));
         assert!(rendered.contains("project_mcp_* connect/migrate failed"));

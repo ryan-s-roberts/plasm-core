@@ -9,6 +9,7 @@ use crate::symbol_tuning::{
     ExposureSurface, ExposureSurfaceDelta,
 };
 use indexmap::IndexMap;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -214,6 +215,7 @@ struct RegistryRow {
     label: String,
     tags: Vec<String>,
     cgs: Arc<CGS>,
+    catalog_cgs_hash: String,
 }
 
 fn fallback_target_entry_ids(
@@ -295,7 +297,16 @@ impl InMemoryCgsRegistry {
     pub fn from_pairs(pairs: Vec<RegistryEntryPair>) -> Self {
         let mut map = IndexMap::new();
         for (id, label, tags, cgs) in pairs {
-            map.insert(id.clone(), RegistryRow { label, tags, cgs });
+            let catalog_cgs_hash = cgs.catalog_cgs_hash_hex();
+            map.insert(
+                id.clone(),
+                RegistryRow {
+                    label,
+                    tags,
+                    cgs,
+                    catalog_cgs_hash,
+                },
+            );
         }
         Self { entries: map }
     }
@@ -316,7 +327,7 @@ impl CgsCatalog for InMemoryCgsRegistry {
                 entry_id: id.clone(),
                 label: row.label.clone(),
                 tags: row.tags.clone(),
-                catalog_cgs_hash: row.cgs.catalog_cgs_hash_hex(),
+                catalog_cgs_hash: row.catalog_cgs_hash.clone(),
             })
             .collect()
     }
@@ -326,7 +337,7 @@ impl CgsCatalog for InMemoryCgsRegistry {
             entry_id: entry_id.to_string(),
             label: row.label.clone(),
             tags: row.tags.clone(),
-            catalog_cgs_hash: row.cgs.catalog_cgs_hash_hex(),
+            catalog_cgs_hash: row.catalog_cgs_hash.clone(),
         })
     }
 
@@ -646,46 +657,51 @@ impl CgsDiscovery for InMemoryCgsRegistry {
                     continue;
                 }
             }
-            for cap in row.cgs.capabilities.values() {
-                if !cap_passes_filters(query, entry_id, cap) {
-                    continue;
-                }
-                let (mut score, mut reasons) = score_capability(&query_tokens, &row.cgs, cap);
-                if has_explicit
-                    && query
-                        .capability_names
-                        .as_ref()
-                        .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
-                {
-                    score = score.saturating_add(1000);
-                    reasons.push("filter:capability_name".into());
-                }
-                if has_explicit
-                    && query
-                        .pick_capabilities
-                        .as_ref()
-                        .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
-                {
-                    score = score.saturating_add(500);
-                    reasons.push("filter:pick_capabilities".into());
-                }
-                if query_tokens.is_empty() && score == 0 && has_explicit {
-                    reasons.push("filter:explicit_only".into());
-                }
-                if score == 0 && !query_tokens.is_empty() {
-                    continue;
-                }
-                reasons.sort();
-                reasons.dedup();
-                candidates.push(RankedCandidate {
-                    entry_id: entry_id.clone(),
-                    entity: cap.domain.to_string(),
-                    capability_name: cap.name.to_string(),
-                    score,
-                    reason_codes: reasons,
-                    capability_description: truncate_discovery_description(&cap.description),
-                });
-            }
+            let caps: Vec<&CapabilitySchema> = row.cgs.capabilities.values().collect();
+            let entry_candidates: Vec<RankedCandidate> = caps
+                .par_iter()
+                .filter_map(|cap| {
+                    if !cap_passes_filters(query, entry_id, cap) {
+                        return None;
+                    }
+                    let (mut score, mut reasons) = score_capability(&query_tokens, &row.cgs, cap);
+                    if has_explicit
+                        && query
+                            .capability_names
+                            .as_ref()
+                            .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
+                    {
+                        score = score.saturating_add(1000);
+                        reasons.push("filter:capability_name".into());
+                    }
+                    if has_explicit
+                        && query
+                            .pick_capabilities
+                            .as_ref()
+                            .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
+                    {
+                        score = score.saturating_add(500);
+                        reasons.push("filter:pick_capabilities".into());
+                    }
+                    if query_tokens.is_empty() && score == 0 && has_explicit {
+                        reasons.push("filter:explicit_only".into());
+                    }
+                    if score == 0 && !query_tokens.is_empty() {
+                        return None;
+                    }
+                    reasons.sort();
+                    reasons.dedup();
+                    Some(RankedCandidate {
+                        entry_id: entry_id.clone(),
+                        entity: cap.domain.to_string(),
+                        capability_name: cap.name.to_string(),
+                        score,
+                        reason_codes: reasons,
+                        capability_description: truncate_discovery_description(&cap.description),
+                    })
+                })
+                .collect();
+            candidates.extend(entry_candidates);
         }
 
         candidates.sort_by(|a, b| {

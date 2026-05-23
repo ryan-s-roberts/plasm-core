@@ -23,6 +23,11 @@ use tracing::{debug, error, info, trace, warn};
 /// Hard cap for `domain.yaml` / `mappings.yaml` / combined CGS YAML (defense in depth).
 const MAX_SCHEMA_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
+/// When `PLASM_CGS_FAST_LOAD=1`, skip expression-surface / DOMAIN bundle synthesis at load (structural validate only).
+pub fn plasm_cgs_fast_load_enabled() -> bool {
+    std::env::var("PLASM_CGS_FAST_LOAD").ok().as_deref() == Some("1")
+}
+
 /// Read a schema YAML file as UTF-8 text. Refuses FIFOs/sockets and oversized files so we never
 /// block forever on `read_to_string` (e.g. `mkfifo domain.yaml`) or allocate pathological buffers.
 fn read_schema_text_file(path: &Path, label: &str) -> Result<String, String> {
@@ -298,6 +303,22 @@ pub struct DomainItems {
 
 /// Load a CGS from split domain.yaml + mappings.yaml files.
 pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS, String> {
+    load_split_schema_internal(domain_path, mappings_path, true)
+}
+
+/// Load split schema files without running [`finalize_cgs_load`] (for pack paths that validate after mutation).
+pub fn load_split_schema_unvalidated(
+    domain_path: &Path,
+    mappings_path: &Path,
+) -> Result<CGS, String> {
+    load_split_schema_internal(domain_path, mappings_path, false)
+}
+
+fn load_split_schema_internal(
+    domain_path: &Path,
+    mappings_path: &Path,
+    validate: bool,
+) -> Result<CGS, String> {
     let span = crate::spans::schema_load_split(domain_path, mappings_path);
     let _enter = span.enter();
     let t0 = std::time::Instant::now();
@@ -329,7 +350,9 @@ pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS
 
     debug!("phase: assemble_cgs");
     let cgs = assemble_cgs_core(domain, mappings)?;
-    finalize_cgs_load(&cgs)?;
+    if validate {
+        finalize_cgs_load(&cgs)?;
+    }
 
     info!(
         elapsed_ms = t0.elapsed().as_millis() as u64,
@@ -340,7 +363,19 @@ pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS
     Ok(cgs)
 }
 
-fn finalize_cgs_load(cgs: &CGS) -> Result<(), String> {
+/// Like [`load_schema_dir`] but skips validation — caller must run [`finalize_cgs_load`] after mutations.
+pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
+    let resolved = resolve_schema_directory_for_load(dir);
+    let span = crate::spans::schema_load_directory(&resolved);
+    let _g = span.enter();
+    load_split_schema_unvalidated(
+        &resolved.join("domain.yaml"),
+        &resolved.join("mappings.yaml"),
+    )
+}
+
+/// Run post-assemble validation and string-semantics checks (after optional mutation such as pinning `entry_id`).
+pub fn finalize_cgs_load(cgs: &CGS) -> Result<(), String> {
     debug!(
         entities = cgs.entities.len(),
         capabilities = cgs.capabilities.len(),
@@ -691,8 +726,8 @@ fn merge_domain_capability_input_schema(
 }
 
 fn assemble_cgs_core(
-    domain: DomainFile,
-    mappings: IndexMap<String, serde_json::Value>,
+    mut domain: DomainFile,
+    mut mappings: IndexMap<String, serde_json::Value>,
 ) -> Result<CGS, String> {
     let span = crate::spans::schema_assemble(domain.entities.len(), domain.capabilities.len());
     let _g = span.enter();
@@ -772,14 +807,11 @@ fn assemble_cgs_core(
     for (cap_name, cap) in &domain.capabilities {
         let kind = parse_capability_kind(&cap.kind);
 
-        let template = mappings
-            .get(cap_name)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
-                )
-            })?;
+        let template = mappings.swap_remove(cap_name).ok_or_else(|| {
+            format!(
+                "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
+            )
+        })?;
 
         let input_schema = merge_domain_capability_input_schema(
             cap_name,
@@ -808,7 +840,7 @@ fn assemble_cgs_core(
             .map_err(|e| format!("Failed to add capability '{}': {}", cap_name, e))?;
     }
 
-    cgs.views = domain.views.clone();
+    cgs.views = std::mem::take(&mut domain.views);
 
     Ok(cgs)
 }

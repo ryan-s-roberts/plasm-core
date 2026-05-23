@@ -134,9 +134,7 @@ fn splat_aggregate_into_env(
         Value::String(s) => {
             splat_from_string_phrase(env, key_vars, s);
         }
-        Value::Integer(n)
-            if key_vars.len() == 1 && !env.contains_key(key_vars[0].as_str()) =>
-        {
+        Value::Integer(n) if key_vars.len() == 1 && !env.contains_key(key_vars[0].as_str()) => {
             env.insert(
                 key_vars[0].as_str().to_string(),
                 Value::String(n.to_string()),

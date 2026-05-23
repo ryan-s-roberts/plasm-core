@@ -11,7 +11,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plasm_compile::validate_cgs_capability_templates;
-use plasm_core::loader::load_schema;
+use plasm_core::loader::{finalize_cgs_load, load_schema_dir_unvalidated};
 use plasm_core::schema::CGS;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -153,7 +153,7 @@ fn enforce_entry_retention(
 }
 
 fn prepare_cgs_for_plugin(api_dir: &Path, entry_id: &str) -> Result<CGS> {
-    let mut cgs = load_schema(api_dir)
+    let mut cgs = load_schema_dir_unvalidated(api_dir)
         .map_err(|e| anyhow::anyhow!("load_schema {}: {e}", api_dir.display()))?;
     validate_cgs_capability_templates(&cgs)
         .map_err(|e| anyhow::anyhow!("validate {entry_id}: {e}"))?;
@@ -176,11 +176,7 @@ fn prepare_cgs_for_plugin(api_dir: &Path, entry_id: &str) -> Result<CGS> {
         );
     }
 
-    // `load_schema` validated before `entry_id` was pinned (YAML often omits it). Runtime plugins and
-    // teaching-bundle checks use the packed registry id — re-validate so CI `plasm-pack-plugins` fails
-    // on expression-surface / coverage regressions instead of at deploy.
-    cgs.validate()
-        .map_err(|e| anyhow::anyhow!("CGS validate {entry_id} (after entry_id pin): {e}"))?;
+    finalize_cgs_load(&cgs).map_err(|e| anyhow::anyhow!("CGS validate {entry_id}: {e}"))?;
 
     Ok(cgs)
 }

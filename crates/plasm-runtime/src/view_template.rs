@@ -16,7 +16,9 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
         Value::Integer(i) => json!(i),
         Value::Float(f) => json!(f),
         Value::String(s) => json!(s),
-        Value::Array(arr) => serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect()),
+        Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect())
+        }
         Value::Object(obj) => {
             let mut map = serde_json::Map::new();
             for (k, v) in obj {
@@ -29,9 +31,12 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
 }
 
 fn register_view_template_filters(env: &mut Environment<'_>) {
-    env.add_filter("urlencode", |s: String| -> Result<String, minijinja::Error> {
-        Ok(url::form_urlencoded::byte_serialize(s.as_bytes()).collect())
-    });
+    env.add_filter(
+        "urlencode",
+        |s: String| -> Result<String, minijinja::Error> {
+            Ok(url::form_urlencoded::byte_serialize(s.as_bytes()).collect())
+        },
+    );
     env.add_filter(
         "wire_query_suffix",
         |json_text: String| -> Result<String, minijinja::Error> {
@@ -85,23 +90,18 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             let plasm = minijinja_to_plasm(v);
             let json = plasm_value_to_json(&plasm);
             serde_json::to_string(&json).map_err(|e| {
-                minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    e.to_string(),
-                )
+                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
             })
         },
     );
     env.add_filter(
         "wire_time",
         |v: minijinja::Value, format: String| -> Result<String, minijinja::Error> {
-            let fmt = temporal_wire_format_from_name(&format).map_err(|e| {
-                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e)
-            })?;
+            let fmt = temporal_wire_format_from_name(&format)
+                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))?;
             let plasm = minijinja_to_plasm(v);
-            let out = wire_temporal_value(plasm, fmt).map_err(|e| {
-                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e)
-            })?;
+            let out = wire_temporal_value(plasm, fmt)
+                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))?;
             Ok(match out {
                 Value::String(s) => s,
                 Value::Integer(i) => i.to_string(),
@@ -167,9 +167,7 @@ pub fn render_view_computed_template(
     }
     if trimmed.chars().count() > VIEW_TEMPLATE_MAX_CHARS {
         return Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "computed view template exceeds {VIEW_TEMPLATE_MAX_CHARS} characters"
-            ),
+            message: format!("computed view template exceeds {VIEW_TEMPLATE_MAX_CHARS} characters"),
         });
     }
 

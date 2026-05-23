@@ -66,6 +66,20 @@ impl BlockingEmbedder {
     }
 }
 
+/// Concurrent ONNX embed batches (`PLASM_DISCOVERY_EMBED_CONCURRENCY`, default clamp(2, available_parallelism, 8)).
+pub fn discovery_embed_concurrency() -> usize {
+    std::env::var("PLASM_DISCOVERY_EMBED_CONCURRENCY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(2)
+                .clamp(2, 8)
+        })
+        .max(1)
+}
+
 pub fn cosine_sim(a: &[f32], b: &[f32]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;

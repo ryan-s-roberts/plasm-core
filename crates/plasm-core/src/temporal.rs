@@ -331,8 +331,8 @@ mod tests {
 
     #[test]
     fn wire_temporal_nl_phrase_encodes_unix_ms() {
-        let v = wire_temporal_value(Value::String("today".into()), TemporalWireFormat::UnixMs)
-            .unwrap();
+        let v =
+            wire_temporal_value(Value::String("today".into()), TemporalWireFormat::UnixMs).unwrap();
         assert!(matches!(v, Value::String(_)));
     }
 

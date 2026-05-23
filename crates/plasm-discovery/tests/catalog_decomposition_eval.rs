@@ -71,7 +71,7 @@ fn discovery_engine() -> TypedDiscovery {
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect::<Vec<_>>();
-    TypedDiscovery::from_cgs_entries(entries, false, None).with_max_options(24)
+    TypedDiscovery::from_cgs_entries(entries, false, None, None).with_max_options(24)
 }
 
 #[derive(Debug, Clone, Copy)]

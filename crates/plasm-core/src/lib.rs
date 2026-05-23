@@ -155,7 +155,10 @@ pub use identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityId, EntityName, PathMethodSegment,
     RegistryEntryId, RelationName,
 };
-pub use loader::{load_schema, load_schema_dir, load_split_schema, PathSchemaSource, SchemaSource};
+pub use loader::{
+    finalize_cgs_load, load_schema, load_schema_dir, load_schema_dir_unvalidated,
+    load_split_schema, plasm_cgs_fast_load_enabled, PathSchemaSource, SchemaSource,
+};
 pub use normalizer::{is_normalized, normalize};
 pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
@@ -207,6 +210,7 @@ pub use symbol_tuning::{
     DomainExposureSession, ExposedEntitySymbolRow, FocusSpec, SymbolMap, SymbolMapCacheKey,
     SymbolMapCrossRequestCache,
 };
+pub use temporal::{normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value};
 pub use type_checker::{
     type_check_chain, type_check_create, type_check_delete, type_check_expr,
     type_check_expr_federated, type_check_get, type_check_invoke, type_check_predicate,
@@ -215,9 +219,6 @@ pub use type_checker::{
 pub use typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 pub use typed_literal::{TypedComparisonValue, TypedLiteral, TypedLiteralError};
 pub use typed_row::TypedFieldValue;
-pub use temporal::{
-    normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value,
-};
 pub use value::{
     CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
     ValueWireFormat, PLASM_ATTACHMENT_KEY,

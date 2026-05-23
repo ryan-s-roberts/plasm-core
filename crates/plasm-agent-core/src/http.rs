@@ -11,7 +11,10 @@
 use axum::extract::Extension;
 use axum::routing::get;
 use axum::Router;
+#[cfg(feature = "local-embeddings")]
+use fastembed;
 use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_discovery::CatalogIndexCache;
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -116,6 +119,12 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             oauth_link_catalog: None,
             outbound_secret_provider: None,
             discovery_embedding: None,
+            discovery_index_cache: Arc::new(CatalogIndexCache::new()),
+            #[cfg(feature = "local-embeddings")]
+            discovery_embedder: Arc::new(plasm_discovery::BlockingEmbedder::new(
+                fastembed::EmbeddingModel::AllMiniLML6V2,
+                plasm_discovery::embedder::discovery_embed_concurrency(),
+            )),
         },
         saas: None,
     }

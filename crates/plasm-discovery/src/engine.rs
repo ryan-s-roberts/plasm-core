@@ -7,6 +7,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use inflection::{plural, singular};
 use plasm_core::schema::{CapabilityKind, CGS};
+use rayon::prelude::*;
 use tracing::{debug_span, info_span, Instrument};
 
 use crate::decompose::{decompose, tokenize};
@@ -14,6 +15,7 @@ use crate::decompose::{decompose, tokenize};
 use crate::embedder::{cosine_sim, BlockingEmbedder};
 use crate::embedding_store::CatalogEmbeddingStore;
 use crate::index::{qualifier_supported, CatalogIndex, PhraseHit, PhraseSource};
+use crate::index_cache::CatalogIndexCache;
 use crate::metrics;
 use crate::types::{
     evidence_codes, ClarificationAnswer, ClarificationDimension, ClarificationOption,
@@ -268,9 +270,10 @@ async fn apply_embedding_rerank(
 
 /// Async typed discovery over one or more loaded CGS graphs.
 pub struct TypedDiscovery {
-    indexes: Vec<CatalogIndex>,
+    indexes: Vec<Arc<CatalogIndex>>,
     #[cfg(feature = "local-embeddings")]
     embedder: Option<Arc<BlockingEmbedder>>,
+    #[cfg_attr(not(feature = "local-embeddings"), allow(dead_code))]
     embedding_store: Option<Arc<dyn CatalogEmbeddingStore>>,
     /// Max clarification / ready options per response.
     pub max_options: usize,
@@ -281,26 +284,53 @@ impl TypedDiscovery {
         entries: Vec<(String, Arc<CGS>)>,
         enable_embeddings: bool,
         embedding_store: Option<Arc<dyn CatalogEmbeddingStore>>,
+        index_cache: Option<&CatalogIndexCache>,
     ) -> Self {
         let t0 = Instant::now();
-        let mut indexes = Vec::new();
+        let indexes: Vec<Arc<CatalogIndex>> = if let Some(cache) = index_cache {
+            entries
+                .into_iter()
+                .map(|(eid, cgs)| cache.get_or_build(eid, cgs))
+                .collect()
+        } else {
+            entries
+                .into_par_iter()
+                .map(|(eid, cgs)| Arc::new(CatalogIndex::build(eid, cgs)))
+                .collect()
+        };
         let mut total_ent = 0i64;
         let mut total_cap = 0i64;
-        for (eid, cgs) in entries {
-            let idx = CatalogIndex::build(eid, cgs);
+        for idx in &indexes {
             total_ent += idx.entity_count() as i64;
             total_cap += idx.capability_count() as i64;
-            indexes.push(idx);
         }
         metrics::record_index_build("success", t0.elapsed());
         metrics::record_index_sizes(total_ent, total_cap);
 
+        Self::from_indexes(
+            indexes,
+            enable_embeddings,
+            embedding_store,
+            #[cfg(feature = "local-embeddings")]
+            None,
+        )
+    }
+
+    /// Build typed discovery from pre-built indexes (cache hits or tests).
+    pub fn from_indexes(
+        indexes: Vec<Arc<CatalogIndex>>,
+        enable_embeddings: bool,
+        embedding_store: Option<Arc<dyn CatalogEmbeddingStore>>,
+        #[cfg(feature = "local-embeddings")] shared_embedder: Option<Arc<BlockingEmbedder>>,
+    ) -> Self {
         #[cfg(feature = "local-embeddings")]
         let embedder = if enable_embeddings {
-            Some(Arc::new(BlockingEmbedder::new(
-                fastembed::EmbeddingModel::AllMiniLML6V2,
-                2,
-            )))
+            shared_embedder.or_else(|| {
+                Some(Arc::new(BlockingEmbedder::new(
+                    fastembed::EmbeddingModel::AllMiniLML6V2,
+                    crate::embedder::discovery_embed_concurrency(),
+                )))
+            })
         } else {
             None
         };
@@ -321,6 +351,15 @@ impl TypedDiscovery {
         self
     }
 
+    /// Reuse a process-wide embedder instead of constructing a new one per request.
+    #[cfg(feature = "local-embeddings")]
+    pub fn with_shared_embedder(mut self, embedder: Option<Arc<BlockingEmbedder>>) -> Self {
+        if let Some(e) = embedder {
+            self.embedder = Some(e);
+        }
+        self
+    }
+
     fn catalog_entry_ids(&self) -> Vec<String> {
         self.indexes.iter().map(|i| i.entry_id.clone()).collect()
     }
@@ -332,6 +371,7 @@ impl TypedDiscovery {
             .map(|i| i.cgs.as_ref())
     }
 
+    #[cfg_attr(not(feature = "local-embeddings"), allow(dead_code))]
     fn catalog_hash_for_entry(&self, entry_id: &str) -> Option<&str> {
         self.indexes
             .iter()
@@ -559,13 +599,7 @@ impl TypedDiscovery {
         });
 
         #[cfg(feature = "local-embeddings")]
-        apply_embedding_rerank(
-            self,
-            query.enable_embeddings,
-            utterance,
-            &mut hypotheses,
-        )
-        .await;
+        apply_embedding_rerank(self, query.enable_embeddings, utterance, &mut hypotheses).await;
 
         hypotheses.sort_by(|a, b| {
             b.score
@@ -946,7 +980,8 @@ mod relation_intent_rank_tests {
     #[tokio::test]
     async fn relation_intent_boost_prefers_relation_target_over_parent_token_match() {
         let cgs = Arc::new(minimal_parent_child_comments_cgs());
-        let discovery = TypedDiscovery::from_cgs_entries(vec![("demo".into(), cgs)], false, None);
+        let discovery =
+            TypedDiscovery::from_cgs_entries(vec![("demo".into(), cgs)], false, None, None);
         let q = DiscoveryQuery {
             utterance: "get thing comments".into(),
             allowed_entry_ids: vec![],

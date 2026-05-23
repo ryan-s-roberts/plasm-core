@@ -8,17 +8,17 @@ use axum::extract::Extension;
 use plasm_agent::http::{build_plasm_host_state, discovery_execute_router, PlasmHostBootstrap};
 use plasm_agent::incoming_auth::IncomingPrincipal;
 use plasm_agent::server_state::CatalogBootstrap;
-use sha2::{Digest, Sha256};
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::Arc;
-use tempfile::TempDir;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
+use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 fn server_slug(server: &str) -> String {
@@ -236,11 +236,7 @@ impl CliHarness {
         if let Some(sid) = self.current_session_id() {
             let sess = root.join("sessions").join(&sid);
             out.push_str(&format!("session_dir: sessions/{sid}/\n"));
-            for name in [
-                "session_meta.txt",
-                "symbol_state.json",
-                "domain.tsv",
-            ] {
+            for name in ["session_meta.txt", "symbol_state.json", "domain.tsv"] {
                 let p = sess.join(name);
                 if p.exists() {
                     out.push_str(&format!("{name}: present\n"));
@@ -255,7 +251,11 @@ impl CliHarness {
             let catalog = sess.join("catalogs/overshow.json");
             out.push_str(&format!(
                 "catalogs/overshow.json: {}\n",
-                if catalog.exists() { "present" } else { "missing" }
+                if catalog.exists() {
+                    "present"
+                } else {
+                    "missing"
+                }
             ));
         }
         self.norm(&out)
@@ -265,10 +265,7 @@ impl CliHarness {
 /// Run a closure with snapshots pinned to this crate's `tests/snapshots/`.
 fn with_insta<T>(f: impl FnOnce() -> T) -> T {
     let mut settings = insta::Settings::clone_current();
-    settings.set_snapshot_path(format!(
-        "{}/tests/snapshots",
-        env!("CARGO_MANIFEST_DIR")
-    ));
+    settings.set_snapshot_path(format!("{}/tests/snapshots", env!("CARGO_MANIFEST_DIR")));
     settings.bind(f)
 }
 
@@ -287,10 +284,7 @@ fn cli_init_and_doctor_snapshot() {
         let h = CliHarness::new();
         let doctor = h.plasm(&["doctor"]);
         assert!(doctor.status.success());
-        insta::assert_snapshot!(
-            "cli_init_doctor",
-            h.norm(&combined_output(&doctor))
-        );
+        insta::assert_snapshot!("cli_init_doctor", h.norm(&combined_output(&doctor)));
     });
 }
 
@@ -321,17 +315,9 @@ fn cli_context_first_exposure_mirror_snapshot() {
     with_insta(|| {
         let h = CliHarness::new();
         assert!(h.plasm(&["search", "profile query"]).status.success());
-        let ctx = h.plasm(&[
-            "context",
-            "profile query",
-            "Profile",
-            "RecordedContent",
-        ]);
+        let ctx = h.plasm(&["context", "profile query", "Profile", "RecordedContent"]);
         assert!(ctx.status.success(), "{}", combined_output(&ctx));
-        insta::assert_snapshot!(
-            "cli_context_open",
-            h.norm(&combined_output(&ctx))
-        );
+        insta::assert_snapshot!("cli_context_open", h.norm(&combined_output(&ctx)));
         insta::assert_snapshot!("cli_mirror_after_open", h.mirror_layout_snapshot());
         assert!(
             combined_output(&ctx).contains("overshow:Profile")
@@ -346,11 +332,10 @@ fn cli_context_expand_and_new_snapshot() {
     with_insta(|| {
         let h = CliHarness::new();
         assert!(h.plasm(&["search", "profile query"]).status.success());
-        assert!(
-            h.plasm(&["context", "profile query", "Profile"])
-                .status
-                .success()
-        );
+        assert!(h
+            .plasm(&["context", "profile query", "Profile"])
+            .status
+            .success());
         let ptr1 = h.current_session_id().expect("session after open");
         let expand = h.plasm(&["context", "profile query", "RecordedContent"]);
         assert!(expand.status.success(), "{}", combined_output(&expand));
@@ -362,14 +347,8 @@ fn cli_context_expand_and_new_snapshot() {
         let ptr3 = h.current_session_id().expect("session after --new");
         assert_ne!(ptr1, ptr3, "--new should change client session pointer");
 
-        insta::assert_snapshot!(
-            "cli_context_expand",
-            h.norm(&combined_output(&expand))
-        );
-        insta::assert_snapshot!(
-            "cli_context_new",
-            h.norm(&combined_output(&new_ctx))
-        );
+        insta::assert_snapshot!("cli_context_expand", h.norm(&combined_output(&expand)));
+        insta::assert_snapshot!("cli_context_new", h.norm(&combined_output(&new_ctx)));
     });
 }
 
@@ -378,20 +357,15 @@ fn cli_run_plan_snapshot() {
     with_insta(|| {
         let h = CliHarness::new();
         assert!(h.plasm(&["search", "profile query"]).status.success());
-        assert!(
-            h.plasm(&["context", "profile query", "Profile"])
-                .status
-                .success()
-        );
+        assert!(h
+            .plasm(&["context", "profile query", "Profile"])
+            .status
+            .success());
         let plan = h.plasm_stdin(
             &["run", "--mode", "plan", "--accept", "application/json"],
             "Profile{}",
         );
-        assert!(
-            plan.status.success(),
-            "plan: {}",
-            combined_output(&plan)
-        );
+        assert!(plan.status.success(), "plan: {}", combined_output(&plan));
         insta::assert_snapshot!("cli_run_plan", h.norm(&combined_output(&plan)));
     });
 }
@@ -402,10 +376,12 @@ fn cli_error_paths_snapshot() {
         let h = CliHarness::new();
 
         let run_no_ctx = h.plasm_stdin(&["run"], "Profile{}");
-        assert!(!run_no_ctx.status.success() || {
-            let c = combined_output(&run_no_ctx);
-            c.contains("No active plasm context")
-        });
+        assert!(
+            !run_no_ctx.status.success() || {
+                let c = combined_output(&run_no_ctx);
+                c.contains("No active plasm context")
+            }
+        );
 
         let ctx_no_disc = h.plasm(&["context", "profile query", "Profile"]);
         assert!(!ctx_no_disc.status.success());

@@ -4069,20 +4069,19 @@ async fn post_execute_session_plan(
         );
     }
 
-    let prepared =
-        match crate::resolved_plan_http::prepare_resolved_plan_request(body, &sess) {
-            Ok(p) => p,
-            Err(e) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_INVALID_REQUEST_BODY),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(e.to_string()),
-                );
-            }
-        };
+    let prepared = match crate::resolved_plan_http::prepare_resolved_plan_request(body, &sess) {
+        Ok(p) => p,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_REQUEST_BODY),
+                )
+                .with_title("Bad Request")
+                .with_detail(e.to_string()),
+            );
+        }
+    };
     let run_live = matches!(
         prepared.mode,
         crate::resolved_plan_http::ResolvedPlanRunMode::Run
@@ -4114,13 +4113,14 @@ async fn post_execute_session_plan(
                 node_results: Some(result.node_results),
                 graph_summary: Some(result.graph_summary),
                 run_markdown: result.run_markdown,
-                meta: result
-                    .run_plasm_meta
-                    .map(serde_json::Value::Object),
+                meta: result.run_plasm_meta.map(serde_json::Value::Object),
             };
             if run_live {
                 if let ExecResponseKind::Toon | ExecResponseKind::Ndjson = kind {
-                    return respond_plan_payload(kind, serde_json::to_value(&payload).unwrap_or_default());
+                    return respond_plan_payload(
+                        kind,
+                        serde_json::to_value(&payload).unwrap_or_default(),
+                    );
                 }
                 if let Some(md) = payload.run_markdown.as_deref() {
                     if matches!(kind, ExecResponseKind::Table) {
@@ -5113,8 +5113,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolved_plan_endpoint_plan_mode() {
-        use crate::plasm_dag::compile_plasm_surface_line_to_plan;
         use crate::catalog_pin::CatalogPin;
+        use crate::plasm_dag::compile_plasm_surface_line_to_plan;
         use crate::resolved_plan_http::{
             ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
             RESOLVED_PLAN_CONTENT_TYPE,
@@ -5146,14 +5146,9 @@ mod tests {
             .expect("session");
         let pipeline = st.engine.prompt_pipeline();
         let cross = st.sessions.symbol_map_cross_cache();
-        let plan = compile_plasm_surface_line_to_plan(
-            pipeline,
-            Some(cross),
-            &sess,
-            "test",
-            "Profile{}",
-        )
-        .expect("compile");
+        let plan =
+            compile_plasm_surface_line_to_plan(pipeline, Some(cross), &sess, "test", "Profile{}")
+                .expect("compile");
         let digest = sess.cgs.catalog_cgs_hash_hex();
         let req = ResolvedPlanRequest {
             protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
@@ -5175,7 +5170,11 @@ mod tests {
             .body(Body::from(serde_json::to_string(&req).unwrap()))
             .unwrap();
         let res2 = app.oneshot(run).await.unwrap();
-        assert_eq!(res2.status(), StatusCode::OK, "plan endpoint should succeed");
+        assert_eq!(
+            res2.status(),
+            StatusCode::OK,
+            "plan endpoint should succeed"
+        );
         let bytes = axum::body::to_bytes(res2.into_body(), usize::MAX)
             .await
             .unwrap();

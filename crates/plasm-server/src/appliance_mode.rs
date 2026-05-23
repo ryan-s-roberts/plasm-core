@@ -46,8 +46,9 @@ impl PolicyStoreBootstrapDetail {
 
     pub fn fatal_message(&self) -> String {
         match self {
-            Self::NoPostgresUrl => "MCP policy store requires a Postgres URL but none is configured"
-                .into(),
+            Self::NoPostgresUrl => {
+                "MCP policy store requires a Postgres URL but none is configured".into()
+            }
             Self::MigrateFailed(e) => format!("project_mcp_* connect/migrate failed: {e:#}"),
         }
     }

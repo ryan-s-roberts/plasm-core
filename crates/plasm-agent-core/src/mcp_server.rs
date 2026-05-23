@@ -1417,56 +1417,57 @@ impl PlasmMcpHandler {
                     } else {
                         match parse_and_validate_plan_json(&plan) {
                             Err(e) => Err(e),
-                            Ok(validated) => match evaluate_validated_plasm_plan_dry(&es, &validated) {
-                                Err(e) => Err(e),
-                                Ok(dry) => {
-                                            let dry_text = render_plasm_plan_dry_text(&dry, None);
-                                            let guidance = plasm_plan_review_guidance_lines(&dry);
-                                            let markdown = format!("```text\n{dry_text}\n```");
-                                            let plan_json = plasm_plan_dag_json(&dry);
-                                            trace_archive_and_emit_code_plan_evaluate(
-                                                &self.plasm.trace_hub,
-                                                &self.plasm.run_artifacts,
-                                                &ls_key,
-                                                &es,
-                                                b.prompt_hash.as_str(),
-                                                b.session_id.as_str(),
-                                                session_ref.as_str(),
-                                                &plan,
-                                                &program,
-                                                plan_json.clone(),
-                                                call_count,
-                                            )
-                                            .await;
-                                            let mut plasm_obj = serde_json::Map::new();
-                                            plasm_obj
-                                                .insert("dry_run".into(), serde_json::json!(true));
-                                            plasm_obj.insert("plan".into(), plan_json.clone());
-                                            plasm_obj.insert(
-                                                "guidance".into(),
-                                                serde_json::Value::Array(
-                                                    guidance
-                                                        .into_iter()
-                                                        .map(serde_json::Value::String)
-                                                        .collect(),
-                                                ),
-                                            );
-                                            let mut meta = serde_json::Map::new();
-                                            meta.insert(
-                                                "plasm".into(),
-                                                serde_json::Value::Object(plasm_obj),
-                                            );
-                                            Ok(PlasmPlanRunResult {
-                                                version: dry.version,
-                                                node_results: dry.node_results,
-                                                graph_summary: dry.graph_summary,
-                                                plan_dag: plan_json,
-                                                code_plan_run_artifacts: Vec::new(),
-                                                run_markdown: Some(markdown),
-                                                run_plasm_meta: Some(meta),
-                                            })
+                            Ok(validated) => {
+                                match evaluate_validated_plasm_plan_dry(&es, &validated) {
+                                    Err(e) => Err(e),
+                                    Ok(dry) => {
+                                        let dry_text = render_plasm_plan_dry_text(&dry, None);
+                                        let guidance = plasm_plan_review_guidance_lines(&dry);
+                                        let markdown = format!("```text\n{dry_text}\n```");
+                                        let plan_json = plasm_plan_dag_json(&dry);
+                                        trace_archive_and_emit_code_plan_evaluate(
+                                            &self.plasm.trace_hub,
+                                            &self.plasm.run_artifacts,
+                                            &ls_key,
+                                            &es,
+                                            b.prompt_hash.as_str(),
+                                            b.session_id.as_str(),
+                                            session_ref.as_str(),
+                                            &plan,
+                                            &program,
+                                            plan_json.clone(),
+                                            call_count,
+                                        )
+                                        .await;
+                                        let mut plasm_obj = serde_json::Map::new();
+                                        plasm_obj.insert("dry_run".into(), serde_json::json!(true));
+                                        plasm_obj.insert("plan".into(), plan_json.clone());
+                                        plasm_obj.insert(
+                                            "guidance".into(),
+                                            serde_json::Value::Array(
+                                                guidance
+                                                    .into_iter()
+                                                    .map(serde_json::Value::String)
+                                                    .collect(),
+                                            ),
+                                        );
+                                        let mut meta = serde_json::Map::new();
+                                        meta.insert(
+                                            "plasm".into(),
+                                            serde_json::Value::Object(plasm_obj),
+                                        );
+                                        Ok(PlasmPlanRunResult {
+                                            version: dry.version,
+                                            node_results: dry.node_results,
+                                            graph_summary: dry.graph_summary,
+                                            plan_dag: plan_json,
+                                            code_plan_run_artifacts: Vec::new(),
+                                            run_markdown: Some(markdown),
+                                            run_plasm_meta: Some(meta),
+                                        })
+                                    }
                                 }
-                            },
+                            }
                         }
                     }
                 }
@@ -1885,10 +1886,16 @@ impl PlasmMcpHandler {
                     dq.allowed_entry_ids.retain(|e| cfg.entry_allowed(e));
                 }
             }
-            let decision =
-                run_typed_catalog_discovery(&reg, dq, self.plasm.discovery_embedding_store())
-                    .await
-                    .map_err(typed_discovery_mcp_error)?;
+            let decision = run_typed_catalog_discovery(
+                &reg,
+                dq,
+                self.plasm.discovery_embedding_store(),
+                Some(self.plasm.discovery_index_cache()),
+                #[cfg(feature = "local-embeddings")]
+                Some(self.plasm.discovery_embedder()),
+            )
+            .await
+            .map_err(typed_discovery_mcp_error)?;
             drop(_discover_guard);
             let json = serde_json::to_string_pretty(&decision).map_err(|e| {
                 CallToolError::from_message(format!("serialize typed discovery: {e}"))

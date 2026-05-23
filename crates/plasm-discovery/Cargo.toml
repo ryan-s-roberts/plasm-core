@@ -21,3 +21,13 @@ opentelemetry = { workspace = true }
 fastembed = { workspace = true, optional = true }
 indexmap = { workspace = true }
 inflection = { workspace = true }
+rayon = { workspace = true }
+aho-corasick = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[[bench]]
+name = "index_build"
+harness = false

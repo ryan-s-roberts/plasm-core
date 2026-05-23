@@ -878,10 +878,10 @@ async fn finalize_session_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_artifacts::RunArtifactId;
     use crate::run_artifacts::{ArtifactPayload, ArtifactPayloadMetadata};
     use plasm_core::CgsContext;
     use plasm_core::CGS;
-    use crate::run_artifacts::RunArtifactId;
 
     #[tokio::test]
     async fn reuse_returns_same_session_id_for_same_entry_and_entities() {

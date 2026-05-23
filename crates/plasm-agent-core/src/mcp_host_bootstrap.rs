@@ -19,8 +19,8 @@ use crate::catalog_runtime::CatalogBootstrap;
 use crate::error::AgentError;
 use crate::http::PlasmHostBootstrap;
 use crate::incoming_auth::{IncomingAuthConfig, IncomingAuthVerifier};
-use crate::run_artifacts::RunArtifactInitPolicy;
 use crate::mcp_config_repository::{self, McpConfigRepositoryError};
+use crate::run_artifacts::RunArtifactInitPolicy;
 use crate::server_state::PlasmHostState;
 
 /// Early argv parse shared by `plasm-mcp`, `plasm-mcp-saas`, and `plasm-server`.
