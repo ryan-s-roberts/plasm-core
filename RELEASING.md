@@ -28,12 +28,18 @@ The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 2. Update **`CHANGELOG.md`** under `[Unreleased]` → move notes under a `## [X.Y.Z]` heading with the release date.
 3. Commit and push, then create an **annotated tag** `vX.Y.Z` pointing at that commit (`git tag -a vX.Y.Z -m "Release vX.Y.Z"`).
 4. **Push the tag** to GitHub:
-   - **plasm-core** (OSS repo): workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) builds all four triples natively and publishes three tarballs per triple + `SHA256SUMS`.
+   - **plasm-core** (OSS repo): workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) builds all four triples natively and publishes three tarballs per triple + `SHA256SUMS`. When `PLASM_MONOREPO_DISPATCH_TOKEN` is configured, it also triggers the monorepo **OSS install site** workflow so `plasm.tools/get` updates without a manual step.
    - **Private monorepo (`plasm`)** with CircleCI: on tag `v*.*.*`, after `validate` and `appliance_tui_pty`:
-     - **`oss_release_linux`** — Docker Buildx `linux/amd64` + `linux/arm64` via [`docker/plasm-stack.Dockerfile`](../docker/plasm-stack.Dockerfile) `--target oss-release-bundle` (same rust-builder graph as production images).
-     - **`oss_release_macos`** — native `cargo` on a **Darwin** machine runner (host triple only; use a second runner or rely on GHA for the other macOS arch).
+     - **`oss_release_linux`** — Docker Buildx `linux/amd64` via [`docker/plasm-stack.Dockerfile`](../docker/plasm-stack.Dockerfile) `--target oss-release-bundle`.
+     - **`oss_release_macos`** — native `cargo` on a **Darwin** machine runner (host triple only).
      - Both run [`scripts/ci/circle-oss-release.sh`](../scripts/ci/circle-oss-release.sh) and **merge** `SHA256SUMS` into the same GitHub release (`--clobber` uploads).
-5. **Install microsite:** regenerate and deploy [`get-plasm-tools/`](../get-plasm-tools/) (see below).
+     - **`oss_publish_install_site`** (after both OSS release jobs) — [`scripts/ci/publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh): regenerate `oss-release.json`, commit to `main`, push **`plasm-portal`** so [plasm.tools/get](https://plasm.tools/get/) matches the release.
+     - **`release_build_and_push_vultr`** — full image bake from updated `main` (includes portal with fresh manifest).
+5. **Manual fallback** (if CI dispatch is unavailable):
+
+```bash
+bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
+```
 
 ## CircleCI (monorepo tag pipelines)
 
@@ -66,15 +72,16 @@ Install plane is deployed from **[`portal/`](../portal/)** (Kubernetes `plasm-po
 | `https://plasm.tools/install/install.sh` | `portal/public/install/install.sh` |
 | `https://plasm.tools/install/oss-release.json` | `portal/public/install/oss-release.json` |
 
-After CI finishes the GitHub release:
+After CI finishes the GitHub release, **`oss_publish_install_site`** (CircleCI tag pipeline) or the monorepo GHA workflow **OSS install site** (dispatched from plasm-core) runs [`scripts/ci/publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh) automatically.
+
+Manual fallback:
 
 ```bash
 # From monorepo root (requires gh + python3):
-bash scripts/ci/generate-oss-release-json.sh vX.Y.Z
-bash scripts/portal/sync-install-from-sources.sh
+bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
 ```
 
-Commit `portal/public/install/*`, push `main` — CI builds `plasm-portal`; Argo syncs. Install examples:
+Install examples:
 
 ```bash
 # Appliance (default): plasm-server + plugins
