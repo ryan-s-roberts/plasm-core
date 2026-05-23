@@ -85,6 +85,9 @@ entities:
       echo_title:
         required: true
         value_ref: nv_lang_digest_echo_title
+      echo_slug:
+        required: true
+        value_ref: nv_lang_digest_echo_slug
     relations:
       item_snapshot:
         description: Synthetic relation ref to the backing LangItem from the view DAG.
@@ -237,6 +240,7 @@ capabilities:
     provides:
     - item_id
     - echo_title
+    - echo_slug
   lang_digest_get:
     description: Get LangDigest by item id (transport view).
     kind: get
@@ -249,6 +253,7 @@ capabilities:
     provides:
     - item_id
     - echo_title
+    - echo_slug
 values:
   nv_lang_tag_id:
     type: string
@@ -313,6 +318,9 @@ values:
   nv_lang_digest_echo_title:
     type: string
     string_semantics: short
+  nv_lang_digest_echo_slug:
+    type: string
+    string_semantics: short
   nv_lang_digest_scope_item_id:
     type: entity_ref
     target: LangItem
@@ -343,6 +351,9 @@ views:
         kind: node_field
         node: item_node
         field: title
+      echo_slug:
+        kind: computed
+        template: "{{ item_id }}-{{ echo_title }}"
     relation_outputs:
     - relation: item_snapshot
       target: LangItem

@@ -1,6 +1,11 @@
-//! **Input-only:** normalize values typed as [`FieldType::Date`] when they appear in **path
-//! expressions and predicates** (see [`crate::expr_parser`]). The schema’s [`TemporalWireFormat`]
-//! is the target wire shape for those inputs before typecheck and HTTP mapping.
+//! Temporal parsing and wire encoding for Plasm.
+//!
+//! **Predicate / expression input** — [`normalize_temporal_value`]: values typed as
+//! [`FieldType::Date`] in path expressions and predicates (see [`crate::expr_parser`]). Bare `now`
+//! resolves to the current UTC instant.
+//!
+//! **URL / query wire slots** — [`wire_temporal_value`]: preserves backend-relative literals
+//! (`now`, `now-1h`, …) and all-digit opaque tokens; otherwise same NL/ISO parsing as predicates.
 //!
 //! **Not used for:** decoding JSON responses, cache rows, REPL tables, summaries, or any
 //! **display** path — those show API values as returned by the backend.
@@ -113,7 +118,11 @@ fn parse_to_utc(val: &Value) -> Result<chrono::DateTime<chrono::Utc>, String> {
 pub fn normalize_temporal_value(val: Value, fmt: TemporalWireFormat) -> Result<Value, String> {
     let dt = parse_to_utc(&val)?;
 
-    Ok(match fmt {
+    Ok(encode_utc_datetime(dt, fmt))
+}
+
+fn encode_utc_datetime(dt: chrono::DateTime<chrono::Utc>, fmt: TemporalWireFormat) -> Value {
+    match fmt {
         TemporalWireFormat::Rfc3339 => Value::String(dt.to_rfc3339()),
         TemporalWireFormat::UnixMs => Value::Integer(dt.timestamp_millis()),
         TemporalWireFormat::UnixSec => Value::Integer(dt.timestamp()),
@@ -121,7 +130,85 @@ pub fn normalize_temporal_value(val: Value, fmt: TemporalWireFormat) -> Result<V
             let d = dt.naive_utc().date();
             Value::String(format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day()))
         }
-    })
+    }
+}
+
+/// Render an encoded temporal [`Value`] as a wire string (for URL query params).
+pub fn temporal_encoded_as_wire_string(encoded: &Value) -> String {
+    match encoded {
+        Value::String(s) => s.clone(),
+        Value::Integer(i) => i.to_string(),
+        Value::Float(f) => {
+            if f.fract() == 0.0 && f.is_finite() {
+                (*f as i64).to_string()
+            } else {
+                f.to_string()
+            }
+        }
+        Value::Bool(b) => b.to_string(),
+        Value::Null => String::new(),
+        Value::Array(_) | Value::Object(_) => {
+            serde_json::to_string(&plasm_value_to_json_temporal(encoded)).unwrap_or_default()
+        }
+        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => String::new(),
+    }
+}
+
+fn plasm_value_to_json_temporal(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::json!(b),
+        Value::Integer(i) => serde_json::json!(i),
+        Value::Float(f) => serde_json::json!(f),
+        Value::String(s) => serde_json::json!(s),
+        Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(plasm_value_to_json_temporal).collect())
+        }
+        Value::Object(obj) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in obj {
+                map.insert(k.clone(), plasm_value_to_json_temporal(v));
+            }
+            serde_json::Value::Object(map)
+        }
+        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
+    }
+}
+
+/// True when `s` should pass through unchanged on wire (relative `now*` tokens, opaque digit strings).
+fn is_opaque_wire_temporal_string(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    t.to_ascii_lowercase().starts_with("now")
+}
+
+/// Encode a temporal for URL/query wire slots: pass through `now*` / digit tokens; else parse and format.
+pub fn wire_temporal_value(val: Value, fmt: TemporalWireFormat) -> Result<Value, String> {
+    if let Value::String(s) = &val {
+        if is_opaque_wire_temporal_string(s) {
+            return Ok(Value::String(s.trim().to_string()));
+        }
+    }
+    let encoded = normalize_temporal_value(val, fmt)?;
+    Ok(Value::String(temporal_encoded_as_wire_string(&encoded)))
+}
+
+/// Parse a wire-format name (`unix_ms`, `rfc3339`, …) for view templates and filters.
+pub fn temporal_wire_format_from_name(name: &str) -> Result<TemporalWireFormat, String> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "rfc3339" => Ok(TemporalWireFormat::Rfc3339),
+        "unix_ms" => Ok(TemporalWireFormat::UnixMs),
+        "unix_sec" => Ok(TemporalWireFormat::UnixSec),
+        "iso8601_date" => Ok(TemporalWireFormat::Iso8601Date),
+        other => Err(format!(
+            "unknown temporal wire format `{other}` (expected rfc3339, unix_ms, unix_sec, iso8601_date)"
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -208,6 +295,52 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn wire_temporal_passes_now_offset_unchanged() {
+        let v = wire_temporal_value(Value::String("now-1h".into()), TemporalWireFormat::UnixMs)
+            .unwrap();
+        assert_eq!(v, Value::String("now-1h".into()));
+    }
+
+    #[test]
+    fn wire_temporal_passes_digit_string_unchanged() {
+        let v = wire_temporal_value(
+            Value::String("1717234567890".into()),
+            TemporalWireFormat::UnixMs,
+        )
+        .unwrap();
+        assert_eq!(v, Value::String("1717234567890".into()));
+    }
+
+    #[test]
+    fn wire_temporal_rfc3339_to_unix_ms_string() {
+        let v = wire_temporal_value(
+            Value::String("2024-06-01T12:00:00Z".to_string()),
+            TemporalWireFormat::UnixMs,
+        )
+        .unwrap();
+        assert!(matches!(v, Value::String(_)));
+        let s = match v {
+            Value::String(s) => s,
+            _ => panic!("expected string"),
+        };
+        assert!(s.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn wire_temporal_nl_phrase_encodes_unix_ms() {
+        let v = wire_temporal_value(Value::String("today".into()), TemporalWireFormat::UnixMs)
+            .unwrap();
+        assert!(matches!(v, Value::String(_)));
+    }
+
+    #[test]
+    fn predicate_now_still_resolves_instant() {
+        let v = normalize_temporal_value(Value::String("now".into()), TemporalWireFormat::UnixMs)
+            .unwrap();
+        assert!(matches!(v, Value::Integer(_)));
     }
 
     #[test]

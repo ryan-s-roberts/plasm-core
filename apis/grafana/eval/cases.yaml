@@ -1,0 +1,210 @@
+# Grafana — NL→Plasm eval (schema: grafana). Goals are observability tasks, not REST paths.
+# Coverage: `cargo run -p plasm-eval -- coverage --schema apis/grafana --cases apis/grafana/eval/cases.yaml`
+
+- id: gf-01
+  schema: grafana
+  goal: "Search dashboards whose title mentions 'otel' for the on-call handoff"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Dashboard]
+
+- id: gf-02
+  schema: grafana
+  goal: "List configured datasources so I can pick Prometheus for a metrics check"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [Datasource]
+
+- id: gf-03
+  schema: grafana
+  goal: "Run instant PromQL `up` on the prometheus datasource for the last five minutes"
+  tags: [invoke, metrics]
+  covers: [invoke]
+  expect:
+    entities_any: [Datasource]
+
+- id: gf-04
+  schema: grafana
+  goal: "Load a compact dashboard summary by uid without pulling full panel JSON"
+  tags: [get, view]
+  covers: [get, projection]
+  expect:
+    entities_any: [DashboardSummary]
+
+- id: gf-05
+  schema: grafana
+  goal: "From that summary, open the linked dashboard record for editing context"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [DashboardSummary, Dashboard]
+
+- id: gf-06
+  schema: grafana
+  goal: "List Prometheus metric names on the prometheus datasource before writing a new query"
+  tags: [invoke, explorer]
+  covers: [invoke]
+  expect:
+    entities_any: [Datasource]
+
+- id: gf-07
+  schema: grafana
+  goal: "Fetch the root notification policy tree for alert routing review"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [NotificationPolicy]
+
+- id: gf-08
+  schema: grafana
+  goal: "List organization users and their org roles for access review"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [OrgUser]
+
+- id: gf-09
+  schema: grafana
+  goal: "Create a folder titled 'Synthetics' for new probe dashboards"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Folder]
+
+- id: gf-10
+  schema: grafana
+  goal: "Generate an assembled dashboard deeplink URL with a one-hour time range"
+  tags: [query, view]
+  covers: [query_filtered, multi_step]
+  expect:
+    entities_any: [NavigationLink, FrontendSettings]
+
+- id: gf-11
+  schema: grafana
+  goal: "Run a known panel query expression after reading targets from a dashboard"
+  tags: [invoke, panel]
+  covers: [invoke, multi_step]
+  expect:
+    entities_any: [Dashboard, Datasource]
+
+- id: gf-12
+  schema: grafana
+  goal: "List RBAC roles available for delegation before assigning one to a user"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [RbacRole]
+
+- id: gf-13
+  schema: grafana
+  goal: "Show permissions on a dashboard resource for the security audit"
+  tags: [query, rbac]
+  covers: [query_filtered]
+  expect:
+    entities_any: [ResourcePermission]
+
+- id: gf-14
+  schema: grafana
+  goal: "Update an org member role to Viewer after contractor offboarding"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [OrgUser]
+
+- id: gf-15
+  schema: grafana
+  goal: "Delete an expired alert silence once the incident is resolved"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Silence]
+
+- id: gf-16
+  schema: grafana
+  goal: "Show annotations on a dashboard we already opened for the release review"
+  tags: [reverse, query]
+  covers: [reverse, query_filtered]
+  expect:
+    entities_any: [Annotation, Dashboard]
+
+- id: gf-17
+  schema: grafana
+  goal: "List provisioned alert rules before tuning firing thresholds"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [AlertRule]
+
+- id: gf-18
+  schema: grafana
+  goal: "Find annotation tags used across dashboards for taxonomy cleanup"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [AnnotationTag]
+
+- id: gf-19
+  schema: grafana
+  goal: "Review contact points and mute timings before changing the on-call route"
+  tags: [query, alerting]
+  covers: [query_all, multi_step]
+  expect:
+    entities_any: [ContactPoint, MuteTiming]
+
+- id: gf-20
+  schema: grafana
+  goal: "List teams and reusable library panels for the platform guild"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [Team, LibraryElement]
+
+- id: gf-21
+  schema: grafana
+  goal: "Open an incident and read its activity timeline during the bridge call"
+  tags: [plugin, incident]
+  covers: [get, chain]
+  expect:
+    entities_any: [Incident, IncidentActivity]
+
+- id: gf-22
+  schema: grafana
+  goal: "Check OnCall schedules, shifts, and open alert groups for the primary team"
+  tags: [plugin, oncall]
+  covers: [query_filtered, multi_step]
+  expect:
+    entities_any: [OnCallSchedule, OnCallShift, OnCallUser, OnCallTeam, OnCallAlertGroup]
+
+- id: gf-23
+  schema: grafana
+  goal: "Render a dashboard panel PNG for a status page snapshot"
+  tags: [query, render]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PanelRender, Dashboard]
+
+- id: gf-24
+  schema: grafana
+  goal: "List RBAC role assignments and resource type metadata before delegating admin"
+  tags: [query, rbac]
+  covers: [query_filtered, get]
+  expect:
+    entities_any: [RbacRoleAssignment, ResourceTypeMeta, RbacRole]
+
+- id: gf-25
+  schema: grafana
+  goal: "Start a Sift investigation and list analyses for a latency regression"
+  tags: [plugin, sift]
+  covers: [create, query_filtered]
+  expect:
+    entities_any: [SiftInvestigation, SiftAnalysis]
+
+- id: gf-26
+  schema: grafana
+  goal: "Build an Explore deeplink for the prometheus datasource with a one-hour range and confirm the assembled url field"
+  tags: [query, view, adversarial]
+  covers: [query_filtered, multi_step]
+  expect:
+    entities_any: [NavigationLink, FrontendSettings]

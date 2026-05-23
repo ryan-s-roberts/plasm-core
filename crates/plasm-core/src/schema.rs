@@ -1666,6 +1666,10 @@ pub enum ViewOutputBinding {
     NodeRowCountPositive {
         node: String,
     },
+    /// Minijinja template evaluated after scope/node bindings (see `plasm-runtime` view_template).
+    Computed {
+        template: String,
+    },
 }
 
 /// Materialize outbound relations on a view entity row from composed node results (agent-facing refs).
@@ -1705,6 +1709,9 @@ pub struct ViewScopeParam {
     pub name: String,
     #[serde(default)]
     pub value_ref: Option<String>,
+    /// When true, the view invocation must supply this scope key (see `validate_expected_scope`).
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// Declarative read-only composition plan (`views:` in `domain.yaml`).
@@ -2140,6 +2147,17 @@ impl CGS {
                         }
                     }
                     ViewOutputBinding::Scope { .. } => {}
+                    ViewOutputBinding::Computed { template } => {
+                        if template.trim().is_empty() {
+                            return Err(SchemaError::ViewCapabilityMappingInvalid {
+                                view: view_key.clone(),
+                                capability: view.capability.clone(),
+                                detail: format!(
+                                    "output field `{field_name}`: computed template must be non-empty"
+                                ),
+                            });
+                        }
+                    }
                 }
             }
 

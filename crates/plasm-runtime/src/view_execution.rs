@@ -3,7 +3,7 @@
 //! Execution phases follow the internal [`crate::view_typestate`] sketch: bind scope → run nodes →
 //! materialize agent-facing row + relation refs (no `node_*` vocabulary in prompts).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
@@ -125,19 +125,17 @@ fn validate_expected_scope(
     view: &plasm_core::schema::ViewDefinition,
     scope: &IndexMap<String, Value>,
 ) -> Result<(), RuntimeError> {
-    let mut expected_scope = HashSet::new();
-    for s in &view.scope {
-        expected_scope.insert(s.name.as_str());
-    }
-    if !expected_scope.is_empty() {
-        for name in &expected_scope {
-            if !scope.contains_key(*name) {
-                return Err(RuntimeError::ConfigurationError {
-                    message: format!(
-                        "view `{view_name}` requires identity/scope field `{name}` (declared under views.scope)"
-                    ),
-                });
-            }
+    for sp in &view.scope {
+        if !sp.required {
+            continue;
+        }
+        if !scope.contains_key(sp.name.as_str()) {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "view `{view_name}` requires identity/scope field `{}` (declared under views.scope)",
+                    sp.name
+                ),
+            });
         }
     }
     Ok(())
@@ -247,6 +245,9 @@ fn resolve_output_binding(
                 })?;
             Ok(Value::Bool(r.count > 0))
         }
+        ViewOutputBinding::Computed { .. } => Err(RuntimeError::ConfigurationError {
+            message: "computed output bindings are resolved in a separate phase".into(),
+        }),
     }
 }
 
@@ -276,6 +277,7 @@ fn field_histogram_json(rows: &[crate::cache::CachedEntity], field: &str) -> Val
 
 fn scalar_string_from_value(v: &Value) -> Result<String, RuntimeError> {
     match v {
+        Value::Null => Ok(String::new()),
         Value::String(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
         Value::Bool(b) => Ok(b.to_string()),
@@ -488,35 +490,6 @@ fn resolve_view_relation_maps(
     Ok(out)
 }
 
-/// Derive compact posture summary label for Cloudflare `SecurityOverview` (internal; not `node_*` wiring).
-fn derive_security_surface_status(fields_plain: &IndexMap<String, Value>) -> Value {
-    let b = |name: &str| -> bool {
-        fields_plain
-            .get(name)
-            .map(|v| matches!(v, Value::Bool(true)))
-            .unwrap_or(false)
-    };
-    let legacy = b("legacy_waf_present");
-    let custom = b("custom_rules_configured");
-    let managed = b("managed_waf_configured");
-    let ddos = b("ddos_l7_configured");
-
-    let label = if legacy && !managed {
-        "legacy_heavy"
-    } else if custom && managed {
-        "managed_and_custom"
-    } else if managed || ddos {
-        "managed_surface"
-    } else if custom {
-        "custom_heavy"
-    } else if legacy {
-        "legacy_only"
-    } else {
-        "minimal"
-    };
-    Value::String(label.to_string())
-}
-
 async fn execute_view_scoped(
     engine: &ExecutionEngine,
     view_name: &str,
@@ -617,15 +590,22 @@ async fn execute_view_scoped(
 
     let mut fields_plain: IndexMap<String, Value> = IndexMap::new();
     for (fname, binding) in &view.output {
+        if matches!(binding, ViewOutputBinding::Computed { .. }) {
+            continue;
+        }
         let v = resolve_output_binding(binding, &scope, &node_results)?;
         fields_plain.insert(fname.clone(), v);
     }
-
-    if view_entity.name.as_str() == "SecurityOverview" {
-        fields_plain.insert(
-            "security_surface_status".to_string(),
-            derive_security_surface_status(&fields_plain),
-        );
+    for (fname, binding) in &view.output {
+        let ViewOutputBinding::Computed { template } = binding else {
+            continue;
+        };
+        let v = crate::view_template::render_view_computed_template(
+            template,
+            &scope,
+            &fields_plain,
+        )?;
+        fields_plain.insert(fname.clone(), v);
     }
 
     let reference = build_view_row_reference(view_entity, &fields_plain)?;

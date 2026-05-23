@@ -366,7 +366,7 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
   - **`description:`** — domain-only prose.
   - **`capability:`** — must equal one `capabilities:` id on `entity` (historically the `kind: query` symbol); additional `get` capabilities may reference the same `view:` key.
   - **`entity:`** — read-model entity whose `fields:` / `relations:` are the agent-facing projection.
-  - **`scope:`** — optional list of `name` (+ optional `value_ref:`) documenting scope parameters.
+  - **`scope:`** — optional list of scope parameters: `name`, optional `value_ref:`, and optional **`required: true`** (default false). Only keys marked required must appear on the outer view invocation; omit optional scope params when unused.
   - **`nodes:`** — ordered steps; each has `id`, `capability` (existing cap id), and `bind:` mapping that capability's parameter names to either:
     - `kind: scope` `param: <name>` — take from the outer view invocation's scope, or
     - `kind: literal` `value: <JSON>` — fixed predicate/env fragment.
@@ -377,13 +377,34 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
     - `kind: node_field_histogram_json` — JSON object of distinct values → counts
     - `kind: node_any_row_field_equals` — boolean
     - `kind: node_row_count_positive` — boolean
+    - **`kind: computed`** `template:` — Minijinja string evaluated **after** all non-computed `output:` bindings (scope + node bindings) are materialized. The template context includes scope keys and prior output field names. Result is stored as a string field on the composed row. Use for assembled URLs, derived labels, and other strings that are not a single upstream field.
   - **`relation_outputs:`** (optional) — synthesize `CachedEntity.relations` `Ref` targets:
     - `kind: first_node_row_where`
     - `kind: node_rows_where`
     - `kind: node_all_rows`
     - `kind: node_single_row`
 
-Inner nodes may be `query` or `get` capabilities that already have normal CML mappings; the runtime issues HTTP for those only.
+Inner nodes may be `query` or `get` capabilities that already have normal CML mappings; the runtime issues HTTP for those only. **`kind: action` is not supported** as a view node today — model explorer-style calls as **`kind: action`** on the target entity (e.g. datasource explorers) or as a standalone capability when a single HTTP op is enough.
+
+#### View computed templates (filters and time)
+
+Computed templates run in `plasm-runtime` with **strict** undefined behavior. Prefer multiline `template: |` blocks in YAML for readability.
+
+Built-in filters (view templates only):
+
+| Filter | Usage | Behavior |
+|--------|--------|----------|
+| `urlencode` | `{{ s \| urlencode }}` | Form-style percent-encoding |
+| `json_encode` | `{{ v \| json_encode }}` | JSON text for a Plasm/JSON value |
+| `strip_trailing_slash` | `{{ base \| strip_trailing_slash }}` | Trim trailing `/` |
+| `wire_time` | `{{ from \| wire_time('unix_ms') }}` | Pass through `now`, `now-1h`, and all-digit strings unchanged; otherwise normalize via core temporal rules for the named wire format (`unix_ms`, `rfc3339`, …) |
+| `wire_query_suffix` | `{{ query_params_json \| wire_query_suffix }}` | Parse a JSON object string; append `&k=v` pairs (empty string when absent/invalid) |
+
+**Temporal:** Predicate slots and `value_ref: temporal` still use `normalize_temporal_value` at plan/compile time. View scope params typed as plain strings (e.g. `nv_grafana_time_range`) should use **`wire_time`** in templates when the wire may be relative (`now-1h`) or already epoch milliseconds.
+
+**Authoring pitfalls:** Do not use `\| default('')` on JSON scope fields you pass to `wire_query_suffix` — use `{% if query_params_json %}…{% endif %}` instead. Choose scope `TAG` names that cannot appear as trimmed lines inside heredoc payloads when binding row templates elsewhere.
+
+Conformance fixture: `fixtures/schemas/plasm_language_matrix_views` (`echo_slug` computed field). Production examples: `apis/cloudflare` `security_surface_status`, `apis/grafana` `views.deeplink_generate.output.url`.
 
 #### CML: `transport: view`
 
@@ -418,7 +439,7 @@ materialize:
 
 #### Reference catalog
 
-See `apis/cloudflare/domain.yaml` (`views.security_overview`, `security_overview_query`, `SecurityOverview`) and `mappings.yaml` (`transport: view`).
+See `apis/cloudflare/domain.yaml` (`views.security_overview` with computed `security_surface_status`), `apis/grafana/domain.yaml` (`views.deeplink_generate` with computed `url`), and `mappings.yaml` (`transport: view`).
 
 ### Action output: `provides:` vs `output.side_effect`
 

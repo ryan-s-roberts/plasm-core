@@ -1,4 +1,4 @@
-version: 12
+version: 13
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
@@ -496,6 +496,10 @@ views:
       legacy_waf_present:
         kind: node_row_count_positive
         node: legacy_packages
+      security_surface_status:
+        kind: computed
+        template: |
+          {%- if legacy_waf_present and not managed_waf_configured -%}legacy_heavy{%- elif custom_rules_configured and managed_waf_configured -%}managed_and_custom{%- elif managed_waf_configured or ddos_l7_configured -%}managed_surface{%- elif custom_rules_configured -%}custom_heavy{%- elif legacy_waf_present -%}legacy_only{%- else -%}minimal{%- endif -%}
     relation_outputs:
     - relation: managed_waf_ruleset
       target: Ruleset

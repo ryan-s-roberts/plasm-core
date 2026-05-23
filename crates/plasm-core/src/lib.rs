@@ -215,6 +215,9 @@ pub use type_checker::{
 pub use typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 pub use typed_literal::{TypedComparisonValue, TypedLiteral, TypedLiteralError};
 pub use typed_row::TypedFieldValue;
+pub use temporal::{
+    normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value,
+};
 pub use value::{
     CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
     ValueWireFormat, PLASM_ATTACHMENT_KEY,

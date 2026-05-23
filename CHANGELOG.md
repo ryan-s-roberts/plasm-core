@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-05-23
+
+### Added
+
+- **`apis/grafana`:** v5 catalog (core API, RBAC, datasource explorers, Sift/Incident/OnCall plugins, assembled deeplink `url`, panel render/query).
+- **`plasm-core` / `plasm-runtime`:** view `output` bindings with `kind: computed` (Minijinja); optional `views.scope` `required:`; `wire_temporal_value` and view-template filters (`wire_time`, `urlencode`, `wire_query_suffix`, …).
+- **Conformance:** `plasm_language_matrix_views` computed field `echo_slug`.
+
+### Changed
+
+- **`apis/cloudflare`:** derive `security_surface_status` in `views.security_overview` (domain v13); remove `SecurityOverview` hardcoded derivation from `view_execution`.
+
 ## [0.1.5] - 2026-05-23
 
 ### Fixed

@@ -25,7 +25,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 | [evm-erc20](evm-erc20/)             | EVM ERC-20 reads (on-chain, not REST)                                                                                           |
 | [flightaware-aeroapi](flightaware-aeroapi/) | FlightAware AeroAPI v4 (`x-apikey`; airborne search + ident flight summaries; OpenAPI from FlightAware)                         |
 | [github](github/)                   | GitHub REST (repos, issues, PRs, commits, branches, reviews, files—see README)                                                  |
-| [grafana](grafana/)                 | Grafana HTTP API v4 (core + RBAC, datasource explorers, Sift/Incident/OnCall plugins, deeplinks, panel render/query; bearer token) |
+| [grafana](grafana/)                 | Grafana HTTP API v5 (core + RBAC, datasource explorers, Sift/Incident/OnCall plugins, assembled deeplinks, panel render/query; bearer token) |
 | [graphqlzero](graphqlzero/)         | GraphQLZero public GraphQL (full JSONPlaceholder slice; `transport: graphql`, pagination, post mutations)                       |
 | [hackernews](hackernews/)           | Hacker News Firebase + Algolia search (feeds, maxitem, updates, search, items, users, polls; no auth)                           |
 | [gitlab](gitlab/)                   | GitLab REST v4 (projects, issues, merge requests—see README; OpenAPI in-tree)                                                   |

@@ -28,6 +28,7 @@ const REQUIRED_VIEW_FEATURE_TAGS: &[&str] = &[
     "view_query",
     "view_get",
     "view_relation_outputs",
+    "view_computed",
     "get_scoped_bindings",
 ];
 
@@ -202,6 +203,19 @@ fn assert_view_planning_ir(
                 return Err("compiled plan missing relation node item_snapshot".into());
             }
         }
+        "views_digest_computed_slug" => {
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangDigest" {
+                return Err(format!("expected LangDigest query, got {:?}", q.entity));
+            }
+            if let Some(cap) = q.capability_name.as_ref() {
+                if cap.as_str() != "lang_digest_query" {
+                    return Err(format!(
+                        "expected lang_digest_query capability when pinned, got {cap}"
+                    ));
+                }
+            }
+        }
         "views_langitem_get_scoped_bindings" => {
             if !surfaces
                 .iter()
@@ -274,6 +288,13 @@ const VIEW_MATRIX_ROWS: &[ViewMatrixRow] = &[
         features: &["view_get"],
         min_node_results: 1,
         expect_markdown_substrings: &["langmatrix_views", "echo_title", "item_id", "i1"],
+    },
+    ViewMatrixRow {
+        id: "views_digest_computed_slug",
+        program: r#"LangDigest{item_id="i1"}[item_id,echo_title,echo_slug]"#,
+        features: &["view_computed"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["langmatrix_views", "echo_slug", "i1-", "echo_title"],
     },
     ViewMatrixRow {
         id: "views_digest_relation_outputs",
