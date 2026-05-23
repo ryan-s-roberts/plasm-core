@@ -17,6 +17,11 @@ pub enum McpConfigRepositoryError {
     Sqlx(#[from] sqlx::Error),
     #[error("migrate: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error(
+        "project_mcp_configs is missing after sqlx migrate; \
+         check DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL and Postgres permissions"
+    )]
+    PostMigrateSchemaMissing,
     #[error("{0}")]
     InvalidInput(String),
 }
@@ -71,12 +76,6 @@ pub struct McpConfigRepository {
     pool: PgPool,
 }
 
-/// Numeric prefixes of `crates/plasm-agent-core/migrations/*.sql` shipped with this binary.
-/// If DDL is removed out-of-band (e.g. a mistaken `DROP`) while `_sqlx_migrations` still records
-/// these versions as applied, `sqlx::migrate` will not recreate tables — see
-/// `repair_mcp_config_migration_ledger_if_tables_missing`.
-const EMBEDDED_MCP_CONFIG_SQLX_VERSIONS: &[i64] = &[20260216120000];
-
 async fn project_mcp_configs_table_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         r#"SELECT EXISTS (
@@ -92,47 +91,6 @@ async fn project_mcp_configs_table_exists(pool: &PgPool) -> Result<bool, sqlx::E
     .await
 }
 
-async fn sqlx_migrations_table_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        r#"SELECT EXISTS (
-            SELECT 1
-            FROM pg_catalog.pg_class c
-            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public'
-              AND c.relname = '_sqlx_migrations'
-              AND c.relkind = 'r'
-        )"#,
-    )
-    .fetch_one(pool)
-    .await
-}
-
-/// When `project_mcp_configs` was dropped externally but `_sqlx_migrations` still lists our
-/// embedded versions, `sqlx::migrate` will not re-apply. Clear only versions from this crate's
-/// `migrations/` directory so the next `migrate.run()` recreates DDL.
-async fn repair_mcp_config_migration_ledger_if_tables_missing(
-    pool: &PgPool,
-) -> Result<(), McpConfigRepositoryError> {
-    if project_mcp_configs_table_exists(pool).await? {
-        return Ok(());
-    }
-    if !sqlx_migrations_table_exists(pool).await? {
-        return Ok(());
-    }
-    tracing::warn!(
-        versions = ?EMBEDDED_MCP_CONFIG_SQLX_VERSIONS,
-        "project_mcp_configs missing while _sqlx_migrations exists; \
-         removing embedded MCP config migration rows so sqlx can re-apply DDL"
-    );
-    for ver in EMBEDDED_MCP_CONFIG_SQLX_VERSIONS {
-        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
-            .bind(*ver)
-            .execute(pool)
-            .await?;
-    }
-    Ok(())
-}
-
 impl McpConfigRepository {
     pub async fn connect_and_migrate(database_url: &str) -> Result<Self, McpConfigRepositoryError> {
         let pool = PgPoolOptions::new()
@@ -140,14 +98,8 @@ impl McpConfigRepository {
             .connect(database_url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        repair_mcp_config_migration_ledger_if_tables_missing(&pool).await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
         if !project_mcp_configs_table_exists(&pool).await? {
-            return Err(McpConfigRepositoryError::InvalidInput(
-                "project_mcp_configs is missing after sqlx migrate (and ledger repair if applicable); \
-                 check DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL and Postgres permissions"
-                    .into(),
-            ));
+            return Err(McpConfigRepositoryError::PostMigrateSchemaMissing);
         }
         Ok(Self { pool })
     }
@@ -866,6 +818,28 @@ mod tests {
         assert_eq!(
             effective_owner_subject_for_hosted_kv(id, None, Some("oauth-subject-1")),
             Some("oauth-subject-1")
+        );
+    }
+
+    #[test]
+    fn single_squashed_migration_file_is_present() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .expect("migrations dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "sql"))
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "expected one squashed plasm_agent_schema migration"
+        );
+        assert!(
+            entries[0]
+                .file_name()
+                .to_string_lossy()
+                .contains("plasm_agent_schema"),
+            "migration file should be plasm_agent_schema"
         );
     }
 }

@@ -25,9 +25,10 @@ use ratatui::Terminal;
 use uuid::Uuid;
 
 use crate::appliance_admin_bridge::{
-    AdminBridge, AdminCompletion, AdminCorr, AdminJob, McpConfigSurfaceState, OAuthSurfaceState,
-    RefreshedUiData,
+    config_surface_from_host, AdminBridge, AdminCompletion, AdminCorr, AdminJob,
+    McpConfigSurfaceState, OAuthSurfaceState, PolicyStoreUnavailableReason, RefreshedUiData,
 };
+use crate::appliance_mode::PolicyStoreBootstrapDetail;
 use crate::appliance_log;
 use crate::appliance_mcp_admin::appliance_mcp_scope;
 use crate::boot::UiEvent;
@@ -336,7 +337,10 @@ fn sync_log_cursor_scroll(logs: &mut LogState, visible: usize) {
 fn screen_footer_items(model: &RunState) -> Vec<chrome::FooterItem> {
     use chrome::FooterItem;
     match model.screen {
-        RunScreen::Status => vec![],
+        RunScreen::Status => vec![
+            FooterItem::new("↑↓", "scroll"),
+            FooterItem::new("PgUp/Dn", "page"),
+        ],
         RunScreen::Clients => vec![
             FooterItem::new("#", "copy URL"),
             FooterItem::new("%", "copy curl"),
@@ -800,6 +804,11 @@ struct LogState {
     cursor: usize,
 }
 
+#[derive(Default)]
+struct OverviewState {
+    scroll: u16,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AdminTaskKind {
     Refreshing,
@@ -908,7 +917,8 @@ struct RunState {
     resources: ResourceState,
     notice: Option<RunNotice>,
     show_help: bool,
-    policy_bootstrap_detail: Option<String>,
+    overview: OverviewState,
+    policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
 }
 
 impl RunState {
@@ -920,6 +930,7 @@ impl RunState {
             oauth: OAuthState::default(),
             keys: KeysState::default(),
             logs: LogState::default(),
+            overview: OverviewState::default(),
             resources: ResourceState::default(),
             notice: None,
             show_help: false,
@@ -1745,11 +1756,11 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
             }
         }
         KeyCode::Right | KeyCode::Tab => {
-            state.screen = state.screen.next();
+            set_run_screen(state, state.screen.next());
             state.reset_screen_local_mode();
         }
         KeyCode::Left | KeyCode::BackTab => {
-            state.screen = state.screen.prev();
+            set_run_screen(state, state.screen.prev());
             state.reset_screen_local_mode();
         }
         KeyCode::Esc
@@ -2234,6 +2245,21 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                 }
             }
         }
+        KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::Status => {
+            state.overview.scroll = state.overview.scroll.saturating_add(1);
+        }
+        KeyCode::Up | KeyCode::Char('k') if state.screen == RunScreen::Status => {
+            state.overview.scroll = state.overview.scroll.saturating_sub(1);
+        }
+        KeyCode::PageDown if state.screen == RunScreen::Status => {
+            state.overview.scroll = state.overview.scroll.saturating_add(20);
+        }
+        KeyCode::PageUp if state.screen == RunScreen::Status => {
+            state.overview.scroll = state.overview.scroll.saturating_sub(20);
+        }
+        KeyCode::Char('g') if state.screen == RunScreen::Status => {
+            state.overview.scroll = 0;
+        }
         KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::Logs => {
             let total = state.logs.lines.len();
             if total > 0 {
@@ -2310,6 +2336,137 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
     }
 }
 
+fn set_run_screen(state: &mut RunState, screen: RunScreen) {
+    if state.screen == RunScreen::Status && screen != RunScreen::Status {
+        state.overview.scroll = 0;
+    }
+    state.screen = screen;
+}
+
+fn clamp_overview_scroll(scroll: u16, line_count: usize, visible: usize) -> u16 {
+    if line_count == 0 || visible == 0 {
+        return 0;
+    }
+    let max_top = line_count.saturating_sub(visible);
+    scroll.min(max_top as u16)
+}
+
+fn build_overview_lines(
+    model: &RunState,
+    snap: &UiSnapshot,
+    host_state: &PlasmHostState,
+    listen_port: u16,
+) -> Vec<Line<'static>> {
+    let scope = appliance_mcp_scope();
+    let mut lines = vec![
+        Line::from("Listeners"),
+        Line::from(format!(
+            "  HTTP+MCP   http://127.0.0.1:{listen_port}  (MCP: /mcp)"
+        )),
+        Line::from(""),
+        Line::from("Your MCP (singleton)"),
+    ];
+    match &snap.config_surface {
+        McpConfigSurfaceState::Ready {
+            summary_name,
+            summary_status,
+            enabled_api_count,
+            key_count,
+        } => {
+            lines.push(Line::from("  policy store (project_mcp_*): enabled"));
+            lines.push(Line::from(format!(
+                "  tenant / workspace / project: {} / {} / {}",
+                scope.tenant_id, scope.workspace_slug, scope.project_slug
+            )));
+            lines.push(Line::from(format!(
+                "  config: {}  ({})",
+                summary_name, summary_status
+            )));
+            lines.push(Line::from(format!(
+                "  enabled APIs: {}  transport keys: {}",
+                enabled_api_count, key_count
+            )));
+            if let Some(id) = model.resources.config_id {
+                lines.push(Line::from(format!("  config_id: {id}")));
+            }
+        }
+        McpConfigSurfaceState::ConfigLoadError => {
+            lines.push(Line::from(vec![
+                Span::styled("  ! ", err_emphasis_style()),
+                Span::styled(
+                    "MCP policy store online, but the singleton config failed to load.",
+                    err_emphasis_style(),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  > ", dim_style()),
+                Span::raw("Wait for refresh or inspect startup / DB diagnostics."),
+            ]));
+        }
+        McpConfigSurfaceState::PolicyStoreUnavailable { reason } => match reason {
+            PolicyStoreUnavailableReason::RefreshPending => {
+                lines.push(Line::from(Span::styled(
+                    "  policy store (project_mcp_*): refreshing…",
+                    dim_style(),
+                )));
+            }
+            PolicyStoreUnavailableReason::NeverAttached => {
+                lines.push(Line::from(Span::styled(
+                    "  ! ERROR: MCP policy store offline",
+                    err_emphasis_style(),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "  ! project_mcp_* not reachable (database missing or migrations failed).",
+                    err_emphasis_style(),
+                )));
+                if let Some(detail) = model.policy_bootstrap_detail.as_ref() {
+                    lines.push(Line::from(""));
+                    for line in detail.display_lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("  > {line}"),
+                            dim_style(),
+                        )));
+                    }
+                }
+                lines.push(Line::from(Span::styled(
+                    "  x Transport API keys and API allowlists are disabled until fixed.",
+                    err_emphasis_style(),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(
+                    "  > Fix: wipe ~/.plasm/appliance/postgres and restart, or run: plasm-server mcp migrate-db",
+                ));
+                lines.push(Line::from(
+                    "  > See Logs tab for bootstrap / sqlx details.",
+                ));
+            }
+        },
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(format!(
+        "Trace hub: {}",
+        plasm_agent_core::appliance_services::trace_hub_bounds_summary(host_state)
+    )));
+    lines
+}
+
+fn render_overview_panel(
+    frame: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    lines: &[Line<'static>],
+    scroll: u16,
+) {
+    let visible = area.height.saturating_sub(2) as usize;
+    let scroll = clamp_overview_scroll(scroll, lines.len(), visible);
+    frame.render_widget(
+        Paragraph::new(lines.to_vec())
+            .scroll((scroll, 0))
+            .wrap(Wrap { trim: false })
+            .block(chrome::panel_block("Overview", Some('o'))),
+        area,
+    );
+}
+
 fn render_running_frame(
     frame: &mut ratatui::Frame<'_>,
     model: &mut RunState,
@@ -2336,111 +2493,8 @@ fn render_running_frame(
         RunScreen::Status => {
             let (content_area, notice_area) =
                 split_main_notice_area(chunks[1], shared_notice.is_some());
-            let scope = appliance_mcp_scope();
-            let mut lines = vec![
-                Line::from("Listeners"),
-                Line::from(format!(
-                    "  HTTP+MCP   http://127.0.0.1:{listen_port}  (MCP: /mcp)"
-                )),
-                Line::from(""),
-                Line::from("Your MCP (singleton)"),
-            ];
-            match &snap.config_surface {
-                McpConfigSurfaceState::Ready {
-                    summary_name,
-                    summary_status,
-                    enabled_api_count,
-                    key_count,
-                } => {
-                    lines.push(Line::from("  policy store (project_mcp_*): enabled"));
-                    lines.push(Line::from(format!(
-                        "  tenant / workspace / project: {} / {} / {}",
-                        scope.tenant_id, scope.workspace_slug, scope.project_slug
-                    )));
-                    lines.push(Line::from(format!(
-                        "  config: {}  ({})",
-                        summary_name, summary_status
-                    )));
-                    lines.push(Line::from(format!(
-                        "  enabled APIs: {}  transport keys: {}",
-                        enabled_api_count, key_count
-                    )));
-                    if let Some(id) = model.resources.config_id {
-                        lines.push(Line::from(format!("  config_id: {id}")));
-                    }
-                }
-                McpConfigSurfaceState::ConfigLoadError => {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ⚠ ", err_emphasis_style()),
-                        Span::styled(
-                            "MCP policy store online, but the singleton config failed to load.",
-                            err_emphasis_style(),
-                        ),
-                    ]));
-                    lines.push(Line::from(vec![
-                        Span::styled("  ➜ ", dim_style()),
-                        Span::raw("Wait for refresh or inspect startup / DB diagnostics."),
-                    ]));
-                }
-                McpConfigSurfaceState::PolicyStoreUnavailable => {
-                    lines.push(Line::from(Span::styled(
-                        "  ! ERROR: MCP policy store offline",
-                        err_emphasis_style(),
-                    )));
-                    lines.push(Line::from(Span::styled(
-                        "  ! project_mcp_* not reachable (database missing or migrations failed).",
-                        err_emphasis_style(),
-                    )));
-                    if let Some(detail) = model.policy_bootstrap_detail.as_deref() {
-                        lines.push(Line::from(""));
-                        for sentence in detail.split(". ").filter(|s| !s.is_empty()) {
-                            let mut s = sentence.to_string();
-                            if !s.ends_with('.') {
-                                s.push('.');
-                            }
-                            lines.push(Line::from(Span::styled(
-                                format!("  > {s}"),
-                                dim_style(),
-                            )));
-                        }
-                    }
-                    if let Some(skip) =
-                        plasm_agent::embedded_postgres::EmbeddedPostgresGuard::embedded_autostart_skip_reason()
-                    {
-                        lines.push(Line::from(Span::styled(
-                            format!("  > Storage tab: embedded PG skipped ({skip})"),
-                            dim_style(),
-                        )));
-                    }
-                    lines.push(Line::from(Span::styled(
-                        "  x Transport API keys and API allowlists are disabled until fixed.",
-                        err_emphasis_style(),
-                    )));
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(format!(
-                        "  tenant / workspace / project: {} / {} / {}",
-                        scope.tenant_id, scope.workspace_slug, scope.project_slug
-                    )));
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(
-                        "  > Fix: restart after embedded PG starts, or run: plasm-server mcp migrate-db",
-                    ));
-                    lines.push(Line::from(
-                        "  > See Logs tab for bootstrap / sqlx details.",
-                    ));
-                }
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from(format!(
-                "Trace hub: {}",
-                plasm_agent_core::appliance_services::trace_hub_bounds_summary(host_state)
-            )));
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .wrap(Wrap { trim: true })
-                    .block(chrome::panel_block("Overview", Some('o'))),
-                content_area,
-            );
+            let lines = build_overview_lines(model, snap, host_state, listen_port);
+            render_overview_panel(frame, content_area, &lines, model.overview.scroll);
             if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
                 render_notice_panel(frame, area, notice);
             }
@@ -3222,7 +3276,7 @@ pub(crate) fn run_running_mode(
     ui_evt_tx: Option<Sender<UiEvent>>,
     listen_port: u16,
     admin_bridge: Option<AdminBridge>,
-    policy_bootstrap_detail: Option<String>,
+    policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
     log_rx: Option<crossbeam_channel::Receiver<String>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Signal the async supervisor before the first draw so a full PTY pipe cannot
@@ -3238,6 +3292,7 @@ pub(crate) fn run_running_mode(
     }
     let mut model = RunState::new();
     model.policy_bootstrap_detail = policy_bootstrap_detail;
+    model.resources.snapshot.config_surface = config_surface_from_host(host_state.as_ref());
     if let Some(ref bridge) = admin_bridge {
         enqueue_refresh_if_idle(&mut model, bridge);
     }
@@ -3264,7 +3319,9 @@ pub(crate) fn run_running_mode(
             }
         } else if matches!(
             model.resources.snapshot.config_surface,
-            McpConfigSurfaceState::PolicyStoreUnavailable
+            McpConfigSurfaceState::PolicyStoreUnavailable {
+                reason: PolicyStoreUnavailableReason::NeverAttached
+            }
         ) && appliance_services_policy_hint(host_state.as_ref())
         {
             set_notice(
@@ -3782,6 +3839,76 @@ mod tests {
         assert!(matches!(state.mode, InputMode::Normal));
         let notice = state.notice.expect("wizard cancel notice");
         assert_eq!(notice.title, "OAuth wizard cancelled");
+    }
+
+    fn min_test_host_state() -> PlasmHostState {
+        use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
+        use plasm_core::discovery::InMemoryCgsRegistry;
+        use plasm_core::loader::load_schema_dir;
+        use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs.clone(),
+        )]);
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+        build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: Arc::new(reg),
+            catalog_bootstrap: plasm_agent_core::server_state::CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+    }
+
+    #[test]
+    fn overview_unavailable_long_detail_no_garbled_overlap() {
+        use plasm_agent_core::mcp_config_repository::McpConfigRepositoryError;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        let host = rt.block_on(async { min_test_host_state() });
+
+        let mut model = RunState::new();
+        model.policy_bootstrap_detail = Some(PolicyStoreBootstrapDetail::MigrateFailed(
+            McpConfigRepositoryError::PostMigrateSchemaMissing,
+        ));
+        model.resources.snapshot.config_surface = McpConfigSurfaceState::PolicyStoreUnavailable {
+            reason: PolicyStoreUnavailableReason::NeverAttached,
+        };
+        let lines = build_overview_lines(&model, &model.resources.snapshot, &host, 3001);
+        let rendered = lines
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!rendered.contains("enabledts"));
+        assert!(rendered.contains("Trace hub:"));
+        assert!(rendered.contains("project_mcp_* connect/migrate failed"));
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_overview_panel(frame, frame.area(), &lines, 0);
+            })
+            .expect("draw overview");
+        let buffer_text = buffer_text(terminal.backend().buffer());
+        assert!(!buffer_text.contains("enabledts"));
+        assert!(buffer_text.contains("Trace hub"));
     }
 
     #[test]

@@ -20,6 +20,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::appliance_admin_bridge::AdminBridge;
+use crate::appliance_mode::PolicyStoreBootstrapDetail;
 use crate::tui::run_running_mode;
 
 pub const BOOT_PHASE_COUNT: usize = 8;
@@ -28,8 +29,8 @@ pub const BOOT_PHASE_COUNT: usize = 8;
 pub struct RunningHandoff {
     pub state: Arc<PlasmHostState>,
     pub admin_bridge: AdminBridge,
-    /// When the policy store did not attach (embedded skipped or migrate failed before fatal).
-    pub policy_store_detail: Option<String>,
+    /// When the policy store did not attach (migrate failed or no URL).
+    pub policy_store_detail: Option<PolicyStoreBootstrapDetail>,
 }
 
 /// Rolling BOOT Detail log capacity (FIFO trim).

@@ -20,6 +20,7 @@ use crate::error::AgentError;
 use crate::http::PlasmHostBootstrap;
 use crate::incoming_auth::{IncomingAuthConfig, IncomingAuthVerifier};
 use crate::run_artifacts::RunArtifactInitPolicy;
+use crate::mcp_config_repository::{self, McpConfigRepositoryError};
 use crate::server_state::PlasmHostState;
 
 /// Early argv parse shared by `plasm-mcp`, `plasm-mcp-saas`, and `plasm-server`.
@@ -351,19 +352,34 @@ pub async fn attach_outbound_oauth_if_enabled_oss(state: &mut PlasmHostState) {
     }
 }
 
+/// Result of attaching the OSS `project_mcp_*` policy store during host bootstrap.
+#[derive(Debug)]
+pub enum McpPolicyAttachOutcome {
+    Attached,
+    NoDatabaseUrl,
+    Failed(McpConfigRepositoryError),
+}
+
+/// Full OSS host assembly after CLI matches + catalog outcome (no listeners).
+pub struct OssHostBootstrap {
+    pub state: PlasmHostState,
+    pub mcp_policy_attach: McpPolicyAttachOutcome,
+}
+
 /// OSS-only: `project_mcp_*` + MCP API keys when a config DB URL resolves.
-pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> Result<(), String> {
-    let Some(db_url) = crate::mcp_config_repository::mcp_config_database_url() else {
-        return Ok(());
+pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> McpPolicyAttachOutcome {
+    let Some(db_url) = mcp_config_repository::mcp_config_database_url() else {
+        return McpPolicyAttachOutcome::NoDatabaseUrl;
     };
-    let repo = match crate::mcp_config_repository::McpConfigRepository::connect_and_migrate(&db_url)
-        .await
+    let repo = match mcp_config_repository::McpConfigRepository::connect_and_migrate(&db_url).await
     {
         Ok(r) => r,
         Err(e) => {
-            let msg = format!("project_mcp_* connect/migrate failed: {e}");
-            tracing::warn!(error = %e, "OSS plasm-mcp: {msg}");
-            return Err(msg);
+            tracing::warn!(
+                error = %e,
+                "OSS plasm-mcp: project_mcp_* connect/migrate failed"
+            );
+            return McpPolicyAttachOutcome::Failed(e);
         }
     };
 
@@ -393,7 +409,7 @@ pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> Result<(
     tracing::info!(
         "OSS plasm-mcp: tenant MCP policy enabled (project_mcp_* + API keys); control-plane routes on HTTP require X-Plasm-Control-Plane-Secret"
     );
-    Ok(())
+    McpPolicyAttachOutcome::Attached
 }
 
 /// Background reconcile for typed-discovery embeddings when Postgres store is configured.
@@ -418,7 +434,7 @@ pub async fn attach_discovery_embedding_background(mut state: PlasmHostState) {
 pub async fn bootstrap_plasm_host_state_oss(
     matches: &ArgMatches,
     catalog_outcome: &CatalogLoadOutcome,
-) -> Result<PlasmHostState, std::io::Error> {
+) -> Result<OssHostBootstrap, std::io::Error> {
     let registry = build_registry_arc(matches, catalog_outcome)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let catalog_bootstrap = catalog_bootstrap_from_matches(matches);
@@ -442,9 +458,10 @@ pub async fn bootstrap_plasm_host_state_oss(
     })
     .await?;
     attach_outbound_oauth_if_enabled_oss(&mut app_state).await;
-    attach_oss_mcp_policy_store(&mut app_state)
-        .await
-        .map_err(std::io::Error::other)?;
+    let mcp_policy_attach = attach_oss_mcp_policy_store(&mut app_state).await;
     attach_discovery_embedding_background(app_state.clone()).await;
-    Ok(app_state)
+    Ok(OssHostBootstrap {
+        state: app_state,
+        mcp_policy_attach,
+    })
 }

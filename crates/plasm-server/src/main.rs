@@ -4,6 +4,7 @@
 mod appliance_admin_bridge;
 mod appliance_log;
 mod appliance_mcp_admin;
+mod appliance_mode;
 mod appliance_oauth_admin;
 mod boot;
 mod mcp_cli;
@@ -178,25 +179,28 @@ fn reconcile_appliance_db_env(cli: &ServeCli) {
     }
 }
 
-fn policy_store_handoff_detail(state: &plasm_agent_core::server_state::PlasmHostState) -> Option<String> {
-    if state.mcp_config_repository().is_some() {
+fn policy_store_handoff_detail(
+    attach: plasm_agent_core::mcp_host_bootstrap::McpPolicyAttachOutcome,
+    repo_attached: bool,
+) -> Option<crate::appliance_mode::PolicyStoreBootstrapDetail> {
+    if repo_attached {
         return None;
     }
-    if let Some(reason) = EmbeddedPostgresGuard::embedded_autostart_skip_reason() {
-        return Some(format!(
-            "Embedded PostgreSQL was skipped: {reason}. A cwd `.env` DATABASE_URL may override the appliance; use PLASM_EMBEDDED_POSTGRES=0 only when using an external database intentionally."
-        ));
+    crate::appliance_mode::PolicyStoreBootstrapDetail::from_attach(attach)
+}
+
+fn send_bootstrap_ui(
+    ui_tx: Option<&crossbeam_channel::Sender<boot::BootstrapUiMsg>>,
+    msg: boot::BootstrapUiMsg,
+) {
+    if let Some(t) = ui_tx {
+        if t.send(msg).is_err() {
+            tracing::warn!(
+                target: "plasm_appliance_boot",
+                "bootstrap UI channel closed; dropping message"
+            );
+        }
     }
-    if plasm_agent_core::mcp_config_repository::mcp_config_database_url().is_none() {
-        return Some(
-            "No postgres URL is set (DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL / PLASM_AUTH_STORAGE_URL)."
-                .into(),
-        );
-    }
-    Some(
-        "project_mcp_* connect/migrate did not complete during engine bootstrap (see Logs tab)."
-            .into(),
-    )
 }
 
 fn redact_postgres_url_for_display(url: &str) -> String {
@@ -443,6 +447,11 @@ enum BootstrapStopped {
     Fatal,
 }
 
+struct ApplianceBootstrapCoreResult {
+    state: Arc<plasm_agent_core::server_state::PlasmHostState>,
+    mcp_policy_attach: plasm_agent_core::mcp_host_bootstrap::McpPolicyAttachOutcome,
+}
+
 fn eprintln_exit_error(err: &dyn Error) {
     stderr_log::line(format!("plasm-server: error: {err}"));
     let mut src = err.source();
@@ -536,12 +545,8 @@ async fn bootstrap_appliance_core(
     argv: &[OsString],
     embedded_slot: &mut Option<EmbeddedPostgresGuard>,
     boot_cancel: &AtomicBool,
-) -> Result<Arc<plasm_agent_core::server_state::PlasmHostState>, BootstrapStopped> {
-    let send = |msg: boot::BootstrapUiMsg| {
-        if let Some(t) = ui_tx {
-            let _ = t.send(msg);
-        }
-    };
+) -> Result<ApplianceBootstrapCoreResult, BootstrapStopped> {
+    let send = |msg: boot::BootstrapUiMsg| send_bootstrap_ui(ui_tx, msg);
 
     let mirror_boot_stderr = ui_tx.is_none()
         || matches!(
@@ -665,14 +670,12 @@ async fn bootstrap_appliance_core(
     send(boot::BootstrapUiMsg::PhaseDone(1));
     check_cancel()?;
 
-    let mut embedded_autostarted = false;
     if EmbeddedPostgresGuard::will_autostart_embedded_postgres() {
         send(boot::BootstrapUiMsg::PhaseEnter(2));
         phase_line("embedded PostgreSQL");
         match EmbeddedPostgresGuard::try_start_from_env().await {
             Ok(eg) => {
                 *embedded_slot = eg;
-                embedded_autostarted = true;
                 send(boot::BootstrapUiMsg::Detail(
                     "embedded PostgreSQL ready".into(),
                 ));
@@ -719,13 +722,13 @@ async fn bootstrap_appliance_core(
     send(boot::BootstrapUiMsg::Detail(
         "bootstrap_plasm_host_state_oss".into(),
     ));
-    let mut app_state = match mcp_host_bootstrap::bootstrap_plasm_host_state_oss(
+    let host_bootstrap = match mcp_host_bootstrap::bootstrap_plasm_host_state_oss(
         &matches,
         &catalog_outcome,
     )
     .await
     {
-        Ok(s) => s,
+        Ok(b) => b,
         Err(e) => {
             let msg = format!("{e:#}");
             report_fatal(&msg);
@@ -733,18 +736,36 @@ async fn bootstrap_appliance_core(
             return Err(BootstrapStopped::Fatal);
         }
     };
+    let mcp_policy_attach = host_bootstrap.mcp_policy_attach;
+    let mut app_state = host_bootstrap.state;
+    if let plasm_agent_core::mcp_host_bootstrap::McpPolicyAttachOutcome::Failed(ref e) =
+        mcp_policy_attach
+    {
+        send(boot::BootstrapUiMsg::DetailPush(format!(
+            "project_mcp_* connect/migrate failed: {e:#}"
+        )));
+    }
     send(boot::BootstrapUiMsg::PhaseDone(3));
     check_cancel()?;
 
-    if embedded_autostarted && app_state.mcp_config_repository().is_none() {
-        let msg = "embedded PostgreSQL started but project_mcp_* policy store is not attached \
-                   (connect/migrate failed or DATABASE_URL missing after bootstrap)"
-            .to_string();
-        report_fatal(&msg);
-        send(boot::BootstrapUiMsg::Fatal(msg));
-        return Err(BootstrapStopped::Fatal);
-    }
+    let mcp_policy_attach = match crate::appliance_mode::evaluate_policy_bootstrap_gate(
+        crate::appliance_mode::appliance_policy_requirement(cli),
+        &app_state,
+        mcp_policy_attach,
+    ) {
+        crate::appliance_mode::BootstrapGateOutcome::Proceed(attach) => attach,
+        crate::appliance_mode::BootstrapGateOutcome::Fatal(detail) => {
+            for line in detail.display_lines() {
+                send(boot::BootstrapUiMsg::DetailPush(line));
+            }
+            let msg = detail.fatal_message();
+            report_fatal(&msg);
+            send(boot::BootstrapUiMsg::Fatal(msg));
+            return Err(BootstrapStopped::Fatal);
+        }
+    };
     if app_state.mcp_config_repository().is_some() {
+        phase_line("project_mcp_* policy store connected (migrations applied)");
         send(boot::BootstrapUiMsg::Detail(
             "project_mcp_* policy store connected (migrations applied)".into(),
         ));
@@ -829,7 +850,10 @@ async fn bootstrap_appliance_core(
     send(boot::BootstrapUiMsg::PhaseDone(4));
     check_cancel()?;
 
-    Ok(Arc::new(app_state))
+    Ok(ApplianceBootstrapCoreResult {
+        state: Arc::new(app_state),
+        mcp_policy_attach,
+    })
 }
 
 async fn join_ui_thread(
@@ -968,7 +992,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             out = bootstrap_appliance_core(None, &cli, &argv, &mut embedded_pg, &boot_cancel) => out,
         };
         match bootstrap_out {
-            Ok(state) => {
+            Ok(bootstrap) => {
+                let state = bootstrap.state;
                 tracing::info!(target: "plasm_appliance_boot", "phase: bind HTTP+MCP listener");
                 stderr_log::line("[plasm-server] phase: bind HTTP+MCP listener");
                 let addr = SocketAddr::from(([0, 0, 0, 0], listen_port));
@@ -1146,10 +1171,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let state = match bootstrap_out {
+        let bootstrap = match bootstrap_out {
             Ok(s) => s,
             Err(BootstrapStopped::Cancelled | BootstrapStopped::Fatal) => unreachable!(),
         };
+
+        let state = bootstrap.state;
+        let mcp_policy_attach = bootstrap.mcp_policy_attach;
 
         let _ = tx.send(boot::BootstrapUiMsg::PhaseEnter(5));
         tracing::info!(target: "plasm_appliance_boot", "phase: bind HTTP+MCP listener");
@@ -1218,12 +1246,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let admin_bridge = crate::appliance_admin_bridge::spawn_admin_router(Arc::clone(&state));
         tracing::info!(target: "plasm_appliance_boot", "phase: run UI handoff");
         stderr_log::line("[plasm-server] bootstrap: sent RUN handoff to UI thread");
-        let policy_store_detail = policy_store_handoff_detail(state.as_ref());
-        let _ = tx.send(boot::BootstrapUiMsg::Running(boot::RunningHandoff {
-            state: Arc::clone(&state),
-            admin_bridge,
-            policy_store_detail,
-        }));
+        let policy_store_detail = policy_store_handoff_detail(
+            mcp_policy_attach,
+            state.mcp_config_repository().is_some(),
+        );
+        send_bootstrap_ui(
+            Some(&tx),
+            boot::BootstrapUiMsg::Running(boot::RunningHandoff {
+                state: Arc::clone(&state),
+                admin_bridge,
+                policy_store_detail,
+            }),
+        );
 
         tokio::select! {
             _ = shutdown_signal() => {

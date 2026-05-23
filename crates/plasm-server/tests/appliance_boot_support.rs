@@ -48,8 +48,11 @@ pub const LOG_PHASE_HEADLESS_LISTENER: &str = "phase: headless listener running"
 pub const LOG_EMBEDDED_PG_READY: &str = "embedded postgres: server ready";
 pub const LOG_RUN_HANDSHAKE_TIMEOUT: &str = "RUN UI RunEntered not observed within 120s";
 
+pub const LOG_POLICY_STORE_CONNECTED: &str = "project_mcp_* policy store connected";
+
 const HEADLESS_MILESTONES: &[(&str, &str)] = &[
     (LOG_EMBEDDED_PG_READY, "embedded Postgres up"),
+    (LOG_POLICY_STORE_CONNECTED, "MCP policy store connected"),
     (LOG_PHASE_HEADLESS_LISTENER, "headless listener running"),
 ];
 

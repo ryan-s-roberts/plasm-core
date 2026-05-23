@@ -26,10 +26,23 @@ use crate::appliance_oauth_admin::{self, ApplianceOauthUpsert};
 
 pub type AdminCorr = u64;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PolicyStoreUnavailableReason {
+    NeverAttached,
+    RefreshPending,
+}
+
+impl Default for PolicyStoreUnavailableReason {
+    fn default() -> Self {
+        Self::NeverAttached
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum McpConfigSurfaceState {
-    #[default]
-    PolicyStoreUnavailable,
+    PolicyStoreUnavailable {
+        reason: PolicyStoreUnavailableReason,
+    },
     ConfigLoadError,
     Ready {
         summary_name: String,
@@ -37,6 +50,30 @@ pub enum McpConfigSurfaceState {
         enabled_api_count: usize,
         key_count: usize,
     },
+}
+
+impl Default for McpConfigSurfaceState {
+    fn default() -> Self {
+        Self::PolicyStoreUnavailable {
+            reason: PolicyStoreUnavailableReason::NeverAttached,
+        }
+    }
+}
+
+/// Seed RUN-mode Overview before the first admin refresh completes.
+pub fn config_surface_from_host(state: &PlasmHostState) -> McpConfigSurfaceState {
+    if state.mcp_config_repository().is_some() {
+        McpConfigSurfaceState::Ready {
+            summary_name: "Your MCP".into(),
+            summary_status: "attached".into(),
+            enabled_api_count: 0,
+            key_count: 0,
+        }
+    } else {
+        McpConfigSurfaceState::PolicyStoreUnavailable {
+            reason: PolicyStoreUnavailableReason::NeverAttached,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -592,6 +629,16 @@ mod tests {
         }];
 
         assert_eq!(rotated_api_key_label(rows, key_id), "");
+    }
+
+    #[test]
+    fn default_config_surface_is_never_attached() {
+        assert!(matches!(
+            McpConfigSurfaceState::default(),
+            McpConfigSurfaceState::PolicyStoreUnavailable {
+                reason: PolicyStoreUnavailableReason::NeverAttached
+            }
+        ));
     }
 
     #[test]

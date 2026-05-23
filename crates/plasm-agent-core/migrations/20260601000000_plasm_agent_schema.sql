@@ -1,4 +1,7 @@
--- Tenant MCP configuration (canonical store for plasm-mcp). No FK to project_outbound_auth_configs
+-- plasm-agent-core canonical schema (appliance + hosted plasm-mcp).
+-- Idempotent DDL safe on shared SaaS Postgres (Phoenix may already own oauth_provider_apps).
+
+-- Tenant MCP configuration (`project_mcp_*`). No FK to project_outbound_auth_configs
 -- so this migration is self-contained; auth_config_id integrity is application-level.
 
 CREATE TABLE IF NOT EXISTS project_mcp_configs (
@@ -81,3 +84,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS project_mcp_auth_bindings_config_entry
 
 CREATE INDEX IF NOT EXISTS project_mcp_auth_bindings_auth_config
     ON project_mcp_auth_bindings (auth_config_id);
+
+-- Discovery embeddings (BYTEA f32 LE). No pgvector extension required.
+
+CREATE TABLE IF NOT EXISTS plasm_catalog_discovery_embeddings (
+    catalog_cgs_hash TEXT NOT NULL,
+    embedding_model_id TEXT NOT NULL,
+    line_text TEXT NOT NULL,
+    embedding_dim SMALLINT NOT NULL,
+    embedding BYTEA NOT NULL,
+    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (catalog_cgs_hash, embedding_model_id, line_text)
+);
+
+CREATE INDEX IF NOT EXISTS plasm_catalog_discovery_embeddings_model_hash
+    ON plasm_catalog_discovery_embeddings (embedding_model_id, catalog_cgs_hash);
+
+-- Outbound OAuth provider registry. Phoenix-compatible baseline columns.
+
+CREATE TABLE IF NOT EXISTS oauth_provider_apps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entry_id TEXT NOT NULL,
+    provider TEXT,
+    authorization_endpoint TEXT,
+    token_endpoint TEXT,
+    client_id TEXT NOT NULL,
+    client_secret_key TEXT NOT NULL,
+    redirect_uri_note TEXT,
+    docs_url TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    last_synced_at TIMESTAMPTZ,
+    last_sync_error TEXT,
+    updated_by_subject TEXT,
+    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS oauth_provider_apps_entry_id_key ON oauth_provider_apps (entry_id);
+
+ALTER TABLE oauth_provider_apps
+    ADD COLUMN IF NOT EXISTS device_authorization_endpoint TEXT;

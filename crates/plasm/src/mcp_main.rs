@@ -116,18 +116,19 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
     let mut embedded_pg =
         crate::embedded_postgres::EmbeddedPostgresGuard::try_start_from_env().await?;
 
-    let app_state = match mcp_host_bootstrap::bootstrap_plasm_host_state_oss(
+    let host_bootstrap = match mcp_host_bootstrap::bootstrap_plasm_host_state_oss(
         &matches,
         &catalog_outcome,
     )
     .await
     {
-        Ok(s) => s,
+        Ok(b) => b,
         Err(e) => {
             shutdown_embedded_pg(&mut embedded_pg).await;
             return Err(e.into());
         }
     };
+    let app_state = host_bootstrap.state;
 
     let mcp_port = match matches.get_one::<u16>("mcp_port").copied() {
         Some(p) => p,
