@@ -104,13 +104,13 @@ async fn get_trace(
         return Ok(Json(TraceDetailResponse { trace_id, detail }));
     }
 
-    // Fallback for older rows without sufficient shape (keeps compatibility).
+    // Fallback: tenant-scoped pruned segment scan (never trace_id-only across partitions).
     let fallback_span = spans::read_trace_detail(tenant.as_str(), &trace_id);
     let mut events = state
-        .trace_events(trace_id)
+        .trace_events_for_tenant(&tenant, trace_id)
         .instrument(fallback_span)
         .await
-        .map_err(iceberg_500("Iceberg load_trace_events failed"))?;
+        .map_err(iceberg_500("Iceberg load_trace_events_for_tenant failed"))?;
     if events.is_empty() {
         return Err(StatusCode::NOT_FOUND);
     }

@@ -120,6 +120,7 @@ async fn list_traces(
         if let Some(base) = st.trace_sink_read_base_url.as_deref() {
             let list_span = crate::spans::billing_trace_list(tenant, q.limit, q.offset);
             match list_traces_from_sink(
+                &st.trace_sink_http,
                 base,
                 tenant,
                 q.project_slug.as_deref(),
@@ -229,7 +230,7 @@ async fn get_trace_detail(
 
     if let Some(base) = st.trace_sink_read_base_url.as_deref() {
         let detail_span = crate::spans::billing_trace_detail(tenant, &trace_id);
-        match fetch_trace_detail_from_sink(base, tenant, trace_id)
+        match fetch_trace_detail_from_sink(&st.trace_sink_http, base, tenant, trace_id)
             .instrument(detail_span)
             .await
         {
@@ -335,6 +336,7 @@ pub fn trace_routes() -> Router {
 }
 
 async fn list_traces_from_sink(
+    client: &reqwest::Client,
     base: &str,
     tenant_id: &str,
     project_slug: Option<&str>,
@@ -357,7 +359,7 @@ async fn list_traces_from_sink(
         .extend_pairs(qp.iter().map(|(k, v)| (*k, v.as_str())))
         .finish();
     let url = format!("{}/v1/traces?{qs}", base.trim_end_matches('/'));
-    let resp = reqwest::Client::new()
+    let resp = client
         .get(url)
         .send()
         .await
@@ -409,6 +411,7 @@ fn logical_session_id_from_sink_records(records: &[JsonValue]) -> Option<String>
 }
 
 async fn fetch_trace_detail_from_sink(
+    client: &reqwest::Client,
     base: &str,
     tenant_id: &str,
     trace_id: Uuid,
@@ -419,7 +422,7 @@ async fn fetch_trace_detail_from_sink(
         trace_id,
         url::form_urlencoded::byte_serialize(tenant_id.as_bytes()).collect::<String>()
     );
-    let resp = reqwest::Client::new()
+    let resp = client
         .get(url)
         .send()
         .await

@@ -9,9 +9,11 @@ use crate::append_port::{
 };
 use crate::config::IcebergConnectParams;
 use crate::config::WarehouseLocation;
+use crate::metrics::record_iceberg_detail_prune_fallback;
 use crate::model::{
-    year_month_bucket_utc, AuditEvent, DurableTraceDetail, TraceDetailRecord, TraceHeadRow,
-    TraceSpanRow, TraceSummary, TraceTotals, AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
+    year_month_bucket_utc, year_month_buckets_for_trace_ms, AuditEvent, DurableTraceDetail,
+    TraceDetailRecord, TraceHeadRow, TraceSpanRow, TraceSummary, TraceTotals,
+    AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
 use crate::trace_totals::trace_totals_from_head_row;
 use async_trait::async_trait;
@@ -1067,15 +1069,87 @@ impl IcebergSink {
 
     pub async fn load_trace_events_for_tenant(
         &self,
-        tenant_id: &str,
+        tenant_partition: &str,
         trace_id: Uuid,
     ) -> anyhow::Result<Vec<AuditEvent>> {
-        let tenant_q = Self::sql_quote(tenant_id);
-        self.load_trace_events_with_where(&format!(
-            "tenant_partition = '{}' AND trace_id = '{trace_id}'",
-            tenant_q
-        ))
-        .await
+        self.load_trace_events_for_tenant_with_head(tenant_partition, trace_id, None)
+            .await
+    }
+
+    pub async fn load_trace_events_for_tenant_with_head(
+        &self,
+        tenant_partition: &str,
+        trace_id: Uuid,
+        head_hint: Option<&TraceHeadRow>,
+    ) -> anyhow::Result<Vec<AuditEvent>> {
+        let head = match head_hint {
+            Some(h) => Some(h.clone()),
+            None => {
+                self.load_trace_head_row_for_tenant(tenant_partition, trace_id)
+                    .await?
+            }
+        };
+        let buckets = head.as_ref().map(|h| {
+            year_month_buckets_for_trace_ms(h.started_at_ms, h.ended_at_ms)
+        });
+        let (events, _) = self
+            .load_trace_events_for_tenant_pruned(
+                tenant_partition,
+                trace_id,
+                buckets.as_deref(),
+                head.is_some(),
+            )
+            .await?;
+        Ok(events)
+    }
+
+    /// Load `mcp_trace_segment` audit rows for one trace, optionally pruning by `year_month_bucket`.
+    ///
+    /// When `year_month_buckets` is non-empty and `retry_on_empty` is true, an empty pruned result
+    /// triggers one full-tenant retry (partition-prune flake guard, same pattern as billing).
+    pub async fn load_trace_events_for_tenant_pruned(
+        &self,
+        tenant_partition: &str,
+        trace_id: Uuid,
+        year_month_buckets: Option<&[i32]>,
+        retry_on_empty: bool,
+    ) -> anyhow::Result<(Vec<AuditEvent>, IcebergDetailLoadMeta)> {
+        let pruned_buckets = year_month_buckets.filter(|b| !b.is_empty());
+        let where_clause =
+            audit_trace_detail_where(tenant_partition, trace_id, pruned_buckets, true);
+        let mut events = self.load_trace_events_with_where(&where_clause).await?;
+        let mut prune_fallback = false;
+        if events.is_empty() && retry_on_empty && pruned_buckets.is_some() {
+            tracing::debug!(
+                target: "plasm_trace_sink.iceberg",
+                %trace_id,
+                tenant_partition,
+                year_month_bucket_count = pruned_buckets.map(|b| b.len()).unwrap_or(0),
+                "load_trace_events_for_tenant_pruned: empty pruned scan; retrying without year_month_bucket"
+            );
+            record_iceberg_detail_prune_fallback();
+            let where_clause =
+                audit_trace_detail_where(tenant_partition, trace_id, None, true);
+            events = self.load_trace_events_with_where(&where_clause).await?;
+            prune_fallback = true;
+        }
+        let meta = IcebergDetailLoadMeta {
+            iceberg_detail_pruned: pruned_buckets.is_some() && !prune_fallback,
+            year_month_bucket_count: pruned_buckets.map(|b| b.len()).unwrap_or(0),
+            iceberg_detail_prune_fallback: prune_fallback,
+        };
+        Ok((events, meta))
+    }
+
+    async fn load_trace_head_row_for_tenant(
+        &self,
+        tenant_partition: &str,
+        trace_id: Uuid,
+    ) -> anyhow::Result<Option<TraceHeadRow>> {
+        let heads = self.load_latest_trace_heads(&[trace_id]).await?;
+        Ok(heads
+            .into_iter()
+            .find(|h| h.tenant_partition == tenant_partition))
     }
 
     async fn load_trace_events_with_where(
@@ -1278,16 +1352,88 @@ impl IcebergSink {
         tenant: &TenantId,
         trace_id: Uuid,
     ) -> anyhow::Result<Option<DurableTraceDetail>> {
-        let tenant_id = tenant.as_str();
+        self.load_trace_detail_with_head(tenant, trace_id, None)
+            .await
+    }
+
+    /// Cold-path detail read with optional SQL `trace_heads` hint for month pruning.
+    pub async fn load_trace_detail_with_head(
+        &self,
+        tenant: &TenantId,
+        trace_id: Uuid,
+        head_hint: Option<&TraceHeadRow>,
+    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+        let tenant_partition = tenant.as_str();
         let events = self
-            .load_trace_events_for_tenant(tenant_id, trace_id)
+            .load_trace_events_for_tenant_with_head(tenant_partition, trace_id, head_hint)
             .await?;
         if events.is_empty() {
             return Ok(None);
         }
-        let detail = durable_detail_from_events(trace_id, events, tenant_id.to_string());
+        let detail = durable_detail_from_events(trace_id, events, tenant_partition.to_string());
         Ok(Some(detail))
     }
+}
+
+/// Observability for head-guided Iceberg detail scans.
+#[derive(Debug, Clone, Copy)]
+pub struct IcebergDetailLoadMeta {
+    pub iceberg_detail_pruned: bool,
+    pub year_month_bucket_count: usize,
+    pub iceberg_detail_prune_fallback: bool,
+}
+
+fn audit_trace_detail_where(
+    tenant_partition: &str,
+    trace_id: Uuid,
+    year_month_buckets: Option<&[i32]>,
+    mcp_trace_segment_only: bool,
+) -> String {
+    let tenant_q = IcebergSink::sql_quote(tenant_partition);
+    let mut parts = vec![
+        format!("tenant_partition = '{tenant_q}'"),
+        format!("trace_id = '{trace_id}'"),
+    ];
+    if mcp_trace_segment_only {
+        parts.push(format!(
+            "event_kind = '{}'",
+            IcebergSink::sql_quote(AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT)
+        ));
+    }
+    if let Some(buckets) = year_month_buckets {
+        if !buckets.is_empty() {
+            let list = buckets
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            parts.push(format!("year_month_bucket IN ({list})"));
+        }
+    }
+    parts.join(" AND ")
+}
+
+/// Build one HTTP detail row from an ingested `mcp_trace_segment` audit event.
+pub fn trace_detail_record_from_audit_event(e: &AuditEvent) -> Option<TraceDetailRecord> {
+    if e.event_kind != AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT {
+        return None;
+    }
+    let trace = serde_json::from_value::<plasm_trace::TraceEvent>(e.payload.clone()).ok()?;
+    let mut record = serde_json::to_value(&trace).ok()?;
+    if let serde_json::Value::Object(ref mut map) = record {
+        map.insert(
+            "event_id".to_string(),
+            serde_json::Value::String(e.event_id.to_string()),
+        );
+        map.insert(
+            "emitted_at".to_string(),
+            serde_json::Value::String(e.emitted_at.to_rfc3339()),
+        );
+    }
+    Some(TraceDetailRecord {
+        kind: AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT.to_string(),
+        record,
+    })
 }
 
 pub fn durable_detail_from_events(
@@ -1316,8 +1462,6 @@ pub fn durable_detail_from_events(
 
     struct McpTraceRow {
         sort_key: usize,
-        event_id: Uuid,
-        emitted_at: DateTime<Utc>,
         trace: TraceEvent,
     }
 
@@ -1329,32 +1473,11 @@ pub fn durable_detail_from_events(
         let Ok(trace) = serde_json::from_value::<TraceEvent>(e.payload.clone()) else {
             continue;
         };
-        mcp_rows.push(McpTraceRow {
-            sort_key: i,
-            event_id: e.event_id,
-            emitted_at: e.emitted_at,
-            trace,
-        });
+        mcp_rows.push(McpTraceRow { sort_key: i, trace });
     }
-    let records: Vec<TraceDetailRecord> = mcp_rows
+    let records: Vec<TraceDetailRecord> = events
         .iter()
-        .filter_map(|row| {
-            let mut record = serde_json::to_value(&row.trace).ok()?;
-            if let serde_json::Value::Object(ref mut map) = record {
-                map.insert(
-                    "event_id".to_string(),
-                    serde_json::Value::String(row.event_id.to_string()),
-                );
-                map.insert(
-                    "emitted_at".to_string(),
-                    serde_json::Value::String(row.emitted_at.to_rfc3339()),
-                );
-            }
-            Some(TraceDetailRecord {
-                kind: AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT.to_string(),
-                record,
-            })
-        })
+        .filter_map(trace_detail_record_from_audit_event)
         .collect();
 
     let mut session_ix: Vec<usize> = (0..mcp_rows.len()).collect();
@@ -1638,6 +1761,14 @@ impl AuditSpanReader for IcebergSink {
         IcebergSink::load_trace_events(self, trace_id).await
     }
 
+    async fn load_trace_events_for_tenant(
+        &self,
+        tenant: &TenantId,
+        trace_id: Uuid,
+    ) -> anyhow::Result<Vec<AuditEvent>> {
+        IcebergSink::load_trace_events_for_tenant(self, tenant.as_str(), trace_id).await
+    }
+
     async fn load_latest_trace_heads(
         &self,
         trace_ids: &[Uuid],
@@ -1673,6 +1804,28 @@ impl AuditSpanReader for IcebergSink {
         trace_id: Uuid,
     ) -> anyhow::Result<Option<DurableTraceDetail>> {
         IcebergSink::load_trace_detail(self, tenant, trace_id).await
+    }
+}
+
+#[cfg(test)]
+mod detail_where_tests {
+    use super::*;
+
+    #[test]
+    fn audit_trace_detail_where_includes_tenant_trace_kind_and_months() {
+        let trace_id = Uuid::new_v4();
+        let w = audit_trace_detail_where("tenant-a", trace_id, Some(&[202603, 202604]), true);
+        assert!(w.contains("tenant_partition = 'tenant-a'"));
+        assert!(w.contains(&format!("trace_id = '{trace_id}'")));
+        assert!(w.contains("event_kind = 'mcp_trace_segment'"));
+        assert!(w.contains("year_month_bucket IN (202603, 202604)"));
+    }
+
+    #[test]
+    fn audit_trace_detail_where_omits_months_when_none() {
+        let trace_id = Uuid::new_v4();
+        let w = audit_trace_detail_where("tenant-a", trace_id, None, true);
+        assert!(!w.contains("year_month_bucket"));
     }
 }
 

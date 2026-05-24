@@ -126,6 +126,122 @@ async fn ingest_then_get_trace_sorted_by_line_index() {
 }
 
 #[tokio::test]
+async fn trace_detail_sql_projection_served_after_ingest() {
+    let Some(ctx) = iceberg_test_state().await else {
+        return;
+    };
+    let app = router(ctx.state.clone());
+    let trace_id = Uuid::new_v4();
+    let tenant = "tenant-projection";
+    let mut events = Vec::new();
+    for i in 0..12 {
+        events.push(sample_mcp_trace_line_event(
+            Uuid::new_v4(),
+            trace_id,
+            &format!("2026-04-07T11:00:{i:02}Z"),
+            Some(tenant),
+            i,
+        ));
+    }
+
+    let post = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "events": events })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(post.status(), StatusCode::OK);
+
+    let tenant_id = plasm_trace_sink::append_port::TenantId::parse(tenant).unwrap();
+    let detail = ctx
+        .state
+        .trace_detail(&tenant_id, trace_id)
+        .await
+        .expect("trace_detail")
+        .expect("detail");
+    assert_eq!(detail.records.len(), 12);
+
+    let get = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/traces/{trace_id}?tenant_id={tenant}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    let doc = read_json_body(get.into_body()).await;
+    assert_eq!(doc["detail"]["records"].as_array().unwrap().len(), 12);
+}
+
+#[tokio::test]
+async fn trace_detail_cross_utc_month_buckets_returns_all_segments() {
+    let Some(ctx) = iceberg_test_state().await else {
+        return;
+    };
+    let app = router(ctx.state.clone());
+    let trace_id = Uuid::new_v4();
+    let tenant = "tenant-cross-month";
+    let events = vec![
+        sample_mcp_trace_line_event(
+            Uuid::new_v4(),
+            trace_id,
+            "2026-03-31T23:59:00Z",
+            Some(tenant),
+            0,
+        ),
+        sample_mcp_trace_line_event(
+            Uuid::new_v4(),
+            trace_id,
+            "2026-04-01T00:01:00Z",
+            Some(tenant),
+            1,
+        ),
+    ];
+
+    let post = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "events": events })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(post.status(), StatusCode::OK);
+
+    let tenant_id = plasm_trace_sink::append_port::TenantId::parse(tenant).unwrap();
+    let detail = ctx
+        .state
+        .trace_detail(&tenant_id, trace_id)
+        .await
+        .expect("trace_detail")
+        .expect("detail");
+    assert_eq!(detail.records.len(), 2);
+    assert_eq!(
+        plasm_trace_sink::model::year_month_buckets_for_trace_ms(
+            detail.summary.started_at_ms as i64,
+            detail.summary.ended_at_ms.map(|v| v as i64),
+        ),
+        vec![202603, 202604]
+    );
+}
+
+#[tokio::test]
 async fn get_trace_unknown_returns_404() {
     let Some(ctx) = iceberg_test_state().await else {
         return;
@@ -323,7 +439,7 @@ async fn trace_survives_new_state_same_iceberg_files() {
             .await
             .expect("reconnect Iceberg"),
     );
-    let store2: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(&connect, sink2)
+    let store2: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(&connect, sink2, 0, 300)
         .await
         .expect("reconnect projections");
     let state2 = AppState::new(store2);

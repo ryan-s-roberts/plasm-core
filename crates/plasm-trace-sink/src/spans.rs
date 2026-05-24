@@ -29,6 +29,9 @@ pub(crate) fn read_trace_detail(tenant_id: &str, trace_id: &Uuid) -> Span {
         "plasm_trace_sink.billing.read_trace_detail",
         tenant_id = tenant_id,
         trace_id = %trace_id,
+        year_month_bucket_count = tracing::field::Empty,
+        iceberg_detail_pruned = tracing::field::Empty,
+        iceberg_detail_prune_fallback = tracing::field::Empty,
     )
 }
 

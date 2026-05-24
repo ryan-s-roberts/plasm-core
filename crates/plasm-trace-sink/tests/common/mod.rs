@@ -59,9 +59,14 @@ pub async fn iceberg_test_state() -> Option<IcebergTestCtx> {
             .await
             .expect("IcebergSink::connect"),
     );
-    let store: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(&connect, sink.clone())
-        .await
-        .expect("PersistedTraceSink::connect");
+    let store: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(
+        &connect,
+        sink.clone(),
+        0,
+        300,
+    )
+    .await
+    .expect("PersistedTraceSink::connect");
     let state = AppState::new(store);
     Some(IcebergTestCtx {
         _dir: dir,

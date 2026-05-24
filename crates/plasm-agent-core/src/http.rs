@@ -38,8 +38,17 @@ use crate::trace_hub::{TraceHubBuilder, TraceHubConfig};
 use crate::trace_sink_emit::{EnvTraceIngestClient, TraceIngestClient};
 use plasm_otel::tower_http_trace_parent_span;
 use plasm_plugin_host::PluginManager;
+use reqwest::Client;
 use std::collections::HashMap;
+use std::time::Duration;
 use tokio::sync::RwLock;
+
+fn trace_sink_http_client() -> Client {
+    Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
 
 /// Inputs for [`build_plasm_host_state`] (keeps the surface under clippy’s argument limit).
 pub struct PlasmHostBootstrap {
@@ -115,6 +124,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
                 .or_else(|| std::env::var("PLASM_TRACE_SINK_URL").ok())
                 .map(|s| s.trim_end_matches('/').to_string())
                 .filter(|s| !s.is_empty()),
+            trace_sink_http: trace_sink_http_client(),
             auth_storage: None,
             oauth_link_catalog: None,
             outbound_secret_provider: None,

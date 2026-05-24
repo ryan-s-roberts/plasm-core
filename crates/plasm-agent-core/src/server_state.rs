@@ -70,6 +70,8 @@ pub struct PlasmOssHostState {
     pub local_trace_archive: Option<Arc<LocalTraceArchive>>,
     /// Trace sink read API base URL (defaults to `PLASM_TRACE_SINK_URL` when unset). Highest precedence for durable list/detail.
     pub trace_sink_read_base_url: Option<String>,
+    /// Reused HTTP client for trace sink read proxy (`GET /v1/traces*`).
+    pub trace_sink_http: reqwest::Client,
     /// Auth-framework KV store for outbound OAuth pending sessions and `hosted_kv` secrets (optional on OSS).
     pub auth_storage: Option<Arc<dyn AuthStorage>>,
     /// OAuth2 catalog for outbound account linking (`/internal/oauth-link/...`, `/oauth/link/callback`).

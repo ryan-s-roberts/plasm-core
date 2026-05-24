@@ -97,6 +97,13 @@ pub trait AuditSpanReader: Send + Sync {
 
     /// Audit rows for `trace_id`, ordered by `emitted_at`, `call_index`, `line_index`.
     async fn load_trace_events(&self, trace_id: Uuid) -> anyhow::Result<Vec<AuditEvent>>;
+
+    /// Tenant-scoped segment events for `trace_id` (head-guided month pruning when supported).
+    async fn load_trace_events_for_tenant(
+        &self,
+        tenant: &TenantId,
+        trace_id: Uuid,
+    ) -> anyhow::Result<Vec<AuditEvent>>;
     async fn load_latest_trace_heads(
         &self,
         trace_ids: &[Uuid],

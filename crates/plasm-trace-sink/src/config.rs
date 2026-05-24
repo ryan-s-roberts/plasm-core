@@ -142,6 +142,10 @@ pub struct Config {
     /// Takes precedence over [`Self::warehouse_fs_path`]. Set `PLASM_TRACE_SINK_WAREHOUSE_URL`
     /// at runtime; see [`S3WarehouseUri::parse`] for accepted forms.
     pub warehouse_s3_url: Option<String>,
+    /// Hot `trace_segments` SQL cache TTL (`PLASM_TRACE_SINK_SEGMENT_PROJECTION_TTL_SECS`); `0` disables.
+    pub segment_projection_ttl_secs: u64,
+    /// Background purge interval for expired `trace_segments` rows.
+    pub segment_projection_gc_interval_secs: u64,
 }
 
 impl Config {
@@ -159,6 +163,17 @@ impl Config {
         let catalog_url = std::env::var("PLASM_TRACE_SINK_CATALOG_URL")
             .ok()
             .filter(|s| !s.trim().is_empty());
+        let segment_projection_ttl_secs =
+            std::env::var("PLASM_TRACE_SINK_SEGMENT_PROJECTION_TTL_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(604_800);
+        let segment_projection_gc_interval_secs =
+            std::env::var("PLASM_TRACE_SINK_SEGMENT_PROJECTION_GC_INTERVAL_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(300);
         Self {
             listen: std::env::var("PLASM_TRACE_SINK_LISTEN")
                 .unwrap_or_else(|_| "127.0.0.1:7070".to_string()),
@@ -166,6 +181,8 @@ impl Config {
             catalog_url,
             warehouse_fs_path,
             warehouse_s3_url,
+            segment_projection_ttl_secs,
+            segment_projection_gc_interval_secs,
         }
     }
 
@@ -214,9 +231,9 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use super::{CatalogConnectionString, S3WarehouseUri};
+    use super::{CatalogConnectionString, Config, S3WarehouseUri};
 
     #[test]
     fn catalog_requires_explicit_postgres_url() {
@@ -247,5 +264,19 @@ mod tests {
     #[test]
     fn s3_warehouse_uri_rejects_non_s3() {
         assert!(S3WarehouseUri::parse("https://x").is_err());
+    }
+
+    #[test]
+    fn segment_projection_ttl_defaults_to_seven_days() {
+        let cfg = Config {
+            listen: "127.0.0.1:7070".into(),
+            data_dir: PathBuf::from("var/plasm-trace-sink"),
+            catalog_url: None,
+            warehouse_fs_path: PathBuf::from("var/w"),
+            warehouse_s3_url: None,
+            segment_projection_ttl_secs: 604_800,
+            segment_projection_gc_interval_secs: 300,
+        };
+        assert_eq!(cfg.segment_projection_ttl_secs, 604_800);
     }
 }

@@ -21,7 +21,10 @@ struct SinkMetrics {
     projection_heads_sql_rows: Counter<u64>,
     projection_heads_lake_rows: Counter<u64>,
     projection_list_summaries: Counter<u64>,
+    projection_load_trace_detail: Counter<u64>,
+    iceberg_detail_prune_fallback: Counter<u64>,
     projection_heads_backfill_rows: Counter<u64>,
+    segment_projection_gc_rows: Counter<u64>,
 }
 
 static SINK_METRICS: OnceLock<SinkMetrics> = OnceLock::new();
@@ -70,9 +73,23 @@ fn sink_metrics() -> &'static SinkMetrics {
                 .u64_counter("plasm.trace_sink.projection.list_summaries.calls_total")
                 .with_description("GET /v1/traces list: projection query vs Iceberg fallback.")
                 .build(),
+            projection_load_trace_detail: m
+                .u64_counter("plasm.trace_sink.projection.load_trace_detail.calls_total")
+                .with_description("GET /v1/traces/:id detail: projection query vs Iceberg fallback.")
+                .build(),
+            iceberg_detail_prune_fallback: m
+                .u64_counter("plasm.trace_sink.iceberg.detail_prune_fallback_total")
+                .with_description(
+                    "Iceberg detail reads that retried without year_month_bucket after pruned scan returned empty.",
+                )
+                .build(),
             projection_heads_backfill_rows: m
                 .u64_counter("plasm.trace_sink.projection.heads_backfill.rows_total")
                 .with_description("Trace heads copied from Iceberg into empty SQL on startup.")
+                .build(),
+            segment_projection_gc_rows: m
+                .u64_counter("plasm.trace_sink.projection.segment_gc.rows_purged_total")
+                .with_description("Expired trace_segments rows deleted by TTL background GC.")
                 .build(),
         }
     })
@@ -103,6 +120,21 @@ impl ListSummariesSource {
         match self {
             ListSummariesSource::Projection => KeyValue::new("source", "projection"),
             ListSummariesSource::IcebergFallback => KeyValue::new("source", "iceberg_fallback"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum LoadTraceDetailSource {
+    Projection,
+    IcebergFallback,
+}
+
+impl LoadTraceDetailSource {
+    fn as_kv(self) -> KeyValue {
+        match self {
+            LoadTraceDetailSource::Projection => KeyValue::new("source", "projection"),
+            LoadTraceDetailSource::IcebergFallback => KeyValue::new("source", "iceberg_fallback"),
         }
     }
 }
@@ -147,8 +179,24 @@ pub(crate) fn record_list_summaries(source: ListSummariesSource) {
         .add(1, &[source.as_kv()]);
 }
 
+pub(crate) fn record_load_trace_detail(source: LoadTraceDetailSource) {
+    sink_metrics()
+        .projection_load_trace_detail
+        .add(1, &[source.as_kv()]);
+}
+
+pub(crate) fn record_iceberg_detail_prune_fallback() {
+    sink_metrics().iceberg_detail_prune_fallback.add(1, &[]);
+}
+
 pub(crate) fn record_heads_backfill(rows: u64) {
     if rows > 0 {
         sink_metrics().projection_heads_backfill_rows.add(rows, &[]);
+    }
+}
+
+pub(crate) fn record_segment_projection_gc(rows: u64) {
+    if rows > 0 {
+        sink_metrics().segment_projection_gc_rows.add(rows, &[]);
     }
 }

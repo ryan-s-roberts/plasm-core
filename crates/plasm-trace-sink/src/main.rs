@@ -123,9 +123,24 @@ async fn run() -> anyhow::Result<()> {
         "Iceberg SqlCatalog ready"
     );
 
-    let store: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(&connect, iceberg.clone())
-        .await
-        .context("SQL trace projections (same catalog DB as Iceberg)")?;
+    let persisted = PersistedTraceSink::connect(
+        &connect,
+        iceberg.clone(),
+        config.segment_projection_ttl_secs,
+        config.segment_projection_gc_interval_secs,
+    )
+    .await
+    .context("SQL trace projections (same catalog DB as Iceberg)")?;
+
+    persisted.start_background_tasks();
+
+    tracing::info!(
+        segment_projection_ttl_secs = config.segment_projection_ttl_secs,
+        segment_projection_gc_interval_secs = config.segment_projection_gc_interval_secs,
+        "trace segment projection TTL configured"
+    );
+
+    let store: Arc<dyn AuditSpanStore> = persisted;
 
     tracing::info!("trace projection store ready (plasm_trace_sink schema on Postgres)");
     let state = AppState::new(store);

@@ -9,6 +9,10 @@ readme = "README.md"
 name = "plasm-trace-sink"
 path = "src/main.rs"
 
+[[bench]]
+name = "trace_detail_cpu"
+harness = false
+
 [dependencies]
 # JanKaul iceberg-rust stack: SqlCatalog (Postgres) + DataFusion + Parquet on local FS.
 anyhow = { workspace = true }
@@ -40,6 +44,7 @@ sqlx = { version = "0.8.6", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+criterion = { workspace = true }
 tempfile = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 tower = { workspace = true }

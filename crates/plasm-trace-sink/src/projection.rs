@@ -1,24 +1,43 @@
 //! Hot projections on the same SqlCatalog Postgres database as Iceberg (`plasm_trace_sink` schema).
 //! Iceberg remains the durable lake; this layer accelerates idempotency, trace head lookups, and listing.
+//!
+//! **`trace_segments`** is a bounded hot cache for detail reads. When
+//! [`ProjectionStore::segment_ttl_secs`] is non-zero, traces older than the TTL fall back to Iceberg
+//! and expired rows are purged in the background.
 
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use sqlx::Row;
 use uuid::Uuid;
 
 use crate::append_port::{TraceListFilter, TraceListStatusFilter};
-use crate::model::{TraceHeadRow, TraceSummary, TraceTotals};
+use crate::iceberg_writer::trace_detail_record_from_audit_event;
+use crate::metrics::record_segment_projection_gc;
+use crate::model::{
+    AuditEvent, DurableTraceDetail, TraceDetailRecord, TraceHeadRow, TraceSummary, TraceTotals,
+    AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
+};
 use crate::trace_totals::trace_totals_from_head_row;
 
 /// Connection to projection tables (same Postgres as JanKaul SqlCatalog).
 pub struct ProjectionStore {
     pool: PgPool,
+    /// `0` = no TTL (segments kept until manual purge).
+    segment_ttl_secs: u64,
+    segment_gc_interval_secs: u64,
 }
 
 impl ProjectionStore {
     /// Connect using the same JDBC URL as Iceberg SqlCatalog (`postgresql://…` / `postgres://…` only).
-    pub async fn connect(catalog_url: &str) -> anyhow::Result<Self> {
+    pub async fn connect(
+        catalog_url: &str,
+        segment_ttl_secs: u64,
+        segment_gc_interval_secs: u64,
+    ) -> anyhow::Result<Self> {
         let url = catalog_url.trim();
         if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
             anyhow::bail!(
@@ -30,7 +49,51 @@ impl ProjectionStore {
             .max_connections(8)
             .connect(url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            segment_ttl_secs,
+            segment_gc_interval_secs,
+        })
+    }
+
+    #[must_use]
+    pub fn segment_ttl_enabled(&self) -> bool {
+        self.segment_ttl_secs > 0
+    }
+
+    /// Spawn periodic `trace_segments` purge when TTL is enabled.
+    pub fn spawn_segment_gc_loop(self: Arc<Self>) {
+        if !self.segment_ttl_enabled() {
+            return;
+        }
+        let interval_secs = self.segment_gc_interval_secs;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                match self.purge_expired_trace_segments().await {
+                    Ok(n) => {
+                        record_segment_projection_gc(n);
+                        if n > 0 {
+                            tracing::info!(
+                                target: "plasm_trace_sink.projection",
+                                rows = n,
+                                ttl_secs = self.segment_ttl_secs,
+                                "purged expired trace_segments projection rows"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "plasm_trace_sink.projection",
+                            error = %e,
+                            "trace_segments TTL purge failed"
+                        );
+                    }
+                }
+            }
+        });
     }
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
@@ -243,6 +306,197 @@ impl ProjectionStore {
         }
         Ok(summaries)
     }
+
+    /// Hot read path for `GET /v1/traces/:id` — returns `None` when the head or segment rows are missing.
+    pub async fn load_trace_detail(
+        &self,
+        tenant_partition: &str,
+        trace_id: Uuid,
+    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+        let head = self.load_trace_head(tenant_partition, trace_id).await?;
+        let Some(head) = head else {
+            return Ok(None);
+        };
+        if !self.trace_head_within_segment_ttl(&head) {
+            return Ok(None);
+        }
+        let records = self.load_trace_segment_records(trace_id, tenant_partition).await?;
+        if records.is_empty() {
+            return Ok(None);
+        }
+        let totals = trace_totals_from_head_row(&head);
+        Ok(Some(DurableTraceDetail {
+            summary: TraceSummary {
+                trace_id,
+                mcp_session_id: head.mcp_session_id.unwrap_or_default(),
+                status: head.status,
+                started_at_ms: head.started_at_ms.max(0) as u64,
+                ended_at_ms: head.ended_at_ms.map(|v| v.max(0) as u64),
+                project_slug: head.project_slug,
+                tenant_id: head.tenant_id,
+                totals,
+            },
+            records,
+        }))
+    }
+
+    pub async fn insert_trace_segments(&self, events: &[AuditEvent]) -> anyhow::Result<()> {
+        let segment_events: Vec<&AuditEvent> = events
+            .iter()
+            .filter(|e| e.event_kind == AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT)
+            .collect();
+        if segment_events.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        for ev in segment_events {
+            let Some(detail_rec) = trace_detail_record_from_audit_event(ev) else {
+                continue;
+            };
+            let record_json = serde_json::to_string(&detail_rec.record)?;
+            sqlx::query(
+                r#"INSERT INTO plasm_trace_sink.trace_segments (
+                    event_id, trace_id, tenant_partition, emitted_at, call_index, line_index,
+                    sort_key, record_kind, record_json
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                ON CONFLICT (event_id) DO NOTHING"#,
+            )
+            .bind(ev.event_id)
+            .bind(ev.trace_id)
+            .bind(ev.tenant_partition())
+            .bind(ev.emitted_at)
+            .bind(ev.call_index)
+            .bind(ev.line_index)
+            .bind(ev.emitted_at.timestamp_millis())
+            .bind(&detail_rec.kind)
+            .bind(record_json)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// After an Iceberg cold read, persist segment rows so the next detail fetch hits SQL.
+    pub async fn backfill_trace_segments_from_detail(
+        &self,
+        tenant_partition: &str,
+        trace_id: Uuid,
+        records: &[TraceDetailRecord],
+    ) -> anyhow::Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        for rec in records {
+            let event_id = rec
+                .record
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .unwrap_or_else(Uuid::new_v4);
+            let emitted_at = rec
+                .record
+                .get("emitted_at")
+                .and_then(|v| v.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(chrono::Utc::now);
+            let call_index = rec
+                .record
+                .get("call_index")
+                .and_then(|v| v.as_i64());
+            let line_index = rec
+                .record
+                .get("line_index")
+                .and_then(|v| v.as_i64());
+            let record_json = serde_json::to_string(&rec.record)?;
+            sqlx::query(
+                r#"INSERT INTO plasm_trace_sink.trace_segments (
+                    event_id, trace_id, tenant_partition, emitted_at, call_index, line_index,
+                    sort_key, record_kind, record_json
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                ON CONFLICT (event_id) DO NOTHING"#,
+            )
+            .bind(event_id)
+            .bind(trace_id)
+            .bind(tenant_partition)
+            .bind(emitted_at)
+            .bind(call_index)
+            .bind(line_index)
+            .bind(emitted_at.timestamp_millis())
+            .bind(&rec.kind)
+            .bind(record_json)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Whether an Iceberg cold read should warm `trace_segments` (skip when outside TTL).
+    #[must_use]
+    pub fn summary_within_segment_ttl(&self, summary: &TraceSummary) -> bool {
+        summary_within_segment_ttl(self.segment_ttl_secs, summary)
+    }
+
+    pub async fn purge_expired_trace_segments(&self) -> anyhow::Result<u64> {
+        let Some(cutoff) = segment_ttl_cutoff(self.segment_ttl_secs) else {
+            return Ok(0);
+        };
+        let r = sqlx::query("DELETE FROM plasm_trace_sink.trace_segments WHERE emitted_at < $1")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+
+    fn trace_head_within_segment_ttl(&self, head: &TraceHeadRow) -> bool {
+        trace_head_within_segment_ttl(self.segment_ttl_secs, head)
+    }
+
+    pub async fn load_trace_head(
+        &self,
+        tenant_partition: &str,
+        trace_id: Uuid,
+    ) -> anyhow::Result<Option<TraceHeadRow>> {
+        let row = sqlx::query(
+            "SELECT trace_id, tenant_partition, tenant_id, project_slug, mcp_session_id, \
+             status, started_at_ms, ended_at_ms, updated_at_ms, expression_lines, \
+             max_call_index, totals_json, workspace_slug \
+             FROM plasm_trace_sink.trace_heads \
+             WHERE trace_id = $1 AND tenant_partition = $2",
+        )
+        .bind(trace_id)
+        .bind(tenant_partition)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| row_to_head_pg(&r)).transpose()
+    }
+
+    async fn load_trace_segment_records(
+        &self,
+        trace_id: Uuid,
+        tenant_partition: &str,
+    ) -> anyhow::Result<Vec<TraceDetailRecord>> {
+        let rows = sqlx::query(
+            r#"SELECT record_kind, record_json FROM plasm_trace_sink.trace_segments
+               WHERE trace_id = $1 AND tenant_partition = $2
+               ORDER BY sort_key ASC, call_index ASC NULLS LAST, line_index ASC NULLS LAST"#,
+        )
+        .bind(trace_id)
+        .bind(tenant_partition)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let kind: String = r.try_get("record_kind")?;
+            let json: String = r.try_get("record_json")?;
+            let record: serde_json::Value = serde_json::from_str(&json)?;
+            out.push(TraceDetailRecord { kind, record });
+        }
+        Ok(out)
+    }
 }
 
 fn row_to_head_pg(r: &sqlx::postgres::PgRow) -> anyhow::Result<TraceHeadRow> {
@@ -317,5 +571,90 @@ async fn migrate_postgres(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS plasm_trace_sink.trace_segments (
+            event_id UUID PRIMARY KEY,
+            trace_id UUID NOT NULL,
+            tenant_partition TEXT NOT NULL,
+            emitted_at TIMESTAMPTZ NOT NULL,
+            call_index BIGINT,
+            line_index BIGINT,
+            sort_key BIGINT NOT NULL,
+            record_kind TEXT NOT NULL,
+            record_json TEXT NOT NULL
+        )"#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"CREATE INDEX IF NOT EXISTS ix_plasm_tsink_seg_trace
+           ON plasm_trace_sink.trace_segments (trace_id, tenant_partition)"#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"CREATE INDEX IF NOT EXISTS ix_plasm_tsink_seg_emitted_at
+           ON plasm_trace_sink.trace_segments (emitted_at)"#,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+fn segment_ttl_cutoff(ttl_secs: u64) -> Option<DateTime<Utc>> {
+    if ttl_secs == 0 {
+        return None;
+    }
+    Some(Utc::now() - chrono::Duration::seconds(ttl_secs as i64))
+}
+
+fn trace_head_within_segment_ttl(ttl_secs: u64, head: &TraceHeadRow) -> bool {
+    let Some(cutoff) = segment_ttl_cutoff(ttl_secs) else {
+        return true;
+    };
+    head.updated_at_ms >= cutoff.timestamp_millis()
+}
+
+fn summary_within_segment_ttl(ttl_secs: u64, summary: &TraceSummary) -> bool {
+    let Some(cutoff) = segment_ttl_cutoff(ttl_secs) else {
+        return true;
+    };
+    let anchor_ms = summary.ended_at_ms.unwrap_or(summary.started_at_ms) as i64;
+    anchor_ms >= cutoff.timestamp_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn head(updated_at_ms: i64) -> TraceHeadRow {
+        TraceHeadRow {
+            trace_id: Uuid::new_v4(),
+            tenant_partition: "t".into(),
+            tenant_id: "t".into(),
+            project_slug: "main".into(),
+            mcp_session_id: None,
+            status: "completed".into(),
+            started_at_ms: updated_at_ms - 1000,
+            ended_at_ms: Some(updated_at_ms),
+            updated_at_ms,
+            expression_lines: 1,
+            max_call_index: Some(0),
+            totals_json: String::new(),
+            workspace_slug: String::new(),
+        }
+    }
+
+    #[test]
+    fn trace_head_ttl_disabled_always_hot() {
+        let h = head(0);
+        assert!(trace_head_within_segment_ttl(0, &h));
+    }
+
+    #[test]
+    fn trace_head_outside_ttl_is_cold() {
+        let old_ms = Utc::now().timestamp_millis() - 86400 * 1000;
+        assert!(!trace_head_within_segment_ttl(3600, &head(old_ms)));
+    }
 }

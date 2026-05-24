@@ -15,6 +15,61 @@ pub fn year_month_bucket_utc(dt: DateTime<Utc>) -> i32 {
     dt.year() * 100 + dt.month() as i32
 }
 
+/// Distinct `year_month_bucket` values spanning a trace's wall-time window (UTC).
+///
+/// Used to add `year_month_bucket IN (...)` when reading `audit_events` from Iceberg so
+/// detail scans touch only the monthly partitions the trace actually used (typically one).
+pub fn year_month_buckets_for_trace_ms(started_at_ms: i64, ended_at_ms: Option<i64>) -> Vec<i32> {
+    let start_ms = started_at_ms.max(0);
+    let end_ms = ended_at_ms.unwrap_or(started_at_ms).max(start_ms);
+    let start = ms_to_utc_datetime(start_ms);
+    let end = ms_to_utc_datetime(end_ms);
+    let mut buckets = Vec::new();
+    let (mut y, mut m) = (start.year(), start.month());
+    let (end_y, end_m) = (end.year(), end.month());
+    loop {
+        buckets.push(y * 100 + m as i32);
+        if y == end_y && m == end_m {
+            break;
+        }
+        if m == 12 {
+            y += 1;
+            m = 1;
+        } else {
+            m += 1;
+        }
+    }
+    buckets
+}
+
+fn ms_to_utc_datetime(ms: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp_millis(ms).unwrap_or_else(Utc::now)
+}
+
+#[cfg(test)]
+mod year_month_tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    #[test]
+    fn single_month_trace_one_bucket() {
+        let t = Utc.with_ymd_and_hms(2026, 4, 7, 10, 0, 0).unwrap();
+        let ms = t.timestamp_millis();
+        assert_eq!(year_month_buckets_for_trace_ms(ms, Some(ms)), vec![202604]);
+    }
+
+    #[test]
+    fn cross_month_trace_two_buckets() {
+        let start = Utc.with_ymd_and_hms(2026, 3, 31, 23, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 4, 1, 1, 0, 0).unwrap();
+        assert_eq!(
+            year_month_buckets_for_trace_ms(start.timestamp_millis(), Some(end.timestamp_millis())),
+            vec![202603, 202604]
+        );
+    }
+}
+
 /// Denormalized span row for fast trace reads + billing projection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceSpanRow {

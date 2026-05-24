@@ -9,9 +9,9 @@ use crate::append_port::{AuditSpanReader, AuditSpanWriter, TenantId, TimeWindow,
 use crate::config::IcebergConnectParams;
 use crate::iceberg_writer::IcebergSink;
 use crate::metrics::{
-    record_heads_backfill, record_list_summaries, record_projection_dedupe,
-    record_projection_trace_heads, ListSummariesSource, ProjectionDedupeHits,
-    ProjectionHeadRowCounts,
+    record_heads_backfill, record_list_summaries, record_load_trace_detail,
+    record_projection_dedupe, record_projection_trace_heads, ListSummariesSource,
+    LoadTraceDetailSource, ProjectionDedupeHits, ProjectionHeadRowCounts,
 };
 use crate::model::{AuditEvent, DurableTraceDetail, TraceHeadRow, TraceSpanRow, TraceSummary};
 use crate::projection::ProjectionStore;
@@ -28,8 +28,17 @@ impl PersistedTraceSink {
     pub async fn connect(
         params: &IcebergConnectParams,
         iceberg: Arc<IcebergSink>,
+        segment_ttl_secs: u64,
+        segment_gc_interval_secs: u64,
     ) -> anyhow::Result<Arc<Self>> {
-        let projection = Arc::new(ProjectionStore::connect(params.catalog.as_str()).await?);
+        let projection = Arc::new(
+            ProjectionStore::connect(
+                params.catalog.as_str(),
+                segment_ttl_secs,
+                segment_gc_interval_secs,
+            )
+            .await?,
+        );
         projection.migrate().await?;
 
         let n = projection.count_trace_heads().await?;
@@ -49,6 +58,11 @@ impl PersistedTraceSink {
             projection,
         }))
     }
+
+    /// Background purge of expired `trace_segments` rows (no-op when TTL disabled).
+    pub fn start_background_tasks(self: &Arc<Self>) {
+        Arc::clone(&self.projection).spawn_segment_gc_loop();
+    }
 }
 
 #[async_trait]
@@ -56,6 +70,7 @@ impl AuditSpanWriter for PersistedTraceSink {
     async fn append_audit_events(&self, events: &[AuditEvent]) -> anyhow::Result<()> {
         self.iceberg.append_audit_events(events).await?;
         self.projection.insert_ingested_events(events).await?;
+        self.projection.insert_trace_segments(events).await?;
         Ok(())
     }
 
@@ -72,6 +87,7 @@ impl AuditSpanWriter for PersistedTraceSink {
             .append_audit_events_with_trace_spans(events, spans)
             .await?;
         self.projection.insert_ingested_events(events).await?;
+        self.projection.insert_trace_segments(events).await?;
         Ok(())
     }
 
@@ -117,6 +133,23 @@ impl AuditSpanReader for PersistedTraceSink {
 
     async fn load_trace_events(&self, trace_id: uuid::Uuid) -> anyhow::Result<Vec<AuditEvent>> {
         self.iceberg.load_trace_events(trace_id).await
+    }
+
+    async fn load_trace_events_for_tenant(
+        &self,
+        tenant: &TenantId,
+        trace_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<AuditEvent>> {
+        let tenant_part = tenant.as_str();
+        let sql_head = self
+            .projection
+            .load_trace_head(tenant_part, trace_id)
+            .await
+            .ok()
+            .flatten();
+        self.iceberg
+            .load_trace_events_for_tenant_with_head(tenant_part, trace_id, sql_head.as_ref())
+            .await
     }
 
     async fn load_latest_trace_heads(
@@ -185,6 +218,54 @@ impl AuditSpanReader for PersistedTraceSink {
         tenant: &TenantId,
         trace_id: uuid::Uuid,
     ) -> anyhow::Result<Option<DurableTraceDetail>> {
-        self.iceberg.load_trace_detail(tenant, trace_id).await
+        let tenant_part = tenant.as_str();
+        match self
+            .projection
+            .load_trace_detail(tenant_part, trace_id)
+            .await
+        {
+            Ok(Some(detail)) => {
+                record_load_trace_detail(LoadTraceDetailSource::Projection);
+                return Ok(Some(detail));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target: "plasm_trace_sink.projection",
+                    error = %e,
+                    %trace_id,
+                    "load_trace_detail: projection query failed; falling back to Iceberg"
+                );
+            }
+        }
+
+        let sql_head = self
+            .projection
+            .load_trace_head(tenant_part, trace_id)
+            .await
+            .ok()
+            .flatten();
+        let detail = self
+            .iceberg
+            .load_trace_detail_with_head(tenant, trace_id, sql_head.as_ref())
+            .await?;
+        record_load_trace_detail(LoadTraceDetailSource::IcebergFallback);
+        if let Some(ref d) = detail {
+            if self.projection.summary_within_segment_ttl(&d.summary) {
+                if let Err(e) = self
+                    .projection
+                    .backfill_trace_segments_from_detail(tenant_part, trace_id, &d.records)
+                    .await
+                {
+                    tracing::warn!(
+                        target: "plasm_trace_sink.projection",
+                        error = %e,
+                        %trace_id,
+                        "load_trace_detail: segment backfill after Iceberg read failed"
+                    );
+                }
+            }
+        }
+        Ok(detail)
     }
 }
