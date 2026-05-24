@@ -216,7 +216,7 @@ async fn duplicate_event_id_skipped_after_reconnect_iceberg() {
     drop(app1);
 
     let sink2 = Arc::new(IcebergSink::connect(&connect).await.expect("reconnect"));
-    let store2: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(&connect, sink2)
+    let store2: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(&connect, sink2, 0, 300)
         .await
         .expect("reconnect projections");
     let state2 = AppState::new(store2);
