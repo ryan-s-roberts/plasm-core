@@ -44,6 +44,8 @@ bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
 
 ## CircleCI (monorepo tag pipelines)
 
+Monorepo CircleCI uses two workflows: **`ci`** (branch pushes — `validate` + `appliance_tui_pty` + Vultr bake) and **`oss_release`** (version tags only — no full test suite). Install-manifest commits from `publish-oss-install-site.sh` include **`[skip ci]`** so post-release JSON sync does not re-run `validate`. Tag pushes should not duplicate the same `cargo nextest` + `mix test` job that already ran on `main` before the release tag.
+
 Configure a **project or context** environment variable:
 
 - **`GH_TOKEN`** — PAT with **Contents** + **Releases** on `PlasmTools/plasm-core` and **Contents** write on `ryan-s-roberts/plasm` (Circle release upload + optional install manifest push).
