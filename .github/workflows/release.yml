@@ -68,19 +68,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  update_install_site:
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger monorepo install site sync
-        env:
-          GH_TOKEN: ${{ secrets.PLASM_MONOREPO_DISPATCH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "PLASM_MONOREPO_DISPATCH_TOKEN not set — skip install site dispatch (run publish-oss-install-site.sh manually)" >&2
-            exit 0
-          fi
-          gh api repos/ryan-s-roberts/plasm/dispatches \
-            -f event_type=oss-release-published \
-            -f "client_payload[tag]=${GITHUB_REF_NAME}"
