@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-05-24
+
+### Fixed
+
+- **CI:** Circle install publish uses `PLASM_MONOREPO_GH_TOKEN` for monorepo git push (avoids 403 from plasm-core-only `GH_TOKEN`).
+
 ## [0.1.13] - 2026-05-24
 
 ### Fixed
