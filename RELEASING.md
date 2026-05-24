@@ -28,12 +28,13 @@ The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 2. Update **`CHANGELOG.md`** under `[Unreleased]` → move notes under a `## [X.Y.Z]` heading with the release date.
 3. Commit and push, then create an **annotated tag** `vX.Y.Z` pointing at that commit (`git tag -a vX.Y.Z -m "Release vX.Y.Z"`).
 4. **Push the tag** to GitHub:
-   - **plasm-core** (OSS repo): workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) builds all four triples natively and publishes three tarballs per triple + `SHA256SUMS`. When `PLASM_MONOREPO_DISPATCH_TOKEN` is configured, it also triggers the monorepo **OSS install site** workflow so `plasm.tools/get` updates without a manual step.
+   - **plasm-core** (OSS repo): workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) builds all four triples natively and publishes three tarballs per triple + `SHA256SUMS`. When `PLASM_MONOREPO_DISPATCH_TOKEN` is configured, it dispatches the monorepo **OSS install site** workflow (`repository_dispatch: oss-release-published`).
+   - **Private monorepo (`plasm`)**: pushing tag `v*.*.*` runs [`.github/workflows/oss-install-site.yml`](../.github/workflows/oss-install-site.yml) on GitHub Actions (waits for release tarballs, commits `portal/public/install/oss-release.json`, optional portal image push). CircleCI tag pipelines are a second path (see below).
    - **Private monorepo (`plasm`)** with CircleCI: on tag `v*.*.*`, after `validate` and `appliance_tui_pty`:
      - **`oss_release_linux`** — Docker Buildx `linux/amd64` via [`docker/plasm-stack.Dockerfile`](../docker/plasm-stack.Dockerfile) `--target oss-release-bundle`.
      - **`oss_release_macos`** — native `cargo` on a **Darwin** machine runner (host triple only).
      - Both run [`scripts/ci/circle-oss-release.sh`](../scripts/ci/circle-oss-release.sh) and **merge** `SHA256SUMS` into the same GitHub release (`--clobber` uploads).
-     - **`oss_publish_install_site`** (after both OSS release jobs) — [`scripts/ci/publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh): regenerate `oss-release.json`, commit to `main`, push **`plasm-portal`** so [plasm.tools/get](https://plasm.tools/get/) matches the release.
+     - **`oss_publish_install_site`** (after both OSS release jobs) — dispatches **OSS install site** GHA when `PLASM_MONOREPO_DISPATCH_TOKEN` is set, else runs [`publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh) `--git --portal` on the runner.
      - **`release_build_and_push_vultr`** — full image bake from updated `main` (includes portal with fresh manifest).
 5. **Manual fallback** (if CI dispatch is unavailable):
 
@@ -46,6 +47,7 @@ bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
 Configure a **project or context** environment variable:
 
 - **`GH_TOKEN`** — PAT with **Contents** + **Releases** on the OSS repo (default: `PlasmTools/plasm-core`).
+- **`PLASM_MONOREPO_DISPATCH_TOKEN`** (recommended) — PAT with **Contents** + **Actions** on `ryan-s-roberts/plasm` so plasm-core release and CircleCI can dispatch the install-site workflow.
 
 Optional:
 
