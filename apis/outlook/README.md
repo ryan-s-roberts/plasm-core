@@ -1,8 +1,15 @@
 # Outlook (Microsoft Graph) — Plasm CGS
 
-Wave 1 in this tree models the signed-in mailbox as three agent-facing entities: `MailFolder`, `Message`, and `Attachment`. The focus is mailbox navigation and triage: list folders, descend into child folders, list messages across the mailbox or within a folder, inspect a full message, list attachments, download attachment content, and perform basic mailbox state changes (`message_update`, `message_move`, `message_send`, `message_delete`). Later waves should add calendar/event surfaces, richer composition flows, and conversation-level abstractions only when they compress the domain rather than mirror Graph RPC paths.
+Wave 3 adds **`Calendar`** and **`Event`** entities (list/get/create/delete), plus Teams **`ChannelMessage`** read/post and **`chat_message_send`**.
 
-Docs consulted:
+Wave 2 added **`message_create`**, **`views.mailbox_triage`**, and **`query_scoped_bindings`** on folder/message relations.
+
+- <https://learn.microsoft.com/en-us/graph/api/user-list-calendars?view=graph-rest-1.0>
+- <https://learn.microsoft.com/en-us/graph/api/user-list-events?view=graph-rest-1.0>
+- <https://learn.microsoft.com/en-us/graph/api/event-create?view=graph-rest-1.0>
+- <https://learn.microsoft.com/en-us/graph/api/event-delete?view=graph-rest-1.0>
+
+Docs consulted (mail):
 - <https://learn.microsoft.com/en-us/graph/api/user-list-mailfolders?view=graph-rest-1.0&tabs=http>
 - <https://learn.microsoft.com/en-us/graph/api/mailfolder-list-childfolders?view=graph-rest-1.0&tabs=http>
 - <https://learn.microsoft.com/en-us/graph/api/mailfolder-get?view=graph-rest-1.0&tabs=http>
@@ -25,6 +32,8 @@ Docs consulted:
   - Read-only navigation: `Mail.ReadBasic` or `Mail.Read`
   - Full message bodies and attachment content: `Mail.Read`
   - Message state changes, moves, draft send, delete: `Mail.ReadWrite`
+  - Calendar read: `Calendars.Read` or `Calendars.ReadWrite`
+  - Calendar create/delete: `Calendars.ReadWrite`
 - If you later want an application-only mailbox catalog, author a separate `/users/{id}`-scoped CGS slice rather than overloading this one.
 
 ```bash
@@ -41,18 +50,32 @@ cargo run -p plasm --bin plasm-cgs -- \
   - root folders via `mail_folder_query`
   - child folders via `mail_folder_child_query`
   - messages via `message_folder_query`
+- `MailboxTriage`
+  - composed triage via `mailbox_triage_query` / `mailbox_triage_get` (view over root folders)
 - `Message`
   - mailbox-wide messages via `message_query`
+  - draft creation via `message_create`
   - detail via `message_get`
   - attachments via `attachment_query`
   - triage writes via `message_update`, `message_move`, `message_send`, `message_delete`
 - `Attachment`
   - attachment metadata via `attachment_query`
   - attachment content via `attachment_get`
+- `Calendar`
+  - list via `calendar_query`
+  - detail via `calendar_get`
+  - events via `event_calendar_query`
+- `Event`
+  - mailbox-wide list via `event_query`
+  - detail via `event_get`
+  - create via `event_create`
+  - delete via `event_delete`
 
 ## Known limitations
 
-- Microsoft Graph mailbox collections commonly paginate with `@odata.nextLink` as an absolute URL in the response body. Plasm's current HTTP pagination machinery advances query/body params or `Link` headers, not "follow this whole URL from JSON", so the list capabilities in this wave return the first page only. The mappings pin `$top=100` to make that first page as useful as possible.
+- Mail **delta sync** (`/messages/delta`, `@odata.deltaLink` token carry-forward) is not modeled — requires session-held delta tokens and tombstone decode (future core/catalog work).
+
+- List capabilities paginate via Microsoft Graph `@odata.nextLink` using CML `pagination.location: response_next_url`. The default query returns the first page (`$top=100`); use `page(pg1)` (or a postfix limit) to follow additional pages when the service returns a next link.
 - `Attachment` detail still requires an explicit `messageId` scope parameter on `attachment_get`. The relation `Message.attachments` lists attachment rows cleanly, but the current runtime does not automatically carry the parent message identity into a later attachment detail call.
 
 ## Validation note

@@ -441,6 +441,26 @@ materialize:
 
 See `apis/cloudflare/domain.yaml` (`views.security_overview` with computed `security_surface_status`), `apis/grafana/domain.yaml` (`views.deeplink_generate` with computed `url`), and `mappings.yaml` (`transport: view`).
 
+#### Composed views for work tracking and mail
+
+Use this table before adding `views:` to issue trackers (Jira, Linear) or mail (Gmail) catalogs:
+
+| Agent need | Prefer | Example |
+|------------|--------|---------|
+| List row → detail upgrade | **Hydration** (entity has `query` + `get`) | Gmail `message_list` → `message_get`; Linear `issue_query` → `issue_get` |
+| Child collection on parent GET | **`from_parent_get`** or **`query_scoped`** relation | Jira `Issue.comments`; Linear `Issue.labels` |
+| Multi-GET aggregate (counts, booleans, status label) | **`views:`** with `node_row_count` / `node_any_row_field_equals` / `kind: computed` | Jira `views.issue_transition_context`; Cloudflare `views.security_overview` |
+| Assembled browse / deeplink URL | **`views:`** with **`output.kind: computed`** | Linear `views.issue_navigation_link`; Jira `views.issue_browse_link`; Grafana `views.deeplink_generate` |
+| Reply / threading context before an action | **`views:`** read model **or** action **`invoke_preflight`** | Gmail `views.reply_context` (explicit DOMAIN teaching); `message_reply` keeps preflight for send |
+| Singleton + one scoped GET | **`views:`** with empty bind + literal bind | Gmail `views.mailbox_snapshot` (`profile_get` + `label_get` id=`INBOX`) |
+| Sprint / cycle board (filter inner list from prior node output) | **Scoped query capability first** (or future template binds) | Not a pure view today — add `issue_by_sprint_jql` / GraphQL filter cap, then optional view wrapper |
+
+**Mail-specific:** Header extraction stays on entity fields via **`derive: name_value_array_lookup`** on `Message` — do not duplicate in views unless composing across capabilities.
+
+**Issue-tracker-specific:** When the vendor GET already returns a fat graph (Linear `issue_get` GraphQL), views add value for **cross-capability snapshots** (issue + transitions) and **computed URLs**, not for re-fetching the same GET payload.
+
+Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_triage_context`, `lang_item_link`).
+
 ### Action output: `provides:` vs `output.side_effect`
 
 `kind: action` must declare **how the response is modeled**:
@@ -697,7 +717,8 @@ Rust ground truth: [`PaginationConfig`](../../../crates/plasm-cml/src/cml.rs) in
 
 ```yaml
 pagination:
-  location: query            # query | body | link_header | block_range
+  location: query            # query | body | link_header | response_next_url | block_range
+  response_next_url_field: "@odata.nextLink"   # optional; when location: response_next_url
   body_merge_path: [variables, o, paginate]   # optional; when location: body
   response_prefix: [data, issues, pageInfo]   # optional; scope for stop_when / from_response
   stop_when:
@@ -722,6 +743,7 @@ Decode shape for list bodies remains on the mapping's `response:` / decoder.
 | `query` (default) | Merge `params` into the query string. |
 | `body` | Merge `params` under `body_merge_path` (or top-level JSON body). |
 | `link_header` | Next page from `Link: …; rel="next"` (Live mode; replay caveats). |
+| `response_next_url` | Next page from an absolute URL string in the JSON body (e.g. Graph `@odata.nextLink`). First-page `params` still apply; continuation fetches the stored URL as-is (Live mode; replay caveats). |
 | `block_range` | EVM log ranges (`from_block` / `to_block`). |
 
 #### Inference heuristics (LLM / authoring)
@@ -735,6 +757,7 @@ Decode shape for list bodies remains on the mapping's `response:` / decoder.
 | Schema `Paginated*` with `count`, `next`, `previous`, `results` | Offset/page + `response_prefix` if nested |
 | `has_more` + `data` | `stop_when` + `from_response` on nested `pageInfo` |
 | `next_cursor` + `results` | Cursor param + `from_response` |
+| `@odata.nextLink` + `value` | `location: response_next_url`, optional `response_next_url_field`, `$top` / `$select` as first-page `params` |
 | No list pagination parameters | omit `pagination` |
 
 #### GraphQL (`transport: graphql`)

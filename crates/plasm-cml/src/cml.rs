@@ -225,6 +225,10 @@ pub struct PaginationConfig {
     /// (short-page heuristic — last page has fewer items than requested).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_when: Option<PaginationStop>,
+    /// When `location` is [`PaginationLocation::ResponseNextUrl`], read the next-page
+    /// absolute URL from this field in the response object (default `@odata.nextLink`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_next_url_field: Option<String>,
 }
 
 /// How a single pagination parameter advances across pages.
@@ -289,6 +293,10 @@ pub enum PaginationLocation {
     Body,
     /// No params needed — the next-page URL comes from the `Link: rel=next` header.
     LinkHeader,
+    /// Next page from an absolute URL string field in the JSON body (e.g. Microsoft
+    /// Graph `@odata.nextLink`). First-page query/body params still apply; continuation
+    /// pages fetch the stored URL as-is.
+    ResponseNextUrl,
     /// EVM block-range pagination: `from_block`/`to_block` injected per-page.
     BlockRange,
 }
@@ -1325,5 +1333,23 @@ mod tests {
         let mp = compiled.multipart.as_ref().unwrap();
         assert_eq!(mp.parts.len(), 1);
         assert_eq!(mp.parts[0].name, "file");
+    }
+
+    #[test]
+    fn pagination_config_deserializes_response_next_url() {
+        let cfg: PaginationConfig = serde_json::from_value(serde_json::json!({
+            "location": "response_next_url",
+            "response_next_url_field": "@odata.nextLink",
+            "params": {
+                "$top": { "fixed": 100 }
+            }
+        }))
+        .expect("parse pagination block");
+        assert_eq!(cfg.location, PaginationLocation::ResponseNextUrl);
+        assert_eq!(
+            cfg.response_next_url_field.as_deref(),
+            Some("@odata.nextLink")
+        );
+        assert_eq!(cfg.params.get("$top").unwrap().fixed_as_u32(), Some(100));
     }
 }

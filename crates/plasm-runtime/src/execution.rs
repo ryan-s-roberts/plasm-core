@@ -1286,7 +1286,7 @@ impl ExecutionEngine {
                     if let Some(url) = state.next_absolute_url.take() {
                         if mode != ExecutionMode::Live {
                             Err(RuntimeError::ConfigurationError {
-                                message: "link_header pagination beyond the first page requires Live execution mode (replay/hybrid do not store Link headers)".to_string(),
+                                message: "absolute-URL pagination beyond the first page requires Live execution mode (replay/hybrid do not store Link headers or body next URLs)".to_string(),
                             })?;
                         }
                         let (j, link) = with_dispatch_entity(
@@ -3873,6 +3873,8 @@ fn pagination_default_limit(pconf: &PaginationConfig) -> u32 {
         "maxResults",
         "max_results",
         "first",
+        "$top",
+        "top",
     ];
     for (name, param) in &pconf.params {
         let is_size_like = size_names.contains(&name.as_str())
@@ -4058,7 +4060,7 @@ pub(crate) fn pagination_context_map<'a>(
 struct PaginationLoopState {
     /// Current value for each param. `None` = `FromResponse` not yet received.
     param_values: indexmap::IndexMap<String, Option<serde_json::Value>>,
-    /// Next-page absolute URL (LinkHeader location only).
+    /// Next-page absolute URL (`LinkHeader` and `ResponseNextUrl` locations).
     next_absolute_url: Option<String>,
     /// Page size used on the last request (for short-page heuristic).
     last_requested_limit: u32,
@@ -4191,7 +4193,8 @@ impl PaginationLoopState {
             return Ok(());
         }
 
-        // LinkHeader: no params to inject — URL comes from response header.
+        // LinkHeader / ResponseNextUrl: no params to inject on absolute-URL continuations;
+        // first-page params for ResponseNextUrl are injected via the Query arm below.
         if pconf.location == plasm_compile::PaginationLocation::LinkHeader {
             self.last_requested_limit = default_lim;
             return Ok(());
@@ -4245,7 +4248,8 @@ impl PaginationLoopState {
 
             let plasm_val = json_to_plasm_value(&value);
             match pconf.location {
-                plasm_compile::PaginationLocation::Query => {
+                plasm_compile::PaginationLocation::Query
+                | plasm_compile::PaginationLocation::ResponseNextUrl => {
                     compiled_query_insert(compiled, name, plasm_val)?;
                 }
                 plasm_compile::PaginationLocation::Body => {
@@ -4292,6 +4296,28 @@ impl PaginationLoopState {
         // LinkHeader: next URL from response header.
         if pconf.location == plasm_compile::PaginationLocation::LinkHeader {
             let Some(url) = link_next.filter(|u| !u.is_empty()) else {
+                return Ok(false);
+            };
+            self.next_absolute_url = Some(url.to_string());
+            return Ok(true);
+        }
+
+        // ResponseNextUrl: next URL from a JSON body field (e.g. Graph @odata.nextLink).
+        if pconf.location == plasm_compile::PaginationLocation::ResponseNextUrl {
+            let field = pconf
+                .response_next_url_field
+                .as_deref()
+                .unwrap_or("@odata.nextLink");
+            let url = if let Some(prefix) =
+                pconf.response_prefix.as_ref().filter(|p| !p.is_empty())
+            {
+                pagination_context_map(response, Some(prefix.as_slice()))
+                    .ok()
+                    .and_then(|resp| resp.get(field).and_then(|v| v.as_str()))
+            } else {
+                response.get(field).and_then(|v| v.as_str())
+            };
+            let Some(url) = url.filter(|u| !u.is_empty()) else {
                 return Ok(false);
             };
             self.next_absolute_url = Some(url.to_string());

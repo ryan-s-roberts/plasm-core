@@ -1,8 +1,6 @@
 # Microsoft Teams (Microsoft Graph) — Plasm CGS
 
-A **wave‑1** [Plasm](../../README.md) domain for **Microsoft Teams** via **Microsoft Graph** `v1.0`: teams the signed-in user has joined, plus **get team by id**. The CGS compresses the Graph RPC surface into one relational entity (`Team`) so agents reason about “teams I belong to” and “details for team X”, not raw URL trees.
-
-Later waves (not authored here yet) should add **channels**, **tabs**, **chats**, and **messages** where they fit the same pattern: declare `entity_ref` / `key_vars` / scoped queries only when the JSON actually carries every part of the identity—or when product semantics justify a documented engine limitation.
+A **wave‑3** [Plasm](../../README.md) domain for **Microsoft Teams** via **Microsoft Graph** `v1.0`: joined teams, channels, channel messages, chats, and chat messages (read and send).
 
 ```bash
 export MICROSOFT_GRAPH_ACCESS_TOKEN="…"   # OAuth 2.0 access token for Graph (delegated user)
@@ -26,14 +24,24 @@ cargo run -p plasm --bin plasm-cgs -- \
 
 | Wave | Scope | Notes |
 |------|--------|--------|
-| **1 (this tree)** | `Team`: `team_query`, `team_get` | Joined teams + detail; no Graph `@odata.nextLink` loop (see below). |
-| **2** | `Channel` under `Team` | Graph channel rows omit parent `teamId`; compound `key_vars: [team_id, id]` needs every list row to carry `team_id` (today: **not** auto-filled from scope in core). **Do not** fake IDs in CGS—either wait for product/runtime support or choose an API shape that includes parent keys in JSON. |
-| **3** | Messages / chat | Free-text search vs filtered lists; heavy pagination and rate limits. |
-| **4** | Apps, tabs, membership writes | Side-effect `action` capabilities with explicit domain `output` descriptions. |
+| **1 (this tree)** | `Team`: `team_query`, `team_get` | Joined teams + detail; `@odata.nextLink` pagination via `response_next_url`. |
+| **2 (this tree)** | `Channel`, `Chat`, `ChatMessage` | Channels scoped by `teamId`; chats and chat messages for delegated `/me` reads. |
+| **3 (this tree)** | `ChannelMessage`, chat/channel sends | Team channel message read/post; chat message send. |
+| **4** | Apps, tabs, membership writes | Side-effect capabilities beyond messaging. |
 
-## Known limitation (no core change in this PR)
+## Entity graph
 
-Microsoft Graph often returns **`@odata.nextLink`** (absolute URL) for the next page. Plasm’s composable pagination today advances **query/body params** or **Link** headers, not “replay this full URL from JSON”. So **`team_query` returns the first page only** (`$top=100`). For full tenant scans, extend the **engine** deliberately in a separate change, or use a different collection API that paginates with tokens you can map to `pagination.params`.
+- `Team` — joined teams; `channels` relation lists channels when `teamId` scope is known
+- `Channel` — team channels (`channel_query` / `channel_get` require `teamId` scope); `messages` relation lists channel posts when `teamId` scope is also supplied at invoke time
+- `ChannelMessage` — posts in a channel (`channel_message_query` / `channel_message_get` / `channel_message_send` require `teamId` + `channelId` scope)
+- `Chat` — `/me/chats` conversations; `messages` relation lists chat messages
+- `ChatMessage` — messages in a chat (`chat_message_query` / `chat_message_get` / `chat_message_send` require `chatId` scope)
+
+**Channel scope note:** Graph channel and channel-message JSON does not include parent `teamId` on each row. Channel and channel-message capabilities always require explicit `teamId` scope (and `channelId` for messages). The `Channel.messages` relation binds `channelId` only — you must still pass `teamId` when listing or posting.
+
+## Known limitations
+
+Microsoft Graph returns **`@odata.nextLink`** (absolute URL) for collection continuations. **`team_query`** declares `pagination.location: response_next_url` so agents can follow additional pages with `page(pg1)` when the first response includes a next link. The first page pins `$top=100`.
 
 ## Validation
 

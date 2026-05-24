@@ -3,10 +3,9 @@
 # Base origin: https://graph.microsoft.com
 # Auth: bearer token via MICROSOFT_GRAPH_ACCESS_TOKEN
 #
-# Important runtime note:
-# Graph mailbox collections commonly paginate with @odata.nextLink absolute URLs.
-# Plasm's current HTTP pagination machinery does not replay those body URLs yet, so
-# these mappings intentionally fetch the first page only and pin $top=100.
+# Graph collections paginate with @odata.nextLink absolute URLs in the JSON body.
+# List capabilities declare `pagination.location: response_next_url` so the runtime
+# replays those URLs on `page(pg#)` continuations.
 
 mail_folder_query:
   method: GET
@@ -19,13 +18,16 @@ mail_folder_query:
   query:
     type: object
     fields:
-      - - $top
-        - { type: const, value: 100 }
       - - includeHiddenFolders
         - type: if
           condition: { type: exists, var: includeHiddenFolders }
           then_expr: { type: var, name: includeHiddenFolders }
           else_expr: { type: const, value: null }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
 
 mail_folder_child_query:
   method: GET
@@ -40,13 +42,16 @@ mail_folder_child_query:
   query:
     type: object
     fields:
-      - - $top
-        - { type: const, value: 100 }
       - - includeHiddenFolders
         - type: if
           condition: { type: exists, var: includeHiddenFolders }
           then_expr: { type: var, name: includeHiddenFolders }
           else_expr: { type: const, value: null }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
 
 mail_folder_get:
   method: GET
@@ -68,10 +73,23 @@ message_query:
   query:
     type: object
     fields:
-      - - $top
-        - { type: const, value: 100 }
       - - $select
         - { type: const, value: "id,subject,bodyPreview,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
+      - - $filter
+        - type: if
+          condition: { type: exists, var: filter }
+          then_expr: { type: var, name: filter }
+          else_expr: { type: const, value: null }
+      - - $orderby
+        - type: if
+          condition: { type: exists, var: orderBy }
+          then_expr: { type: var, name: orderBy }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
 
 message_folder_query:
   method: GET
@@ -86,10 +104,23 @@ message_folder_query:
   query:
     type: object
     fields:
-      - - $top
-        - { type: const, value: 100 }
       - - $select
         - { type: const, value: "id,subject,bodyPreview,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
+      - - $filter
+        - type: if
+          condition: { type: exists, var: filter }
+          then_expr: { type: var, name: filter }
+          else_expr: { type: const, value: null }
+      - - $orderby
+        - type: if
+          condition: { type: exists, var: orderBy }
+          then_expr: { type: var, name: orderBy }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
 
 message_get:
   method: GET
@@ -104,6 +135,39 @@ message_get:
     fields:
       - - $select
         - { type: const, value: "id,subject,bodyPreview,body,internetMessageId,conversationId,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
+
+message_create:
+  method: POST
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: messages }
+  response: single
+  body:
+    type: object
+    fields:
+      - - subject
+        - { type: var, name: subject }
+      - - body
+        - type: object
+          fields:
+            - - contentType
+              - type: if
+                condition: { type: exists, var: bodyContentType }
+                then_expr: { type: var, name: bodyContentType }
+                else_expr: { type: const, value: html }
+            - - content
+              - { type: var, name: bodyContent }
+      - - toRecipients
+        - type: array
+          elements:
+            - type: object
+              fields:
+                - - emailAddress
+                  - type: object
+                    fields:
+                      - - address
+                        - { type: var, name: toAddress }
 
 message_update:
   method: PATCH
@@ -173,11 +237,11 @@ attachment_query:
     - { type: literal, value: attachments }
   response:
     items: value
-  query:
-    type: object
-    fields:
-      - - $top
-        - { type: const, value: 100 }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
 
 attachment_get:
   method: GET
@@ -189,3 +253,172 @@ attachment_get:
     - { type: literal, value: attachments }
     - { type: var, name: id }
   response: single
+
+mailbox_triage_query:
+  transport: view
+  view: mailbox_triage
+
+mailbox_triage_get:
+  transport: view
+  view: mailbox_triage
+
+calendar_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: calendars }
+  response:
+    items: value
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
+
+calendar_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: calendars }
+    - { type: var, name: id }
+  response: single
+
+event_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: events }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink" }
+      - - $filter
+        - type: if
+          condition: { type: exists, var: filter }
+          then_expr: { type: var, name: filter }
+          else_expr: { type: const, value: null }
+      - - $orderby
+        - type: if
+          condition: { type: exists, var: orderBy }
+          then_expr: { type: var, name: orderBy }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
+
+event_calendar_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: calendars }
+    - { type: var, name: calendarId }
+    - { type: literal, value: events }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink" }
+      - - $filter
+        - type: if
+          condition: { type: exists, var: filter }
+          then_expr: { type: var, name: filter }
+          else_expr: { type: const, value: null }
+      - - $orderby
+        - type: if
+          condition: { type: exists, var: orderBy }
+          then_expr: { type: var, name: orderBy }
+          else_expr: { type: const, value: null }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
+
+event_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: events }
+    - { type: var, name: id }
+  response: single
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink" }
+
+event_create:
+  method: POST
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: events }
+  response: single
+  body:
+    type: object
+    fields:
+      - - subject
+        - { type: var, name: subject }
+      - - start
+        - type: object
+          fields:
+            - - dateTime
+              - { type: var, name: startDateTime }
+            - - timeZone
+              - type: if
+                condition: { type: exists, var: timeZone }
+                then_expr: { type: var, name: timeZone }
+                else_expr: { type: const, value: UTC }
+      - - end
+        - type: object
+          fields:
+            - - dateTime
+              - { type: var, name: endDateTime }
+            - - timeZone
+              - type: if
+                condition: { type: exists, var: timeZone }
+                then_expr: { type: var, name: timeZone }
+                else_expr: { type: const, value: UTC }
+      - - body
+        - type: if
+          condition: { type: exists, var: bodyContent }
+          then_expr:
+            type: object
+            fields:
+              - - contentType
+                - type: if
+                  condition: { type: exists, var: bodyContentType }
+                  then_expr: { type: var, name: bodyContentType }
+                  else_expr: { type: const, value: html }
+              - - content
+                - { type: var, name: bodyContent }
+          else_expr: { type: const, value: null }
+      - - location
+        - type: if
+          condition: { type: exists, var: locationDisplayName }
+          then_expr:
+            type: object
+            fields:
+              - - displayName
+                - { type: var, name: locationDisplayName }
+          else_expr: { type: const, value: null }
+
+event_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: events }
+    - { type: var, name: id }

@@ -1,4 +1,4 @@
-version: 1
+version: 4
 http_backend: https://graph.microsoft.com
 entities:
   Team:
@@ -24,24 +24,540 @@ entities:
       isArchived:
         required: false
         value_ref: nv_team_is_archived
+    relations:
+      channels:
+        target: Channel
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: channel_query
+          bindings:
+            teamId: id
+  Channel:
+    id_field: id
+    description: A conversation channel within a team.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      displayName:
+        required: false
+        value_ref: nv_channel_display_name
+      description:
+        required: false
+        value_ref: nv_channel_description
+      email:
+        required: false
+        value_ref: nv_channel_email
+      webUrl:
+        required: false
+        value_ref: nv_channel_web_url
+      membershipType:
+        required: false
+        value_ref: nv_channel_membership_type
+      isFavoriteByDefault:
+        required: false
+        value_ref: nv_wire_bool
+      createdDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+    relations:
+      messages:
+        target: ChannelMessage
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: channel_message_query
+          bindings:
+            channelId: id
+  Chat:
+    id_field: id
+    description: A one-on-one or group chat outside a team channel.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      topic:
+        required: false
+        value_ref: nv_chat_topic
+      chatType:
+        required: false
+        value_ref: nv_chat_type
+      webUrl:
+        required: false
+        value_ref: nv_chat_web_url
+      createdDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      lastUpdatedDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+    relations:
+      messages:
+        target: ChatMessage
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: chat_message_query
+          bindings:
+            chatId: id
+  ChatMessage:
+    id_field: id
+    description: A message posted in a chat conversation.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      bodyContent:
+        required: false
+        path: body.content
+        value_ref: nv_chat_message_body_content
+      bodyContentType:
+        required: false
+        path: body.contentType
+        value_ref: nv_chat_message_body_content_type
+      createdDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      lastModifiedDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      fromDisplayName:
+        required: false
+        path: from.user.displayName
+        value_ref: nv_chat_message_from_display_name
+      fromUserId:
+        required: false
+        path: from.user.id
+        value_ref: nv_chat_message_from_user_id
+      importance:
+        required: false
+        value_ref: nv_chat_message_importance
+      messageType:
+        required: false
+        value_ref: nv_chat_message_type
+      webUrl:
+        required: false
+        value_ref: nv_chat_message_web_url
+    relations: {}
+  ChannelMessage:
+    id_field: id
+    description: A message posted in a team channel.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      bodyContent:
+        required: false
+        path: body.content
+        value_ref: nv_channel_message_body_content
+      bodyContentType:
+        required: false
+        path: body.contentType
+        value_ref: nv_channel_message_body_content_type
+      createdDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      lastModifiedDateTime:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      fromDisplayName:
+        required: false
+        path: from.user.displayName
+        value_ref: nv_channel_message_from_display_name
+      fromUserId:
+        required: false
+        path: from.user.id
+        value_ref: nv_channel_message_from_user_id
+      importance:
+        required: false
+        value_ref: nv_channel_message_importance
+      messageType:
+        required: false
+        value_ref: nv_channel_message_type
+      webUrl:
+        required: false
+        value_ref: nv_channel_message_web_url
     relations: {}
 capabilities:
   team_query:
     description: Teams the signed-in user has joined (ordered by the service; not a global directory search).
     kind: query
     entity: Team
+    provides:
+    - id
+    - displayName
+    - description
+    - visibility
+    - webUrl
+    - isArchived
   team_get:
     description: Full team record for a known team identifier, including archive state when the service returns it.
     kind: get
     entity: Team
+    provides:
+    - id
+    - displayName
+    - description
+    - visibility
+    - webUrl
+    - isArchived
+  channel_query:
+    description: List channels in a team.
+    kind: query
+    entity: Channel
+    provides:
+    - id
+    - displayName
+    - description
+    - email
+    - webUrl
+    - membershipType
+    - isFavoriteByDefault
+    - createdDateTime
+    parameters:
+    - name: teamId
+      value_ref: nv_channel_query_team_id
+      required: true
+      role: scope
+  channel_get:
+    description: Get a channel in a team when both team and channel identifiers are known.
+    kind: get
+    entity: Channel
+    provides:
+    - id
+    - displayName
+    - description
+    - email
+    - webUrl
+    - membershipType
+    - isFavoriteByDefault
+    - createdDateTime
+    parameters:
+    - name: teamId
+      value_ref: nv_channel_get_team_id
+      required: true
+      role: scope
+  chat_query:
+    description: List chats the signed-in user participates in.
+    kind: query
+    entity: Chat
+    provides:
+    - id
+    - topic
+    - chatType
+    - webUrl
+    - createdDateTime
+    - lastUpdatedDateTime
+  chat_get:
+    description: Get a chat by identifier.
+    kind: get
+    entity: Chat
+    provides:
+    - id
+    - topic
+    - chatType
+    - webUrl
+    - createdDateTime
+    - lastUpdatedDateTime
+  chat_message_query:
+    description: List messages in a chat.
+    kind: query
+    entity: ChatMessage
+    provides:
+    - id
+    - bodyContent
+    - bodyContentType
+    - createdDateTime
+    - lastModifiedDateTime
+    - fromDisplayName
+    - fromUserId
+    - importance
+    - messageType
+    - webUrl
+    parameters:
+    - name: chatId
+      value_ref: nv_chat_message_query_chat_id
+      required: true
+      role: scope
+  chat_message_get:
+    description: Get a message in a chat when both chat and message identifiers are known.
+    kind: get
+    entity: ChatMessage
+    provides:
+    - id
+    - bodyContent
+    - bodyContentType
+    - createdDateTime
+    - lastModifiedDateTime
+    - fromDisplayName
+    - fromUserId
+    - importance
+    - messageType
+    - webUrl
+    parameters:
+    - name: chatId
+      value_ref: nv_chat_message_get_chat_id
+      required: true
+      role: scope
+  channel_message_query:
+    description: List messages in a team channel.
+    kind: query
+    entity: ChannelMessage
+    provides:
+    - id
+    - bodyContent
+    - bodyContentType
+    - createdDateTime
+    - lastModifiedDateTime
+    - fromDisplayName
+    - fromUserId
+    - importance
+    - messageType
+    - webUrl
+    parameters:
+    - name: teamId
+      value_ref: nv_channel_message_query_team_id
+      required: true
+      role: scope
+    - name: channelId
+      value_ref: nv_channel_message_query_channel_id
+      required: true
+      role: scope
+  channel_message_get:
+    description: Get a channel message when team, channel, and message identifiers are known.
+    kind: get
+    entity: ChannelMessage
+    provides:
+    - id
+    - bodyContent
+    - bodyContentType
+    - createdDateTime
+    - lastModifiedDateTime
+    - fromDisplayName
+    - fromUserId
+    - importance
+    - messageType
+    - webUrl
+    parameters:
+    - name: teamId
+      value_ref: nv_channel_message_get_team_id
+      required: true
+      role: scope
+    - name: channelId
+      value_ref: nv_channel_message_get_channel_id
+      required: true
+      role: scope
+  channel_message_send:
+    description: Post a message into a team channel.
+    kind: action
+    entity: ChannelMessage
+    parameters:
+    - name: teamId
+      value_ref: nv_channel_message_send_team_id
+      required: true
+      role: scope
+    - name: channelId
+      value_ref: nv_channel_message_send_channel_id
+      required: true
+      role: scope
+    - name: bodyContent
+      value_ref: nv_channel_message_send_body_content
+      required: true
+    - name: bodyContentType
+      value_ref: nv_channel_message_send_body_content_type
+      required: false
+    output:
+      type: side_effect
+      description: Posts a new message into the team channel conversation.
+  chat_message_send:
+    description: Send a message into a chat conversation.
+    kind: action
+    entity: ChatMessage
+    parameters:
+    - name: chatId
+      value_ref: nv_chat_message_send_chat_id
+      required: true
+      role: scope
+    - name: bodyContent
+      value_ref: nv_chat_message_send_body_content
+      required: true
+    - name: bodyContentType
+      value_ref: nv_chat_message_send_body_content_type
+      required: false
+    output:
+      type: side_effect
+      description: Sends a new message into the chat conversation.
 auth:
   scheme: bearer_token
   env: MICROSOFT_GRAPH_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:microsoft-teams
 values:
-  nv_team_id:
-    type: uuid
-    description: Stable opaque identifier for this team in the tenant directory.
+  nv_channel_message_body_content:
+    type: string
+    string_semantics: markdown
+  nv_channel_message_body_content_type:
+    type: select
+    allowed_values:
+    - text
+    - html
+  nv_channel_message_from_display_name:
+    type: string
+    string_semantics: short
+    description: Sender display name on the channel message.
+  nv_channel_message_from_user_id:
+    type: string
+    string_semantics: short
+    description: Directory object id of the sender when present.
+  nv_channel_message_get_channel_id:
+    type: entity_ref
+    target: Channel
+    description: Channel that owns the message.
+  nv_channel_message_get_team_id:
+    type: entity_ref
+    target: Team
+    description: Team that owns the channel.
+  nv_channel_message_importance:
+    type: select
+    allowed_values:
+    - normal
+    - high
+    - urgent
+    - unknownFutureValue
+  nv_channel_message_query_channel_id:
+    type: entity_ref
+    target: Channel
+    description: Channel whose messages should be listed.
+  nv_channel_message_query_team_id:
+    type: entity_ref
+    target: Team
+    description: Team that owns the channel.
+  nv_channel_message_send_body_content:
+    type: string
+    string_semantics: markdown
+    description: Message body to post into the channel.
+  nv_channel_message_send_body_content_type:
+    type: select
+    allowed_values:
+    - text
+    - html
+    description: Body format for the channel message.
+  nv_channel_message_send_channel_id:
+    type: entity_ref
+    target: Channel
+    description: Channel that should receive the message.
+  nv_channel_message_send_team_id:
+    type: entity_ref
+    target: Team
+    description: Team that owns the channel.
+  nv_channel_message_type:
+    type: string
+    string_semantics: short
+    description: Message classification from the service.
+  nv_channel_message_web_url:
+    type: string
+    string_semantics: short
+    description: Client URL that opens the channel message in Teams when available.
+  nv_channel_description:
+    type: string
+    string_semantics: markdown
+    description: Channel purpose text when the service returns one.
+  nv_channel_display_name:
+    type: string
+    string_semantics: short
+    description: Human-facing channel label in Teams.
+  nv_channel_email:
+    type: string
+    string_semantics: short
+    description: SMTP address for the channel when provisioned.
+  nv_channel_get_team_id:
+    type: entity_ref
+    target: Team
+    description: Team that owns the channel.
+  nv_channel_membership_type:
+    type: select
+    allowed_values:
+    - standard
+    - private
+    - unknownFutureValue
+    description: Whether the channel is standard or private within the team.
+  nv_channel_query_team_id:
+    type: entity_ref
+    target: Team
+    description: Team whose channels should be listed.
+  nv_channel_web_url:
+    type: string
+    string_semantics: short
+    description: Client URL that opens the channel in Teams when available.
+  nv_chat_message_send_body_content:
+    type: string
+    string_semantics: markdown
+    description: Message body to send into the chat.
+  nv_chat_message_send_body_content_type:
+    type: select
+    allowed_values:
+    - text
+    - html
+    description: Body format for the chat message.
+  nv_chat_message_send_chat_id:
+    type: entity_ref
+    target: Chat
+    description: Chat that should receive the message.
+  nv_chat_message_body_content:
+    type: string
+    string_semantics: markdown
+  nv_chat_message_body_content_type:
+    type: select
+    allowed_values:
+    - text
+    - html
+  nv_chat_message_from_display_name:
+    type: string
+    string_semantics: short
+    description: Sender display name on the chat message.
+  nv_chat_message_from_user_id:
+    type: string
+    string_semantics: short
+    description: Directory object id of the sender when present.
+  nv_chat_message_get_chat_id:
+    type: entity_ref
+    target: Chat
+    description: Chat that owns the message.
+  nv_chat_message_importance:
+    type: select
+    allowed_values:
+    - normal
+    - high
+    - urgent
+    - unknownFutureValue
+  nv_chat_message_query_chat_id:
+    type: entity_ref
+    target: Chat
+    description: Chat whose messages should be listed.
+  nv_chat_message_type:
+    type: string
+    string_semantics: short
+    description: Message classification from the service (message, systemEventMessage, etc.).
+  nv_chat_message_web_url:
+    type: string
+    string_semantics: short
+    description: Client URL that opens the message in Teams when available.
+  nv_chat_topic:
+    type: string
+    string_semantics: short
+    description: Chat title for group chats; often empty for one-on-one chats.
+  nv_chat_type:
+    type: select
+    allowed_values:
+    - oneOnOne
+    - group
+    - meeting
+    - unknownFutureValue
+    description: Whether the chat is one-on-one, a group, or meeting-backed.
+  nv_chat_web_url:
+    type: string
+    string_semantics: short
+    description: Client URL that opens the chat in Teams when available.
   nv_team_display_name:
     type: string
     string_semantics: short
@@ -50,15 +566,28 @@ values:
     type: string
     string_semantics: markdown
     description: Longer narrative summary of the team’s purpose when one exists.
+  nv_team_id:
+    type: uuid
+    description: Stable opaque identifier for this team in the tenant directory.
+  nv_team_is_archived:
+    type: boolean
+    description: Whether the team is frozen for most member activity.
   nv_team_visibility:
-    type: string
-    string_semantics: short
-    description: Who may discover or join the team (private, public, or hidden membership) when the directory exposes this
-      classification.
+    type: select
+    allowed_values:
+    - private
+    - public
+    - hiddenMembership
+    description: Who may discover or join the team when the directory exposes this classification.
   nv_team_web_url:
     type: string
     string_semantics: short
     description: Client URL that opens this team in Microsoft Teams when available.
-  nv_team_is_archived:
+  nv_wire_bool:
     type: boolean
-    description: Whether the team is frozen for most member activity.
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

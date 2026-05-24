@@ -4,7 +4,7 @@
   schema: outlook
   goal: "List the top-level folders in my mailbox so I can choose where to triage next."
   tags: [query]
-  covers: [query_all]
+  covers: [query_filtered]
   expect:
     entities_any: [MailFolder]
 
@@ -76,7 +76,7 @@
   schema: outlook
   goal: "Show every message in the mailbox so I can skim the recent subjects."
   tags: [query]
-  covers: [query_all]
+  covers: [page_next]
   expect:
     entities_any: [Message]
 
@@ -90,9 +90,59 @@
 
 - id: out-12
   schema: outlook
-  goal: "Send a brand new email to finance@example.com with an invoice PDF attached."
-  tags: [adversarial]
-  covers: [invoke]
+  goal: "Compose a new draft email to finance@example.com with subject Invoice Q1 and a short body asking them to review the attached PDF."
+  tags: [create]
+  covers: [create]
   expect:
-    entities_any: [Message, Attachment]
-    # Adversarial: wave 1 does not model new-message composition or attachment upload.
+    entities_any: [Message]
+    # Attachment upload remains out of scope; agent should create the draft then explain attachment limits.
+
+- id: out-15
+  schema: outlook
+  goal: "Give me a mailbox triage snapshot with root folders and highlight the inbox folder so I can see unread counts next."
+  tags: [query, chain]
+  covers: [query_all, chain]
+  expect:
+    entities_any: [MailboxTriage, MailFolder]
+
+- id: out-16
+  schema: outlook
+  goal: "List my calendars, then show meetings for the next seven days with subject, start time, and location only."
+  tags: [query, projection, chain]
+  covers: [query_filtered, projection, page_next, chain]
+  expect:
+    entities_any: [Calendar, Event]
+
+- id: out-17
+  schema: outlook
+  goal: "Schedule a 30-minute focus block tomorrow at 2pm UTC titled Deep work with location Home office."
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Event]
+
+- id: out-18
+  schema: outlook
+  goal: "Cancel event id AAMkAGI2CalendarEvent= that I no longer need on my calendar."
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Event]
+
+- id: out-13
+  schema: outlook
+  goal: "Show the next page of inbox messages after the first hundred so I can keep skimming older mail."
+  tags: [query]
+  covers: [page_next]
+  expect:
+    entities_any: [Message]
+    # Exercises @odata.nextLink pagination via page(pg1) when the mailbox exceeds one page.
+
+- id: out-14
+  schema: outlook
+  goal: "List unread messages received this week, newest first, using a server-side filter."
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [Message]
+    # Exercises optional filter and orderBy parameters on message_query.

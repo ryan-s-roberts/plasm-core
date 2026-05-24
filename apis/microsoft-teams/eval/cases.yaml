@@ -1,6 +1,6 @@
 # Microsoft Teams (Graph) — NL eval cases (schema: microsoft-teams)
 #
-# Buckets: query_all, get, projection (see plasm-eval coverage).
+# Buckets: page_next, get, projection (see plasm-eval coverage).
 
 - id: mst-01
   schema: microsoft-teams
@@ -8,7 +8,7 @@
     List every Microsoft Team I am a member of so I can pick one to open later;
     I only care about the display name and whether it looks archived.
   tags: [query, projection]
-  covers: [query_all, projection]
+  covers: [page_next, projection]
   expect:
     entities_any: [Team]
     projection_contains: [displayName, isArchived]
@@ -28,11 +28,11 @@
   goal: >-
     Show me only archived teams in my tenant with names containing “Contoso”.
   tags: [adversarial, query]
-  covers: [query_all]
+  covers: [page_next]
   expect:
     entities_any: [Team]
     # Adversarial: wave-1 CGS has no name filter or archive filter on team_query —
-    # a good agent should query_all then explain client-side limits, not invent params.
+    # a good agent should list pages then explain client-side limits, not invent params.
 
 - id: mst-04
   schema: microsoft-teams
@@ -43,3 +43,63 @@
   expect:
     entities_any: [Team]
     # Adversarial: Get is keyed by opaque id; displayName is not a stable primary key in this CGS.
+
+- id: mst-05
+  schema: microsoft-teams
+  goal: >-
+    Keep listing joined teams page by page until I have seen every team I belong to when there
+    are more than one hundred memberships.
+  tags: [query]
+  covers: [page_next]
+  expect:
+    entities_any: [Team]
+    # Exercises @odata.nextLink pagination via page(pg1) on team_query.
+
+- id: mst-06
+  schema: microsoft-teams
+  goal: >-
+    For team id 00000000-0000-0000-0000-000000000001, list its channels and open the General
+    channel details when you find it.
+  tags: [query, chain, get, multi_step]
+  covers: [query_filtered, chain, get, reverse, multi_step]
+  expect:
+    entities_any: [Team, Channel]
+
+- id: mst-07
+  schema: microsoft-teams
+  goal: >-
+    List my recent chats, pick one, and show the latest messages with sender names only.
+  tags: [query, chain, projection, multi_step]
+  covers: [page_next, chain, projection, multi_step]
+  expect:
+    entities_any: [Chat, ChatMessage]
+
+- id: mst-08
+  schema: microsoft-teams
+  goal: >-
+    For team id 00000000-0000-0000-0000-000000000001 and channel id 19:abc@thread.tacv2,
+    list the recent channel posts and show sender display names only.
+  tags: [query, chain, projection]
+  covers: [query_filtered, chain, projection, multi_step]
+  expect:
+    entities_any: [Team, Channel, ChannelMessage]
+
+- id: mst-09
+  schema: microsoft-teams
+  goal: >-
+    Post "Standup starts in five minutes" into chat id 19:chat@thread.v2 as a plain text message.
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Chat, ChatMessage]
+
+- id: mst-10
+  schema: microsoft-teams
+  goal: >-
+    Post "Deploy window opens now" into the General channel of team
+    00000000-0000-0000-0000-000000000001.
+  tags: [invoke, adversarial]
+  covers: [invoke]
+  expect:
+    entities_any: [Team, Channel, ChannelMessage]
+    # Adversarial: agent must resolve General channel id (or ask) before channel_message_send.

@@ -1,15 +1,12 @@
 # Microsoft Graph v1.0 — Teams slice. Semantic model is in domain.yaml.
 #
-# Product docs (Microsoft Graph / Teams) describe OAuth and permission names; keep
-# transport notes here, not in DOMAIN copy.
-#
 # Base origin: https://graph.microsoft.com — paths are relative to that host.
 # Delegated flow: `team_query` uses `/me/joinedTeams` (requires a user context token).
 #
-# Pagination: many Graph collections return `@odata.nextLink` as a full URL in the
-# JSON body. Today’s Plasm HTTP pagination follows cursor/query params or Link headers,
-# not body next URLs, so this mapping does not declare `pagination:` — first response
-# page only (see README).
+# Graph collections paginate with @odata.nextLink absolute URLs in the JSON body.
+#
+# Channel list/get require explicit teamId scope — Graph channel JSON does not carry
+# the parent team id on each row.
 
 team_query:
   method: GET
@@ -19,10 +16,11 @@ team_query:
     - { type: literal, value: joinedTeams }
   response:
     items: value
-  query:
-    type: object
-    fields:
-      - [$top, { type: const, value: 100 }]
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
 
 team_get:
   method: GET
@@ -31,3 +29,170 @@ team_get:
     - { type: literal, value: teams }
     - { type: var, name: id }
   response: single
+
+channel_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: teams }
+    - { type: var, name: teamId }
+    - { type: literal, value: channels }
+  response:
+    items: value
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
+
+channel_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: teams }
+    - { type: var, name: teamId }
+    - { type: literal, value: channels }
+    - { type: var, name: id }
+  response: single
+
+chat_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: me }
+    - { type: literal, value: chats }
+  response:
+    items: value
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 100 }
+
+chat_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: chats }
+    - { type: var, name: id }
+  response: single
+
+chat_message_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: chats }
+    - { type: var, name: chatId }
+    - { type: literal, value: messages }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,body,createdDateTime,lastModifiedDateTime,from,importance,messageType,webUrl" }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 50 }
+
+chat_message_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: chats }
+    - { type: var, name: chatId }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+  response: single
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,body,createdDateTime,lastModifiedDateTime,from,importance,messageType,webUrl" }
+
+chat_message_send:
+  method: POST
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: chats }
+    - { type: var, name: chatId }
+    - { type: literal, value: messages }
+  response: single
+  body:
+    type: object
+    fields:
+      - - body
+        - type: object
+          fields:
+            - - contentType
+              - type: if
+                condition: { type: exists, var: bodyContentType }
+                then_expr: { type: var, name: bodyContentType }
+                else_expr: { type: const, value: html }
+            - - content
+              - { type: var, name: bodyContent }
+
+channel_message_query:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: teams }
+    - { type: var, name: teamId }
+    - { type: literal, value: channels }
+    - { type: var, name: channelId }
+    - { type: literal, value: messages }
+  response:
+    items: value
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,body,createdDateTime,lastModifiedDateTime,from,importance,messageType,webUrl" }
+  pagination:
+    location: response_next_url
+    response_next_url_field: "@odata.nextLink"
+    params:
+      $top: { fixed: 50 }
+
+channel_message_get:
+  method: GET
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: teams }
+    - { type: var, name: teamId }
+    - { type: literal, value: channels }
+    - { type: var, name: channelId }
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+  response: single
+  query:
+    type: object
+    fields:
+      - - $select
+        - { type: const, value: "id,body,createdDateTime,lastModifiedDateTime,from,importance,messageType,webUrl" }
+
+channel_message_send:
+  method: POST
+  path:
+    - { type: literal, value: "v1.0" }
+    - { type: literal, value: teams }
+    - { type: var, name: teamId }
+    - { type: literal, value: channels }
+    - { type: var, name: channelId }
+    - { type: literal, value: messages }
+  response: single
+  body:
+    type: object
+    fields:
+      - - body
+        - type: object
+          fields:
+            - - contentType
+              - type: if
+                condition: { type: exists, var: bodyContentType }
+                then_expr: { type: var, name: bodyContentType }
+                else_expr: { type: const, value: html }
+            - - content
+              - { type: var, name: bodyContent }

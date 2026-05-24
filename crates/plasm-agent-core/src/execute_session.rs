@@ -1128,6 +1128,7 @@ mod tests {
                 body_merge_path: None,
                 response_prefix: None,
                 stop_when: None,
+                response_next_url_field: None,
             },
             state: QueryPaginationState {
                 param_values: vec![("page".into(), Some(serde_json::json!(0)))],
