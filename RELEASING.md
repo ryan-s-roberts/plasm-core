@@ -39,7 +39,7 @@ The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 
 6. Watch Circle **`oss_release`** to completion:
    - **`oss_release_linux`** + **`oss_release_macos`** → [`circle-oss-release.sh`](../scripts/ci/circle-oss-release.sh) uploads tarballs + `SHA256SUMS` to [PlasmTools/plasm-core](https://github.com/PlasmTools/plasm-core/releases).
-   - **`oss_publish_install_site`** → generates `oss-release.json`, uploads it to the GitHub release, pushes **plasm-portal** image, commits manifest to `main` (`[skip ci]`), optional cluster rollout, **live verify** (requires **`GH_TOKEN`**, **`VULTR_CONTAINER_KEY`**, optional **`KUBECONFIG`**).
+   - **`oss_publish_install_site`** → generates `oss-release.json`, uploads it to the GitHub release, pushes **plasm-portal** image, commits manifest to `main` (`[skip ci]`), cluster rollout when **`KUBECONFIG`** is set, **live verify** (requires **`GH_TOKEN`**, **`PLASM_MONOREPO_GH_TOKEN`**, **`VULTR_CONTAINER_KEY`**).
    - **`release_build_and_push_vultr`** → remaining stack images (skips **plasm-portal**; already published).
 
 7. Confirm install plane:
@@ -65,8 +65,9 @@ Monorepo CircleCI uses two workflows: **`ci`** (branch pushes — `validate` + `
 
 Configure a **project or context** environment variable:
 
-- **`GH_TOKEN`** — PAT with **Contents** + **Releases** on `PlasmTools/plasm-core` (release tarballs + `oss-release.json` upload).
-- **`PLASM_MONOREPO_GH_TOKEN`** (recommended) — PAT with **Contents** write on `ryan-s-roberts/plasm` for `[skip ci]` install manifest commits. Without it, Circle sets `PLASM_INSTALL_GIT_PUSH_OPTIONAL=1` (GitHub release manifest + portal image still publish).
+- **`GH_TOKEN`** — PAT with **Contents** + **Releases** on `PlasmTools/plasm-core` (release tarballs + `oss-release.json` upload via `gh`).
+- **`PLASM_MONOREPO_GH_TOKEN`** — PAT with **Contents** write on `ryan-s-roberts/plasm` (install manifest commit to `main`). Do not reuse `GH_TOKEN` if it is plasm-core-only (monorepo `git push` returns 403).
+- **`VULTR_CONTAINER_KEY`** — registry push for `plasm-portal` image.
 
 Optional:
 
