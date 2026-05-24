@@ -245,6 +245,11 @@ capabilities:
     kind: get
     entity: Zone
     description: Load canonical zone metadata when you already hold the zone id.
+    parameters:
+    - name: zone_id
+      value_ref: nv_cloudflare_zone_id
+      required: true
+      role: scope
     provides:
     - id
     - name
