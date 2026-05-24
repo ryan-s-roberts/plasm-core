@@ -13,7 +13,13 @@ use testcontainers_modules::testcontainers::{
 pub const INTEGRATION_POSTGRES_URL_ENV: &str = "PLASM_TEST_POSTGRES_URL";
 
 /// Keeps a throwaway Postgres container alive until dropped.
-pub struct PostgresKeepAlive(pub Option<ContainerAsync<GenericImage>>);
+pub struct PostgresKeepAlive(Option<ContainerAsync<GenericImage>>);
+
+impl Drop for PostgresKeepAlive {
+    fn drop(&mut self) {
+        drop(self.0.take());
+    }
+}
 
 async fn postgres_url_reachable(url: &str) -> bool {
     match tokio::time::timeout(

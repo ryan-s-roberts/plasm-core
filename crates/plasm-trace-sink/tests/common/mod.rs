@@ -18,9 +18,7 @@ use uuid::Uuid;
 #[path = "../../../plasm-agent-core/tests/support/postgres.rs"]
 mod integration_postgres;
 
-use integration_postgres::{
-    integration_postgres_url, PostgresKeepAlive, INTEGRATION_POSTGRES_URL_ENV,
-};
+use integration_postgres::{integration_postgres_url, PostgresKeepAlive};
 
 /// Keeps the Postgres container alive until the end of the test.
 #[allow(dead_code)]

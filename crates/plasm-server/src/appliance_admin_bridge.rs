@@ -26,16 +26,12 @@ use crate::appliance_oauth_admin::{self, ApplianceOauthUpsert};
 
 pub type AdminCorr = u64;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PolicyStoreUnavailableReason {
+    #[default]
     NeverAttached,
+    #[allow(dead_code)] // first admin refresh in flight (see RUN overview copy)
     RefreshPending,
-}
-
-impl Default for PolicyStoreUnavailableReason {
-    fn default() -> Self {
-        Self::NeverAttached
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

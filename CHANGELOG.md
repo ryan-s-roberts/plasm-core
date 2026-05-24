@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-05-23
+
+### Fixed
+
+- **CI / quality:** `cargo clippy --workspace --all-targets -- -D warnings` clean (integration Postgres keep-alive holder, TUI `UiMsg::Admin` boxing, assorted clippy nits).
+
 ## [0.1.9] - 2026-05-23
 
 ### Fixed

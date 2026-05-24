@@ -304,6 +304,7 @@ pub fn apply_appliance_test_env(cmd: &mut std::process::Command, diag_log: &Path
 }
 
 /// Environment pairs for `testty::PtySession::spawn_with_size` (PTY quit smoke).
+#[allow(dead_code)] // used by `plasm-server-pty-tests` via `#[path]` include
 pub fn appliance_pty_spawn_env(diag_log: &Path) -> Vec<(String, String)> {
     let mut pairs = vec![
         ("NO_COLOR".into(), "1".into()),

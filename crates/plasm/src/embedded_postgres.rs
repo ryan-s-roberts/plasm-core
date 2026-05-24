@@ -450,7 +450,7 @@ async fn start_embedded_db_with_retry(
     persistent: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match pg.start_db().await {
-        Ok(()) => return Ok(()),
+        Ok(()) => Ok(()),
         Err(first) if !persistent => {
             tracing::warn!(
                 %first,

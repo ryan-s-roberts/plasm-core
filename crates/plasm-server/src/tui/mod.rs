@@ -1341,7 +1341,7 @@ fn apply_admin_completion(
 enum UiMsg {
     Tick,
     Key(KeyEvent),
-    Admin(AdminCompletion),
+    Admin(Box<AdminCompletion>),
     LogLine(String),
 }
 
@@ -2301,7 +2301,7 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
             false
         }
         UiMsg::Admin(comp) => {
-            apply_admin_completion(state, deps.admin_bridge, comp);
+            apply_admin_completion(state, deps.admin_bridge, *comp);
             false
         }
         UiMsg::LogLine(line) => {
@@ -3310,7 +3310,7 @@ pub(crate) fn run_running_mode(
         }
         if let Some(ref bridge) = admin_bridge {
             while let Ok(comp) = bridge.completions().try_recv() {
-                let _ = update(&mut model, UiMsg::Admin(comp), &deps);
+                let _ = update(&mut model, UiMsg::Admin(Box::new(comp)), &deps);
             }
         } else if matches!(
             model.resources.snapshot.config_surface,
@@ -3632,7 +3632,7 @@ mod tests {
 
         update(
             &mut state,
-            UiMsg::Admin(AdminCompletion::RefreshFull { corr: 6, data }),
+            UiMsg::Admin(Box::new(AdminCompletion::RefreshFull { corr: 6, data })),
             &deps,
         );
 

@@ -244,7 +244,7 @@ impl CliHarness {
                         let body = std::fs::read_to_string(&p).unwrap_or_default();
                         let excerpt: String = body.lines().take(12).collect::<Vec<_>>().join("\n");
                         out.push_str(&self.norm(&excerpt));
-                        out.push_str("\n");
+                        out.push('\n');
                     }
                 }
             }

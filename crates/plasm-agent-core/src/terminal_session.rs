@@ -289,31 +289,29 @@ impl ClientSymbolSession {
                 } else {
                     exp.expose_entities(&layer_refs, cgs.clone(), entry_id.as_str(), &refs);
                 }
+            } else if use_intent {
+                let mut relation_endpoints = entities.clone();
+                relation_endpoints.sort_unstable();
+                let delta = derive_intent_exposure_surface_batch(
+                    cgs.as_ref(),
+                    entry_id.as_str(),
+                    intent_s,
+                    &relation_endpoints,
+                    entities,
+                    None,
+                );
+                self.exposure = Some(DomainExposureSession::new_with_intent_delta(
+                    cgs.as_ref(),
+                    entry_id.as_str(),
+                    &refs,
+                    delta,
+                ));
             } else {
-                if use_intent {
-                    let mut relation_endpoints = entities.clone();
-                    relation_endpoints.sort_unstable();
-                    let delta = derive_intent_exposure_surface_batch(
-                        cgs.as_ref(),
-                        entry_id.as_str(),
-                        intent_s,
-                        &relation_endpoints,
-                        entities,
-                        None,
-                    );
-                    self.exposure = Some(DomainExposureSession::new_with_intent_delta(
-                        cgs.as_ref(),
-                        entry_id.as_str(),
-                        &refs,
-                        delta,
-                    ));
-                } else {
-                    self.exposure = Some(DomainExposureSession::new(
-                        cgs.as_ref(),
-                        entry_id.as_str(),
-                        &refs,
-                    ));
-                }
+                self.exposure = Some(DomainExposureSession::new(
+                    cgs.as_ref(),
+                    entry_id.as_str(),
+                    &refs,
+                ));
             }
 
             let exp = self
