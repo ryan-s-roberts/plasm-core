@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-05-24
+
+### Fixed
+
+- **`plasm-runtime`:** `PaginationConfig` unit tests set `response_next_url_field` (OData `nextLink` field).
+- **`plasm-trace-sink`:** `http_iceberg_integration` passes segment-projection TTL args to `PersistedTraceSink::connect`.
+- **`apis/cloudflare`**, **`apis/grafana`:** declare scope parameters on `zone_get` / `dashboard_get` used by view node binds.
+- **`fixtures/plasm_prompt_matrix`:** mirror `zone_get` `zone_id` for `security_overview` CGS validation.
+
+### Changed
+
+- **`plasm-core`:** refresh Linear full-prompt insta snapshot (cycle board view, issue URL view, teaching-table symbols).
+
 ## [0.1.11] - 2026-05-24
 
 ### Added
