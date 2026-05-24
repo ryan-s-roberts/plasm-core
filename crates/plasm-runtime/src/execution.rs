@@ -6087,6 +6087,7 @@ mod tests {
             location: plasm_compile::PaginationLocation::BlockRange,
             body_merge_path: None,
             response_prefix: None,
+            response_next_url_field: None,
             stop_when: None,
         };
         let user = QueryPagination {
@@ -6119,6 +6120,7 @@ mod tests {
             location: plasm_compile::PaginationLocation::BlockRange,
             body_merge_path: None,
             response_prefix: None,
+            response_next_url_field: None,
             stop_when: None,
         };
         let user = QueryPagination {
