@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-05-24
+
+### Added
+
+- **`plasm-trace-sink`:** Postgres `trace_segments` projection for hot trace detail reads with configurable TTL/GC.
+- **`plasm-trace-sink`:** Head-guided `year_month_bucket` Iceberg pruning on cold detail reads (`event_kind` filter + empty-scan retry).
+- **API catalogs:** Microsoft Graph–backed Gmail, Jira, and Linear packages with OData `nextLink` pagination.
+- **`plasm-runtime` / `plasm-core`:** View origin injection and inner-node template binds; language-matrix conformance for computed view fields.
+
+### Changed
+
+- **`plasm-agent-core`:** Shared `reqwest::Client` for trace-sink HTTP proxy calls.
+
 ## [0.1.10] - 2026-05-23
 
 ### Fixed
