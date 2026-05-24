@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-05-24
+
+### Fixed
+
+- **CI:** Install publish requires `PLASM_MONOREPO_GH_TOKEN` (no optional git-push skip on Circle).
+
 ## [0.1.14] - 2026-05-24
 
 ### Fixed
