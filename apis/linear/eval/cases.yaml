@@ -136,3 +136,19 @@
   reference_expr: Cycle{team=Team(00000000-0000-0000-0000-0000000000b2)}
   expect:
     entities_any: [Team, Cycle]
+
+- id: lin-16
+  schema: linear
+  goal: "Share the Linear web URL for issue ENG-42 in the release notes"
+  tags: [view, composed_read]
+  covers: [get]
+  expect:
+    entities_any: [IssueNavigationLink]
+
+- id: lin-17
+  schema: linear
+  goal: "For cycle 7, show cycle number, dates, and how many issues are scheduled in that iteration"
+  tags: [view, composed_read]
+  covers: [multi_step, query_filtered]
+  expect:
+    entities_any: [CycleBoardSnapshot, Issue]

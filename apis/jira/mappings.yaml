@@ -942,3 +942,27 @@ sprint_get:
     - { type: literal, value: sprint }
     - { type: var, name: id }
   response: single
+
+issue_transition_context_query:
+  transport: view
+  view: issue_transition_context
+
+issue_transition_context_get:
+  transport: view
+  view: issue_transition_context
+
+issue_browse_link_query:
+  transport: view
+  view: issue_browse_link
+
+issue_browse_link_get:
+  transport: view
+  view: issue_browse_link
+
+sprint_board_snapshot_query:
+  transport: view
+  view: sprint_board_snapshot
+
+sprint_board_snapshot_get:
+  transport: view
+  view: sprint_board_snapshot

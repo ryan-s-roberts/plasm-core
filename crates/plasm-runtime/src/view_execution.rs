@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::expr::EntityKey;
-use plasm_core::schema::{EntityDef, ViewOutputBinding, ViewParamBinding, ViewRelationBinding};
+use plasm_core::schema::{
+    EntityDef, ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewScopeInject,
+};
 use plasm_core::{CapabilityKind, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness, GraphCache};
@@ -141,9 +143,64 @@ fn validate_expected_scope(
     Ok(())
 }
 
+/// First-row field snapshots from prior view DAG nodes (for param bind resolution).
+type ViewNodeFieldMap = IndexMap<String, IndexMap<String, Value>>;
+
+fn node_fields_from_results(
+    node_results: &IndexMap<String, ExecutionResult>,
+) -> ViewNodeFieldMap {
+    let mut out: ViewNodeFieldMap = IndexMap::new();
+    for (node_id, res) in node_results {
+        let Some(row) = res.entities.first() else {
+            out.insert(node_id.clone(), IndexMap::new());
+            continue;
+        };
+        let mut fields = IndexMap::new();
+        for (k, v) in &row.fields {
+            fields.insert(k.clone(), v.to_value());
+        }
+        out.insert(node_id.clone(), fields);
+    }
+    out
+}
+
+fn merge_view_ambient_scope(
+    view: &plasm_core::schema::ViewDefinition,
+    scope: &mut IndexMap<String, Value>,
+) {
+    let material = crate::execution::try_current_execute_session_material();
+    let http_base = crate::execution::try_current_http_base_string();
+
+    let transport = material
+        .as_ref()
+        .and_then(|m| m.transport_origin.clone())
+        .or_else(|| http_base.clone());
+    let ui = material
+        .as_ref()
+        .and_then(|m| m.ui_origin.clone())
+        .or_else(|| transport.clone());
+
+    for sp in &view.scope {
+        let Some(inject) = sp.inject else {
+            continue;
+        };
+        if scope.contains_key(sp.name.as_str()) {
+            continue;
+        }
+        let origin = match inject {
+            ViewScopeInject::SessionUiOrigin => ui.as_ref(),
+            ViewScopeInject::SessionTransportOrigin => transport.as_ref(),
+        };
+        if let Some(o) = origin.filter(|s| !s.trim().is_empty()) {
+            scope.insert(sp.name.clone(), Value::String(o.trim_end_matches('/').to_string()));
+        }
+    }
+}
+
 fn resolve_binding(
     binding: &ViewParamBinding,
     scope: &IndexMap<String, Value>,
+    node_fields: &ViewNodeFieldMap,
 ) -> Result<Value, RuntimeError> {
     match binding {
         ViewParamBinding::Scope { param } => {
@@ -155,16 +212,31 @@ fn resolve_binding(
                 })
         }
         ViewParamBinding::Literal { value } => Ok(json_to_plasm_value(value)),
+        ViewParamBinding::NodeField { node, field } => {
+            let fields = node_fields.get(node).ok_or_else(|| {
+                RuntimeError::ConfigurationError {
+                    message: format!("view bind references unknown node `{node}`"),
+                }
+            })?;
+            Ok(fields
+                .get(field)
+                .cloned()
+                .unwrap_or(Value::Null))
+        }
+        ViewParamBinding::Computed { template } => {
+            crate::view_template::render_view_param_bind_template(template, scope, node_fields)
+        }
     }
 }
 
 fn binds_to_predicate(
     bind: &IndexMap<String, ViewParamBinding>,
     scope: &IndexMap<String, Value>,
+    node_fields: &ViewNodeFieldMap,
 ) -> Result<Predicate, RuntimeError> {
     let mut args = Vec::new();
     for (param, b) in bind {
-        let v = resolve_binding(b, scope)?;
+        let v = resolve_binding(b, scope, node_fields)?;
         args.push(Predicate::eq(param.clone(), v));
     }
     Ok(if args.len() == 1 {
@@ -493,7 +565,7 @@ fn resolve_view_relation_maps(
 async fn execute_view_scoped(
     engine: &ExecutionEngine,
     view_name: &str,
-    scope: IndexMap<String, Value>,
+    mut scope: IndexMap<String, Value>,
     cgs: &CGS,
     cache: &mut GraphCache,
     mode: ExecutionMode,
@@ -513,6 +585,7 @@ async fn execute_view_scoped(
                 ),
             })?;
 
+    merge_view_ambient_scope(view, &mut scope);
     validate_expected_scope(view_name, view, &scope)?;
 
     let mut node_results: IndexMap<String, ExecutionResult> = IndexMap::new();
@@ -526,6 +599,7 @@ async fn execute_view_scoped(
     let mut any_live = false;
 
     for node in &view.nodes {
+        let node_fields = node_fields_from_results(&node_results);
         let cap = cgs
             .get_capability(node.capability.as_str())
             .ok_or_else(|| RuntimeError::CapabilityNotFound {
@@ -534,8 +608,8 @@ async fn execute_view_scoped(
             })?;
 
         match cap.kind {
-            CapabilityKind::Query => {
-                let pred_node = binds_to_predicate(&node.bind, &scope)?;
+            CapabilityKind::Query | CapabilityKind::Search => {
+                let pred_node = binds_to_predicate(&node.bind, &scope, &node_fields)?;
                 let q = QueryExpr::filtered(cap.domain.clone(), pred_node);
                 let res = engine
                     .execute_query(&q, cgs, cache, mode, StreamConsumeOpts::default())
@@ -552,7 +626,7 @@ async fn execute_view_scoped(
             CapabilityKind::Get => {
                 let mut bound = BTreeMap::new();
                 for (param, bspec) in &node.bind {
-                    let v = resolve_binding(bspec, &scope)?;
+                    let v = resolve_binding(bspec, &scope, &node_fields)?;
                     bound.insert(param.clone(), scalar_string_from_value(&v)?);
                 }
                 let target_ent = cgs.get_entity(cap.domain.as_str()).ok_or_else(|| {
@@ -658,16 +732,17 @@ pub(crate) async fn execute_view_query(
         });
     }
 
-    let pred = query
-        .predicate
-        .as_ref()
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{view_name}` requires a query predicate supplying scope parameters"
-            ),
-        })?;
-
-    let scope = predicate_scope_map(pred)?;
+    let scope = match &query.predicate {
+        Some(pred) => predicate_scope_map(pred)?,
+        None if view.scope.iter().all(|s| !s.required || s.inject.is_some()) => IndexMap::new(),
+        None => {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "view `{view_name}` requires a query predicate supplying scope parameters"
+                ),
+            });
+        }
+    };
     execute_view_scoped(engine, view_name, scope, cgs, cache, mode).await
 }
 

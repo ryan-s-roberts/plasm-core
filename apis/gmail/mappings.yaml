@@ -713,3 +713,19 @@ profile_get:
       value: me
     - type: literal
       value: profile
+
+reply_context_query:
+  transport: view
+  view: reply_context
+
+reply_context_get:
+  transport: view
+  view: reply_context
+
+mailbox_snapshot_query:
+  transport: view
+  view: mailbox_snapshot
+
+mailbox_snapshot_get:
+  transport: view
+  view: mailbox_snapshot

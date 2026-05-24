@@ -460,6 +460,36 @@ pub enum SchemaError {
         expected: String,
         got: String,
     },
+
+    #[error("View '{view}': node '{node}' bind param '{param}' is not declared on capability '{capability}'")]
+    ViewNodeBindUnknownParam {
+        view: String,
+        node: String,
+        capability: String,
+        param: String,
+    },
+
+    #[error("View '{view}': node '{node}' bind references unknown prior node '{ref_node}'")]
+    ViewNodeBindUnknownNode {
+        view: String,
+        node: String,
+        ref_node: String,
+    },
+
+    #[error(
+        "View '{view}': node '{node}' bind references node '{ref_node}' which is not declared before '{node}'"
+    )]
+    ViewNodeBindForwardRef {
+        view: String,
+        node: String,
+        ref_node: String,
+    },
+
+    #[error("View '{view}': node '{node}' computed bind template must be non-empty")]
+    ViewNodeBindEmptyTemplate {
+        view: String,
+        node: String,
+    },
 }
 
 #[derive(Error, Debug, Clone)]

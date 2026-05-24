@@ -1,4 +1,4 @@
-version: 4
+version: 6
 http_backend: https://api.linear.app
 entities:
   Team:
@@ -174,6 +174,54 @@ entities:
           - key: children
           - key: nodes
           - wildcard: true
+  IssueNavigationLink:
+    id_field: issue_id
+    primary_read: issue_navigation_link_get
+    description: Shareable Linear web URL for an issue.
+    fields:
+      issue_id:
+        required: true
+        value_ref: nv_issue_id
+      identifier:
+        required: false
+        value_ref: nv_issue_identifier
+      title:
+        required: false
+        value_ref: nv_wire_str_short
+      url:
+        required: false
+        value_ref: nv_linear_issue_url
+    relations:
+      issue:
+        target: Issue
+        cardinality: one
+  CycleBoardSnapshot:
+    id_field: cycle_id
+    primary_read: cycle_board_snapshot_get
+    description: Cycle metadata plus issues scheduled in that iteration (sprint board pattern).
+    fields:
+      cycle_id:
+        required: true
+        value_ref: nv_cycle_id
+      number:
+        required: false
+        value_ref: nv_cycle_number
+      startsAt:
+        required: false
+        value_ref: nv_cycle_starts_at
+      endsAt:
+        required: false
+        value_ref: nv_cycle_ends_at
+      issue_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      cycle:
+        target: Cycle
+        cardinality: one
+      issues:
+        target: Issue
+        cardinality: many
 capabilities:
   issue_query:
     kind: query
@@ -190,6 +238,19 @@ capabilities:
     parameters:
     - name: team
       value_ref: nv_issue_by_team_query_team
+      required: true
+      role: scope
+    provides:
+    - id
+    - identifier
+    - title
+  issue_by_cycle_query:
+    kind: query
+    entity: Issue
+    description: List issues scheduled in a specific cycle (iteration).
+    parameters:
+    - name: cycle
+      value_ref: nv_issue_by_cycle_query_cycle
       required: true
       role: scope
     provides:
@@ -532,6 +593,146 @@ capabilities:
     - name: label
       value_ref: nv_issue_remove_label_label
       required: true
+  issue_navigation_link_query:
+    kind: query
+    entity: IssueNavigationLink
+    description: Assemble the Linear web URL for an issue from its identifier.
+    parameters:
+    - name: issue_id
+      value_ref: nv_issue_navigation_link_issue_id
+      required: true
+      role: scope
+    provides:
+    - issue_id
+    - identifier
+    - title
+    - url
+  issue_navigation_link_get:
+    kind: get
+    entity: IssueNavigationLink
+    description: Linear web URL when you already hold the issue id.
+    provides:
+    - issue_id
+    - identifier
+    - title
+    - url
+  cycle_board_snapshot_query:
+    kind: query
+    entity: CycleBoardSnapshot
+    description: Load cycle dates and issues in that iteration in one composed read.
+    parameters:
+    - name: cycle_id
+      value_ref: nv_cycle_board_snapshot_cycle_id
+      required: true
+      role: scope
+    provides:
+    - cycle_id
+    - number
+    - startsAt
+    - endsAt
+    - issue_count
+  cycle_board_snapshot_get:
+    kind: get
+    entity: CycleBoardSnapshot
+    description: Cycle board snapshot scoped by cycle id.
+    provides:
+    - cycle_id
+    - number
+    - startsAt
+    - endsAt
+    - issue_count
+views:
+  issue_navigation_link:
+    description: Linear web URL assembled from issue identifier and team key prefix.
+    capability: issue_navigation_link_query
+    entity: IssueNavigationLink
+    scope:
+    - name: issue_id
+      value_ref: nv_issue_navigation_link_issue_id
+    nodes:
+    - id: issue_row
+      capability: issue_get
+      bind:
+        id:
+          kind: scope
+          param: issue_id
+    output:
+      issue_id:
+        kind: scope
+        param: issue_id
+      identifier:
+        kind: node_field
+        node: issue_row
+        field: identifier
+      title:
+        kind: node_field
+        node: issue_row
+        field: title
+      url:
+        kind: computed
+        template: |
+          {%- set team_key = identifier.split('-')[0] -%}
+          https://linear.app/{{ team_key }}/issue/{{ identifier }}
+    relation_outputs:
+    - relation: issue
+      target: Issue
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: issue_row
+  cycle_board_snapshot:
+    description: Cycle row plus issues filtered to that iteration (sprint board pattern).
+    capability: cycle_board_snapshot_query
+    entity: CycleBoardSnapshot
+    scope:
+    - name: cycle_id
+      value_ref: nv_cycle_board_snapshot_cycle_id
+    nodes:
+    - id: cycle_row
+      capability: cycle_get
+      bind:
+        id:
+          kind: scope
+          param: cycle_id
+    - id: cycle_issues
+      capability: issue_by_cycle_query
+      bind:
+        cycle:
+          kind: node_field
+          node: cycle_row
+          field: id
+    output:
+      cycle_id:
+        kind: scope
+        param: cycle_id
+      number:
+        kind: node_field
+        node: cycle_row
+        field: number
+      startsAt:
+        kind: node_field
+        node: cycle_row
+        field: startsAt
+      endsAt:
+        kind: node_field
+        node: cycle_row
+        field: endsAt
+      issue_count:
+        kind: node_row_count
+        node: cycle_issues
+    relation_outputs:
+    - relation: cycle
+      target: Cycle
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: cycle_row
+    - relation: issues
+      target: Issue
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: cycle_issues
 oauth:
   provider: linear
   scopes:
@@ -579,6 +780,9 @@ oauth:
         any_of:
         - read
       issue_by_team_query:
+        any_of:
+        - read
+      issue_by_cycle_query:
         any_of:
         - read
       issue_get:
@@ -658,6 +862,18 @@ oauth:
       issue_remove_label:
         any_of:
         - write
+      issue_navigation_link_query:
+        any_of:
+        - read
+      issue_navigation_link_get:
+        any_of:
+        - read
+      cycle_board_snapshot_query:
+        any_of:
+        - read
+      cycle_board_snapshot_get:
+        any_of:
+        - read
     relations:
       Issue.team:
         any_of:
@@ -686,6 +902,15 @@ oauth:
       Issue.children:
         any_of:
         - read
+      IssueNavigationLink.issue:
+        any_of:
+        - read
+      CycleBoardSnapshot.cycle:
+        any_of:
+        - read
+      CycleBoardSnapshot.issues:
+        any_of:
+        - read
       Comment.issue:
         any_of:
         - read
@@ -695,6 +920,14 @@ auth:
   env: LINEAR_API_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:linear
 values:
+  nv_issue_navigation_link_issue_id:
+    type: entity_ref
+    target: Issue
+    description: Issue whose Linear web URL to assemble.
+  nv_linear_issue_url:
+    type: string
+    string_semantics: short
+    description: Assembled linear.app issue URL from identifier.
   nv_comment_create_issue:
     type: entity_ref
     target: Issue
@@ -725,6 +958,14 @@ values:
     type: entity_ref
     target: Team
     description: Team whose issues to list.
+  nv_issue_by_cycle_query_cycle:
+    type: entity_ref
+    target: Cycle
+    description: Cycle whose scheduled issues to list.
+  nv_cycle_board_snapshot_cycle_id:
+    type: entity_ref
+    target: Cycle
+    description: Cycle id for the board snapshot view scope.
   nv_issue_create_assignee:
     type: entity_ref
     target: User
@@ -800,6 +1041,8 @@ values:
     description: Short key (e.g. ENG).
   nv_user_id:
     type: uuid
+  nv_wire_int:
+    type: integer
   nv_wire_str_markdown:
     type: string
     string_semantics: markdown

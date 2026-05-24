@@ -1626,6 +1626,10 @@ pub enum ViewParamBinding {
     Scope { param: String },
     /// Inline JSON value wired into the backing capability env / predicate.
     Literal { value: serde_json::Value },
+    /// First row field from a prior node in declaration order.
+    NodeField { node: String, field: String },
+    /// Minijinja template evaluated against scope and prior node first-row fields.
+    Computed { template: String },
 }
 
 /// One DAG node in a composed [`ViewDefinition`].
@@ -1703,6 +1707,16 @@ pub enum ViewRelationBinding {
     NodeSingleRow { node: String },
 }
 
+/// Host-injected view scope values (see execute session transport / UI origin).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewScopeInject {
+    /// Session UI origin (defaults to transport origin when unset).
+    SessionUiOrigin,
+    /// Session transport / HTTP backend origin.
+    SessionTransportOrigin,
+}
+
 /// Declared scope slot for a view (documentation + validation hooks).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ViewScopeParam {
@@ -1712,6 +1726,9 @@ pub struct ViewScopeParam {
     /// When true, the view invocation must supply this scope key (see `validate_expected_scope`).
     #[serde(default)]
     pub required: bool,
+    /// When set, the execute host may inject this scope key from the session origin (agent omit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject: Option<ViewScopeInject>,
 }
 
 /// Declarative read-only composition plan (`views:` in `domain.yaml`).
@@ -2119,13 +2136,71 @@ impl CGS {
                         node: node.id.clone(),
                         capability: node.capability.clone(),
                     })?;
-                if nc.kind != CapabilityKind::Query && nc.kind != CapabilityKind::Get {
+                if nc.kind != CapabilityKind::Query
+                    && nc.kind != CapabilityKind::Get
+                    && nc.kind != CapabilityKind::Search
+                {
                     return Err(SchemaError::ViewUnsupportedNodeCapabilityKind {
                         view: view_key.clone(),
                         node: node.id.clone(),
                         capability: node.capability.clone(),
                         kind: format!("{:?}", nc.kind),
                     });
+                }
+
+                let mut allowed_params: HashSet<String> = HashSet::new();
+                if let Some(fields) = nc.object_params() {
+                    for f in fields {
+                        allowed_params.insert(f.name.clone());
+                    }
+                }
+                if nc.kind == CapabilityKind::Get {
+                    allowed_params.insert("id".to_string());
+                }
+
+                for (param_name, binding) in &node.bind {
+                    if !allowed_params.is_empty() && !allowed_params.contains(param_name.as_str()) {
+                        return Err(SchemaError::ViewNodeBindUnknownParam {
+                            view: view_key.clone(),
+                            node: node.id.clone(),
+                            capability: node.capability.clone(),
+                            param: param_name.clone(),
+                        });
+                    }
+                    match binding {
+                        ViewParamBinding::Scope { .. } | ViewParamBinding::Literal { .. } => {}
+                        ViewParamBinding::NodeField { node: ref_node, .. } => {
+                            if ref_node == &node.id {
+                                return Err(SchemaError::ViewNodeBindForwardRef {
+                                    view: view_key.clone(),
+                                    node: node.id.clone(),
+                                    ref_node: ref_node.clone(),
+                                });
+                            }
+                            if !seen_ids.contains(ref_node.as_str()) {
+                                if view.nodes.iter().any(|n| n.id == *ref_node) {
+                                    return Err(SchemaError::ViewNodeBindForwardRef {
+                                        view: view_key.clone(),
+                                        node: node.id.clone(),
+                                        ref_node: ref_node.clone(),
+                                    });
+                                }
+                                return Err(SchemaError::ViewNodeBindUnknownNode {
+                                    view: view_key.clone(),
+                                    node: node.id.clone(),
+                                    ref_node: ref_node.clone(),
+                                });
+                            }
+                        }
+                        ViewParamBinding::Computed { template } => {
+                            if template.trim().is_empty() {
+                                return Err(SchemaError::ViewNodeBindEmptyTemplate {
+                                    view: view_key.clone(),
+                                    node: node.id.clone(),
+                                });
+                            }
+                        }
+                    }
                 }
             }
 
@@ -4453,5 +4528,20 @@ mod oauth_extension_tests {
         assert!(!req.satisfied_by(&g));
         g.insert("c".into());
         assert!(req.satisfied_by(&g));
+    }
+}
+
+#[cfg(test)]
+mod view_bind_validation_tests {
+    use std::path::Path;
+
+    #[test]
+    fn plasm_language_matrix_views_loads_with_node_binds() {
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        if !p.exists() {
+            return;
+        }
+        let cgs = crate::loader::load_schema_dir(p).expect("matrix views");
+        cgs.validate().expect("validate views fixture with node binds");
     }
 }

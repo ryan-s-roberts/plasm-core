@@ -157,3 +157,27 @@ lang_digest_query:
 lang_digest_get:
   transport: view
   view: lang_digest
+
+lang_triage_context_query:
+  transport: view
+  view: lang_triage_context
+
+lang_triage_context_get:
+  transport: view
+  view: lang_triage_context
+
+lang_item_link_query:
+  transport: view
+  view: lang_item_link
+
+lang_item_link_get:
+  transport: view
+  view: lang_item_link
+
+lang_owner_filter_demo_query:
+  transport: view
+  view: lang_owner_filter_demo
+
+lang_owner_filter_demo_get:
+  transport: view
+  view: lang_owner_filter_demo

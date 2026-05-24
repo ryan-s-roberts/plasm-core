@@ -170,3 +170,27 @@
       - SavedFilter
       - Sprint
       - Webhook
+
+- id: ji-21
+  schema: jira
+  goal: "For PLASM-42, show summary, status, and how many workflow transitions are available before we move it"
+  tags: [view, composed_read]
+  covers: [multi_step, get]
+  expect:
+    entities_any: [IssueTransitionContext, Transition]
+
+- id: ji-22
+  schema: jira
+  goal: "Share link to PLASM-99 in the Jira web UI for the standup doc"
+  tags: [view, composed_read]
+  covers: [get]
+  expect:
+    entities_any: [IssueBrowseLink]
+
+- id: ji-23
+  schema: jira
+  goal: "For sprint 42, show sprint name, state, and how many issues are in the sprint backlog"
+  tags: [view, composed_read]
+  covers: [multi_step, query_filtered]
+  expect:
+    entities_any: [SprintBoardSnapshot, Issue]

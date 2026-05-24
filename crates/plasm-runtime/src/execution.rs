@@ -53,6 +53,10 @@ pub struct ExecuteSessionMaterial {
     /// Proof (and similar catalogs): merged into CML env as `base_token` before invoke parameters
     /// so `/ops` bodies can send `baseToken` after `editor_state_get` without repeating it every line.
     pub proof_base_token: Option<String>,
+    /// Pinned HTTP(S) transport origin for this execute row (session backend override).
+    pub transport_origin: Option<String>,
+    /// UI / browse deeplink origin; defaults to [`Self::transport_origin`] when unset.
+    pub ui_origin: Option<String>,
 }
 
 /// Reserved CML env key: 64-char lowercase hex (rendered DOMAIN prompt digest for the row).
@@ -347,6 +351,20 @@ tokio::task_local! {
     /// [`merge_plasm_execute_session_identity_env`], [`merge_plasm_execute_session_share_token_env`],
     /// [`merge_plasm_execute_session_proof_base_token_env`].
     static EXECUTION_EXECUTE_SESSION: Option<std::sync::Arc<ExecuteSessionMaterial>>;
+}
+
+/// Session material for the current execute task (view ambient scope injection).
+pub(crate) fn try_current_execute_session_material(
+) -> Option<std::sync::Arc<ExecuteSessionMaterial>> {
+    EXECUTION_EXECUTE_SESSION
+        .try_with(|s| s.clone())
+        .ok()
+        .flatten()
+}
+
+/// HTTP base string for the current execute task (view ambient scope fallback).
+pub(crate) fn try_current_http_base_string() -> Option<String> {
+    EXECUTION_HTTP_BASE.try_with(|b| b.to_string()).ok()
 }
 
 tokio::task_local! {

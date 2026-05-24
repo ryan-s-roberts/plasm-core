@@ -1,4 +1,4 @@
-version: 11
+version: 12
 http_backend: https://gmail.googleapis.com
 entities:
   Message:
@@ -239,6 +239,61 @@ entities:
         required: false
         value_ref: nv_profile_history_id
     relations: {}
+  ReplyContext:
+    id_field: message_id
+    primary_read: reply_context_get
+    description: Threading headers for composing a reply without guessing RFC 5322 fields.
+    fields:
+      message_id:
+        required: true
+        value_ref: nv_message_id
+      headerSubject:
+        required: false
+        value_ref: nv_message_header_subject
+      headerFrom:
+        required: false
+        value_ref: nv_message_header_from
+      headerMessageId:
+        required: false
+        value_ref: nv_message_header_message_id
+      headerReferences:
+        required: false
+        value_ref: nv_message_header_references
+      headerInReplyTo:
+        required: false
+        value_ref: nv_message_header_in_reply_to
+      threadId:
+        required: false
+        value_ref: nv_message_thread_id
+    relations:
+      message:
+        target: Message
+        cardinality: one
+  MailboxSnapshot:
+    id_field: emailAddress
+    primary_read: mailbox_snapshot_get
+    description: Mailbox totals and INBOX unread counts in one composed read.
+    domain_projection_examples: false
+    fields:
+      emailAddress:
+        required: true
+        value_ref: nv_profile_email_address
+      messagesTotal:
+        required: false
+        value_ref: nv_profile_messages_total
+      threadsTotal:
+        required: false
+        value_ref: nv_profile_threads_total
+      inbox_messages_unread:
+        required: false
+        value_ref: nv_label_messages_unread
+      inbox_threads_unread:
+        required: false
+        value_ref: nv_label_threads_unread
+    relations:
+      profile:
+        target: Profile
+        cardinality: one
 capabilities:
   message_list:
     description: 'List messages in the mailbox.
@@ -606,6 +661,151 @@ capabilities:
     description: Get the authenticated user's Gmail profile (email address, message/thread counts)
     kind: singleton
     entity: Profile
+  reply_context_query:
+    kind: query
+    entity: ReplyContext
+    description: Threading headers for replying to a message (metadata format).
+    parameters:
+    - name: message_id
+      value_ref: nv_reply_context_message_id
+      required: true
+      role: scope
+    provides:
+    - message_id
+    - headerSubject
+    - headerFrom
+    - headerMessageId
+    - headerReferences
+    - headerInReplyTo
+    - threadId
+  reply_context_get:
+    kind: get
+    entity: ReplyContext
+    description: Same reply threading context scoped by message id.
+    provides:
+    - message_id
+    - headerSubject
+    - headerFrom
+    - headerMessageId
+    - headerReferences
+    - headerInReplyTo
+    - threadId
+  mailbox_snapshot_query:
+    kind: query
+    entity: MailboxSnapshot
+    description: Profile totals plus INBOX label unread counts.
+    provides:
+    - emailAddress
+    - messagesTotal
+    - threadsTotal
+    - inbox_messages_unread
+    - inbox_threads_unread
+  mailbox_snapshot_get:
+    kind: get
+    entity: MailboxSnapshot
+    description: Same mailbox snapshot keyed by email address.
+    provides:
+    - emailAddress
+    - messagesTotal
+    - threadsTotal
+    - inbox_messages_unread
+    - inbox_threads_unread
+views:
+  reply_context:
+    description: Threading headers for replying to a message without hand-building MIME.
+    capability: reply_context_query
+    entity: ReplyContext
+    scope:
+    - name: message_id
+      value_ref: nv_reply_context_message_id
+    nodes:
+    - id: msg
+      capability: message_get
+      bind:
+        id:
+          kind: scope
+          param: message_id
+        format:
+          kind: literal
+          value: metadata
+    output:
+      message_id:
+        kind: scope
+        param: message_id
+      headerSubject:
+        kind: node_field
+        node: msg
+        field: headerSubject
+      headerFrom:
+        kind: node_field
+        node: msg
+        field: headerFrom
+      headerMessageId:
+        kind: node_field
+        node: msg
+        field: headerMessageId
+      headerReferences:
+        kind: node_field
+        node: msg
+        field: headerReferences
+      headerInReplyTo:
+        kind: node_field
+        node: msg
+        field: headerInReplyTo
+      threadId:
+        kind: node_field
+        node: msg
+        field: threadId
+    relation_outputs:
+    - relation: message
+      target: Message
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: msg
+  mailbox_snapshot:
+    description: Authenticated mailbox totals and INBOX unread counts.
+    capability: mailbox_snapshot_query
+    entity: MailboxSnapshot
+    scope: []
+    nodes:
+    - id: profile_row
+      capability: profile_get
+      bind: {}
+    - id: inbox_label
+      capability: label_get
+      bind:
+        id:
+          kind: literal
+          value: INBOX
+    output:
+      emailAddress:
+        kind: node_field
+        node: profile_row
+        field: emailAddress
+      messagesTotal:
+        kind: node_field
+        node: profile_row
+        field: messagesTotal
+      threadsTotal:
+        kind: node_field
+        node: profile_row
+        field: threadsTotal
+      inbox_messages_unread:
+        kind: node_field
+        node: inbox_label
+        field: messagesUnread
+      inbox_threads_unread:
+        kind: node_field
+        node: inbox_label
+        field: threadsUnread
+    relation_outputs:
+    - relation: profile
+      target: Profile
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: profile_row
 oauth:
   provider: google
   scopes:
@@ -864,6 +1064,28 @@ oauth:
         - https://www.googleapis.com/auth/gmail.readonly
         - https://www.googleapis.com/auth/gmail.modify
         - https://mail.google.com/
+      reply_context_query:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      reply_context_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      mailbox_snapshot_query:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
+      mailbox_snapshot_get:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
     relations:
       Message.attachments:
         any_of:
@@ -871,11 +1093,26 @@ oauth:
         - https://www.googleapis.com/auth/gmail.modify
         - https://www.googleapis.com/auth/gmail.compose
         - https://mail.google.com/
+      ReplyContext.message:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://www.googleapis.com/auth/gmail.compose
+        - https://mail.google.com/
+      MailboxSnapshot.profile:
+        any_of:
+        - https://www.googleapis.com/auth/gmail.readonly
+        - https://www.googleapis.com/auth/gmail.modify
+        - https://mail.google.com/
 auth:
   scheme: bearer_token
   env: GMAIL_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:gmail
 values:
+  nv_reply_context_message_id:
+    type: entity_ref
+    target: Message
+    description: Message whose threading headers to load for reply composition.
   nv_attachment_data:
     type: blob
     description: Attachment payload as base64url (wire); treat as opaque bytes, not short text

@@ -60,6 +60,37 @@ issue_by_team_query:
       field: hasNextPage
       eq: false
 
+issue_by_cycle_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $cycle: ID!) { issues(first: $first, after: $after, filter: { cycle: { id: { eq: $cycle } } }) { nodes { id identifier title parent { id identifier title } } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - cycle
+              - type: var
+                name: cycle
+  response:
+    items_path: [data, issues, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, issues, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
 issue_get:
   transport: graphql
   method: POST
@@ -826,3 +857,19 @@ issue_remove_label:
   response:
     single: true
     items_path: [data, issueUpdate, issue]
+
+issue_navigation_link_query:
+  transport: view
+  view: issue_navigation_link
+
+issue_navigation_link_get:
+  transport: view
+  view: issue_navigation_link
+
+cycle_board_snapshot_query:
+  transport: view
+  view: cycle_board_snapshot
+
+cycle_board_snapshot_get:
+  transport: view
+  view: cycle_board_snapshot

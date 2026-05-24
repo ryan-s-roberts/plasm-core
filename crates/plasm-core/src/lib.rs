@@ -193,7 +193,8 @@ pub use schema::{
     OutputType, ParameterRole, RelationMaterialization, RelationSchema, ResourceSchema,
     ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate,
     ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding,
-    ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec, ViewScopeParam,
+    ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject,
+    ViewScopeParam,
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;

@@ -118,3 +118,19 @@
   covers: [page_next]
   expect:
     entities_any: [Message]
+
+- id: gm-16
+  schema: gmail
+  goal: "Before replying to message X, load threading headers (Subject, From, Message-Id, References)"
+  tags: [view, composed_read]
+  covers: [get, chain]
+  expect:
+    entities_any: [ReplyContext]
+
+- id: gm-17
+  schema: gmail
+  goal: "Morning triage: how many unread messages and threads are in INBOX for this account"
+  tags: [view, composed_read]
+  covers: [multi_step]
+  expect:
+    entities_any: [MailboxSnapshot]

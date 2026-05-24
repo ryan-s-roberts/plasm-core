@@ -366,10 +366,12 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
   - **`description:`** — domain-only prose.
   - **`capability:`** — must equal one `capabilities:` id on `entity` (historically the `kind: query` symbol); additional `get` capabilities may reference the same `view:` key.
   - **`entity:`** — read-model entity whose `fields:` / `relations:` are the agent-facing projection.
-  - **`scope:`** — optional list of scope parameters: `name`, optional `value_ref:`, and optional **`required: true`** (default false). Only keys marked required must appear on the outer view invocation; omit optional scope params when unused.
+  - **`scope:`** — optional list of scope parameters: `name`, optional `value_ref:`, optional **`required: true`** (default false), and optional **`inject:`** (`session_ui_origin` or `session_transport_origin`) so the execute host fills tenant origin from the pinned session backend (agents omit duplicate host strings). Only keys marked required must appear on the outer view invocation; omit optional scope params when unused.
   - **`nodes:`** — ordered steps; each has `id`, `capability` (existing cap id), and `bind:` mapping that capability's parameter names to either:
     - `kind: scope` `param: <name>` — take from the outer view invocation's scope, or
-    - `kind: literal` `value: <JSON>` — fixed predicate/env fragment.
+    - `kind: literal` `value: <JSON>` — fixed predicate/env fragment, or
+    - **`kind: node_field`** `node:` `field:` — take a field from the **first row** of an earlier node (declaration order = dependency order; forward refs rejected at load), or
+    - **`kind: computed`** `template:` — Minijinja string evaluated against outer scope plus prior node first-row fields (same filters as output templates; node ids are also top-level template keys, e.g. `{{ sprint_row.id }}`).
   - **`output:`** — maps entity field names to:
     - `kind: scope` `param:` — copy a scope parameter into the row
     - `kind: node_row_count` `node:` — integer count
@@ -450,16 +452,18 @@ Use this table before adding `views:` to issue trackers (Jira, Linear) or mail (
 | List row → detail upgrade | **Hydration** (entity has `query` + `get`) | Gmail `message_list` → `message_get`; Linear `issue_query` → `issue_get` |
 | Child collection on parent GET | **`from_parent_get`** or **`query_scoped`** relation | Jira `Issue.comments`; Linear `Issue.labels` |
 | Multi-GET aggregate (counts, booleans, status label) | **`views:`** with `node_row_count` / `node_any_row_field_equals` / `kind: computed` | Jira `views.issue_transition_context`; Cloudflare `views.security_overview` |
-| Assembled browse / deeplink URL | **`views:`** with **`output.kind: computed`** | Linear `views.issue_navigation_link`; Jira `views.issue_browse_link`; Grafana `views.deeplink_generate` |
+| Assembled browse / deeplink URL | **`views:`** with **`output.kind: computed`**; scope host with **`inject: session_ui_origin`** when REST/UI share the session origin | Jira `views.issue_browse_link` (`site_base` injected); Linear `views.issue_navigation_link`; Grafana `views.deeplink_generate` |
 | Reply / threading context before an action | **`views:`** read model **or** action **`invoke_preflight`** | Gmail `views.reply_context` (explicit DOMAIN teaching); `message_reply` keeps preflight for send |
 | Singleton + one scoped GET | **`views:`** with empty bind + literal bind | Gmail `views.mailbox_snapshot` (`profile_get` + `label_get` id=`INBOX`) |
-| Sprint / cycle board (filter inner list from prior node output) | **Scoped query capability first** (or future template binds) | Not a pure view today — add `issue_by_sprint_jql` / GraphQL filter cap, then optional view wrapper |
+| Sprint / cycle board (filter inner list from prior node output) | **`views:`** with **`node_field`** / **`computed`** node binds on inner query caps | Jira `views.sprint_board_snapshot` (`issue_jql` JQL from sprint row); Linear `views.cycle_board_snapshot` (`issue_by_cycle_query` cycle from `cycle_get`) |
 
 **Mail-specific:** Header extraction stays on entity fields via **`derive: name_value_array_lookup`** on `Message` — do not duplicate in views unless composing across capabilities.
 
+**Session origin precedence** (browse/deeplink scope injection): `session ui_origin` → `session transport_origin` → `CGS.http_backend` placeholder. Local REPL/CLI `--backend` does not override execute-session injection — set the session backend on `POST /execute` when testing injected scope.
+
 **Issue-tracker-specific:** When the vendor GET already returns a fat graph (Linear `issue_get` GraphQL), views add value for **cross-capability snapshots** (issue + transitions) and **computed URLs**, not for re-fetching the same GET payload.
 
-Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_triage_context`, `lang_item_link`).
+Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_triage_context`, `lang_item_link`, `lang_owner_filter_demo`).
 
 ### Action output: `provides:` vs `output.side_effect`
 

@@ -1,4 +1,4 @@
-version: 1
+version: 3
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -91,6 +91,66 @@ entities:
     relations:
       item_snapshot:
         description: Synthetic relation ref to the backing LangItem from the view DAG.
+        target: LangItem
+        cardinality: one
+  LangTriageContext:
+    id_field: item_id
+    primary_read: lang_triage_context_get
+    description: View-backed triage row with tag count (issue-tracker transition_context pattern).
+    fields:
+      item_id:
+        required: true
+        value_ref: nv_lang_digest_item_id
+      echo_title:
+        required: true
+        value_ref: nv_lang_digest_echo_title
+      tag_count:
+        required: false
+        value_ref: nv_wire_int
+      has_tags:
+        required: false
+        value_ref: nv_wire_bool
+    relations:
+      item:
+        target: LangItem
+        cardinality: one
+      tags:
+        target: LangTag
+        cardinality: many
+  LangItemLink:
+    id_field: item_id
+    primary_read: lang_item_link_get
+    description: View-backed deeplink row with computed slug URL (navigation link pattern).
+    fields:
+      item_id:
+        required: true
+        value_ref: nv_lang_digest_item_id
+      echo_title:
+        required: true
+        value_ref: nv_lang_digest_echo_title
+      url:
+        required: false
+        value_ref: nv_lang_item_link_url
+    relations:
+      item:
+        target: LangItem
+        cardinality: one
+  LangOwnerFilterDemo:
+    id_field: item_id
+    primary_read: lang_owner_filter_demo_get
+    description: View-backed row exercising computed node binds (owner filter pattern).
+    fields:
+      item_id:
+        required: true
+        value_ref: nv_lang_digest_item_id
+      owner:
+        required: false
+        value_ref: nv_lang_item_owner
+      matching_item_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      item:
         target: LangItem
         cardinality: one
 capabilities:
@@ -254,6 +314,86 @@ capabilities:
     - item_id
     - echo_title
     - echo_slug
+  lang_triage_context_query:
+    description: Query LangTriageContext by item id (composed get + scoped tag query).
+    kind: query
+    entity: LangTriageContext
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+      required: true
+      role: filter
+    provides:
+    - item_id
+    - echo_title
+    - tag_count
+    - has_tags
+  lang_triage_context_get:
+    description: Get LangTriageContext by item id.
+    kind: get
+    entity: LangTriageContext
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_get_item_id
+      required: true
+      role: scope
+    provides:
+    - item_id
+    - echo_title
+    - tag_count
+    - has_tags
+  lang_item_link_query:
+    description: Query LangItemLink with computed url.
+    kind: query
+    entity: LangItemLink
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+      required: true
+      role: filter
+    provides:
+    - item_id
+    - echo_title
+    - url
+  lang_item_link_get:
+    description: Get LangItemLink by item id.
+    kind: get
+    entity: LangItemLink
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_get_item_id
+      required: true
+      role: scope
+    provides:
+    - item_id
+    - echo_title
+    - url
+  lang_owner_filter_demo_query:
+    kind: query
+    entity: LangOwnerFilterDemo
+    description: Query owner-filter demo by item id (computed node bind conformance).
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+      required: true
+      role: filter
+    provides:
+    - item_id
+    - owner
+    - matching_item_count
+  lang_owner_filter_demo_get:
+    kind: get
+    entity: LangOwnerFilterDemo
+    description: Get owner-filter demo by item id.
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_get_item_id
+      required: true
+      role: scope
+    provides:
+    - item_id
+    - owner
+    - matching_item_count
 values:
   nv_lang_tag_id:
     type: string
@@ -327,6 +467,13 @@ values:
   nv_lang_digest_get_item_id:
     type: entity_ref
     target: LangItem
+  nv_lang_item_link_url:
+    type: string
+    string_semantics: short
+  nv_wire_bool:
+    type: boolean
+  nv_wire_int:
+    type: integer
 
 views:
   lang_digest:
@@ -356,6 +503,124 @@ views:
         template: "{{ item_id }}-{{ echo_title }}"
     relation_outputs:
     - relation: item_snapshot
+      target: LangItem
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: item_node
+  lang_triage_context:
+    description: LangItem title plus scoped tag count (transition readiness pattern).
+    capability: lang_triage_context_query
+    entity: LangTriageContext
+    scope:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+    nodes:
+    - id: item_node
+      capability: langitem_get
+      bind:
+        id:
+          kind: scope
+          param: item_id
+    - id: tags
+      capability: langtag_query
+      bind:
+        item_id:
+          kind: node_field
+          node: item_node
+          field: id
+    output:
+      item_id:
+        kind: scope
+        param: item_id
+      echo_title:
+        kind: node_field
+        node: item_node
+        field: title
+      tag_count:
+        kind: node_row_count
+        node: tags
+      has_tags:
+        kind: node_row_count_positive
+        node: tags
+    relation_outputs:
+    - relation: item
+      target: LangItem
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: item_node
+    - relation: tags
+      target: LangTag
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: tags
+  lang_item_link:
+    description: Computed deeplink URL for a LangItem (navigation link pattern).
+    capability: lang_item_link_query
+    entity: LangItemLink
+    scope:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+    nodes:
+    - id: item_node
+      capability: langitem_get
+      bind:
+        id:
+          kind: scope
+          param: item_id
+    output:
+      item_id:
+        kind: scope
+        param: item_id
+      echo_title:
+        kind: node_field
+        node: item_node
+        field: title
+      url:
+        kind: computed
+        template: "/language/v1/items/{{ item_id }}"
+    relation_outputs:
+    - relation: item
+      target: LangItem
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: item_node
+  lang_owner_filter_demo:
+    description: Filter LangItems by owner from a prior get row (computed node bind).
+    capability: lang_owner_filter_demo_query
+    entity: LangOwnerFilterDemo
+    scope:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+    nodes:
+    - id: item_node
+      capability: langitem_get
+      bind:
+        id:
+          kind: scope
+          param: item_id
+    - id: owner_items
+      capability: langitem_query_owner
+      bind:
+        owner:
+          kind: computed
+          template: "{{ item_node.owner }}"
+    output:
+      item_id:
+        kind: scope
+        param: item_id
+      owner:
+        kind: node_field
+        node: item_node
+        field: owner
+      matching_item_count:
+        kind: node_row_count
+        node: owner_items
+    relation_outputs:
+    - relation: item
       target: LangItem
       cardinality: one
       binding:

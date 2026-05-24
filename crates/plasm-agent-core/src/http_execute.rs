@@ -3151,6 +3151,8 @@ async fn run_parsed_plasm_line(
             session_id: session_id.to_string(),
             share_token: bound_share.clone(),
             proof_base_token: bound_proof_base_token.clone(),
+            transport_origin: http_backend_for_root.clone(),
+            ui_origin: http_backend_for_root.clone(),
         })),
     };
 

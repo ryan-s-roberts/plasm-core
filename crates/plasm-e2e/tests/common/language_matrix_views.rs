@@ -53,7 +53,15 @@ pub fn views_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         VIEWS_MATRIX_ENTRY_ID.into(),
         Arc::new(CgsContext::entry(VIEWS_MATRIX_ENTRY_ID, cgs.clone())),
     );
-    let wave: &[&str] = &["LangItem", "LangLine", "LangTag", "LangDigest"];
+    let wave: &[&str] = &[
+        "LangItem",
+        "LangLine",
+        "LangTag",
+        "LangDigest",
+        "LangTriageContext",
+        "LangItemLink",
+        "LangOwnerFilterDemo",
+    ];
     let exp = DomainExposureSession::new(cgs.as_ref(), VIEWS_MATRIX_ENTRY_ID, wave);
     ExecuteSession::new(
         "matrix_views_ph".into(),

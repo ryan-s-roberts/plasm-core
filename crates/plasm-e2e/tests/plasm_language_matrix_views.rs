@@ -30,6 +30,8 @@ const REQUIRED_VIEW_FEATURE_TAGS: &[&str] = &[
     "view_relation_outputs",
     "view_computed",
     "get_scoped_bindings",
+    "view_node_field",
+    "view_node_computed_bind",
 ];
 
 struct ViewMatrixRow {
@@ -237,6 +239,21 @@ fn assert_view_planning_ir(
                 ));
             }
         }
+        "views_triage_context_node_field" => {
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangTriageContext" {
+                return Err(format!("expected LangTriageContext query, got {:?}", q.entity));
+            }
+        }
+        "views_owner_filter_computed_bind" => {
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangOwnerFilterDemo" {
+                return Err(format!(
+                    "expected LangOwnerFilterDemo query, got {:?}",
+                    q.entity
+                ));
+            }
+        }
         other => return Err(format!("unknown view matrix row id {other}")),
     }
     Ok(())
@@ -311,6 +328,20 @@ snap"#,
         features: &["get_scoped_bindings"],
         min_node_results: 1,
         expect_markdown_substrings: &["langmatrix_views", "projection: [id, title]", "i1"],
+    },
+    ViewMatrixRow {
+        id: "views_triage_context_node_field",
+        program: r#"LangTriageContext{item_id="i1"}[item_id,echo_title,tag_count]"#,
+        features: &["view_node_field"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["langmatrix_views", "tag_count", "i1"],
+    },
+    ViewMatrixRow {
+        id: "views_owner_filter_computed_bind",
+        program: r#"LangOwnerFilterDemo{item_id="i1"}[item_id,owner,matching_item_count]"#,
+        features: &["view_node_computed_bind"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["langmatrix_views", "matching_item_count", "i1"],
     },
 ];
 

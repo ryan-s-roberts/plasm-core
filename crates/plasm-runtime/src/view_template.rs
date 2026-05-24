@@ -159,6 +159,24 @@ pub fn render_view_computed_template(
     scope: &IndexMap<String, Value>,
     fields_plain: &IndexMap<String, Value>,
 ) -> Result<Value, RuntimeError> {
+    render_view_template_with_nodes(template, scope, fields_plain, &IndexMap::new())
+}
+
+/// Evaluate a view node-parameter bind template against scope and prior node first-row fields.
+pub fn render_view_param_bind_template(
+    template: &str,
+    scope: &IndexMap<String, Value>,
+    node_fields: &IndexMap<String, IndexMap<String, Value>>,
+) -> Result<Value, RuntimeError> {
+    render_view_template_with_nodes(template, scope, &IndexMap::new(), node_fields)
+}
+
+fn render_view_template_with_nodes(
+    template: &str,
+    scope: &IndexMap<String, Value>,
+    fields_plain: &IndexMap<String, Value>,
+    node_fields: &IndexMap<String, IndexMap<String, Value>>,
+) -> Result<Value, RuntimeError> {
     let trimmed = template.trim();
     if trimmed.is_empty() {
         return Err(RuntimeError::ConfigurationError {
@@ -177,6 +195,19 @@ pub fn render_view_computed_template(
     }
     for (k, v) in fields_plain {
         ctx.insert(k.clone(), plasm_value_to_json(v));
+    }
+    let mut nodes_obj = serde_json::Map::new();
+    for (node_id, fields) in node_fields {
+        let mut field_obj = serde_json::Map::new();
+        for (fk, fv) in fields {
+            field_obj.insert(fk.clone(), plasm_value_to_json(fv));
+        }
+        let node_json = serde_json::Value::Object(field_obj.clone());
+        nodes_obj.insert(node_id.clone(), node_json.clone());
+        ctx.insert(node_id.clone(), node_json);
+    }
+    if !nodes_obj.is_empty() {
+        ctx.insert("nodes".to_string(), serde_json::Value::Object(nodes_obj));
     }
 
     let mut env = Environment::new();
