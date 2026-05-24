@@ -65,7 +65,8 @@ Monorepo CircleCI uses two workflows: **`ci`** (branch pushes — `validate` + `
 
 Configure a **project or context** environment variable:
 
-- **`GH_TOKEN`** — PAT with **Contents** + **Releases** on `PlasmTools/plasm-core` and **Contents** write on `ryan-s-roberts/plasm` (Circle release upload + optional install manifest push).
+- **`GH_TOKEN`** — PAT with **Contents** + **Releases** on `PlasmTools/plasm-core` (release tarballs + `oss-release.json` upload).
+- **`PLASM_MONOREPO_GH_TOKEN`** (recommended) — PAT with **Contents** write on `ryan-s-roberts/plasm` for `[skip ci]` install manifest commits. Without it, Circle sets `PLASM_INSTALL_GIT_PUSH_OPTIONAL=1` (GitHub release manifest + portal image still publish).
 
 Optional:
 
