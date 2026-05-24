@@ -929,6 +929,11 @@ capabilities:
     kind: get
     entity: Dashboard
     description: Load a dashboard by uid, including panel and variable JSON.
+    parameters:
+      - name: uid
+        value_ref: nv_grafana_dashboard_uid
+        required: true
+        role: scope
     provides:
       - uid
       - title

@@ -32,7 +32,7 @@ dashboard_get:
   path:
     - { type: literal, value: dashboards }
     - { type: literal, value: uid }
-    - { type: var, name: id }
+    - { type: var, name: uid }
   response:
     items: dashboard
     single: true
