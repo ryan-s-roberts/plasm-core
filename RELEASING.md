@@ -14,7 +14,7 @@ Each supported Rust triple gets **three** tarballs on [GitHub Releases](https://
 
 SemVer is on the **Git tag** only (e.g. `v0.1.1`), not repeated in asset filenames.
 
-Plus **`SHA256SUMS`** for all assets.
+Plus **`SHA256SUMS`** and **`oss-release.json`** (install manifest for `install.sh` and GitHub `releases/latest/download`).
 
 **Targets:** `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` (**6** tarballs per release). **Linux arm64** and **Intel macOS** are not published — use Linux amd64 or Apple Silicon macOS builds, or build from source.
 
@@ -22,25 +22,42 @@ Plus **`SHA256SUMS`** for all assets.
 
 The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 
-## Cut a release
+## Cut a release (single pipeline)
 
-1. Update **`[workspace.package] version`** in `Cargo.toml` (and keep the parent monorepo root `Cargo.toml` `[workspace.package] version` in sync if you ship from both trees).
-2. Update **`CHANGELOG.md`** under `[Unreleased]` → move notes under a `## [X.Y.Z]` heading with the release date.
-3. Commit and push, then create an **annotated tag** `vX.Y.Z` pointing at that commit (`git tag -a vX.Y.Z -m "Release vX.Y.Z"`).
-4. **Push the tag** to GitHub:
-   - **plasm-core** (OSS repo): workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) builds tarballs and publishes to GitHub Releases.
-   - **Private monorepo (`plasm`)**: pushing tag `v*.*.*` runs [`.github/workflows/oss-install-site.yml`](../.github/workflows/oss-install-site.yml) on GitHub Actions (waits for release tarballs, commits `portal/public/install/oss-release.json`, optional portal image push). **Always push the monorepo tag** after plasm-core so [plasm.tools/get](https://plasm.tools/get/) updates.
-   - **Private monorepo (`plasm`)** with CircleCI: on tag `v*.*.*`, after `validate` and `appliance_tui_pty`:
-     - **`oss_release_linux`** — Docker Buildx `linux/amd64` via [`docker/plasm-stack.Dockerfile`](../docker/plasm-stack.Dockerfile) `--target oss-release-bundle`.
-     - **`oss_release_macos`** — native `cargo` on a **Darwin** machine runner (host triple only).
-     - Both run [`scripts/ci/circle-oss-release.sh`](../scripts/ci/circle-oss-release.sh) and **merge** `SHA256SUMS` into the same GitHub release (`--clobber` uploads).
-     - **`oss_publish_install_site`** (after both OSS release jobs) — fallback: [`publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh) `--git --portal` using the same **`GH_TOKEN`** (needs write on the monorepo).
-     - **`release_build_and_push_vultr`** — full image bake from updated `main` (includes portal with fresh manifest).
-5. **Manual fallback** (if CI did not sync install files):
+**Binaries** are published only by **CircleCI** on a **monorepo** annotated tag. **plasm-core** GHA [`.github/workflows/release.yml`](.github/workflows/release.yml) only verifies that the tag matches `[workspace.package] version` (optional tag on the OSS repo for the same check).
+
+1. Bump **`[workspace.package] version`** in `plasm-oss/Cargo.toml` and the monorepo root `Cargo.toml`; update **`CHANGELOG.md`**.
+2. Commit and push **plasm-oss** `main` (submodule pointer in monorepo).
+3. Commit and push **monorepo** `main` with the updated submodule + version.
+4. Run full CI on `main` (Circle **`ci`** workflow) before tagging.
+5. Create and push **one tag** on the **monorepo** only:
+
+   ```bash
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+6. Watch Circle **`oss_release`** to completion:
+   - **`oss_release_linux`** + **`oss_release_macos`** → [`circle-oss-release.sh`](../scripts/ci/circle-oss-release.sh) uploads tarballs + `SHA256SUMS` to [PlasmTools/plasm-core](https://github.com/PlasmTools/plasm-core/releases).
+   - **`oss_publish_install_site`** → generates `oss-release.json`, uploads it to the GitHub release, pushes **plasm-portal** image, commits manifest to `main` (`[skip ci]`), optional cluster rollout, **live verify** (requires **`GH_TOKEN`**, **`VULTR_CONTAINER_KEY`**, optional **`KUBECONFIG`**).
+   - **`release_build_and_push_vultr`** → remaining stack images (skips **plasm-portal**; already published).
+
+7. Confirm install plane:
+
+   ```bash
+   curl -fsSL https://github.com/PlasmTools/plasm-core/releases/latest/download/oss-release.json | jq .version
+   curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --dry-run
+   ```
+
+**Manual recovery** (if a step failed):
 
 ```bash
-bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
+PLASM_INSTALL_SITE_PUSH=1 PLASM_INSTALL_PORTAL_PUSH=1 PLASM_INSTALL_VERIFY_LIVE=1 \
+  bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
+bash scripts/k8s/rollout-plasm-portal.sh   # when KUBECONFIG is set
 ```
+
+Or re-run monorepo GHA [`.github/workflows/oss-install-site.yml`](../.github/workflows/oss-install-site.yml) via **workflow_dispatch** (requires **`VULTR_CONTAINER_KEY`** secret).
 
 ## CircleCI (monorepo tag pipelines)
 
@@ -75,7 +92,7 @@ Install plane is deployed from **[`portal/`](../portal/)** (Kubernetes `plasm-po
 | `https://plasm.tools/install/install.sh` | `portal/public/install/install.sh` |
 | `https://plasm.tools/install/oss-release.json` | `portal/public/install/oss-release.json` |
 
-After the GitHub release has tarballs, the monorepo **OSS install site** workflow (tag push on `ryan-s-roberts/plasm`) or Circle **`oss_publish_install_site`** runs [`scripts/ci/publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh) automatically.
+After tarballs land on GitHub Releases, Circle **`oss_publish_install_site`** runs [`scripts/ci/publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh) (manifest → GitHub asset → portal image → git commit). **`install.sh`** defaults to the GitHub release manifest so installers work even before the portal image rolls out; `https://plasm.tools/install/oss-release.json` is kept in sync via the portal image bake.
 
 Manual fallback:
 
