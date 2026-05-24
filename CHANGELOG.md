@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-05-24
+
+### Fixed
+
+- **CI:** `circle-oss-release` no longer `cp` SHA256SUMS onto itself when refreshing an existing release (macOS `cp` exit 1).
+- **CI:** Linux OSS release job skips checksum upload; macOS job runs after Linux and merges `SHA256SUMS` once (avoids parallel clobber).
+
+### Changed
+
+- **CI:** Coherent monorepo-tag install pipeline (GitHub manifest default, Circle `oss_publish` gate, GHA install recovery only).
+
 ## [0.1.12] - 2026-05-24
 
 ### Fixed
