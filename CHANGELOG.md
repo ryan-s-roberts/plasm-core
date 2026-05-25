@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-05-25
+
+### Fixed
+
+- **CI:** Source `ensure-kubeconfig-env` (subshell dropped KUBECONFIG under zsh -il); reject EKS/cicd-cluster.
+
 ## [0.1.26] - 2026-05-25
 
 ### Fixed
