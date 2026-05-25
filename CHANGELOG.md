@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-05-25
+
+### Fixed
+
+- **CI:** Flat Circle config (no custom commands); use workflow **release** / job **release_ship**, not legacy **oss_publish_install_site**.
+
 ## [0.1.25] - 2026-05-25
 
 ### Fixed
