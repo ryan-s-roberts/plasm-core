@@ -49,23 +49,33 @@ The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
    curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --dry-run
    ```
 
-**Manual recovery** (if a step failed):
+**Recovery** (if a Circle step failed): use the [CircleCI](https://app.circleci.com/) UI for project **`PlasmTools/plasm`** — do **not** use GitHub Actions (install secrets live in **Circle** only).
+
+- **Tag release:** Re-run workflow **`oss_release`** for the tag, or re-run job **`oss_publish_install_site`** after **`oss_release_linux`** / **`oss_release_macos`** are green.
+- **Install UX only** (portal image stale on plasm.tools): Re-run workflow **`portal_site`** on **`main`** (pushes `plasm-portal:latest` + cluster rollout).
+
+On the self-hosted runner with the same env as Circle:
 
 ```bash
 PLASM_INSTALL_SITE_PUSH=1 PLASM_INSTALL_PORTAL_PUSH=1 PLASM_INSTALL_VERIFY_LIVE=1 \
   bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
-bash scripts/k8s/rollout-plasm-portal.sh   # when KUBECONFIG is set
 ```
 
-Or re-run monorepo GHA [`.github/workflows/oss-install-site.yml`](../.github/workflows/oss-install-site.yml) via **workflow_dispatch** (requires **`VULTR_CONTAINER_KEY`** secret).
+## CircleCI ([PlasmTools/plasm](https://github.com/PlasmTools/plasm))
 
-## CircleCI (monorepo tag pipelines)
+Monorepo CircleCI uses **`ci`** (branch pushes), **`oss_release`** (version tags), and **`portal_site`** (`main` → plasm.tools portal image + rollout). Install-manifest commits include **`[skip ci]`** so they do not re-run full `validate`.
 
-Monorepo CircleCI uses two workflows: **`ci`** (branch pushes — `validate` + `appliance_tui_pty` + Vultr bake) and **`oss_release`** (version tags only — no full test suite). Install-manifest commits from `publish-oss-install-site.sh` include **`[skip ci]`** so post-release JSON sync does not re-run `validate`. Tag pushes should not duplicate the same `cargo nextest` + `mix test` job that already ran on `main` before the release tag.
+| Workflow | When | Install / portal |
+|----------|------|------------------|
+| **`oss_release`** | Tag `v*.*.*` | Full install plane via **`oss_publish_install_site`** |
+| **`portal_site`** | Push to **`main`** | **`publish_portal_site`** — portal image + rollout (no new semver) |
+| **`ci`** | Other branches | Tests + optional Vultr bake only |
 
 ### CircleCI secrets
 
-Set these on the **CircleCI project** or a **context** used by `oss_release` (self-hosted `plasm/local` runner). There is **one** GitHub PAT name: **`GH_TOKEN`** (not a separate monorepo secret).
+Set on the **CircleCI project** or a **context** attached to **`oss_release`** and **`portal_site`** on the self-hosted **`plasm/local`** runner. These are **not** GitHub Actions repository secrets.
+
+There is **one** GitHub PAT env name: **`GH_TOKEN`**.
 
 | Circle env var | What to create |
 |----------------|----------------|
@@ -121,10 +131,9 @@ Install plane is deployed from **[`portal/`](../portal/)** (Kubernetes `plasm-po
 
 After tarballs land on GitHub Releases, Circle **`oss_publish_install_site`** runs [`scripts/ci/publish-oss-install-site.sh`](../scripts/ci/publish-oss-install-site.sh) (manifest → GitHub asset → portal image → git commit). **`install.sh`** defaults to the GitHub release manifest so installers work even before the portal image rolls out; `https://plasm.tools/install/oss-release.json` is kept in sync via the portal image bake.
 
-Manual fallback:
+Local fallback (same scripts as Circle; export Circle env vars first):
 
 ```bash
-# From monorepo root (requires gh + python3):
 bash scripts/ci/publish-oss-install-site.sh vX.Y.Z --git --portal
 ```
 
@@ -143,4 +152,4 @@ Platform notes: [`docs/oss-binary-platforms.md`](../docs/oss-binary-platforms.md
 
 ## Native packaging (local / CI)
 
-[`scripts/ci/oss-release-pack-native.sh`](scripts/ci/oss-release-pack-native.sh) — `cargo build --release` then pack three tarballs (used by Circle macOS and GHA).
+[`scripts/ci/oss-release-pack-native.sh`](scripts/ci/oss-release-pack-native.sh) — `cargo build --release` then pack three tarballs (used by Circle macOS).
