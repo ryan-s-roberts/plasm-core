@@ -63,7 +63,9 @@ PLASM_INSTALL_SITE_PUSH=1 PLASM_INSTALL_PORTAL_PUSH=1 PLASM_INSTALL_VERIFY_LIVE=
 
 ## CircleCI ([PlasmTools/plasm](https://github.com/PlasmTools/plasm))
 
-Monorepo CircleCI project must track **[PlasmTools/plasm](https://github.com/PlasmTools/plasm)** (not a personal fork). After an org transfer, open CircleCI → **Projects** → set up or re-link **`PlasmTools/plasm`** so webhooks fire on push. Pushes that only update the old `ryan-s-roberts/plasm` remote will not start pipelines.
+**If pushes/tags do not start builds:** the repo moved to **PlasmTools** but Circle may still be linked to **`ryan-s-roberts/plasm`**. That is fixed in the CircleCI + GitHub UI, not in git. Follow **[docs/circleci-plasmtools-migration.md](../docs/circleci-plasmtools-migration.md)** (org app access → **Set Up Project** under **PlasmTools** → copy env vars → push again).
+
+Monorepo CircleCI must track **[PlasmTools/plasm](https://github.com/PlasmTools/plasm)**. Confirm `git remote -v` points at `PlasmTools/plasm`, not a fork or old path.
 
 Workflows: **`ci`** (branches), **`oss_release`** (tags). On **`main`**, **`ci`** also runs **`publish_portal_site`** (portal image + rollout). Install-manifest commits include **`[skip ci]`** so they do not re-run **`validate`**.
 
