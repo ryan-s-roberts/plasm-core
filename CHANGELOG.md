@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-05-25
+
+### Changed
+
+- **CI:** `publish_portal_site` in `ci` workflow on `main`; Circle project docs for **PlasmTools/plasm**.
+
 ## [0.1.17] - 2026-05-24
 
 ### Changed
