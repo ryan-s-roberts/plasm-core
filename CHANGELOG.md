@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-05-25
+
+### Fixed
+
+- **CI:** `rollout-plasm-portal` bootstraps Argo `plasm-portal` when Deployment is missing; sanity-check VKE cluster.
+
 ## [0.1.22] - 2026-05-25
 
 ### Fixed
