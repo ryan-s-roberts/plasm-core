@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-05-25
+
+### Fixed
+
+- **plasm.tools/get:** release pill reads GitHub `oss-release.json`; portal image cache bust on manifest version.
+
 ## [0.1.28] - 2026-05-25
 
 ### Fixed
