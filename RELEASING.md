@@ -4,7 +4,7 @@
 
 **[RELEASING.md](https://github.com/PlasmTools/plasm/blob/main/RELEASING.md)** on [PlasmTools/plasm](https://github.com/PlasmTools/plasm)
 
-- Annotated tags (`v*.*.*`) and CircleCI **`oss_release`** run on **PlasmTools/plasm** only.
+- Annotated tags (`v*.*.*`) and CircleCI workflow **`release`** run on **PlasmTools/plasm** only.
 - GitHub Release tarballs are uploaded to **PlasmTools/plasm-core** from monorepo CI scripts.
 
 Update **`CHANGELOG.md`** in this repo for OSS workspace release notes; follow the monorepo checklist to ship.
