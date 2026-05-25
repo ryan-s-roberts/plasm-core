@@ -52,7 +52,7 @@ The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 **Recovery** (if a Circle step failed): use the [CircleCI](https://app.circleci.com/) UI for project **`PlasmTools/plasm`** — do **not** use GitHub Actions (install secrets live in **Circle** only).
 
 - **Tag release:** Re-run workflow **`oss_release`** for the tag, or re-run job **`oss_publish_install_site`** after **`oss_release_linux`** / **`oss_release_macos`** are green.
-- **Install UX only** (portal image stale on plasm.tools): Re-run workflow **`portal_site`** on **`main`** (pushes `plasm-portal:latest` + cluster rollout).
+- **Install UX only** (portal image stale on plasm.tools): Re-run workflow **`ci`** job **`publish_portal_site`** on **`main`** (pushes `plasm-portal:latest` + cluster rollout).
 
 On the self-hosted runner with the same env as Circle:
 
@@ -63,17 +63,19 @@ PLASM_INSTALL_SITE_PUSH=1 PLASM_INSTALL_PORTAL_PUSH=1 PLASM_INSTALL_VERIFY_LIVE=
 
 ## CircleCI ([PlasmTools/plasm](https://github.com/PlasmTools/plasm))
 
-Monorepo CircleCI uses **`ci`** (branch pushes), **`oss_release`** (version tags), and **`portal_site`** (`main` → plasm.tools portal image + rollout). Install-manifest commits include **`[skip ci]`** so they do not re-run full `validate`.
+Monorepo CircleCI project must track **[PlasmTools/plasm](https://github.com/PlasmTools/plasm)** (not a personal fork). After an org transfer, open CircleCI → **Projects** → set up or re-link **`PlasmTools/plasm`** so webhooks fire on push. Pushes that only update the old `ryan-s-roberts/plasm` remote will not start pipelines.
+
+Workflows: **`ci`** (branches), **`oss_release`** (tags). On **`main`**, **`ci`** also runs **`publish_portal_site`** (portal image + rollout). Install-manifest commits include **`[skip ci]`** so they do not re-run **`validate`**.
 
 | Workflow | When | Install / portal |
 |----------|------|------------------|
 | **`oss_release`** | Tag `v*.*.*` | Full install plane via **`oss_publish_install_site`** |
-| **`portal_site`** | Push to **`main`** | **`publish_portal_site`** — portal image + rollout (no new semver) |
-| **`ci`** | Other branches | Tests + optional Vultr bake only |
+| **`ci`** on **`main`** | Push to **`main`** | **`publish_portal_site`** + **`validate`** / **`build_and_push_vultr`** (when not skipped) |
+| **`ci`** on other branches | Branch push | Tests + optional Vultr bake only |
 
 ### CircleCI secrets
 
-Set on the **CircleCI project** or a **context** attached to **`oss_release`** and **`portal_site`** on the self-hosted **`plasm/local`** runner. These are **not** GitHub Actions repository secrets.
+Set on the **CircleCI project** or a **context** attached to **`oss_release`** and **`ci`** ( **`publish_portal_site`** ) on the self-hosted **`plasm/local`** runner. These are **not** GitHub Actions repository secrets.
 
 There is **one** GitHub PAT env name: **`GH_TOKEN`**.
 
