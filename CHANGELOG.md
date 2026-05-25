@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-05-25
+
+### Fixed
+
+- **CI:** `git-checkout-main.sh` stashes install manifest before checkout (tag release ship phase 3).
+
 ## [0.1.27] - 2026-05-25
 
 ### Fixed
