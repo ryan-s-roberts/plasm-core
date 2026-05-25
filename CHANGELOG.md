@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-05-25
+
+### Changed
+
+- **CI:** CircleCI project re-linked for **PlasmTools/plasm** (`oss_release` on tag).
+
 ## [0.1.19] - 2026-05-25
 
 ### Changed
