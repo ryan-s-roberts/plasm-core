@@ -39,7 +39,7 @@ The legacy unified `plasm-oss-*.tar.gz` is **no longer published**.
 
 6. Watch Circle **`oss_release`** to completion:
    - **`oss_release_linux`** + **`oss_release_macos`** → [`circle-oss-release.sh`](../scripts/ci/circle-oss-release.sh) uploads tarballs + `SHA256SUMS` to [PlasmTools/plasm-core](https://github.com/PlasmTools/plasm-core/releases).
-   - **`oss_publish_install_site`** → generates `oss-release.json`, uploads it to the GitHub release, pushes **plasm-portal** image, commits manifest to `main` (`[skip ci]`), cluster rollout when **`KUBECONFIG`** is set, **live verify** (requires **`GH_TOKEN`**, **`PLASM_MONOREPO_GH_TOKEN`**, **`VULTR_CONTAINER_KEY`**).
+   - **`oss_publish_install_site`** → manifest → GitHub release → **plasm-portal** image → **`main`** commit → portal rollout → live verify (see [CircleCI secrets](#circleci-secrets)).
    - **`release_build_and_push_vultr`** → remaining stack images (skips **plasm-portal**; already published).
 
 7. Confirm install plane:
@@ -63,11 +63,36 @@ Or re-run monorepo GHA [`.github/workflows/oss-install-site.yml`](../.github/wor
 
 Monorepo CircleCI uses two workflows: **`ci`** (branch pushes — `validate` + `appliance_tui_pty` + Vultr bake) and **`oss_release`** (version tags only — no full test suite). Install-manifest commits from `publish-oss-install-site.sh` include **`[skip ci]`** so post-release JSON sync does not re-run `validate`. Tag pushes should not duplicate the same `cargo nextest` + `mix test` job that already ran on `main` before the release tag.
 
-Configure a **project or context** environment variable:
+### CircleCI secrets
 
-- **`GH_TOKEN`** — PAT with **Contents** + **Releases** on `PlasmTools/plasm-core` (release tarballs + `oss-release.json` upload via `gh`).
-- **`PLASM_MONOREPO_GH_TOKEN`** — PAT with **Contents** write on `ryan-s-roberts/plasm` (install manifest commit to `main`). Do not reuse `GH_TOKEN` if it is plasm-core-only (monorepo `git push` returns 403).
-- **`VULTR_CONTAINER_KEY`** — registry push for `plasm-portal` image.
+Set these on the **CircleCI project** or a **context** used by `oss_release` (self-hosted `plasm/local` runner). There is **one** GitHub PAT name: **`GH_TOKEN`** (not a separate monorepo secret).
+
+| Circle env var | What to create |
+|----------------|----------------|
+| **`GH_TOKEN`** | **GitHub personal access token** (classic or fine-grained) used for **`gh`** and **`git push`**. Must cover **both** repositories below. A plasm-core-only token causes **`403` on `git push`** to `ryan-s-roberts/plasm`. |
+| **`VULTR_CONTAINER_KEY`** | Vultr **container registry API key** (registry password). |
+| **`KUBECONFIG`** *or* **`PLASM_KUBECONFIG_B64`** | Path to kubeconfig **on the runner machine** (e.g. `/Users/runner/.kube/vke.yaml`), **or** base64-encoded kubeconfig file for Vultr VKE (portal rollout + live verify). |
+
+**`GH_TOKEN` permissions (fine-grained PAT)**
+
+Create a fine-grained PAT → **Repository access** → select **both**:
+
+- `PlasmTools/plasm-core`
+- `ryan-s-roberts/plasm`
+
+| Repository | Permissions |
+|------------|-------------|
+| `PlasmTools/plasm-core` | **Contents:** Read and write · **Metadata:** Read-only · **Releases:** Read and write |
+| `ryan-s-roberts/plasm` | **Contents:** Read and write · **Metadata:** Read-only |
+
+**`GH_TOKEN` permissions (classic PAT)**
+
+- Scope: **`repo`** (full control of private repositories), **or** at minimum access to both repos above.
+- Do **not** use a machine-user / org token that is only installed on `plasm-core`.
+
+**Preflight:** `oss_publish_install_site` runs [`preflight-gh-token-scopes.sh`](../scripts/ci/preflight-gh-token-scopes.sh) before upload/push so missing repo access fails with a clear message instead of a late `git push` 403.
+
+**Also required on the runner:** `gh`, `docker`, `kubectl`.
 
 Optional:
 
