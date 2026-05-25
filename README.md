@@ -25,7 +25,7 @@ cargo run -p plasm-server --release -- \
 
 Use **`--plugin-dir target/plasm-plugins`** after packing plugins (see **`AGENTS.md`**). **`--no-tui`** runs headless. For `project_mcp_*` persistence set **`DATABASE_URL`** / **`PLASM_MCP_CONFIG_DATABASE_URL`** (and run **`plasm-server mcp migrate-db`** or **`--migrate-mcp-config-db`**). Details: [`crates/plasm-server/README.md`](crates/plasm-server/README.md).
 
-**SaaS Phoenix + Tool Explorer** lives in the **[plasm](https://github.com/ryan-s-roberts/plasm)** monorepo under **`web/`** (`just local-web` from that checkout).
+**SaaS Phoenix + Tool Explorer** lives in the **[plasm](https://github.com/PlasmTools/plasm)** monorepo under **`web/`** (`just local-web` from that checkout).
 
 Full flags, `/execute`, MCP tools, plugins, and catalog workflows are covered in **[the documentation](https://plasmtools.github.io/plasm-core/)**; contributor-oriented commands and boundaries are summarized in [`AGENTS.md`](AGENTS.md). Doc sources: [`doc-site/`](doc-site/README.md).
 

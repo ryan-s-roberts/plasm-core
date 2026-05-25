@@ -69,7 +69,7 @@ Set these on the **CircleCI project** or a **context** used by `oss_release` (se
 
 | Circle env var | What to create |
 |----------------|----------------|
-| **`GH_TOKEN`** | **GitHub personal access token** (classic or fine-grained) used for **`gh`** and **`git push`**. Must cover **both** repositories below. A plasm-core-only token causes **`403` on `git push`** to `ryan-s-roberts/plasm`. |
+| **`GH_TOKEN`** | **GitHub personal access token** (classic or fine-grained) used for **`gh`** and **`git push`**. Must cover **both** repositories below. A plasm-core-only token causes **`403` on `git push`** to `PlasmTools/plasm`. |
 | **`VULTR_CONTAINER_KEY`** | Vultr **container registry API key** (registry password). |
 | **`KUBECONFIG`** *or* **`PLASM_KUBECONFIG_B64`** | Path to kubeconfig **on the runner machine** (e.g. `/Users/runner/.kube/vke.yaml`), **or** base64-encoded kubeconfig file for Vultr VKE (portal rollout + live verify). |
 
@@ -78,12 +78,12 @@ Set these on the **CircleCI project** or a **context** used by `oss_release` (se
 Create a fine-grained PAT → **Repository access** → select **both**:
 
 - `PlasmTools/plasm-core`
-- `ryan-s-roberts/plasm`
+- `PlasmTools/plasm`
 
 | Repository | Permissions |
 |------------|-------------|
 | `PlasmTools/plasm-core` | **Contents:** Read and write · **Metadata:** Read-only · **Releases:** Read and write |
-| `ryan-s-roberts/plasm` | **Contents:** Read and write · **Metadata:** Read-only |
+| `PlasmTools/plasm` | **Contents:** Read and write · **Metadata:** Read-only |
 
 **`GH_TOKEN` permissions (classic PAT)**
 
