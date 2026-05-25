@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-05-24
+
+### Fixed
+
+- **CI:** Portal image publish uses `docker build` + Vultr push retries instead of buildx bake (504 blob upload timeouts).
+
 ## [0.1.15] - 2026-05-24
 
 ### Fixed
