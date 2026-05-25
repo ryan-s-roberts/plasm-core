@@ -3,7 +3,39 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+use super::log_render;
+
+/// Vertical chrome for the RUN control station (tab rail + body + footer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunningLayout {
+    pub tab_rail: Rect,
+    pub body: Rect,
+    pub footer: Rect,
+}
+
+/// Tab rail height (border + one content line).
+pub const RUN_TAB_RAIL_HEIGHT: u16 = 3;
+/// Footer block height (top border + content + padding).
+pub const RUN_FOOTER_HEIGHT: u16 = 3;
+
+/// Split the terminal into tab rail, scrollable body, and footer.
+pub fn split_running_vertical(area: Rect) -> RunningLayout {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(RUN_TAB_RAIL_HEIGHT),
+            Constraint::Min(0),
+            Constraint::Length(RUN_FOOTER_HEIGHT),
+        ])
+        .split(area);
+    RunningLayout {
+        tab_rail: chunks[0],
+        body: chunks[1],
+        footer: chunks[2],
+    }
+}
 
 /// True when `NO_COLOR` is set (same semantics as the main TUI).
 pub fn no_color() -> bool {
@@ -93,8 +125,13 @@ pub fn split_with_notice(area: Rect, show_notice: bool) -> (Rect, Option<Rect>) 
     (split[0], Some(split[1]))
 }
 
-/// `< Status | [APIs] | OAuth | … >` plus dim trailing ports and tab hint.
-pub fn tab_rail_line(active_index: usize, tab_titles: &[&str], listen_port: u16) -> Line<'static> {
+/// `< Status | [APIs] | OAuth | … >` plus dim trailing listen port; tab hint omitted when narrow.
+pub fn tab_rail_line(
+    active_index: usize,
+    tab_titles: &[&str],
+    listen_port: u16,
+    max_cols: u16,
+) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![Span::raw("< ")];
     let n = tab_titles.len();
     for (i, title) in tab_titles.iter().enumerate() {
@@ -111,12 +148,25 @@ pub fn tab_rail_line(active_index: usize, tab_titles: &[&str], listen_port: u16)
     spans.push(Span::raw(" >"));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        format!("listen:{listen_port} (HTTP+MCP)"),
+        format!("listen:{listen_port}"),
         dim_style(),
     ));
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled("(←/→ or Tab)", dim_style()));
-    Line::from(spans)
+    if max_cols >= 72 {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled("(←/→ or Tab)", dim_style()));
+    }
+    clip_line_spans_to_width(Line::from(spans), max_cols)
+}
+
+/// Truncate a rendered line to fit `max_cols` terminal columns.
+pub fn clip_line_spans_to_width(line: Line<'static>, max_cols: u16) -> Line<'static> {
+    let flat = line.to_string();
+    let clipped = log_render::clip_line_display(&flat, max_cols);
+    if clipped == flat {
+        line
+    } else {
+        Line::from(clipped)
+    }
 }
 
 /// One-line filter bar: `Filter catalogues (/): value` with optional editing highlight on value.
@@ -194,7 +244,14 @@ pub fn footer_line(
     Line::from(spans)
 }
 
+/// Paint a full-frame clear before chrome (avoids ghost cells from stderr / prior frames).
+pub fn clear_frame(frame: &mut ratatui::Frame<'_>) {
+    frame.render_widget(Clear, frame.area());
+}
+
 pub fn render_tab_rail(frame: &mut ratatui::Frame<'_>, area: Rect, line: Line<'static>) {
+    let max_cols = area.width.max(1);
+    let line = clip_line_spans_to_width(line, max_cols);
     frame.render_widget(
         Paragraph::new(line).block(Block::default().borders(Borders::BOTTOM)),
         area,
@@ -202,6 +259,8 @@ pub fn render_tab_rail(frame: &mut ratatui::Frame<'_>, area: Rect, line: Line<'s
 }
 
 pub fn render_footer_bar(frame: &mut ratatui::Frame<'_>, area: Rect, line: Line<'static>) {
+    let max_cols = area.width.max(1);
+    let line = clip_line_spans_to_width(line, max_cols);
     frame.render_widget(
         Paragraph::new(line).block(Block::default().borders(Borders::TOP)),
         area,
@@ -215,11 +274,19 @@ mod tests {
     #[test]
     fn tab_rail_brackets_active_tab() {
         let titles = ["Status", "Clients", "APIs", "OAuth"];
-        let line = tab_rail_line(2, &titles, 8080);
+        let line = tab_rail_line(2, &titles, 8080, 120);
         let s = line.to_string();
         assert!(s.contains("< "));
         assert!(s.contains("[APIs]"));
         assert!(s.contains("listen:8080"));
+    }
+
+    #[test]
+    fn tab_rail_truncates_on_narrow_terminal() {
+        use unicode_width::UnicodeWidthStr;
+        let titles = ["Status", "Clients", "APIs", "OAuth", "Keys", "Runs", "Storage", "Logs"];
+        let line = tab_rail_line(2, &titles, 8080, 40);
+        assert!(line.to_string().width() <= 40);
     }
 
     #[test]
@@ -245,5 +312,17 @@ mod tests {
         let flat = line.to_string();
         assert!(flat.contains("filter"));
         assert!(flat.contains("toggle"));
+    }
+
+    #[test]
+    fn running_layout_reserves_tab_rail_and_footer() {
+        let area = Rect::new(0, 0, 80, 24);
+        let layout = split_running_vertical(area);
+        assert_eq!(layout.tab_rail.height, RUN_TAB_RAIL_HEIGHT);
+        assert_eq!(layout.footer.height, RUN_FOOTER_HEIGHT);
+        assert_eq!(
+            layout.tab_rail.height + layout.body.height + layout.footer.height,
+            24
+        );
     }
 }

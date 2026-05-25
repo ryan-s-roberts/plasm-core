@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30] - 2026-05-25
+
+### Fixed
+
+- **plasm-server TUI:** Clear each frame, handle terminal resize, taller tab rail, display-width clipping for catalogue/API rows; bootstrap supervisor messages go to Logs tab (tracing) instead of painting over the footer.
+
 ## [0.1.29] - 2026-05-25
 
 ### Fixed

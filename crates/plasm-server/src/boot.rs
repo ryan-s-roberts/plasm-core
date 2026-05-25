@@ -16,7 +16,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::appliance_admin_bridge::AdminBridge;
@@ -196,6 +196,7 @@ fn startup_lines(model: &BootModel) -> Vec<Line<'static>> {
 }
 
 fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen_port: u16) {
+    frame.render_widget(Clear, frame.area());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -351,9 +352,11 @@ pub fn run_appliance_shell(
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(BootstrapUiMsg::Running(handoff)) => {
-                    crate::stderr_log::line(
-                        "[plasm-server] bootstrap: UI received RUN handoff (entering RUN mode)",
+                    tracing::info!(
+                        target: "plasm_appliance_boot",
+                        "UI received RUN handoff (entering RUN mode)"
                     );
+                    terminal.clear()?;
                     run_running_mode(
                         &mut terminal,
                         handoff.state,
@@ -386,7 +389,10 @@ pub fn run_appliance_shell(
 
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
-                    Event::Resize(_, _) => dirty = true,
+                    Event::Resize(w, h) => {
+                        terminal.resize(ratatui::layout::Rect::new(0, 0, w, h))?;
+                        dirty = true;
+                    }
                     Event::Key(key) => {
                         let raw_quit = matches!(key.code, KeyCode::Char('\x03'))
                             || (key.modifiers.contains(KeyModifiers::CONTROL)

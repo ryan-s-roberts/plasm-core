@@ -475,16 +475,62 @@ fn current_auth_config_label(row: &McpConfigCatalogRow, snap: &UiSnapshot) -> St
     }
 }
 
-/// Truncate for single-line list rows (full text stays in the Details pane).
-fn ellipsize_chars(s: &str, max_chars: usize) -> String {
-    let n = s.chars().count();
-    if n <= max_chars {
-        s.to_string()
+/// Single-line catalogue list row clipped to pane width (full status in Details).
+fn format_api_catalogue_row(
+    selected: bool,
+    on: bool,
+    name: &str,
+    auth_summary: &str,
+    inner_cols: u16,
+) -> Line<'static> {
+    let mark = if on { "[on]" } else { "[off]" };
+    let prefix = if selected { "› " } else { "  " };
+    let plain = format!("{prefix}{mark} {name}  {auth_summary}");
+    let clipped = log_render::clip_line_display(&plain, inner_cols.max(1));
+    let row_style = if selected {
+        selected_row_style()
     } else {
-        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-        out.push('…');
-        out
+        Style::default()
+    };
+    let mark_style = if selected {
+        selected_row_style()
+    } else if on {
+        api_toggle_on_style()
+    } else {
+        api_toggle_off_style()
+    };
+    Line::from(vec![
+        Span::styled(clipped, if selected { mark_style } else { row_style }),
+    ])
+}
+
+/// Clip a list row built from parts (OAuth providers, keys, etc.).
+fn clip_list_row_plain(parts: &str, inner_cols: u16) -> String {
+    log_render::clip_line_display(parts, inner_cols.max(1))
+}
+
+/// Drain crossterm events until idle; resize updates terminal geometry.
+fn drain_crossterm_events(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    timeout: Duration,
+) -> Result<Vec<Event>, io::Error> {
+    let mut out = Vec::new();
+    if !event::poll(timeout)? {
+        return Ok(out);
     }
+    loop {
+        match event::read()? {
+            Event::Resize(w, h) => {
+                terminal.resize(ratatui::layout::Rect::new(0, 0, w, h))?;
+                out.push(Event::Resize(w, h));
+            }
+            other => out.push(other),
+        }
+        if !event::poll(Duration::from_millis(0))? {
+            break;
+        }
+    }
+    Ok(out)
 }
 
 fn api_secret_notice(entry_id: &str) -> RunNotice {
@@ -2468,26 +2514,25 @@ fn render_running_frame(
     host_state: &PlasmHostState,
     listen_port: u16,
 ) {
+    chrome::clear_frame(frame);
+    let layout = chrome::split_running_vertical(frame.area());
     let snap = &model.resources.snapshot;
     let tab_titles: Vec<&str> = RunScreen::ALL.iter().map(|s| s.title()).collect();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(0),
-            Constraint::Length(3),
-        ])
-        .split(frame.area());
-
-    let rail = chrome::tab_rail_line(model.screen.index(), &tab_titles, listen_port);
-    chrome::render_tab_rail(frame, chunks[0], rail);
+    let rail_max = layout.tab_rail.width.max(1);
+    let rail = chrome::tab_rail_line(
+        model.screen.index(),
+        &tab_titles,
+        listen_port,
+        rail_max,
+    );
+    chrome::render_tab_rail(frame, layout.tab_rail, rail);
 
     let shared_notice = model.notice.as_ref();
 
     match model.screen {
         RunScreen::Status => {
             let (content_area, notice_area) =
-                split_main_notice_area(chunks[1], shared_notice.is_some());
+                split_main_notice_area(layout.body, shared_notice.is_some());
             let lines = build_overview_lines(model, snap, host_state, listen_port);
             render_overview_panel(frame, content_area, &lines, model.overview.scroll);
             if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
@@ -2496,7 +2541,7 @@ fn render_running_frame(
         }
         RunScreen::Clients => {
             let (content_area, notice_area) =
-                split_main_notice_area(chunks[1], shared_notice.is_some());
+                split_main_notice_area(layout.body, shared_notice.is_some());
             let url = mcp_streamable_url(listen_port);
             let curl = mcp_curl_snippet(listen_port);
             let accent = if no_color() {
@@ -2568,7 +2613,7 @@ fn render_running_frame(
             }
         }
         RunScreen::Apis => {
-            let [list_col, right_col] = chrome::split_list_detail(chunks[1], 46);
+            let [list_col, right_col] = chrome::split_list_detail(layout.body, 46);
             let list_rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -2586,51 +2631,22 @@ fn render_running_frame(
                 )),
                 list_rows[0],
             );
+            let list_inner_cols = list_rows[1].width.saturating_sub(2).max(1);
             let mut lines: Vec<Line> = Vec::new();
             for (fi, &row_ix) in model.api.filtered_ix.iter().enumerate() {
                 let r = &snap.catalog_rows[row_ix];
                 let on = row_enabled(model, snap, &r.entry_id);
-                let mark = if on { "[on]" } else { "[off]" };
                 let selected = fi == model.api.selected;
-                let mark_style = if selected {
-                    selected_row_style()
-                } else if on {
-                    api_toggle_on_style()
-                } else {
-                    api_toggle_off_style()
-                };
-                let mut name_style = if on {
-                    Style::default()
-                } else {
-                    api_toggle_off_style()
-                };
-                if selected {
-                    name_style = selected_row_style();
-                }
-                let mut auth_style = dim_style();
-                if selected {
-                    auth_style = selected_row_style();
-                }
                 let name = catalog_row_display_name(&r.entry_id, &r.label);
-                // Dense list: keep one terminal row per catalogue (no Paragraph wrap). Full status
-                // is in the Details panel; cap width so truncation rarely clips mid-token.
-                let status = ellipsize_chars(&current_auth_config_label(r, snap), 40);
+                let status = current_auth_config_label(r, snap);
                 let summary = format!("{} · {}", auth_kind_label(r), status);
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        if selected { "› " } else { "  " },
-                        if selected {
-                            selected_row_style()
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                    Span::styled(mark, mark_style),
-                    Span::raw(" "),
-                    Span::styled(name, name_style),
-                    Span::raw("  "),
-                    Span::styled(summary, auth_style),
-                ]));
+                lines.push(format_api_catalogue_row(
+                    selected,
+                    on,
+                    &name,
+                    &summary,
+                    list_inner_cols,
+                ));
             }
             frame.render_widget(
                 Paragraph::new(lines).block(chrome::panel_block("Catalogues", Some('l'))),
@@ -2726,7 +2742,7 @@ fn render_running_frame(
         RunScreen::OAuth => {
             if let InputMode::OAuthWizard(ref wiz) = model.mode {
                 let (content_area, notice_area) =
-                    split_main_notice_area(chunks[1], shared_notice.is_some());
+                    split_main_notice_area(layout.body, shared_notice.is_some());
                 let mut lines = vec![
                     Line::from(vec![
                         Span::styled(
@@ -2846,7 +2862,7 @@ fn render_running_frame(
                 }
             } else if let InputMode::OAuthDeviceScopePick(ref pick) = model.mode {
                 let (content_area, notice_area) =
-                    split_main_notice_area(chunks[1], shared_notice.is_some());
+                    split_main_notice_area(layout.body, shared_notice.is_some());
                 let mut lines = vec![
                     Line::from(vec![
                         Span::styled(
@@ -2914,13 +2930,14 @@ fn render_running_frame(
                     render_notice_panel(frame, area, notice);
                 }
             } else {
-                let [split0, split1] = chrome::split_list_detail(chunks[1], 40);
+                let [split0, split1] = chrome::split_list_detail(layout.body, 40);
                 let provider_items: Vec<ListItem> = if snap.oauth_providers.is_empty() {
                     vec![ListItem::new(Line::from(Span::styled(
                         "No providers configured",
                         dim_style(),
                     )))]
                 } else {
+                    let inner_cols = split0.width.saturating_sub(2).max(1);
                     snap.oauth_providers
                         .iter()
                         .enumerate()
@@ -2934,26 +2951,20 @@ fn render_running_frame(
                             if !row.enabled {
                                 name_style = name_style.patch(api_toggle_off_style());
                             }
-                            let mut meta_style = dim_style();
-                            if selected {
-                                meta_style = selected_row_style();
-                            }
                             let binding_hint = snap
                                 .oauth_binding_hints
                                 .get(i)
                                 .map(String::as_str)
                                 .unwrap_or("binding unknown");
-                            ListItem::new(Line::from(vec![
-                                Span::styled(if selected { "› " } else { "  " }, name_style),
-                                Span::styled(row.entry_id.as_str(), name_style),
-                                Span::raw("  "),
-                                Span::styled(
-                                    if row.enabled { "enabled" } else { "disabled" },
-                                    meta_style,
-                                ),
-                                Span::raw("  "),
-                                Span::styled(binding_hint.to_string(), meta_style),
-                            ]))
+                            let plain = format!(
+                                "{}  {}  {}  {}",
+                                if selected { "›" } else { " " },
+                                row.entry_id,
+                                if row.enabled { "enabled" } else { "disabled" },
+                                binding_hint
+                            );
+                            let clipped = clip_list_row_plain(&plain, inner_cols);
+                            ListItem::new(Line::from(vec![Span::styled(clipped, name_style)]))
                         })
                         .collect()
                 };
@@ -3049,8 +3060,9 @@ fn render_running_frame(
         }
         RunScreen::Keys => {
             let (content_area, notice_area) =
-                split_main_notice_area(chunks[1], shared_notice.is_some());
+                split_main_notice_area(layout.body, shared_notice.is_some());
             let [keys_col, detail_col] = chrome::split_list_detail(content_area, 42);
+            let key_inner_cols = keys_col.width.saturating_sub(2).max(1);
             let items: Vec<ListItem> = snap
                 .keys
                 .iter()
@@ -3061,7 +3073,8 @@ fn render_running_frame(
                     } else {
                         Style::default()
                     };
-                    ListItem::new(Line::from(vec![Span::styled(api_key_row_label(k), style)]))
+                    let label = clip_list_row_plain(&api_key_row_label(k), key_inner_cols);
+                    ListItem::new(Line::from(vec![Span::styled(label, style)]))
                 })
                 .collect();
             frame.render_widget(
@@ -3125,7 +3138,7 @@ fn render_running_frame(
         }
         RunScreen::Runs => {
             let (content_area, notice_area) =
-                split_main_notice_area(chunks[1], shared_notice.is_some());
+                split_main_notice_area(layout.body, shared_notice.is_some());
             let lines = vec![
                 Line::from("Runs / traces"),
                 Line::from(""),
@@ -3144,7 +3157,7 @@ fn render_running_frame(
         }
         RunScreen::Storage => {
             let (content_area, notice_area) =
-                split_main_notice_area(chunks[1], shared_notice.is_some());
+                split_main_notice_area(layout.body, shared_notice.is_some());
             let (backend_label, backend_detail) = storage_backend_summary(
                 plasm_agent::embedded_postgres::EmbeddedPostgresGuard::will_autostart_embedded_postgres(),
                 plasm_agent::embedded_postgres::EmbeddedPostgresGuard::embedded_autostart_skip_reason(),
@@ -3188,7 +3201,7 @@ fn render_running_frame(
         }
         RunScreen::Logs => {
             let (content_area, notice_area) =
-                split_main_notice_area(chunks[1], shared_notice.is_some());
+                split_main_notice_area(layout.body, shared_notice.is_some());
             let [log_col, detail_col] = chrome::split_list_detail(content_area, 44);
             let list_inner_h = log_col.height.saturating_sub(2) as usize;
             let visible_rows = list_inner_h.max(1);
@@ -3212,7 +3225,7 @@ fn render_running_frame(
                     } else {
                         log_render::log_list_unselected_style()
                     };
-                    let clipped = log_render::clip_log_line_display(s.as_str(), clip_cols);
+                    let clipped = log_render::clip_line_display(s.as_str(), clip_cols);
                     ListItem::new(Line::from(vec![
                         Span::styled(if selected { "› " } else { "  " }, style),
                         Span::styled(clipped, style),
@@ -3260,7 +3273,7 @@ fn render_running_frame(
         )
     });
     let footer_line = chrome::footer_line(&global, &screen_items, mode_l, help, admin.as_deref());
-    chrome::render_footer_bar(frame, chunks[2], footer_line);
+    chrome::render_footer_bar(frame, layout.footer, footer_line);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3278,11 +3291,15 @@ pub(crate) fn run_running_mode(
     // deadlock BOOT→RUN handoff waiting on this frame.
     if let Some(ref tx) = ui_evt_tx {
         if let Err(e) = tx.send(UiEvent::RunEntered) {
-            crate::stderr_log::line(format!(
-                "[plasm-server] bootstrap: failed to send RunEntered to supervisor: {e}"
-            ));
+            tracing::warn!(
+                target: "plasm_appliance_boot",
+                "failed to send RunEntered to supervisor: {e}"
+            );
         } else {
-            crate::stderr_log::line("[plasm-server] bootstrap: emitted RunEntered to supervisor");
+            tracing::info!(
+                target: "plasm_appliance_boot",
+                "RUN UI emitted RunEntered to supervisor"
+            );
         }
     }
     let mut model = RunState::new();
@@ -3335,15 +3352,19 @@ pub(crate) fn run_running_mode(
             render_running_frame(frame, &mut model, host_state.as_ref(), listen_port)
         })?;
 
-        if event::poll(Duration::from_millis(120))? {
-            if let Event::Key(key) = event::read()? {
-                if raw_tty_wants_process_quit(&key) {
-                    running.store(false, Ordering::SeqCst);
-                    break;
+        for ev in drain_crossterm_events(terminal, Duration::from_millis(120))? {
+            match ev {
+                Event::Key(key) => {
+                    if raw_tty_wants_process_quit(&key) {
+                        running.store(false, Ordering::SeqCst);
+                        return Ok(());
+                    }
+                    if update(&mut model, UiMsg::Key(key), &deps) {
+                        return Ok(());
+                    }
                 }
-                if update(&mut model, UiMsg::Key(key), &deps) {
-                    break;
-                }
+                Event::Resize(_, _) => {}
+                _ => {}
             }
         }
     }
@@ -3915,5 +3936,37 @@ mod tests {
         assert!(rendered.contains("device_flow_disabled"));
         assert!(rendered.contains("Enable"));
         assert!(rendered.contains("OAuth app"));
+    }
+
+    #[test]
+    fn format_api_catalogue_row_respects_display_width() {
+        use unicode_width::UnicodeWidthStr;
+        let row = format_api_catalogue_row(
+            true,
+            false,
+            "cloudflare",
+            "api key+oauth · unconfigured service-local / default / default",
+            32,
+        );
+        assert!(line_text(&row).width() <= 32);
+    }
+
+    #[test]
+    fn run_tab_rail_visible_on_first_draw_without_keypress() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                chrome::clear_frame(frame);
+                let layout = chrome::split_running_vertical(frame.area());
+                let titles: Vec<&str> = RunScreen::ALL.iter().map(|s| s.title()).collect();
+                let rail = chrome::tab_rail_line(2, &titles, 8080, layout.tab_rail.width.max(1));
+                chrome::render_tab_rail(frame, layout.tab_rail, rail);
+            })
+            .expect("draw tab rail");
+
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(rendered.contains("[APIs]"));
+        assert!(rendered.contains("listen:8080"));
     }
 }

@@ -1273,8 +1273,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ev = tokio::time::timeout(Duration::from_secs(120), recv_ui_event(&ui_evt_rx)) => {
                 match ev {
                     Ok(Ok(boot::UiEvent::RunEntered)) => {
-                        stderr_log::line(
-                            "[plasm-server] bootstrap: RUN UI RunEntered received (supervisor)",
+                        tracing::info!(
+                            target: "plasm_appliance_boot",
+                            "RUN UI RunEntered received (supervisor)"
                         );
                     }
                     Ok(Err(e)) => {
@@ -1310,8 +1311,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let _ = tx.send(boot::BootstrapUiMsg::PhaseEnter(7));
         let _ = tx.send(boot::BootstrapUiMsg::PhaseDone(7));
-        tracing::info!(target: "plasm_appliance_boot", "phase: control station ready");
-        stderr_log::line("[plasm-server] bootstrap: control station ready");
+        tracing::info!(
+            target: "plasm_appliance_boot",
+            "phase: control station ready"
+        );
 
         let run_ui = Arc::clone(&running);
         let ui_blocking = tokio::task::spawn_blocking(move || ui_handle.join());

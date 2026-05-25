@@ -13,7 +13,7 @@ pub(crate) fn strip_ansi_for_log_view(s: &str) -> String {
 
 /// Truncate `s` to at most `max_cols` terminal columns (Unicode display width).
 /// Reserves one column for `…` when truncation occurs. Strips ANSI when escape bytes are present.
-pub(crate) fn clip_log_line_display(s: &str, max_cols: u16) -> String {
+pub(crate) fn clip_line_display(s: &str, max_cols: u16) -> String {
     let plain: Cow<str> = if s.contains('\x1b') {
         Cow::Owned(strip_ansi_for_log_view(s))
     } else {
@@ -64,15 +64,15 @@ mod tests {
     #[test]
     fn clip_ascii_truncates_with_ellipsis_budget() {
         let s = "0123456789";
-        assert_eq!(clip_log_line_display(s, 12), s);
-        assert_eq!(clip_log_line_display(s, 5), "0123…");
+        assert_eq!(clip_line_display(s, 12), s);
+        assert_eq!(clip_line_display(s, 5), "0123…");
     }
 
     #[test]
     fn clip_wide_char_respects_display_width() {
         let s = "ab你好";
         assert!(s.width() > 4);
-        let clipped = clip_log_line_display(s, 4);
+        let clipped = clip_line_display(s, 4);
         assert_eq!(clipped, "ab…");
         assert!(
             clipped.width() <= 4,
