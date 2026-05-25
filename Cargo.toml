@@ -25,7 +25,7 @@ members = [
 exclude = ["crates/plasm-server-pty-tests"]
 resolver = "2"
 
-# Single SemVer for the OSS workspace (see plasm-oss/RELEASING.md).
+# Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
 version = "0.1.18"
 edition = "2021"
