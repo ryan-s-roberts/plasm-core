@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.31] - 2026-05-26
+
+### Fixed
+
+- **Release CI:** `portal-release-finalize.sh` always bakes/pushes/rollouts portal after Argo sync; tag guard rejects broken `v0.1.30` release_ship checkouts.
+
 ## [0.1.30] - 2026-05-25
 
 ### Fixed
