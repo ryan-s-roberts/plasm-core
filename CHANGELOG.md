@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.33] - 2026-05-26
+
+### Fixed
+
+- **Docker bake:** reject stub `plasm-mcp` / `plasm-trace-sink` ELFs (size + `file(1)` arch) in `rust-builder` and post-bake verify; harden cross-compile artifact paths after `cargo chef cook`.
+
 ## [0.1.32] - 2026-05-26
 
 ### Fixed
