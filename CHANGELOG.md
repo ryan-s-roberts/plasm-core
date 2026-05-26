@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.34] - 2026-05-26
+
+### Fixed
+
+- **Docker bake:** canonical cargo-chef order (cook deps before app source); rustls-only `reqwest`; cross arm64→amd64 on M-series Mac CI without OpenSSL cross deps.
+
 ## [0.1.33] - 2026-05-26
 
 ### Fixed
