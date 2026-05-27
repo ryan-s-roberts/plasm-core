@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.41] - 2026-05-27
+
+### Fixed
+
+- **Release CI (monorepo):** semver `publish-release vX.Y.Z` is tag-only; `release_ship` verifies Vultr images exist before bumping `deploy/values/dev/images.yaml`, avoiding `ImagePullBackOff` when deploy refs lead the registry.
+
 ## [0.1.40] - 2026-05-27
 
 ### Fixed
