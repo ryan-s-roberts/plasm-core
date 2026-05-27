@@ -407,9 +407,10 @@ capabilities:
       threading; same POST users.messages.send as message_send_simple.
     kind: action
     entity: Message
-    invoke_preflight:
-      hydrate_capability: message_get
-      env_prefix: parent
+    preflight:
+    - kind: hydrate_invoke_target
+      get: message_get
+      prefix: parent
     provides:
     - id
     - threadId

@@ -67,6 +67,13 @@ Each finding is filed under one category. Categories help triage and keep the fi
 - A doc under `docs/` (or this skill suite) describes behavior the runtime no longer has, or omits behavior the runtime now has.
 - README inventories under `apis/` disagree with reality.
 
+### 8. Endpoint-shaped catalog (reprint candidate)
+
+- Capability count tracks GraphQL mutation/query roots or OpenAPI path count instead of user tasks.
+- Scoped `query` caps duplicate what `kind: search` should cover; granular label/field mutation caps split one domain verb.
+- UUID-primary keys where the vendor accepts human identifiers (`ENG-42`, team keys).
+- **Proposed action:** run [plasm-catalog-reprint](../plasm-catalog-reprint/SKILL.md) with task inventory per [reference.md — Task-oriented catalogs](../plasm-authoring/reference.md#task-oriented-catalogs-mandatory).
+
 ## Procedure
 
 ```mermaid

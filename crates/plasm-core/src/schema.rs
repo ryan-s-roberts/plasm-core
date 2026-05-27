@@ -585,22 +585,12 @@ pub struct CapabilitySchema {
     /// Policy for the aggregate scope param after compound `entity_ref` scope splat runs.
     #[serde(default)]
     pub scope_aggregate_key_policy: ScopeAggregateKeyPolicy,
-    /// Before compiling the invoke template, run another capability (typically `kind: get`)
-    /// on the invoke target and merge decoded fields into the CML env under `env_prefix_*`.
+    /// Ordered steps before CML compile (hydrate rows, name→wire id resolution).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub invoke_preflight: Option<InvokePreflight>,
+    pub preflight: Option<crate::preflight::PreflightPlan>,
     /// Typed-discovery hints for this capability (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryCapabilityHints>,
-}
-
-/// Declarative preflight for [`CapabilitySchema`] (e.g. hydrate parent row before a write).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InvokePreflight {
-    /// CGS capability name to run (must be [`CapabilityKind::Get`] on [`CapabilitySchema::domain`]).
-    pub hydrate_capability: String,
-    /// Each decoded field name `foo` is merged as `{env_prefix}_foo` (e.g. `parent_threadId`).
-    pub env_prefix: String,
 }
 
 /// The type of operation this capability performs.
@@ -2623,6 +2613,10 @@ impl CGS {
             }
         }
 
+        for (_, cap) in &self.capabilities {
+            crate::preflight::validate_capability_preflight(self, cap)?;
+        }
+
         self.validate_expression_aliases()?;
         self.validate_temporal_value_formats()?;
         self.validate_closed_value_domain_refs()?;
@@ -4542,6 +4536,7 @@ mod view_bind_validation_tests {
             return;
         }
         let cgs = crate::loader::load_schema_dir(p).expect("matrix views");
-        cgs.validate().expect("validate views fixture with node binds");
+        cgs.validate()
+            .expect("validate views fixture with node binds");
     }
 }

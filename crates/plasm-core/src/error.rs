@@ -66,6 +66,9 @@ pub enum SchemaError {
     #[error("Duplicate entity name: '{name}'")]
     DuplicateEntity { name: String },
 
+    #[error("Capability '{capability}' preflight: {message}")]
+    PreflightInvalid { capability: String, message: String },
+
     #[error("Duplicate field name '{field}' in entity '{entity}'")]
     DuplicateField { entity: String, field: String },
 
@@ -486,10 +489,7 @@ pub enum SchemaError {
     },
 
     #[error("View '{view}': node '{node}' computed bind template must be non-empty")]
-    ViewNodeBindEmptyTemplate {
-        view: String,
-        node: String,
-    },
+    ViewNodeBindEmptyTemplate { view: String, node: String },
 }
 
 #[derive(Error, Debug, Clone)]

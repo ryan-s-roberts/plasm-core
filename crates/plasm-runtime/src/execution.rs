@@ -1,7 +1,7 @@
 use crate::api_error_detail::graphql_errors_summary;
 use crate::evm::{execute_evm_call, execute_evm_logs};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
-use crate::invoke_preflight::merge_preflight_fields_into_env;
+use crate::preflight::{apply_preflight_steps, PreflightInvoke};
 use crate::{AuthResolver, CachedEntity, EntityCompleteness, GraphCache, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
@@ -420,7 +420,7 @@ pub fn merge_plasm_execute_session_proof_base_token_env(env: &mut CmlEnv) {
 /// Merge [`CML_ENV_PLASM_EXECUTE_PROMPT_HASH`] / [`CML_ENV_PLASM_EXECUTE_SESSION_ID`] when the
 /// host set [`ExecuteOptions::execute_session`] for this execute task (see task-local scope).
 ///
-/// Call **after** `invoke_preflight` merges for invoke; for GET/create/delete, call after path
+/// Call **after** capability `preflight` merges for invoke/create; for GET/delete, call after path
 /// env and splat so internal preflight GETs (which run with TLS unset or unchanged) omit this.
 pub fn merge_plasm_execute_session_identity_env(env: &mut CmlEnv) {
     let Ok(material) = EXECUTION_EXECUTE_SESSION.try_with(|s| s.clone()) else {
@@ -2046,11 +2046,11 @@ impl ExecutionEngine {
     /// Run GET + decode without consulting the graph cache (used for query hydration and cache refresh).
     ///
     /// When `hydrate_capability` is `Some(name)`, use that named GET capability instead of the
-    /// default per-entity `find_capability(.., Get)` (used by [`Self::apply_invoke_preflight`]).
+    /// default per-entity `find_capability(.., Get)` (used by preflight hydrate steps).
     ///
     /// When `inject_execute_session_env` is true, reserved `plasm_execute_*` keys are merged for
     /// user-facing GETs only — internal preflight/hydrate GETs pass `false`.
-    async fn fetch_get_decoded(
+    pub(crate) async fn fetch_get_decoded(
         &self,
         get: &GetExpr,
         cgs: &CGS,
@@ -2069,15 +2069,13 @@ impl ExecutionEngine {
                         })?;
                 if c.kind != plasm_core::CapabilityKind::Get {
                     return Err(RuntimeError::ConfigurationError {
-                        message: format!(
-                            "invoke_preflight hydrate_capability '{name}' must be kind get"
-                        ),
+                        message: format!("preflight hydrate get '{name}' must be kind get"),
                     });
                 }
                 if c.domain.as_str() != get.reference.entity_type.as_str() {
                     return Err(RuntimeError::ConfigurationError {
                         message: format!(
-                            "invoke_preflight: hydrate capability '{name}' is for entity {}, expected {}",
+                            "preflight: hydrate capability '{name}' is for entity {}, expected {}",
                             c.domain.as_str(),
                             get.reference.entity_type
                         ),
@@ -2126,58 +2124,6 @@ impl ExecutionEngine {
             inject_execute_session_env,
         )
         .await
-    }
-
-    /// When [`CapabilitySchema::invoke_preflight`] is set, load the invoke target row (cache or GET)
-    /// and merge decoded fields into `env` as `{env_prefix}_{field}`.
-    ///
-    /// **Merge order:** called from [`Self::execute_invoke`] after path env, `input`, flattened
-    /// invoke parameters, and scope splat — so preflight **overwrites** any spoofed `parent_*` keys
-    /// that might appear in user input.
-    async fn apply_invoke_preflight(
-        &self,
-        capability: &CapabilitySchema,
-        cgs: &CGS,
-        cache: &mut GraphCache,
-        invoke: &InvokeExpr,
-        mode: ExecutionMode,
-        env: &mut CmlEnv,
-    ) -> Result<(), RuntimeError> {
-        let Some(spec) = capability.invoke_preflight.as_ref() else {
-            return Ok(());
-        };
-
-        let prefix = spec.env_prefix.trim();
-        if prefix.is_empty() {
-            return Err(RuntimeError::ConfigurationError {
-                message: "invoke_preflight.env_prefix must not be empty".to_string(),
-            });
-        }
-
-        if let Some(entity) = cache.get(&invoke.target) {
-            if entity.completeness == EntityCompleteness::Complete {
-                merge_preflight_fields_into_env(env, prefix, &entity.fields);
-                return Ok(());
-            }
-        }
-
-        let get = GetExpr {
-            reference: invoke.target.clone(),
-            path_vars: None,
-        };
-        let (cached, _source) = self
-            .fetch_get_decoded(
-                &get,
-                cgs,
-                mode,
-                Some(spec.hydrate_capability.as_str()),
-                false,
-                Some(cache),
-            )
-            .await?;
-        cache.insert(cached.clone())?;
-        merge_preflight_fields_into_env(env, prefix, &cached.fields);
-        Ok(())
     }
 
     /// After a query, upgrade Summary rows to Complete via concurrent GET when configured and supported.
@@ -2253,7 +2199,7 @@ impl ExecutionEngine {
         &self,
         create: &plasm_core::CreateExpr,
         cgs: &CGS,
-        _cache: &mut GraphCache,
+        cache: &mut GraphCache,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let capability = cgs
@@ -2303,6 +2249,18 @@ impl ExecutionEngine {
                 message: e.to_string(),
             }
         })?;
+
+        apply_preflight_steps(
+            self,
+            capability,
+            cgs,
+            cache,
+            mode,
+            &mut env,
+            None,
+            true,
+        )
+        .await?;
 
         merge_plasm_execute_session_env(&mut env);
 
@@ -2503,8 +2461,17 @@ impl ExecutionEngine {
             }
         })?;
 
-        self.apply_invoke_preflight(capability, cgs, cache, invoke, mode, &mut env)
-            .await?;
+        apply_preflight_steps(
+            self,
+            capability,
+            cgs,
+            cache,
+            mode,
+            &mut env,
+            Some(PreflightInvoke { invoke }),
+            false,
+        )
+        .await?;
 
         merge_plasm_execute_session_env(&mut env);
 
@@ -4326,8 +4293,7 @@ impl PaginationLoopState {
                 .response_next_url_field
                 .as_deref()
                 .unwrap_or("@odata.nextLink");
-            let url = if let Some(prefix) =
-                pconf.response_prefix.as_ref().filter(|p| !p.is_empty())
+            let url = if let Some(prefix) = pconf.response_prefix.as_ref().filter(|p| !p.is_empty())
             {
                 pagination_context_map(response, Some(prefix.as_slice()))
                     .ok()
@@ -5490,7 +5456,7 @@ mod tests {
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
-            invoke_preflight: None,
+            preflight: None,
             discovery: None,
         };
 
@@ -5517,7 +5483,7 @@ mod tests {
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
-            invoke_preflight: None,
+            preflight: None,
             discovery: None,
         };
 
@@ -5618,7 +5584,7 @@ mod tests {
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
-            invoke_preflight: None,
+            preflight: None,
             discovery: None,
         };
         (cgs, cap)

@@ -31,12 +31,13 @@ Treat those skills as **single source of truth** for entities, capabilities, CML
 **Goals**
 
 - Gather **public** API specifications (OpenAPI, GraphQL SDL, vendor docs) and skim **auth**, **pagination**, **nesting**, and **cross-resource** patterns.
-- Produce a **phased scope**: which entity clusters and capability families belong in wave 1 vs later waves — always favor **high-level relational design** (entities, `entity_ref`, relations, merged capabilities where the domain warrants it) that **compresses** the RPC surface conceptually.
+- Produce a **task inventory** first (user-language agent tasks: search, context, dashboard, manage) — then a **phased scope** for entity clusters and capability families — always favor **task-oriented relational design** that **compresses** the RPC/GraphQL surface, never mirrors it operation-for-operation.
 
 **Hard anathema — programmatic `domain.yaml` authoring**
 
 - **Forbidden:** scripts, binaries, generator crates, or bulk templates that emit or mechanically synthesize `domain.yaml` / `mappings.yaml` from specs as if the mapping were unique or correct-by-construction.
 - **Forbidden:** "dump every path as a capability" workflows disguised as tooling.
+- **Forbidden:** GraphQL operation mirroring (one cap per query/mutation field).
 - **Allowed:** normal editor / assistant-assisted manual authoring file-by-file, following the skill loop; using `plasm-eval scaffold` only as a **hint** for eval buckets, not as a domain generator.
 
 Deliverables: short written plan — entity list, relation sketch, capability families per wave, known ambiguities, and links / paths to specs consulted.

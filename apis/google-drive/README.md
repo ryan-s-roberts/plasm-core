@@ -13,7 +13,7 @@ cargo run --bin plasm-repl -- --schema apis/google-drive --backend https://www.g
 
 OAuth 2.0 bearer token with Drive scopes appropriate to the capabilities you call. See `domain.yaml` `oauth.requirements` and `default_scope_sets`.
 
-**Comment / reply edits:** `comments_update` and `replies_update` use **`invoke_preflight`** (`comments_get` / `replies_get`) with env prefix **`parent`**. The PATCH JSON body merges optional **`content`**, **`anchor`**, **`quotedFileContent`** (comments) and **`content`**, **`action`** (replies) over the hydrated parent row—no raw `input` blob.
+**Comment / reply edits:** `comments_update` and `replies_update` use **`preflight`** (`hydrate_invoke_target` with `comments_get` / `replies_get`) with env prefix **`parent`**. The PATCH JSON body merges optional **`content`**, **`anchor`**, **`quotedFileContent`** (comments) and **`content`**, **`action`** (replies) over the hydrated parent row—no raw `input` blob.
 
 ## Validation
 

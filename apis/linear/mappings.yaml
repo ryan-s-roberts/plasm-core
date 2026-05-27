@@ -1,7 +1,7 @@
-# Linear GraphQL — `transport: graphql`, POST `/graphql`.
-# GraphQL connections: `first` / `after`, `pageInfo.hasNextPage` / `endCursor`; `response_prefix` + `body_merge_path: [variables]`.
+# Linear GraphQL — transport: graphql, POST /graphql.
+# Name resolution (team key, issue identifier, state/label names) happens in CML; agents use strings/keys.
 
-issue_query:
+issue_search:
   transport: graphql
   method: POST
   path:
@@ -12,72 +12,93 @@ issue_query:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String) { issues(first: $first, after: $after) { nodes { id identifier title parent { id identifier title } } pageInfo { hasNextPage endCursor } } }'
-      - - variables
-        - type: object
-          fields: []
-  response:
-    items_path: [data, issues, nodes]
-  pagination:
-    location: body
-    body_merge_path: [variables]
-    response_prefix: [data, issues, pageInfo]
-    params:
-      first: {fixed: 50}
-      after: {from_response: endCursor}
-    stop_when:
-      field: hasNextPage
-      eq: false
-
-issue_by_team_query:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'query($first: Int, $after: String, $team: ID!) { issues(first: $first, after: $after, filter: { team: { id: { eq: $team } } }) { nodes { id identifier title parent { id identifier title } } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($first: Int, $after: String, $filter: IssueFilter) { issues(first: $first, after: $after, filter: $filter) { nodes { id identifier title priority } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
           fields:
-            - - team
-              - type: var
-                name: team
-  response:
-    items_path: [data, issues, nodes]
-  pagination:
-    location: body
-    body_merge_path: [variables]
-    response_prefix: [data, issues, pageInfo]
-    params:
-      first: {fixed: 50}
-      after: {from_response: endCursor}
-    stop_when:
-      field: hasNextPage
-      eq: false
-
-issue_by_cycle_query:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'query($first: Int, $after: String, $cycle: ID!) { issues(first: $first, after: $after, filter: { cycle: { id: { eq: $cycle } } }) { nodes { id identifier title parent { id identifier title } } pageInfo { hasNextPage endCursor } } }'
-      - - variables
-        - type: object
-          fields:
-            - - cycle
-              - type: var
-                name: cycle
+            - - filter
+              - type: object
+                fields:
+                  - - team
+                    - type: if
+                      condition: { type: exists, var: team_key }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - key
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: team_key
+                      else_expr: { type: const, value: null }
+                  - - state
+                    - type: if
+                      condition: { type: exists, var: state_name }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - name
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: state_name
+                      else_expr: { type: const, value: null }
+                  - - assignee
+                    - type: if
+                      condition: { type: exists, var: assignee_name }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - displayName
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: assignee_name
+                      else_expr: { type: const, value: null }
+                  - - cycle
+                    - type: if
+                      condition: { type: exists, var: cycle }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - id
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: cycle
+                      else_expr: { type: const, value: null }
+                  - - title
+                    - type: if
+                      condition: { type: exists, var: q }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - contains
+                            - type: var
+                              name: q
+                      else_expr: { type: const, value: null }
+                  - - priority
+                    - type: if
+                      condition: { type: exists, var: priority }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - eq
+                            - type: var
+                              name: priority
+                      else_expr: { type: const, value: null }
+            - - first
+              - type: const
+                value: 50
+            - - after
+              - type: if
+                condition: { type: exists, var: after }
+                then_expr: { type: var, name: after }
+                else_expr: { type: const, value: null }
   response:
     items_path: [data, issues, nodes]
   pagination:
@@ -102,7 +123,7 @@ issue_get:
     fields:
       - - query
         - type: const
-          value: 'query($id: String!){ issue(id: $id) { id identifier title description parent { id identifier title description } children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } team { id name key } project { id name slugId } assignee { id name displayName email } state { id name type } cycle { id number startsAt endsAt team { id name key } } labels { nodes { id name color } } } }'
+          value: 'query($id: String!){ issue(id: $id) { id identifier title description priority estimate dueDate parent { id identifier title } children(first: 50, includeArchived: true) { nodes { id identifier title } } team { id key name } project { id name slugId } assignee { id name displayName email } state { id name type } cycle { id number startsAt endsAt } labels { nodes { id name color } } } }'
       - - variables
         - type: object
           fields:
@@ -112,6 +133,66 @@ issue_get:
   response:
     single: true
     items_path: [data, issue]
+
+user_viewer:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: '{ viewer { id name displayName email } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    single: true
+    items_path: [data, viewer]
+
+user_search:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $filter: UserFilter) { users(first: $first, after: $after, filter: $filter) { nodes { id displayName } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - filter
+              - type: if
+                condition: { type: exists, var: display_name }
+                then_expr:
+                  type: object
+                  fields:
+                    - - displayName
+                      - type: object
+                        fields:
+                          - - eq
+                            - type: var
+                              name: display_name
+                else_expr: { type: const, value: null }
+  response:
+    items_path: [data, users, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, users, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
 
 team_query:
   transport: graphql
@@ -124,7 +205,7 @@ team_query:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String) { teams(first: $first, after: $after) { nodes { id name key } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($first: Int, $after: String) { teams(first: $first, after: $after) { nodes { id key name } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
           fields: []
@@ -152,16 +233,16 @@ team_get:
     fields:
       - - query
         - type: const
-          value: 'query($id: String!){ team(id: $id) { id name key } }'
+          value: 'query($key: String!) { teams(first: 1, filter: { key: { eq: $key } }) { nodes { id key name } } }'
       - - variables
         - type: object
           fields:
-            - - id
+            - - key
               - type: var
                 name: id
   response:
     single: true
-    items_path: [data, team]
+    items_path: [data, teams, nodes, "0"]
 
 project_query:
   transport: graphql
@@ -213,7 +294,7 @@ project_get:
     single: true
     items_path: [data, project]
 
-user_query:
+project_search:
   transport: graphql
   method: POST
   path:
@@ -224,97 +305,35 @@ user_query:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String) { users(first: $first, after: $after) { nodes { id name displayName email } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($first: Int, $after: String, $filter: ProjectFilter) { projects(first: $first, after: $after, filter: $filter) { nodes { id name slugId } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
-          fields: []
+          fields:
+            - - filter
+              - type: if
+                condition: { type: exists, var: q }
+                then_expr:
+                  type: object
+                  fields:
+                    - - name
+                      - type: object
+                        fields:
+                          - - contains
+                            - type: var
+                              name: q
+                else_expr: { type: const, value: null }
   response:
-    items_path: [data, users, nodes]
+    items_path: [data, projects, nodes]
   pagination:
     location: body
     body_merge_path: [variables]
-    response_prefix: [data, users, pageInfo]
+    response_prefix: [data, projects, pageInfo]
     params:
       first: {fixed: 50}
       after: {from_response: endCursor}
     stop_when:
       field: hasNextPage
       eq: false
-
-user_get:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'query($id: String!){ user(id: $id) { id name displayName email } }'
-      - - variables
-        - type: object
-          fields:
-            - - id
-              - type: var
-                name: id
-  response:
-    single: true
-    items_path: [data, user]
-
-workflow_state_query:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'query($first: Int, $after: String, $team: ID!) { workflowStates(first: $first, after: $after, filter: { team: { id: { eq: $team } } }) { nodes { id name type position } pageInfo { hasNextPage endCursor } } }'
-      - - variables
-        - type: object
-          fields:
-            - - team
-              - type: var
-                name: team
-  response:
-    items_path: [data, workflowStates, nodes]
-  pagination:
-    location: body
-    body_merge_path: [variables]
-    response_prefix: [data, workflowStates, pageInfo]
-    params:
-      first: {fixed: 50}
-      after: {from_response: endCursor}
-    stop_when:
-      field: hasNextPage
-      eq: false
-
-workflow_state_get:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'query($id: String!){ workflowState(id: $id) { id name type position } }'
-      - - variables
-        - type: object
-          fields:
-            - - id
-              - type: var
-                name: id
-  response:
-    single: true
-    items_path: [data, workflowState]
 
 cycle_query:
   transport: graphql
@@ -327,19 +346,19 @@ cycle_query:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String, $team: ID!) { team(id: $team) { cycles(first: $first, after: $after) { nodes { id number startsAt endsAt team { id name key } } pageInfo { hasNextPage endCursor } } } }'
+          value: 'query($first: Int, $after: String, $teamKey: String!) { teams(filter: { key: { eq: $teamKey } }) { nodes { cycles(first: $first, after: $after) { nodes { id number startsAt endsAt team { id key name } } pageInfo { hasNextPage endCursor } } } } }'
       - - variables
         - type: object
           fields:
-            - - team
+            - - teamKey
               - type: var
-                name: team
+                name: team_key
   response:
-    items_path: [data, team, cycles, nodes]
+    items_path: [data, teams, nodes, "0", cycles, nodes]
   pagination:
     location: body
     body_merge_path: [variables]
-    response_prefix: [data, team, cycles, pageInfo]
+    response_prefix: [data, teams, nodes, "0", cycles, pageInfo]
     params:
       first: {fixed: 50}
       after: {from_response: endCursor}
@@ -358,7 +377,7 @@ cycle_get:
     fields:
       - - query
         - type: const
-          value: 'query($id: String!){ cycle(id: $id) { id number startsAt endsAt team { id name key } } }'
+          value: 'query($id: String!){ cycle(id: $id) { id number startsAt endsAt team { id key name } } }'
       - - variables
         - type: object
           fields:
@@ -368,6 +387,37 @@ cycle_get:
   response:
     single: true
     items_path: [data, cycle]
+
+workflow_state_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $teamKey: String!) { workflowStates(first: $first, after: $after, filter: { team: { key: { eq: $teamKey } } }) { nodes { id name type } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - teamKey
+              - type: var
+                name: team_key
+  response:
+    items_path: [data, workflowStates, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, workflowStates, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
 
 label_query:
   transport: graphql
@@ -397,7 +447,7 @@ label_query:
       field: hasNextPage
       eq: false
 
-label_get:
+comment_by_issue_query:
   transport: graphql
   method: POST
   path:
@@ -408,32 +458,13 @@ label_get:
     fields:
       - - query
         - type: const
-          value: 'query($id: String!){ issueLabel(id: $id) { id name color } }'
+          value: 'query($first: Int, $after: String, $issueId: String!) { comments(first: $first, after: $after, filter: { issue: { id: { eq: $issueId } } }) { nodes { id body } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
           fields:
-            - - id
+            - - issueId
               - type: var
-                name: id
-  response:
-    single: true
-    items_path: [data, issueLabel]
-
-comment_query:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'query($first: Int, $after: String) { comments(first: $first, after: $after) { nodes { id body issue { id } } pageInfo { hasNextPage endCursor } } }'
-      - - variables
-        - type: object
-          fields: []
+                name: issue
   response:
     items_path: [data, comments, nodes]
   pagination:
@@ -447,7 +478,7 @@ comment_query:
       field: hasNextPage
       eq: false
 
-comment_get:
+document_search:
   transport: graphql
   method: POST
   path:
@@ -458,7 +489,48 @@ comment_get:
     fields:
       - - query
         - type: const
-          value: 'query($id: String!){ comment(id: $id) { id body issue { id } } }'
+          value: 'query($first: Int, $after: String, $filter: DocumentFilter) { documents(first: $first, after: $after, filter: $filter) { nodes { id title } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - filter
+              - type: if
+                condition: { type: exists, var: q }
+                then_expr:
+                  type: object
+                  fields:
+                    - - title
+                      - type: object
+                        fields:
+                          - - contains
+                            - type: var
+                              name: q
+                else_expr: { type: const, value: null }
+  response:
+    items_path: [data, documents, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, documents, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+document_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ document(id: $id) { id title } }'
       - - variables
         - type: object
           fields:
@@ -467,7 +539,290 @@ comment_get:
                 name: id
   response:
     single: true
-    items_path: [data, comment]
+    items_path: [data, document]
+
+document_update:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: DocumentUpdateInput!){ documentUpdate(id: $id, input: $input) { success document { id title } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - title
+                    - type: if
+                      condition: { type: exists, var: title }
+                      then_expr: { type: var, name: title }
+                      else_expr: { type: const, value: null }
+                  - - content
+                    - type: if
+                      condition: { type: exists, var: content }
+                      then_expr: { type: var, name: content }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, documentUpdate, document]
+
+initiative_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String) { initiatives(first: $first, after: $after) { nodes { id name } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields: []
+  response:
+    items_path: [data, initiatives, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, initiatives, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+initiative_get:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($id: String!){ initiative(id: $id) { id name } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+  response:
+    single: true
+    items_path: [data, initiative]
+
+initiative_update:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: InitiativeUpdateInput!){ initiativeUpdate(id: $id, input: $input) { success initiative { id name } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - name
+                    - type: if
+                      condition: { type: exists, var: name }
+                      then_expr: { type: var, name: name }
+                      else_expr: { type: const, value: null }
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, initiativeUpdate, initiative]
+
+project_milestone_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $projectId: String!) { projectMilestones(first: $first, after: $after, filter: { project: { id: { eq: $projectId } } }) { nodes { id name } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - projectId
+              - type: var
+                name: project
+  response:
+    items_path: [data, projectMilestones, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, projectMilestones, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+project_milestone_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: ProjectMilestoneCreateInput!){ projectMilestoneCreate(input: $input) { success projectMilestone { id name } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - projectId
+                    - type: var
+                      name: project
+                  - - name
+                    - type: var
+                      name: name
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, projectMilestoneCreate, projectMilestone]
+
+project_milestone_update:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($id: String!, $input: ProjectMilestoneUpdateInput!){ projectMilestoneUpdate(id: $id, input: $input) { success projectMilestone { id name } } }'
+      - - variables
+        - type: object
+          fields:
+            - - id
+              - type: var
+                name: id
+            - - input
+              - type: object
+                fields:
+                  - - name
+                    - type: if
+                      condition: { type: exists, var: name }
+                      then_expr: { type: var, name: name }
+                      else_expr: { type: const, value: null }
+                  - - description
+                    - type: if
+                      condition: { type: exists, var: description }
+                      then_expr: { type: var, name: description }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, projectMilestoneUpdate, projectMilestone]
+
+project_update_query:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'query($first: Int, $after: String, $projectId: String!) { projectUpdates(first: $first, after: $after, filter: { project: { id: { eq: $projectId } } }) { nodes { id body health } pageInfo { hasNextPage endCursor } } }'
+      - - variables
+        - type: object
+          fields:
+            - - projectId
+              - type: var
+                name: project
+  response:
+    items_path: [data, projectUpdates, nodes]
+  pagination:
+    location: body
+    body_merge_path: [variables]
+    response_prefix: [data, projectUpdates, pageInfo]
+    params:
+      first: {fixed: 50}
+      after: {from_response: endCursor}
+    stop_when:
+      field: hasNextPage
+      eq: false
+
+project_update_create:
+  transport: graphql
+  method: POST
+  path:
+    - type: literal
+      value: graphql
+  body:
+    type: object
+    fields:
+      - - query
+        - type: const
+          value: 'mutation($input: ProjectUpdateCreateInput!){ projectUpdateCreate(input: $input) { success projectUpdate { id body health } } }'
+      - - variables
+        - type: object
+          fields:
+            - - input
+              - type: object
+                fields:
+                  - - projectId
+                    - type: var
+                      name: project
+                  - - body
+                    - type: var
+                      name: body
+                  - - health
+                    - type: if
+                      condition: { type: exists, var: health }
+                      then_expr: { type: var, name: health }
+                      else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [data, projectUpdateCreate, projectUpdate]
 
 issue_create:
   transport: graphql
@@ -480,7 +835,7 @@ issue_create:
     fields:
       - - query
         - type: const
-          value: 'mutation($input: IssueCreateInput!){ issueCreate(input: $input) { success issue { id identifier title description state { id name type } cycle { id number startsAt endsAt } parent { id identifier title description } children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
+          value: 'mutation($input: IssueCreateInput!){ issueCreate(input: $input) { success issue { id identifier title state { id name } } } }'
       - - variables
         - type: object
           fields:
@@ -489,7 +844,7 @@ issue_create:
                 fields:
                   - - teamId
                     - type: var
-                      name: team
+                      name: teamId
                   - - title
                     - type: var
                       name: title
@@ -498,30 +853,30 @@ issue_create:
                       condition: { type: exists, var: description }
                       then_expr: { type: var, name: description }
                       else_expr: { type: const, value: null }
-                  - - projectId
+                  - - priority
                     - type: if
-                      condition: { type: exists, var: project }
-                      then_expr: { type: var, name: project }
-                      else_expr: { type: const, value: null }
-                  - - assigneeId
-                    - type: if
-                      condition: { type: exists, var: assignee }
-                      then_expr: { type: var, name: assignee }
-                      else_expr: { type: const, value: null }
-                  - - stateId
-                    - type: if
-                      condition: { type: exists, var: state }
-                      then_expr: { type: var, name: state }
+                      condition: { type: exists, var: priority }
+                      then_expr: { type: var, name: priority }
                       else_expr: { type: const, value: null }
                   - - parentId
                     - type: if
-                      condition: { type: exists, var: parent }
-                      then_expr: { type: var, name: parent }
+                      condition: { type: exists, var: parent_identifier }
+                      then_expr: { type: var, name: parent_identifier }
                       else_expr: { type: const, value: null }
-                  - - cycleId
+                  - - stateId
                     - type: if
-                      condition: { type: exists, var: cycle }
-                      then_expr: { type: var, name: cycle }
+                      condition: { type: exists, var: stateId }
+                      then_expr: { type: var, name: stateId }
+                      else_expr: { type: const, value: null }
+                  - - assigneeId
+                    - type: if
+                      condition: { type: exists, var: assigneeId }
+                      then_expr: { type: var, name: assigneeId }
+                      else_expr: { type: const, value: null }
+                  - - projectId
+                    - type: if
+                      condition: { type: exists, var: projectId }
+                      then_expr: { type: var, name: projectId }
                       else_expr: { type: const, value: null }
   response:
     single: true
@@ -538,7 +893,7 @@ issue_update:
     fields:
       - - query
         - type: const
-          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier title description state { id name type } cycle { id number startsAt endsAt } parent { id identifier title description } children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
+          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier title state { id name } } } }'
       - - variables
         - type: object
           fields:
@@ -558,30 +913,30 @@ issue_update:
                       condition: { type: exists, var: description }
                       then_expr: { type: var, name: description }
                       else_expr: { type: const, value: null }
-                  - - projectId
+                  - - priority
                     - type: if
-                      condition: { type: exists, var: project }
-                      then_expr: { type: var, name: project }
-                      else_expr: { type: const, value: null }
-                  - - assigneeId
-                    - type: if
-                      condition: { type: exists, var: assignee }
-                      then_expr: { type: var, name: assignee }
+                      condition: { type: exists, var: priority }
+                      then_expr: { type: var, name: priority }
                       else_expr: { type: const, value: null }
                   - - stateId
                     - type: if
-                      condition: { type: exists, var: state }
-                      then_expr: { type: var, name: state }
+                      condition: { type: exists, var: stateId }
+                      then_expr: { type: var, name: stateId }
                       else_expr: { type: const, value: null }
-                  - - parentId
+                  - - assigneeId
                     - type: if
-                      condition: { type: exists, var: parent }
-                      then_expr: { type: var, name: parent }
+                      condition: { type: exists, var: assigneeId }
+                      then_expr: { type: var, name: assigneeId }
                       else_expr: { type: const, value: null }
-                  - - cycleId
+                  - - projectId
                     - type: if
-                      condition: { type: exists, var: cycle }
-                      then_expr: { type: var, name: cycle }
+                      condition: { type: exists, var: projectId }
+                      then_expr: { type: var, name: projectId }
+                      else_expr: { type: const, value: null }
+                  - - labelIds
+                    - type: if
+                      condition: { type: exists, var: labelIds }
+                      then_expr: { type: var, name: labelIds }
                       else_expr: { type: const, value: null }
   response:
     single: true
@@ -598,7 +953,7 @@ issue_delete:
     fields:
       - - query
         - type: const
-          value: 'mutation($id: String!){ issueDelete(id: $id) { success entity { id } } }'
+          value: 'mutation($id: String!){ issueDelete(id: $id) { success } }'
       - - variables
         - type: object
           fields:
@@ -637,88 +992,6 @@ comment_create:
     single: true
     items_path: [data, commentCreate, comment]
 
-# ── Labels / projects / workflow (mutations) ─────────────────────────────────
-
-label_create:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'mutation($input: IssueLabelCreateInput!){ issueLabelCreate(input: $input) { success issueLabel { id name color } } }'
-      - - variables
-        - type: object
-          fields:
-            - - input
-              - type: object
-                fields:
-                  - - name
-                    - type: var
-                      name: name
-                  - - teamId
-                    - type: if
-                      condition: { type: exists, var: team }
-                      then_expr: { type: var, name: team }
-                      else_expr: { type: const, value: null }
-                  - - color
-                    - type: if
-                      condition: { type: exists, var: color }
-                      then_expr: { type: var, name: color }
-                      else_expr: { type: const, value: null }
-                  - - description
-                    - type: if
-                      condition: { type: exists, var: description }
-                      then_expr: { type: var, name: description }
-                      else_expr: { type: const, value: null }
-  response:
-    single: true
-    items_path: [data, issueLabelCreate, issueLabel]
-
-label_update:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'mutation($id: String!, $input: IssueLabelUpdateInput!){ issueLabelUpdate(id: $id, input: $input) { success issueLabel { id name color } } }'
-      - - variables
-        - type: object
-          fields:
-            - - id
-              - type: var
-                name: id
-            - - input
-              - type: object
-                fields:
-                  - - name
-                    - type: if
-                      condition: { type: exists, var: name }
-                      then_expr: { type: var, name: name }
-                      else_expr: { type: const, value: null }
-                  - - color
-                    - type: if
-                      condition: { type: exists, var: color }
-                      then_expr: { type: var, name: color }
-                      else_expr: { type: const, value: null }
-                  - - description
-                    - type: if
-                      condition: { type: exists, var: description }
-                      then_expr: { type: var, name: description }
-                      else_expr: { type: const, value: null }
-  response:
-    single: true
-    items_path: [data, issueLabelUpdate, issueLabel]
-
 project_create:
   transport: graphql
   method: POST
@@ -754,7 +1027,7 @@ project_create:
     single: true
     items_path: [data, projectCreate, project]
 
-workflow_state_create:
+project_update:
   transport: graphql
   method: POST
   path:
@@ -765,98 +1038,53 @@ workflow_state_create:
     fields:
       - - query
         - type: const
-          value: 'mutation($input: WorkflowStateCreateInput!){ workflowStateCreate(input: $input) { success workflowState { id name type } } }'
+          value: 'mutation($id: String!, $input: ProjectUpdateInput!){ projectUpdate(id: $id, input: $input) { success project { id name } } }'
       - - variables
         - type: object
           fields:
+            - - id
+              - type: var
+                name: id
             - - input
               - type: object
                 fields:
                   - - name
-                    - type: var
-                      name: name
-                  - - teamId
-                    - type: var
-                      name: team
-                  - - type
-                    - type: var
-                      name: state_type
-                  - - color
-                    - type: var
-                      name: color
+                    - type: if
+                      condition: { type: exists, var: name }
+                      then_expr: { type: var, name: name }
+                      else_expr: { type: const, value: null }
                   - - description
                     - type: if
                       condition: { type: exists, var: description }
                       then_expr: { type: var, name: description }
                       else_expr: { type: const, value: null }
-                  - - position
-                    - type: if
-                      condition: { type: exists, var: position }
-                      then_expr: { type: var, name: position }
-                      else_expr: { type: const, value: null }
   response:
     single: true
-    items_path: [data, workflowStateCreate, workflowState]
+    items_path: [data, projectUpdate, project]
 
-issue_add_label:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
-      - - variables
-        - type: object
-          fields:
-            - - id
-              - type: var
-                name: id
-            - - input
-              - type: object
-                fields:
-                  - - addedLabelIds
-                    - type: array
-                      elements:
-                        - type: var
-                          name: label
-  response:
-    single: true
-    items_path: [data, issueUpdate, issue]
+issue_context_query:
+  transport: view
+  view: issue_context
 
-issue_remove_label:
-  transport: graphql
-  method: POST
-  path:
-    - type: literal
-      value: graphql
-  body:
-    type: object
-    fields:
-      - - query
-        - type: const
-          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier children(first: 250, includeArchived: true) { nodes { id identifier title description } pageInfo { hasNextPage endCursor } } } } }'
-      - - variables
-        - type: object
-          fields:
-            - - id
-              - type: var
-                name: id
-            - - input
-              - type: object
-                fields:
-                  - - removedLabelIds
-                    - type: array
-                      elements:
-                        - type: var
-                          name: label
-  response:
-    single: true
-    items_path: [data, issueUpdate, issue]
+issue_context_get:
+  transport: view
+  view: issue_context
+
+my_work_query:
+  transport: view
+  view: my_work
+
+my_work_get:
+  transport: view
+  view: my_work
+
+project_context_query:
+  transport: view
+  view: project_context
+
+project_context_get:
+  transport: view
+  view: project_context
 
 issue_navigation_link_query:
   transport: view

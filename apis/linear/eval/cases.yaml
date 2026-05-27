@@ -1,154 +1,202 @@
-# Linear — NL→Plasm eval goals (schema: linear)
-#
-# `covers` — buckets for `plasm-eval coverage` (required set comes from CGS).
-# `reference_expr` — optional one-line Plasm expression (UUIDs are placeholders).
-#   Use: `plasm-eval coverage … --compare-derived --compare-derived-allow-extra-claims`
-#   Default coverage ignores `reference_expr` and uses YAML `covers` only.
+# Linear — task-oriented NL eval (name-centric: identifiers, team keys, filter strings).
 #
 - id: lin-01
   schema: linear
-  goal: "List open issues"
-  tags: [query]
-  covers: [projection]
+  goal: "Show open bugs in team ENG"
+  tags: [search]
+  covers: [search_text, query_filtered]
+  reference_expr: Issue.search(q=bug, team_key=ENG)
   expect:
     entities_any: [Issue]
 
 - id: lin-02
   schema: linear
-  goal: "Get issue by id"
+  goal: "Get issue ENG-42"
   tags: [get]
   covers: [get]
-  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1)
+  reference_expr: Issue(ENG-42)
   expect:
     entities_any: [Issue]
 
 - id: lin-03
   schema: linear
-  goal: "List workflow states for team ENG"
-  tags: [query, reverse]
-  covers: [query_filtered, reverse]
-  reference_expr: WorkflowState{team=Team(00000000-0000-0000-0000-0000000000b2)}
+  goal: "What is ENG-42 and its comments?"
+  tags: [get, multi_step]
+  covers: [get, multi_step]
+  reference_expr: IssueContext(ENG-42)
   expect:
-    entities_any: [Team, WorkflowState]
+    entities_any: [IssueContext, Issue, Comment]
 
 - id: lin-04
   schema: linear
-  goal: "Open an issue then show its assignee"
-  tags: [get, chain]
-  covers: [chain, get, multi_step]
-  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).assignee
+  goal: "What should I work on?"
+  tags: [multi_step]
+  covers: [multi_step, query_filtered]
+  reference_expr: MyWorkSnapshot
   expect:
-    entities_any: [Issue, User]
+    entities_any: [MyWorkSnapshot, Issue]
 
 - id: lin-05
   schema: linear
-  goal: "List teams, projects, users, labels, and comments in one workflow"
-  tags: [multi_step]
-  covers: [multi_step]
+  goal: "List workflow columns for team ENG"
+  tags: [query]
+  covers: [query_filtered]
+  reference_expr: WorkflowState{team_key=ENG}
   expect:
-    entities_any: [Team, Project, User, Label, Comment]
+    entities_any: [WorkflowState]
 
 - id: lin-06
   schema: linear
-  goal: "List issues for a specific team"
-  tags: [query]
-  covers: [query_filtered]
-  reference_expr: Issue{team=Team(00000000-0000-0000-0000-0000000000b2)}
+  goal: "Create issue titled Sprint task on team ENG"
+  tags: [create]
+  covers: [create]
+  reference_expr: Issue.create(team=Team(ENG), title=Sprint task)
   expect:
     entities_any: [Issue]
-    pred_fields_any: [team]
 
 - id: lin-07
   schema: linear
-  goal: "Create an issue titled Sprint task in team ENG"
-  tags: [create]
-  covers: [create]
-  reference_expr: Issue.create(team=Team(00000000-0000-0000-0000-0000000000b2), title=Sprint task)
+  goal: "Rename issue ENG-42 to Renamed"
+  tags: [update]
+  covers: [update]
+  reference_expr: Issue(ENG-42).update(title=Renamed)
   expect:
     entities_any: [Issue]
 
 - id: lin-08
   schema: linear
-  goal: "Update issue abc123 title to Renamed"
-  tags: [update]
-  covers: [update]
-  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).update(title=Renamed)
+  goal: "Trash issue ENG-42"
+  tags: [delete]
+  covers: [delete]
+  reference_expr: Issue(ENG-42).delete
   expect:
     entities_any: [Issue]
 
 - id: lin-09
   schema: linear
-  goal: "Trash issue abc123"
-  tags: [delete]
-  covers: [delete]
-  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).delete
-  expect:
-    entities_any: [Issue]
-
-- id: lin-10
-  schema: linear
-  goal: "Comment on issue abc123 with body LGTM"
+  goal: "Comment on ENG-42 with body LGTM"
   tags: [create]
   covers: [create]
-  reference_expr: Comment.create(issue=Issue(00000000-0000-0000-0000-0000000000a1), body=LGTM)
+  reference_expr: Comment.create(issue=Issue(ENG-42), body=LGTM)
   expect:
     entities_any: [Comment]
 
+- id: lin-10
+  schema: linear
+  goal: "List all teams"
+  tags: [query]
+  covers: [projection]
+  expect:
+    entities_any: [Team]
+
 - id: lin-11
   schema: linear
-  goal: "Browse all issue labels in the workspace"
-  tags: [query]
-  covers: [projection]
-  expect:
-    entities_any: [Label]
-
-- id: lin-12
-  schema: linear
-  goal: "Open project details by id"
-  tags: [get]
+  goal: "Share the Linear web URL for ENG-42"
+  tags: [view]
   covers: [get]
-  reference_expr: Project(00000000-0000-0000-0000-0000000000c3)
-  expect:
-    entities_any: [Project]
-
-- id: lin-13
-  schema: linear
-  goal: "List users in the workspace"
-  tags: [query]
-  covers: [projection]
-  expect:
-    entities_any: [User]
-
-- id: lin-14
-  schema: linear
-  goal: "Move issue abc123 to the In Progress column"
-  tags: [update, workflow]
-  covers: [update]
-  reference_expr: Issue(00000000-0000-0000-0000-0000000000a1).update(state=WorkflowState(00000000-0000-0000-0000-0000000000d4))
-  expect:
-    entities_any: [Issue, WorkflowState]
-
-- id: lin-15
-  schema: linear
-  goal: "List sprint cycles for team ENG"
-  tags: [query, reverse]
-  covers: [query_filtered, reverse]
-  reference_expr: Cycle{team=Team(00000000-0000-0000-0000-0000000000b2)}
-  expect:
-    entities_any: [Team, Cycle]
-
-- id: lin-16
-  schema: linear
-  goal: "Share the Linear web URL for issue ENG-42 in the release notes"
-  tags: [view, composed_read]
-  covers: [get]
+  reference_expr: IssueNavigationLink(ENG-42)
   expect:
     entities_any: [IssueNavigationLink]
 
+- id: lin-12
+  schema: linear
+  goal: "List issues for team ENG across pages"
+  tags: [search, pagination]
+  covers: [page_next, search_text, query_filtered]
+  reference_expr: Issue.search(team_key=ENG)
+  expect:
+    entities_any: [Issue]
+
+- id: lin-13
+  schema: linear
+  goal: "Find projects matching Mobile"
+  tags: [search]
+  covers: [search_text]
+  reference_expr: Project.search(q=Mobile)
+  expect:
+    entities_any: [Project]
+
+- id: lin-14
+  schema: linear
+  goal: "Show project status updates for a project"
+  tags: [view, multi_step]
+  covers: [multi_step, get]
+  expect:
+    entities_any: [ProjectContext, ProjectUpdate]
+
+- id: lin-15
+  schema: linear
+  goal: "Search documents for API spec"
+  tags: [search]
+  covers: [search_text]
+  reference_expr: Document.search(q=API spec)
+  expect:
+    entities_any: [Document]
+
+- id: lin-16
+  schema: linear
+  goal: "Open issue ENG-42 then show assignee"
+  tags: [chain]
+  covers: [chain, get]
+  reference_expr: Issue(ENG-42).assignee
+  expect:
+    entities_any: [Issue, User]
+
 - id: lin-17
   schema: linear
-  goal: "For cycle 7, show cycle number, dates, and how many issues are scheduled in that iteration"
-  tags: [view, composed_read]
-  covers: [multi_step, query_filtered]
+  goal: "List sprint cycles for team ENG"
+  tags: [query]
+  covers: [query_filtered]
+  reference_expr: Cycle{team_key=ENG}
   expect:
-    entities_any: [CycleBoardSnapshot, Issue]
+    entities_any: [Cycle, Team]
+
+- id: lin-18
+  schema: linear
+  goal: "Browse all issue labels"
+  tags: [query]
+  covers: [query_all, projection]
+  expect:
+    entities_any: [Label]
+
+- id: lin-19
+  schema: linear
+  goal: "List strategic initiatives"
+  tags: [query]
+  covers: [query_all]
+  expect:
+    entities_any: [Initiative]
+
+- id: lin-20
+  schema: linear
+  goal: "List milestones on a project"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [ProjectMilestone]
+
+- id: lin-21
+  schema: linear
+  goal: "Show cycle board for an iteration"
+  tags: [view]
+  covers: [multi_step]
+  expect:
+    entities_any: [CycleBoardSnapshot, Issue, Cycle]
+
+- id: lin-22
+  schema: linear
+  goal: "Open ENG-42 and show its team"
+  tags: [chain, reverse]
+  covers: [reverse, chain, get]
+  reference_expr: Issue(ENG-42).team
+  expect:
+    entities_any: [Issue, Team]
+
+- id: lin-23
+  schema: linear
+  goal: "List issues in the workspace"
+  tags: [search]
+  covers: [query_all, search_text]
+  reference_expr: Issue.search
+  expect:
+    entities_any: [Issue]

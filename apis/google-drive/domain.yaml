@@ -675,9 +675,10 @@ capabilities:
     entity: DriveComment
     description: Patch a comment. Preflight runs comments_get and merges parent_*; the wire body merges optional overrides
       with the parent row (content, anchor, quotedFileContent).
-    invoke_preflight:
-      hydrate_capability: comments_get
-      env_prefix: parent
+    preflight:
+    - kind: hydrate_invoke_target
+      get: comments_get
+      prefix: parent
     parameters:
     - name: content
       value_ref: nv_comments_update_content
@@ -734,9 +735,10 @@ capabilities:
     entity: DriveReply
     description: Patch a reply. Preflight runs replies_get and merges parent_*; the wire body merges optional overrides with
       the parent row (content, action).
-    invoke_preflight:
-      hydrate_capability: replies_get
-      env_prefix: parent
+    preflight:
+    - kind: hydrate_invoke_target
+      get: replies_get
+      prefix: parent
     parameters:
     - name: content
       value_ref: nv_replies_update_content

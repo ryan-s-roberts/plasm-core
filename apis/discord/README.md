@@ -30,7 +30,7 @@ cargo run -p plasm-cli --bin plasm -- validate --spec apis/discord/openapi.json 
 cargo run --bin plasm-repl -- --schema apis/discord --help
 ```
 
-**Replies:** `message_reply` (action on a `Message` row) POSTs to `channels/{channel_id}/messages` with a `message_reference` to the target; runtime **`invoke_preflight`** runs **`message_get`** first and merges **`parent_*`** into the CML env for the reference payload.
+**Replies:** `message_reply` (action on a `Message` row) POSTs to `channels/{channel_id}/messages` with a `message_reference` to the target; runtime **`preflight`** runs **`message_get`** first and merges **`parent_*`** into the CML env for the reference payload.
 
 ## Non-goals (v1)
 

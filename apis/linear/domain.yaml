@@ -1,23 +1,23 @@
-version: 6
+version: 9
 http_backend: https://api.linear.app
 entities:
   Team:
-    id_field: id
-    description: A Linear team (workspace grouping).
+    id_field: key
+    description: A Linear team (workspace grouping); agents address teams by short key (e.g. ENG).
     fields:
       id:
         required: true
         value_ref: nv_team_id
+      key:
+        required: true
+        value_ref: nv_team_key
       name:
         required: false
         value_ref: nv_wire_str_short
-      key:
-        required: false
-        value_ref: nv_team_key
     relations: {}
   Project:
     id_field: id
-    description: A Linear project within a team.
+    description: A Linear project.
     fields:
       id:
         required: true
@@ -31,7 +31,7 @@ entities:
     relations: {}
   Cycle:
     id_field: id
-    description: A time-boxed iteration on a team (sprint / cycle window).
+    description: A time-boxed iteration on a team.
     fields:
       id:
         required: true
@@ -49,7 +49,6 @@ entities:
       team:
         target: Team
         cardinality: one
-        description: Team this cycle belongs to.
   User:
     id_field: id
     description: A Linear user.
@@ -69,31 +68,28 @@ entities:
     relations: {}
   WorkflowState:
     id_field: id
-    description: A workflow column/state for a team (backlog, in progress, done, …).
+    description: A workflow column for a team.
     fields:
       id:
         required: true
         value_ref: nv_workflow_state_id
       name:
         required: false
-        value_ref: nv_wire_str_short
+        value_ref: nv_state_name
       type:
         required: false
         value_ref: nv_workflow_state_type
-      position:
-        required: false
-        value_ref: nv_workflow_state_position
     relations: {}
   Label:
-    id_field: id
-    description: An issue label.
+    id_field: name
+    description: An issue label (addressed by name in filters and writes).
     fields:
       id:
         required: true
         value_ref: nv_label_id
       name:
-        required: false
-        value_ref: nv_wire_str_short
+        required: true
+        value_ref: nv_label_name
       color:
         required: false
         value_ref: nv_wire_str_short
@@ -112,16 +108,16 @@ entities:
       issue:
         target: Issue
         cardinality: one
-        description: Issue this comment belongs to.
   Issue:
-    id_field: id
-    description: A Linear issue (task, bug, or feature).
+    id_field: identifier
+    primary_read: issue_get
+    description: A Linear issue (task, bug, or feature); use human identifier (e.g. ENG-42).
     fields:
       id:
         required: true
         value_ref: nv_issue_id
       identifier:
-        required: false
+        required: true
         value_ref: nv_issue_identifier
       title:
         required: false
@@ -129,31 +125,34 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+      priority:
+        required: false
+        value_ref: nv_issue_priority
+      estimate:
+        required: false
+        value_ref: nv_wire_num
+      dueDate:
+        required: false
+        value_ref: nv_wire_str_short
     relations:
       team:
         target: Team
         cardinality: one
-        description: Owning team.
       project:
         target: Project
         cardinality: one
-        description: Project this issue belongs to.
       assignee:
         target: User
         cardinality: one
-        description: User assigned to the issue.
       state:
         target: WorkflowState
         cardinality: one
-        description: Current workflow state.
       cycle:
         target: Cycle
         cardinality: one
-        description: Iteration cycle when the issue is scheduled into one.
       labels:
         target: Label
         cardinality: many
-        description: Labels on this issue.
         materialize:
           kind: from_parent_get
           path:
@@ -163,27 +162,146 @@ entities:
       parent:
         target: Issue
         cardinality: one
-        description: Parent issue when this issue is a sub-issue (otherwise absent).
       children:
         target: Issue
         cardinality: many
-        description: Sub-issues nested directly under this issue in the work hierarchy.
         materialize:
           kind: from_parent_get
           path:
           - key: children
           - key: nodes
           - wildcard: true
+      comments:
+        target: Comment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: comment_by_issue_query
+          param: issue
+  Document:
+    id_field: id
+    description: A Linear document.
+    fields:
+      id:
+        required: true
+        value_ref: nv_document_id
+      title:
+        required: false
+        value_ref: nv_wire_str_short
+    relations: {}
+  Initiative:
+    id_field: id
+    description: A strategic initiative grouping projects.
+    fields:
+      id:
+        required: true
+        value_ref: nv_initiative_id
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+    relations: {}
+  ProjectMilestone:
+    id_field: id
+    description: A milestone on a project.
+    fields:
+      id:
+        required: true
+        value_ref: nv_project_milestone_id
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+    relations:
+      project:
+        target: Project
+        cardinality: one
+  ProjectUpdate:
+    id_field: id
+    description: A status update posted on a project.
+    fields:
+      id:
+        required: true
+        value_ref: nv_project_update_id
+      body:
+        required: false
+        value_ref: nv_wire_str_markdown
+      health:
+        required: false
+        value_ref: nv_project_update_health
+    relations:
+      project:
+        target: Project
+        cardinality: one
+  IssueContext:
+    abstract: true
+    id_field: issue_identifier
+    primary_read: issue_context_get
+    description: One issue plus its comments and relation hooks for triage.
+    fields:
+      issue_identifier:
+        required: true
+        value_ref: nv_issue_identifier
+      title:
+        required: false
+        value_ref: nv_wire_str_short
+      comment_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      issue:
+        target: Issue
+        cardinality: one
+      comments:
+        target: Comment
+        cardinality: many
+  MyWorkSnapshot:
+    abstract: true
+    id_field: viewer_id
+    primary_read: my_work_get
+    description: Issues assigned to the authenticated user (dashboard).
+    fields:
+      viewer_id:
+        required: true
+        value_ref: nv_user_id
+      issue_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      viewer:
+        target: User
+        cardinality: one
+      issues:
+        target: Issue
+        cardinality: many
+  ProjectContext:
+    abstract: true
+    id_field: project_id
+    primary_read: project_context_get
+    description: Project row plus recent status updates.
+    fields:
+      project_id:
+        required: true
+        value_ref: nv_project_id
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+      update_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      project:
+        target: Project
+        cardinality: one
+      updates:
+        target: ProjectUpdate
+        cardinality: many
   IssueNavigationLink:
-    id_field: issue_id
+    abstract: true
+    id_field: issue_identifier
     primary_read: issue_navigation_link_get
     description: Shareable Linear web URL for an issue.
     fields:
-      issue_id:
+      issue_identifier:
         required: true
-        value_ref: nv_issue_id
-      identifier:
-        required: false
         value_ref: nv_issue_identifier
       title:
         required: false
@@ -196,9 +314,10 @@ entities:
         target: Issue
         cardinality: one
   CycleBoardSnapshot:
+    abstract: true
     id_field: cycle_id
     primary_read: cycle_board_snapshot_get
-    description: Cycle metadata plus issues scheduled in that iteration (sprint board pattern).
+    description: Cycle dates and issues in that iteration.
     fields:
       cycle_id:
         required: true
@@ -206,12 +325,6 @@ entities:
       number:
         required: false
         value_ref: nv_cycle_number
-      startsAt:
-        required: false
-        value_ref: nv_cycle_starts_at
-      endsAt:
-        required: false
-        value_ref: nv_cycle_ends_at
       issue_count:
         required: false
         value_ref: nv_wire_int
@@ -223,71 +336,101 @@ entities:
         target: Issue
         cardinality: many
 capabilities:
-  issue_query:
-    kind: query
+  issue_search:
+    kind: search
     entity: Issue
-    description: List issues in the workspace.
-    provides:
-    - id
-    - identifier
-    - title
-  issue_by_team_query:
-    kind: query
-    entity: Issue
-    description: List issues for a specific team.
+    description: Find issues by title text and name-typed filters (team key, state, label, assignee).
     parameters:
-    - name: team
-      value_ref: nv_issue_by_team_query_team
-      required: true
-      role: scope
-    provides:
-    - id
-    - identifier
-    - title
-  issue_by_cycle_query:
-    kind: query
-    entity: Issue
-    description: List issues scheduled in a specific cycle (iteration).
-    parameters:
+    - name: q
+      value_ref: nv_issue_search_q
+      required: false
+      role: search
+    - name: team_key
+      value_ref: nv_team_key
+      required: false
+      role: filter
+    - name: state_name
+      value_ref: nv_state_name
+      required: false
+      role: filter
+    - name: label_name
+      value_ref: nv_label_name
+      required: false
+      role: filter
+    - name: assignee_name
+      value_ref: nv_assignee_name
+      required: false
+      role: filter
+    - name: priority
+      value_ref: nv_issue_priority
+      required: false
+      role: filter
+    - name: project_name
+      value_ref: nv_wire_str_short
+      required: false
+      role: filter
     - name: cycle
-      value_ref: nv_issue_by_cycle_query_cycle
-      required: true
-      role: scope
+      value_ref: nv_cycle_id
+      required: false
+      role: filter
     provides:
-    - id
     - identifier
     - title
+    - priority
   issue_get:
     kind: get
     entity: Issue
-    description: Load one issue with its team, project, assignee, labels, workflow column, cycle, parent, and child issues.
+    description: Load one issue by identifier (e.g. ENG-42).
     provides:
     - id
     - identifier
     - title
     - description
-    - parent
+    - priority
+    - estimate
+    - dueDate
     - team
     - project
     - assignee
     - state
     - cycle
+    - parent
+  user_viewer:
+    kind: get
+    entity: User
+    description: The authenticated Linear user.
+    provides:
+    - id
+    - name
+    - displayName
+    - email
+  user_search:
+    kind: search
+    entity: User
+    description: Find users by display name (exact match on first page).
+    parameters:
+    - name: display_name
+      value_ref: nv_assignee_name
+      required: true
+      role: search
+    provides:
+    - id
+    - displayName
   team_query:
     kind: query
     entity: Team
     description: List teams.
     provides:
-    - id
-    - name
     - key
+    - name
   team_get:
     kind: get
     entity: Team
-    description: Fetch one team by id.
+    description: Fetch one team by key (e.g. ENG).
     provides:
     - id
-    - name
     - key
+    - name
   project_query:
     kind: query
     entity: Project
@@ -304,54 +447,26 @@ capabilities:
     - id
     - name
     - slugId
-  user_query:
-    kind: query
-    entity: User
-    description: List users.
-    provides:
-    - id
-    - name
-    - displayName
-    - email
-  user_get:
-    kind: get
-    entity: User
-    description: Fetch one user by id.
-    provides:
-    - id
-    - name
-    - displayName
-    - email
-  workflow_state_query:
-    kind: query
-    entity: WorkflowState
-    description: List workflow columns for a team—column title, category (e.g. backlog, in progress, done), and sort order.
+  project_search:
+    kind: search
+    entity: Project
+    description: Find projects by name substring.
     parameters:
-    - name: team
-      value_ref: nv_workflow_state_query_team
-      required: true
-      role: scope
+    - name: q
+      value_ref: nv_wire_str_short
+      required: false
+      role: search
     provides:
     - id
     - name
-    - type
-    - position
-  workflow_state_get:
-    kind: get
-    entity: WorkflowState
-    description: Fetch one workflow state (column) by id.
-    provides:
-    - id
-    - name
-    - type
-    - position
+    - slugId
   cycle_query:
     kind: query
     entity: Cycle
-    description: List iteration cycles for a team (ordered by the API).
+    description: List cycles for a team (by team key).
     parameters:
-    - name: team
-      value_ref: nv_cycle_query_team
+    - name: team_key
+      value_ref: nv_team_key
       required: true
       role: scope
     provides:
@@ -359,58 +474,191 @@ capabilities:
     - number
     - startsAt
     - endsAt
-    - team
   cycle_get:
     kind: get
     entity: Cycle
-    description: Fetch one cycle by id, including its team.
+    description: Fetch one cycle by id.
     provides:
     - id
     - number
     - startsAt
     - endsAt
     - team
+  workflow_state_query:
+    kind: query
+    entity: WorkflowState
+    description: List workflow columns for a team (by team key).
+    parameters:
+    - name: team_key
+      value_ref: nv_team_key
+      required: true
+      role: scope
+    provides:
+    - id
+    - name
+    - type
   label_query:
     kind: query
     entity: Label
     description: List issue labels.
     provides:
-    - id
     - name
     - color
-  label_get:
-    kind: get
-    entity: Label
-    description: Fetch one label by id.
-    provides:
-    - id
-    - name
-    - color
-  comment_query:
+  comment_by_issue_query:
     kind: query
     entity: Comment
-    description: List comments.
+    description: List comments on an issue (scoped by issue identifier).
+    parameters:
+    - name: issue
+      value_ref: nv_issue_ref
+      required: true
+      role: scope
     provides:
     - id
     - body
-  comment_get:
+  document_search:
+    kind: search
+    entity: Document
+    description: Find documents by title.
+    parameters:
+    - name: q
+      value_ref: nv_wire_str_short
+      required: false
+      role: search
+    provides:
+    - id
+    - title
+  document_get:
     kind: get
-    entity: Comment
-    description: Fetch one comment by id.
+    entity: Document
+    description: Fetch one document by id.
+    provides:
+    - id
+    - title
+  document_update:
+    kind: update
+    entity: Document
+    description: Update document title or content.
+    provides:
+    - id
+    - title
+    parameters:
+    - name: title
+      value_ref: nv_wire_str_short
+      required: false
+    - name: content
+      value_ref: nv_wire_str_markdown
+      required: false
+  initiative_query:
+    kind: query
+    entity: Initiative
+    description: List initiatives.
+    provides:
+    - id
+    - name
+  initiative_get:
+    kind: get
+    entity: Initiative
+    description: Fetch one initiative by id.
+    provides:
+    - id
+    - name
+  initiative_update:
+    kind: update
+    entity: Initiative
+    description: Update initiative name or description.
+    provides:
+    - id
+    - name
+    parameters:
+    - name: name
+      value_ref: nv_wire_str_short
+      required: false
+    - name: description
+      value_ref: nv_wire_str_markdown
+      required: false
+  project_milestone_query:
+    kind: query
+    entity: ProjectMilestone
+    description: List milestones on a project.
+    parameters:
+    - name: project
+      value_ref: nv_project_id
+      required: true
+      role: scope
+    provides:
+    - id
+    - name
+  project_milestone_create:
+    kind: create
+    entity: ProjectMilestone
+    description: Create a milestone on a project.
+    provides:
+    - id
+    - name
+    parameters:
+    - name: project
+      value_ref: nv_project_id
+      required: true
+    - name: name
+      value_ref: nv_wire_str_short
+      required: true
+    - name: description
+      value_ref: nv_wire_str_markdown
+      required: false
+  project_milestone_update:
+    kind: update
+    entity: ProjectMilestone
+    description: Update a project milestone.
+    provides:
+    - id
+    - name
+    parameters:
+    - name: name
+      value_ref: nv_wire_str_short
+      required: false
+    - name: description
+      value_ref: nv_wire_str_markdown
+      required: false
+  project_update_query:
+    kind: query
+    entity: ProjectUpdate
+    description: List status updates on a project.
+    parameters:
+    - name: project
+      value_ref: nv_project_id
+      required: true
+      role: scope
     provides:
     - id
     - body
+    - health
+  project_update_create:
+    kind: create
+    entity: ProjectUpdate
+    description: Post a project status update.
+    provides:
+    - id
+    - body
+    - health
+    parameters:
+    - name: project
+      value_ref: nv_project_id
+      required: true
+    - name: body
+      value_ref: nv_wire_str_markdown
+      required: true
+    - name: health
+      value_ref: nv_project_update_health
+      required: false
   issue_create:
     kind: create
     entity: Issue
-    description: Create a new issue on a team, optionally in a project, column, cycle, or under a parent issue.
+    description: Create an issue on a team (by team key).
     provides:
-    - id
     - identifier
     - title
-    - description
     - state
-    - cycle
     parameters:
     - name: team
       value_ref: nv_issue_create_team
@@ -421,32 +669,68 @@ capabilities:
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
-    - name: project
-      value_ref: nv_issue_create_project
+    - name: state_name
+      value_ref: nv_state_name
       required: false
-    - name: assignee
-      value_ref: nv_issue_create_assignee
+    - name: assignee_name
+      value_ref: nv_assignee_name
       required: false
-    - name: state
-      value_ref: nv_issue_create_state
+    - name: project_name
+      value_ref: nv_wire_str_short
       required: false
-    - name: parent
-      value_ref: nv_issue_create_parent
+    - name: parent_identifier
+      value_ref: nv_issue_identifier
       required: false
-    - name: cycle
-      value_ref: nv_issue_create_cycle
+    - name: priority
+      value_ref: nv_issue_priority
       required: false
+    preflight:
+    - kind: hydrate_entity_ref_param
+      param: team
+      get: team_get
+      merge:
+        teamId: id
+    - kind: query_pick
+      when: state_name
+      query: workflow_state_query
+      scope:
+        team_key:
+          from_param: team
+      pick:
+        field: name
+        equals_param: state_name
+      merge:
+        stateId: id
+    - kind: query_pick
+      when: assignee_name
+      query: user_search
+      scope:
+        display_name:
+          from_param: assignee_name
+      pick:
+        field: displayName
+        equals_param: assignee_name
+      merge:
+        assigneeId: id
+    - kind: query_pick
+      when: project_name
+      query: project_search
+      scope:
+        q:
+          from_param: project_name
+      pick:
+        field: name
+        equals_param: project_name
+      merge:
+        projectId: id
   issue_update:
     kind: update
     entity: Issue
-    description: Update an issue
+    description: Update issue fields (state, assignee, labels, priority, …) by identifier.
     provides:
-    - id
     - identifier
     - title
-    - description
     - state
-    - cycle
     parameters:
     - name: title
       value_ref: nv_wire_str_short
@@ -454,216 +738,362 @@ capabilities:
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
-    - name: project
-      value_ref: nv_issue_update_project
+    - name: state_name
+      value_ref: nv_state_name
       required: false
-    - name: assignee
-      value_ref: nv_issue_update_assignee
+    - name: assignee_name
+      value_ref: nv_assignee_name
       required: false
-    - name: state
-      value_ref: nv_issue_update_state
+    - name: project_name
+      value_ref: nv_wire_str_short
       required: false
-    - name: parent
-      value_ref: nv_issue_update_parent
+    - name: add_label_name
+      value_ref: nv_label_name
       required: false
-    - name: cycle
-      value_ref: nv_issue_update_cycle
+    - name: remove_label_name
+      value_ref: nv_label_name
       required: false
+    - name: priority
+      value_ref: nv_issue_priority
+      required: false
+    preflight:
+    - kind: hydrate_invoke_target
+      get: issue_get
+      prefix: issue
+    - kind: query_pick
+      when: state_name
+      query: workflow_state_query
+      scope:
+        team_key:
+          from_preflight:
+            prefix: issue
+            path:
+            - team
+            - key
+      pick:
+        field: name
+        equals_param: state_name
+      merge:
+        stateId: id
+    - kind: query_pick
+      when: assignee_name
+      query: user_search
+      scope:
+        display_name:
+          from_param: assignee_name
+      pick:
+        field: displayName
+        equals_param: assignee_name
+      merge:
+        assigneeId: id
+    - kind: query_pick
+      when: project_name
+      query: project_search
+      scope:
+        q:
+          from_param: project_name
+      pick:
+        field: name
+        equals_param: project_name
+      merge:
+        projectId: id
+    - kind: label_ids_delta
+      add_when: add_label_name
+      remove_when: remove_label_name
+      lookup: label_query
+      from_preflight:
+        prefix: issue
+        path:
+        - labels
+      merge: labelIds
   issue_delete:
     kind: delete
     entity: Issue
-    description: Move an issue to trash (recoverable; not a permanent delete).
+    description: Move an issue to trash (recoverable).
   comment_create:
     kind: create
     entity: Comment
-    description: Add a markdown comment on an issue.
+    description: Add a comment on an issue (scoped by issue identifier).
     provides:
     - id
     - body
     parameters:
     - name: issue
-      value_ref: nv_comment_create_issue
+      value_ref: nv_issue_ref
       required: true
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
-  label_create:
-    kind: create
-    entity: Label
-    description: Create an issue label (optionally scoped to a team; omit team for workspace-wide).
-    provides:
-    - id
-    - name
-    - color
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: team
-      value_ref: nv_label_create_team
-      required: false
-    - name: color
-      value_ref: nv_label_create_color
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-  label_update:
-    kind: update
-    entity: Label
-    description: Update label name, color, or description.
-    provides:
-    - id
-    - name
-    - color
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: color
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
   project_create:
     kind: create
     entity: Project
-    description: Create a project owned by one or more teams.
+    description: Create a project on a team (by team key).
     provides:
     - id
     - name
-    - slugId
     parameters:
     - name: name
       value_ref: nv_wire_str_short
       required: true
     - name: team
-      value_ref: nv_project_create_team
+      value_ref: nv_issue_create_team
       required: true
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
-  workflow_state_create:
-    kind: create
-    entity: WorkflowState
-    description: Create a workflow column on a team.
+  project_update:
+    kind: update
+    entity: Project
+    description: Update project name or description.
     provides:
     - id
     - name
-    - type
     parameters:
     - name: name
       value_ref: nv_wire_str_short
-      required: true
-    - name: team
-      value_ref: nv_workflow_state_create_team
-      required: true
-    - name: state_type
-      value_ref: nv_workflow_state_create_state_type
-      required: true
-    - name: color
-      value_ref: nv_workflow_state_create_color
-      required: true
+      required: false
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
-    - name: position
-      value_ref: nv_workflow_state_create_position
-      required: false
-  issue_add_label:
-    kind: update
-    entity: Issue
-    description: Attach one label to this issue (existing labels kept).
-    provides:
-    - id
-    - identifier
-    parameters:
-    - name: label
-      value_ref: nv_issue_add_label_label
-      required: true
-  issue_remove_label:
-    kind: update
-    entity: Issue
-    description: Remove one label from this issue.
-    provides:
-    - id
-    - identifier
-    parameters:
-    - name: label
-      value_ref: nv_issue_remove_label_label
-      required: true
-  issue_navigation_link_query:
+  issue_context_query:
     kind: query
-    entity: IssueNavigationLink
-    description: Assemble the Linear web URL for an issue from its identifier.
+    entity: IssueContext
+    description: Load issue context (issue + comments) for one identifier.
     parameters:
-    - name: issue_id
-      value_ref: nv_issue_navigation_link_issue_id
+    - name: issue_identifier
+      value_ref: nv_issue_identifier
       required: true
       role: scope
     provides:
-    - issue_id
-    - identifier
+    - issue_identifier
+    - title
+    - comment_count
+  issue_context_get:
+    kind: get
+    entity: IssueContext
+    description: Issue context when scoped by identifier.
+    provides:
+    - issue_identifier
+    - title
+    - comment_count
+  my_work_query:
+    kind: query
+    entity: MyWorkSnapshot
+    description: Issues assigned to the authenticated user.
+    provides:
+    - viewer_id
+    - issue_count
+  my_work_get:
+    kind: get
+    entity: MyWorkSnapshot
+    description: Dashboard snapshot for the current user.
+    provides:
+    - viewer_id
+    - issue_count
+  project_context_query:
+    kind: query
+    entity: ProjectContext
+    description: Project plus recent status updates.
+    parameters:
+    - name: project
+      value_ref: nv_project_id
+      required: true
+      role: scope
+    provides:
+    - project_id
+    - name
+    - update_count
+  project_context_get:
+    kind: get
+    entity: ProjectContext
+    description: Project context by project id.
+    provides:
+    - project_id
+    - name
+    - update_count
+  issue_navigation_link_query:
+    kind: query
+    entity: IssueNavigationLink
+    description: Assemble the Linear web URL for an issue identifier.
+    parameters:
+    - name: issue_identifier
+      value_ref: nv_issue_identifier
+      required: true
+      role: scope
+    provides:
+    - issue_identifier
     - title
     - url
   issue_navigation_link_get:
     kind: get
     entity: IssueNavigationLink
-    description: Linear web URL when you already hold the issue id.
     provides:
-    - issue_id
-    - identifier
+    - issue_identifier
     - title
     - url
   cycle_board_snapshot_query:
     kind: query
     entity: CycleBoardSnapshot
-    description: Load cycle dates and issues in that iteration in one composed read.
+    description: Cycle board (cycle + issues in iteration).
     parameters:
-    - name: cycle_id
-      value_ref: nv_cycle_board_snapshot_cycle_id
+    - name: cycle
+      value_ref: nv_cycle_id
       required: true
       role: scope
     provides:
     - cycle_id
     - number
-    - startsAt
-    - endsAt
     - issue_count
   cycle_board_snapshot_get:
     kind: get
     entity: CycleBoardSnapshot
-    description: Cycle board snapshot scoped by cycle id.
     provides:
     - cycle_id
     - number
-    - startsAt
-    - endsAt
     - issue_count
 views:
-  issue_navigation_link:
-    description: Linear web URL assembled from issue identifier and team key prefix.
-    capability: issue_navigation_link_query
-    entity: IssueNavigationLink
+  issue_context:
+    description: Issue row plus comments for one identifier.
+    capability: issue_context_query
+    entity: IssueContext
     scope:
-    - name: issue_id
-      value_ref: nv_issue_navigation_link_issue_id
+    - name: issue_identifier
+      value_ref: nv_issue_identifier
     nodes:
     - id: issue_row
       capability: issue_get
       bind:
         id:
           kind: scope
-          param: issue_id
+          param: issue_identifier
+    - id: issue_comments
+      capability: comment_by_issue_query
+      bind:
+        issue:
+          kind: scope
+          param: issue_identifier
     output:
-      issue_id:
+      issue_identifier:
         kind: scope
-        param: issue_id
-      identifier:
+        param: issue_identifier
+      title:
         kind: node_field
         node: issue_row
-        field: identifier
+        field: title
+      comment_count:
+        kind: node_row_count
+        node: issue_comments
+    relation_outputs:
+    - relation: issue
+      target: Issue
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: issue_row
+    - relation: comments
+      target: Comment
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: issue_comments
+  my_work:
+    description: Authenticated user and their assigned issues.
+    capability: my_work_query
+    entity: MyWorkSnapshot
+    nodes:
+    - id: viewer_row
+      capability: user_viewer
+      bind: {}
+    - id: assigned_issues
+      capability: issue_search
+      bind:
+        assignee_name:
+          kind: node_field
+          node: viewer_row
+          field: displayName
+    output:
+      viewer_id:
+        kind: node_field
+        node: viewer_row
+        field: id
+      issue_count:
+        kind: node_row_count
+        node: assigned_issues
+    relation_outputs:
+    - relation: viewer
+      target: User
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: viewer_row
+    - relation: issues
+      target: Issue
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: assigned_issues
+  project_context:
+    description: Project plus status updates.
+    capability: project_context_query
+    entity: ProjectContext
+    scope:
+    - name: project
+      value_ref: nv_project_id
+    nodes:
+    - id: project_row
+      capability: project_get
+      bind:
+        id:
+          kind: scope
+          param: project
+    - id: status_updates
+      capability: project_update_query
+      bind:
+        project:
+          kind: scope
+          param: project
+    output:
+      project_id:
+        kind: scope
+        param: project
+      name:
+        kind: node_field
+        node: project_row
+        field: name
+      update_count:
+        kind: node_row_count
+        node: status_updates
+    relation_outputs:
+    - relation: project
+      target: Project
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: project_row
+    - relation: updates
+      target: ProjectUpdate
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: status_updates
+  issue_navigation_link:
+    description: Linear web URL from issue identifier.
+    capability: issue_navigation_link_query
+    entity: IssueNavigationLink
+    scope:
+    - name: issue_identifier
+      value_ref: nv_issue_identifier
+    nodes:
+    - id: issue_row
+      capability: issue_get
+      bind:
+        id:
+          kind: scope
+          param: issue_identifier
+    output:
+      issue_identifier:
+        kind: scope
+        param: issue_identifier
       title:
         kind: node_field
         node: issue_row
@@ -671,8 +1101,8 @@ views:
       url:
         kind: computed
         template: |
-          {%- set team_key = identifier.split('-')[0] -%}
-          https://linear.app/{{ team_key }}/issue/{{ identifier }}
+          {%- set team_key = issue_identifier.split('-')[0] -%}
+          https://linear.app/{{ team_key }}/issue/{{ issue_identifier }}
     relation_outputs:
     - relation: issue
       target: Issue
@@ -681,42 +1111,33 @@ views:
         kind: node_single_row
         node: issue_row
   cycle_board_snapshot:
-    description: Cycle row plus issues filtered to that iteration (sprint board pattern).
+    description: Cycle plus issues in that iteration.
     capability: cycle_board_snapshot_query
     entity: CycleBoardSnapshot
     scope:
-    - name: cycle_id
-      value_ref: nv_cycle_board_snapshot_cycle_id
+    - name: cycle
+      value_ref: nv_cycle_id
     nodes:
     - id: cycle_row
       capability: cycle_get
       bind:
         id:
           kind: scope
-          param: cycle_id
+          param: cycle
     - id: cycle_issues
-      capability: issue_by_cycle_query
+      capability: issue_search
       bind:
         cycle:
-          kind: node_field
-          node: cycle_row
-          field: id
+          kind: scope
+          param: cycle
     output:
       cycle_id:
         kind: scope
-        param: cycle_id
+        param: cycle
       number:
         kind: node_field
         node: cycle_row
         field: number
-      startsAt:
-        kind: node_field
-        node: cycle_row
-        field: startsAt
-      endsAt:
-        kind: node_field
-        node: cycle_row
-        field: endsAt
       issue_count:
         kind: node_row_count
         node: cycle_issues
@@ -737,341 +1158,243 @@ oauth:
   provider: linear
   scopes:
     read:
-      label: Read access (default on OAuth tokens)
-      notes: Linear documents read as always present on user OAuth tokens.
-      docs_url: https://linear.app/developers/oauth-2-0-authentication
+      label: Read access
     write:
-      label: Broad write access
-      docs_url: https://linear.app/developers/oauth-2-0-authentication
+      label: Write access
     issues:create:
-      label: Create issues and attachments
-      docs_url: https://linear.app/developers/oauth-2-0-authentication
+      label: Create issues
     comments:create:
-      label: Create issue comments
-      docs_url: https://linear.app/developers/oauth-2-0-authentication
-    timeSchedule:write:
-      label: Time schedules write
-      docs_url: https://linear.app/developers/oauth-2-0-authentication
-    admin:
-      label: Admin endpoints
-      docs_url: https://linear.app/developers/oauth-2-0-authentication
+      label: Create comments
   default_scope_sets:
     plasm_linear_readonly_core:
-      description: Read-heavy automation — query and load issues, teams, projects, users, labels, comments, workflow states,
-        and cycles.
+      description: Read-heavy automation.
       scopes:
       - read
     plasm_linear_contributor_core:
-      description: Issue and workspace edits — create and update issues and comments, manage labels, projects, and workflow
-        columns (full write surface in this CGS).
+      description: Issue and workspace edits.
       scopes:
       - read
       - write
-    plasm_linear_create_focus:
-      description: Narrow grant — create issues and comments without broader write access (no issue updates, labels, projects,
-        or workflow structure changes).
-      scopes:
-      - read
-      - issues:create
-      - comments:create
   requirements:
     capabilities:
-      issue_query:
-        any_of:
-        - read
-      issue_by_team_query:
-        any_of:
-        - read
-      issue_by_cycle_query:
-        any_of:
-        - read
+      issue_search:
+        any_of: [read]
       issue_get:
-        any_of:
-        - read
+        any_of: [read]
+      user_viewer:
+        any_of: [read]
+      user_search:
+        any_of: [read]
       team_query:
-        any_of:
-        - read
+        any_of: [read]
       team_get:
-        any_of:
-        - read
+        any_of: [read]
       project_query:
-        any_of:
-        - read
+        any_of: [read]
       project_get:
-        any_of:
-        - read
-      user_query:
-        any_of:
-        - read
-      user_get:
-        any_of:
-        - read
-      workflow_state_query:
-        any_of:
-        - read
-      workflow_state_get:
-        any_of:
-        - read
+        any_of: [read]
+      project_search:
+        any_of: [read]
       cycle_query:
-        any_of:
-        - read
+        any_of: [read]
       cycle_get:
-        any_of:
-        - read
+        any_of: [read]
+      workflow_state_query:
+        any_of: [read]
       label_query:
-        any_of:
-        - read
-      label_get:
-        any_of:
-        - read
-      comment_query:
-        any_of:
-        - read
-      comment_get:
-        any_of:
-        - read
+        any_of: [read]
+      comment_by_issue_query:
+        any_of: [read]
+      document_search:
+        any_of: [read]
+      document_get:
+        any_of: [read]
+      document_update:
+        any_of: [write]
+      initiative_query:
+        any_of: [read]
+      initiative_get:
+        any_of: [read]
+      initiative_update:
+        any_of: [write]
+      project_milestone_query:
+        any_of: [read]
+      project_milestone_create:
+        any_of: [write]
+      project_milestone_update:
+        any_of: [write]
+      project_update_query:
+        any_of: [read]
+      project_update_create:
+        any_of: [write]
       issue_create:
-        any_of:
-        - issues:create
-        - write
+        any_of: [issues:create, write]
       issue_update:
-        any_of:
-        - write
+        any_of: [write]
       issue_delete:
-        any_of:
-        - write
+        any_of: [write]
       comment_create:
-        any_of:
-        - comments:create
-        - write
-      label_create:
-        any_of:
-        - write
-      label_update:
-        any_of:
-        - write
+        any_of: [comments:create, write]
       project_create:
-        any_of:
-        - write
-      workflow_state_create:
-        any_of:
-        - write
-      issue_add_label:
-        any_of:
-        - write
-      issue_remove_label:
-        any_of:
-        - write
+        any_of: [write]
+      project_update:
+        any_of: [write]
+      issue_context_query:
+        any_of: [read]
+      issue_context_get:
+        any_of: [read]
+      my_work_query:
+        any_of: [read]
+      my_work_get:
+        any_of: [read]
+      project_context_query:
+        any_of: [read]
+      project_context_get:
+        any_of: [read]
       issue_navigation_link_query:
-        any_of:
-        - read
+        any_of: [read]
       issue_navigation_link_get:
-        any_of:
-        - read
+        any_of: [read]
       cycle_board_snapshot_query:
-        any_of:
-        - read
+        any_of: [read]
       cycle_board_snapshot_get:
-        any_of:
-        - read
+        any_of: [read]
     relations:
       Issue.team:
-        any_of:
-        - read
+        any_of: [read]
       Issue.project:
-        any_of:
-        - read
+        any_of: [read]
       Issue.assignee:
-        any_of:
-        - read
+        any_of: [read]
       Issue.state:
-        any_of:
-        - read
+        any_of: [read]
       Issue.cycle:
-        any_of:
-        - read
-      Cycle.team:
-        any_of:
-        - read
+        any_of: [read]
       Issue.labels:
-        any_of:
-        - read
+        any_of: [read]
       Issue.parent:
-        any_of:
-        - read
+        any_of: [read]
       Issue.children:
-        any_of:
-        - read
-      IssueNavigationLink.issue:
-        any_of:
-        - read
-      CycleBoardSnapshot.cycle:
-        any_of:
-        - read
-      CycleBoardSnapshot.issues:
-        any_of:
-        - read
+        any_of: [read]
+      Issue.comments:
+        any_of: [read]
       Comment.issue:
-        any_of:
-        - read
+        any_of: [read]
+      Cycle.team:
+        any_of: [read]
+      ProjectMilestone.project:
+        any_of: [read]
+      ProjectUpdate.project:
+        any_of: [read]
+      IssueContext.issue:
+        any_of: [read]
+      IssueContext.comments:
+        any_of: [read]
+      MyWorkSnapshot.viewer:
+        any_of: [read]
+      MyWorkSnapshot.issues:
+        any_of: [read]
+      ProjectContext.project:
+        any_of: [read]
+      ProjectContext.updates:
+        any_of: [read]
+      IssueNavigationLink.issue:
+        any_of: [read]
+      CycleBoardSnapshot.cycle:
+        any_of: [read]
+      CycleBoardSnapshot.issues:
+        any_of: [read]
 auth:
   scheme: api_key_header
   header: Authorization
   env: LINEAR_API_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:linear
 values:
-  nv_issue_navigation_link_issue_id:
-    type: entity_ref
-    target: Issue
-    description: Issue whose Linear web URL to assemble.
-  nv_linear_issue_url:
+  nv_issue_search_q:
     type: string
     string_semantics: short
-    description: Assembled linear.app issue URL from identifier.
-  nv_comment_create_issue:
-    type: entity_ref
-    target: Issue
-    description: Issue to attach the comment to.
-  nv_comment_id:
-    type: uuid
-  nv_cycle_ends_at:
+    description: Title/description text filter.
+  nv_team_key:
     type: string
     string_semantics: short
-    description: Cycle end (ISO-8601 timestamp from the API).
-  nv_cycle_id:
-    type: uuid
-  nv_cycle_number:
-    type: number
-    description: Cycle index within the team (Linear exposes as a number).
-  nv_cycle_query_team:
-    type: entity_ref
-    target: Team
-    description: Team whose cycles to list.
-  nv_cycle_starts_at:
-    type: string
-    string_semantics: short
-    description: Cycle start (ISO-8601 timestamp from the API).
-  nv_issue_add_label_label:
-    type: entity_ref
-    target: Label
-  nv_issue_by_team_query_team:
-    type: entity_ref
-    target: Team
-    description: Team whose issues to list.
-  nv_issue_by_cycle_query_cycle:
-    type: entity_ref
-    target: Cycle
-    description: Cycle whose scheduled issues to list.
-  nv_cycle_board_snapshot_cycle_id:
-    type: entity_ref
-    target: Cycle
-    description: Cycle id for the board snapshot view scope.
-  nv_issue_create_assignee:
-    type: entity_ref
-    target: User
-  nv_issue_create_cycle:
-    type: entity_ref
-    target: Cycle
-    description: Iteration cycle to place the new issue in.
-  nv_issue_create_parent:
-    type: entity_ref
-    target: Issue
-    description: Parent issue when creating a sub-issue.
-  nv_issue_create_project:
-    type: entity_ref
-    target: Project
-  nv_issue_create_state:
-    type: entity_ref
-    target: WorkflowState
-  nv_issue_create_team:
-    type: entity_ref
-    target: Team
-    description: Team that owns the new issue.
-  nv_issue_id:
+    description: Team short key (e.g. ENG).
+  nv_team_id:
     type: uuid
   nv_issue_identifier:
     type: string
     string_semantics: short
-    description: Human-visible key (e.g. ENG-42).
-  nv_issue_remove_label_label:
-    type: entity_ref
-    target: Label
-  nv_issue_update_assignee:
-    type: entity_ref
-    target: User
-  nv_issue_update_cycle:
-    type: entity_ref
-    target: Cycle
-    description: Iteration cycle to assign; omit to leave the cycle unchanged.
-  nv_issue_update_parent:
+    description: Human-visible issue key (e.g. ENG-42).
+  nv_issue_ref:
     type: entity_ref
     target: Issue
-    description: Issue to nest this under; omit to leave the parent link unchanged.
-  nv_issue_update_project:
-    type: entity_ref
-    target: Project
-  nv_issue_update_state:
-    type: entity_ref
-    target: WorkflowState
-  nv_label_create_color:
+    description: Issue anchor (human identifier, e.g. ENG-42).
+  nv_issue_id:
+    type: uuid
+  nv_state_name:
     type: string
     string_semantics: short
-    description: Hex swatch color for the label.
-  nv_label_create_team:
+    description: Workflow column name (e.g. In Progress).
+  nv_label_name:
+    type: string
+    string_semantics: short
+  nv_assignee_name:
+    type: string
+    string_semantics: short
+  nv_issue_priority:
+    type: integer
+    description: Linear priority 0–4 (1 urgent, 4 low).
+  nv_issue_create_team:
     type: entity_ref
     target: Team
-    description: Team to scope the label to; omit for workspace label.
+    description: Owning team (by team key).
   nv_label_id:
     type: uuid
-  nv_project_create_team:
+  nv_comment_id:
+    type: uuid
+  nv_cycle_id:
     type: entity_ref
-    target: Team
-    description: Primary team that owns the new project.
+    target: Cycle
+  nv_cycle_number:
+    type: number
+  nv_cycle_starts_at:
+    type: string
+    string_semantics: short
+  nv_cycle_ends_at:
+    type: string
+    string_semantics: short
   nv_project_id:
     type: uuid
   nv_project_slug_id:
     type: string
     string_semantics: short
-    description: Stable slug for the project within its team.
-  nv_team_id:
-    type: uuid
-  nv_team_key:
-    type: string
-    string_semantics: short
-    description: Short key (e.g. ENG).
   nv_user_id:
     type: uuid
-  nv_wire_int:
-    type: integer
-  nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
-  nv_wire_str_short:
-    type: string
-    string_semantics: short
-  nv_workflow_state_create_color:
-    type: string
-    string_semantics: short
-    description: Column header hex color on the board.
-  nv_workflow_state_create_position:
-    type: number
-    description: Column order within the workflow.
-  nv_workflow_state_create_state_type:
-    type: string
-    string_semantics: short
-    description: One of triage, backlog, unstarted, started, completed, canceled, duplicate.
-  nv_workflow_state_create_team:
-    type: entity_ref
-    target: Team
   nv_workflow_state_id:
     type: uuid
-  nv_workflow_state_position:
-    type: number
-  nv_workflow_state_query_team:
-    type: entity_ref
-    target: Team
-    description: Team whose columns to list.
   nv_workflow_state_type:
     type: string
     string_semantics: short
-    description: State category (e.g. started, completed).
+  nv_document_id:
+    type: uuid
+  nv_initiative_id:
+    type: uuid
+  nv_project_milestone_id:
+    type: uuid
+  nv_project_update_id:
+    type: uuid
+  nv_project_update_health:
+    type: select
+    allowed_values: [onTrack, atRisk, offTrack]
+  nv_linear_issue_url:
+    type: string
+    string_semantics: short
+  nv_wire_int:
+    type: integer
+  nv_wire_num:
+    type: number
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_wire_str_markdown:
+    type: string
+    string_semantics: markdown
