@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.43] - 2026-05-28
+
+### Fixed
+
+- **Release packaging:** monorepo `deploy/packaged-apis.txt` drops nonexistent `teams` entry and duplicate `outlook` so `plasm-pack-plugins` completes in Docker release builds.
+
 ## [0.1.42] - 2026-05-27
 
 ### Fixed
