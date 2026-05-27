@@ -1,92 +1,99 @@
-//! Forward `tracing` fmt output into the Ratatui **Logs** tab (never stderr during alternate-screen UI).
+//! Typed `tracing` capture for the Ratatui **Logs** tab; optional fmt duplicate for diagnostics.
 //!
-//! Optional append-only file duplicate: see [`ApplianceLogMakeWriter::with_diag_file`] and
-//! `PLASM_APPLIANCE_DIAG_LOG` in `docs/appliance-surface-inventory.md`.
+//! TUI mode: [`plasm_otel::TuiLogCallback`] → [`ApplianceLogEntry`]. The fmt layer writes to
+//! [`std::io::sink()`] or [`ApplianceDiagFileMakeWriter`] when `PLASM_APPLIANCE_DIAG_LOG` is set.
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crossbeam_channel::Sender;
+use plasm_otel::{TuiLogCallback, TuiLogRecord};
+use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;
 
 pub const APPLIANCE_LOG_CHANNEL_CAP: usize = 8192;
 pub const APPLIANCE_LOG_TAB_MAX_LINES: usize = 2000;
 
-#[derive(Clone)]
-pub struct ApplianceLogMakeWriter {
-    tx: Sender<String>,
-    diag: Option<Arc<Mutex<std::fs::File>>>,
+/// One log line in the control-station Logs tab (from the TUI capture layer, not fmt parsing).
+#[derive(Clone, Debug)]
+pub struct ApplianceLogEntry {
+    pub timestamp: SystemTime,
+    pub level: Level,
+    pub target: String,
+    pub message: String,
 }
 
-impl ApplianceLogMakeWriter {
-    pub fn new(tx: Sender<String>) -> Self {
-        Self { tx, diag: None }
-    }
-
-    /// Duplicate each completed fmt line to an append-only file (e.g. PTY e2e diagnostics).
-    pub fn with_diag_file(tx: Sender<String>, file: std::fs::File) -> Self {
+impl From<TuiLogRecord> for ApplianceLogEntry {
+    fn from(rec: TuiLogRecord) -> Self {
         Self {
-            tx,
-            diag: Some(Arc::new(Mutex::new(file))),
+            timestamp: rec.timestamp,
+            level: rec.level,
+            target: rec.target,
+            message: rec.message,
         }
     }
 }
 
-impl<'a> MakeWriter<'a> for ApplianceLogMakeWriter {
-    type Writer = ApplianceLogWriter;
+/// Fmt layer target for appliance TUI mode: diag file or discard (human-readable logs use [`TuiLogCallback`]).
+#[derive(Clone)]
+pub enum ApplianceFmtMakeWriter {
+    Diag(ApplianceDiagFileMakeWriter),
+    Sink,
+}
+
+impl<'a> MakeWriter<'a> for ApplianceFmtMakeWriter {
+    type Writer = ApplianceFmtWriter;
     fn make_writer(&'a self) -> Self::Writer {
-        ApplianceLogWriter {
-            buf: Vec::new(),
-            tx: self.tx.clone(),
-            diag: self.diag.clone(),
+        match self {
+            Self::Diag(d) => ApplianceFmtWriter::Diag(d.make_writer()),
+            Self::Sink => ApplianceFmtWriter::Sink(std::io::sink()),
         }
     }
 }
 
-pub struct ApplianceLogWriter {
-    buf: Vec<u8>,
-    tx: Sender<String>,
-    diag: Option<Arc<Mutex<std::fs::File>>>,
+pub enum ApplianceFmtWriter {
+    Diag(ApplianceDiagFileWriter),
+    Sink(std::io::Sink),
 }
 
-impl ApplianceLogWriter {
-    fn emit_line(&mut self, line: String) {
-        let line =
-            String::from_utf8_lossy(&strip_ansi_escapes::strip(line.as_bytes())).into_owned();
-        let _ = self.tx.try_send(line.clone());
-        if let Some(f) = &self.diag {
-            if let Ok(mut g) = f.lock() {
-                let _ = writeln!(g, "{line}");
-                let _ = g.flush();
-            }
-        }
-    }
-}
-
-impl Write for ApplianceLogWriter {
+impl Write for ApplianceFmtWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buf.extend_from_slice(buf);
-        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
-            let line_bytes: Vec<u8> = self.buf.drain(..=pos).collect();
-            let end = line_bytes.len().saturating_sub(1);
-            let line = String::from_utf8_lossy(&line_bytes[..end]).into_owned();
-            self.emit_line(line);
+        match self {
+            Self::Diag(w) => w.write(buf),
+            Self::Sink(w) => w.write(buf),
         }
-        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if !self.buf.is_empty() {
-            let line = String::from_utf8_lossy(&self.buf).into_owned();
-            self.buf.clear();
-            self.emit_line(line);
+        match self {
+            Self::Diag(w) => w.flush(),
+            Self::Sink(w) => w.flush(),
         }
-        Ok(())
     }
 }
 
-/// Headless `--no-tui` diagnostics: append-only `PLASM_APPLIANCE_DIAG_LOG` without a TUI log channel.
+/// Resolve fmt writer from `PLASM_APPLIANCE_DIAG_LOG` when set.
+pub fn appliance_fmt_make_writer(
+    diag_path: Option<&Path>,
+) -> Result<ApplianceFmtMakeWriter, io::Error> {
+    match diag_path {
+        Some(p) if !p.as_os_str().is_empty() => {
+            ApplianceDiagFileMakeWriter::open(p).map(ApplianceFmtMakeWriter::Diag)
+        }
+        _ => Ok(ApplianceFmtMakeWriter::Sink),
+    }
+}
+
+/// Build a [`TuiLogCallback`] that forwards into the bounded UI channel.
+pub fn appliance_tui_callback(tx: Sender<ApplianceLogEntry>) -> TuiLogCallback {
+    Arc::new(move |rec| {
+        let _ = tx.try_send(ApplianceLogEntry::from(rec));
+    })
+}
+
+/// Append-only fmt sink for `PLASM_APPLIANCE_DIAG_LOG` (PTY e2e diagnostics).
 #[derive(Clone)]
 pub struct ApplianceDiagFileMakeWriter {
     file: Arc<Mutex<std::fs::File>>,
@@ -152,13 +159,48 @@ impl Write for ApplianceDiagFileWriter {
     }
 }
 
-pub fn push_block(tx: &Sender<String>, text: &str) {
+/// Push plain multi-line help text into the Logs tab (not via `tracing`).
+pub fn push_block(tx: &Sender<ApplianceLogEntry>, text: &str) {
     if text.is_empty() {
         return;
     }
+    let now = SystemTime::now();
     for line in text.lines() {
-        let clean =
-            String::from_utf8_lossy(&strip_ansi_escapes::strip(line.as_bytes())).into_owned();
-        let _ = tx.try_send(clean);
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let _ = tx.try_send(ApplianceLogEntry {
+            timestamp: now,
+            level: Level::INFO,
+            target: "plasm_appliance".into(),
+            message: line.to_string(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::EnvFilter;
+
+    #[test]
+    fn appliance_tui_callback_forwards_entries() {
+        let (tx, rx) = crossbeam_channel::bounded(8);
+        let cb = appliance_tui_callback(tx);
+
+        let _guard = tracing_subscriber::registry()
+            .with(plasm_otel::tui_capture_layer(Some(cb)))
+            .with(EnvFilter::new("info"))
+            .set_default();
+
+        tracing::error!(target: "appliance_test", "boot failed");
+
+        let entry = rx.try_recv().expect("one log entry");
+        assert_eq!(entry.level, Level::ERROR);
+        assert_eq!(entry.target, "appliance_test");
+        assert_eq!(entry.message, "boot failed");
     }
 }

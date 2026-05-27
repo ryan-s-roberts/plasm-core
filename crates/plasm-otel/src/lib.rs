@@ -1,8 +1,10 @@
 //! Shared OpenTelemetry OTLP bootstrap for Plasm binaries (`OTEL_*` env vars).
 
 mod trace_context;
+mod tui_capture;
 
 pub use trace_context::{install_w3c_trace_context_propagator, tower_http_trace_parent_span};
+pub use tui_capture::{layer as tui_capture_layer, TuiCaptureLayer, TuiLogCallback, TuiLogRecord};
 
 use std::borrow::Cow;
 
@@ -153,15 +155,22 @@ fn init_metrics(resource: &Resource) -> anyhow::Result<SdkMeterProvider> {
         .build())
 }
 
-fn init_console_only_with_writer<W>(make_writer: W) -> anyhow::Result<()>
+fn init_console_only_with_writer<W>(
+    make_writer: W,
+    tui_capture: Option<TuiLogCallback>,
+) -> anyhow::Result<()>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+    let fmt_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt = tracing_subscriber::fmt::layer()
         .with_writer(make_writer)
+        .with_filter(fmt_filter.clone());
+    let tui = tui_capture_layer(tui_capture).with_filter(fmt_filter);
+    tracing_subscriber::registry()
+        .with(fmt)
+        .with(tui)
         .try_init()
         .map_err(|e| anyhow::anyhow!("tracing subscriber init: {e}"))?;
     Ok(())
@@ -192,7 +201,11 @@ fn stderr_fmt_env_filter(traces_otlp_enabled: bool) -> (EnvFilter, bool) {
     }
 }
 
-fn try_init_otlp_with_writer<W>(default_service_name: &str, make_writer: W) -> anyhow::Result<()>
+fn try_init_otlp_with_writer<W>(
+    default_service_name: &str,
+    make_writer: W,
+    tui_capture: Option<TuiLogCallback>,
+) -> anyhow::Result<()>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -230,7 +243,8 @@ where
     let (fmt_filter, fmt_filter_is_default) = stderr_fmt_env_filter(traces);
     let fmt = tracing_subscriber::fmt::layer()
         .with_writer(make_writer)
-        .with_filter(fmt_filter);
+        .with_filter(fmt_filter.clone());
+    let tui = tui_capture_layer(tui_capture).with_filter(fmt_filter);
 
     let tracer_name: Cow<'static, str> = std::env::var("OTEL_SERVICE_NAME")
         .ok()
@@ -250,6 +264,7 @@ where
                 .add_directive("reqwest=off".parse().unwrap());
             tracing_subscriber::registry()
                 .with(fmt)
+                .with(tui)
                 .with(otel_traces)
                 .with(otel_logs.with_filter(filter_otel))
                 .init();
@@ -259,6 +274,7 @@ where
             let otel_traces = tracing_opentelemetry::layer().with_tracer(tracer);
             tracing_subscriber::registry()
                 .with(fmt)
+                .with(tui)
                 .with(otel_traces)
                 .init();
         }
@@ -270,11 +286,12 @@ where
                 .add_directive("reqwest=off".parse().unwrap());
             tracing_subscriber::registry()
                 .with(fmt)
+                .with(tui)
                 .with(otel_logs.with_filter(filter_otel))
                 .init();
         }
         (false, false) => {
-            tracing_subscriber::registry().with(fmt).init();
+            tracing_subscriber::registry().with(fmt).with(tui).init();
         }
     }
 
@@ -315,27 +332,31 @@ where
 ///
 /// On failure, falls back to stderr `tracing` only so servers can still start.
 pub fn init(default_service_name: &str) -> anyhow::Result<()> {
-    init_with_fmt_make_writer(default_service_name, std::io::stderr)
+    init_with_fmt_make_writer(default_service_name, std::io::stderr, None)
 }
 
 /// Like [`init`], but directs the human-readable `tracing-subscriber` **fmt** layer to `make_writer`
 /// (OTLP bridges unchanged). `make_writer` must be [`Clone`] so OTLP init can retry on fallback.
+///
+/// When `tui_capture` is set, a companion layer emits [`TuiLogRecord`] for the same filtered events.
 pub fn init_with_fmt_make_writer<W>(
     default_service_name: &str,
     make_writer: W,
+    tui_capture: Option<TuiLogCallback>,
 ) -> anyhow::Result<()>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
 {
     if otel_disabled() {
-        return init_console_only_with_writer(make_writer);
+        return init_console_only_with_writer(make_writer, tui_capture);
     }
 
-    match try_init_otlp_with_writer(default_service_name, make_writer.clone()) {
+    match try_init_otlp_with_writer(default_service_name, make_writer.clone(), tui_capture.clone())
+    {
         Ok(()) => Ok(()),
         Err(e) => {
             eprintln!("OpenTelemetry init failed ({e}); falling back to console logging only");
-            init_console_only_with_writer(make_writer)
+            init_console_only_with_writer(make_writer, tui_capture)
         }
     }
 }

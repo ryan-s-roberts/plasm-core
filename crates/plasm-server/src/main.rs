@@ -968,8 +968,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         reconcile_appliance_db_env(&cli);
         (None, None)
     } else {
-        let (tx, rx) =
-            crossbeam_channel::bounded::<String>(appliance_log::APPLIANCE_LOG_CHANNEL_CAP);
+        let (tx, rx) = crossbeam_channel::bounded::<appliance_log::ApplianceLogEntry>(
+            appliance_log::APPLIANCE_LOG_CHANNEL_CAP,
+        );
         // Telemetry init (`plasm_otel`, OTLP, etc.) runs on the main thread. Do **not** install it
         // before the boot UI thread starts: PTY-based tests (and humans) otherwise see a silent
         // terminal while a PTY harness blocks on the first read with no timeout progress.
@@ -1101,26 +1102,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         });
 
-        let appliance_log_writer = match std::env::var_os("PLASM_APPLIANCE_DIAG_LOG") {
-            Some(ref raw) if !raw.is_empty() => {
-                let path = Path::new(raw);
-                match OpenOptions::new().create(true).append(true).open(path) {
-                    Ok(f) => {
-                        appliance_log::ApplianceLogMakeWriter::with_diag_file(log_tx.clone(), f)
-                    }
-                    Err(e) => {
-                        stderr_log::line(format!(
-                            "plasm-server: could not open PLASM_APPLIANCE_DIAG_LOG ({}): {e}; continuing with TUI log sink only",
-                            path.display()
-                        ));
-                        appliance_log::ApplianceLogMakeWriter::new(log_tx.clone())
-                    }
+        let diag_path = std::env::var_os("PLASM_APPLIANCE_DIAG_LOG")
+            .filter(|raw| !raw.is_empty())
+            .map(|raw| Path::new(&raw).to_path_buf());
+        let appliance_log_writer = match diag_path.as_deref() {
+            Some(path) => match appliance_log::appliance_fmt_make_writer(Some(path)) {
+                Ok(w) => w,
+                Err(e) => {
+                    stderr_log::line(format!(
+                        "plasm-server: could not open PLASM_APPLIANCE_DIAG_LOG ({}): {e}; continuing without diag file sink",
+                        path.display()
+                    ));
+                    appliance_log::ApplianceFmtMakeWriter::Sink
                 }
-            }
-            _ => appliance_log::ApplianceLogMakeWriter::new(log_tx.clone()),
+            },
+            None => appliance_log::ApplianceFmtMakeWriter::Sink,
         };
+        let tui_capture = Some(appliance_log::appliance_tui_callback(log_tx));
 
-        if let Err(e) = plasm_agent_core::init_agent_runtime_with_fmt_writer(appliance_log_writer) {
+        if let Err(e) = plasm_agent_core::init_agent_runtime_with_appliance_logs(
+            appliance_log_writer,
+            tui_capture,
+        ) {
             let _ = tx.send(boot::BootstrapUiMsg::Fatal(format!("{e:#}")));
             eprintln_exit_error(&*e);
             if let Err(je) = join_ui_thread(ui_handle).await {

@@ -20,6 +20,8 @@ path = "tests/appliance_headless_boot.rs"
 
 [dependencies]
 plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
+plasm-otel = { path = "../plasm-otel" }
+chrono = { workspace = true }
 plasm = { path = "../plasm", default-features = false }
 plasm-core = { path = "../plasm-core" }
 plasm-runtime = { path = "../plasm-runtime" }

@@ -110,6 +110,20 @@ where
     Ok(())
 }
 
+/// Appliance TUI: fmt to `make_writer` (diag file or sink) plus typed log capture for the Logs tab.
+pub fn init_agent_runtime_with_appliance_logs<W>(
+    make_writer: W,
+    tui_capture: Option<plasm_otel::TuiLogCallback>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
+{
+    crate::dotenv_safe::load_from_cwd_parents();
+    crate::telemetry::init_with_fmt_make_writer_and_tui(make_writer, tui_capture)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    Ok(())
+}
+
 /// Remote HTTP terminal (`plasm` binary from the workspace `plasm` crate). Local schema-driven CGS CLIs use `plasm-repl` / tests only.
 pub async fn run_cgs_main() -> Result<(), Box<dyn std::error::Error>> {
     crate::terminal::run_terminal()

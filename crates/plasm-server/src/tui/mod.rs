@@ -922,7 +922,7 @@ struct KeysState {
 
 #[derive(Default)]
 struct LogState {
-    lines: VecDeque<String>,
+    lines: VecDeque<appliance_log::ApplianceLogEntry>,
     scroll: usize,
     /// Selected line index; viewport scroll is synced in [`render_running_frame`].
     cursor: usize,
@@ -1499,7 +1499,7 @@ enum UiMsg {
     Tick,
     Key(KeyEvent),
     Admin(Box<AdminCompletion>),
-    LogLine(String),
+    LogLine(appliance_log::ApplianceLogEntry),
 }
 
 fn row_enabled(state: &RunState, snap: &UiSnapshot, entry_id: &str) -> bool {
@@ -3306,34 +3306,30 @@ fn render_running_frame(
                 .enumerate()
                 .skip(top)
                 .take(visible_rows)
-                .map(|(gi, s)| {
+                .map(|(gi, entry)| {
                     let selected = gi == model.logs.cursor;
-                    let style = if selected {
+                    let row_style = if selected {
                         selected_row_style()
                     } else {
                         log_render::log_list_unselected_style()
                     };
-                    let clipped = log_render::clip_line_display(s.as_str(), clip_cols);
-                    ListItem::new(Line::from(vec![
-                        Span::styled(if selected { "› " } else { "  " }, style),
-                        Span::styled(clipped, style),
-                    ]))
+                    let line = log_render::format_list_line(entry, selected, row_style, clip_cols);
+                    ListItem::new(line)
                 })
                 .collect();
             frame.render_widget(
                 List::new(items).block(chrome::panel_block("Log", Some('l'))),
                 log_col,
             );
-            let body = model
+            let detail_lines = model
                 .logs
                 .lines
                 .get(model.logs.cursor)
-                .map(String::as_str)
-                .unwrap_or("(no log line selected)");
+                .map(log_render::format_detail_lines)
+                .unwrap_or_else(|| vec![Line::from("(no log line selected)")]);
             let detail_block = chrome::panel_block("Line", Some('d')).style(Style::default());
             frame.render_widget(
-                Paragraph::new(body)
-                    .style(log_render::log_list_unselected_style())
+                Paragraph::new(detail_lines)
                     .wrap(Wrap { trim: true })
                     .block(detail_block),
                 detail_col,
@@ -3373,7 +3369,7 @@ pub(crate) fn run_running_mode(
     listen_port: u16,
     admin_bridge: Option<AdminBridge>,
     policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
-    log_rx: Option<crossbeam_channel::Receiver<String>>,
+    log_rx: Option<crossbeam_channel::Receiver<appliance_log::ApplianceLogEntry>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Signal the async supervisor before the first draw so a full PTY pipe cannot
     // deadlock BOOT→RUN handoff waiting on this frame.

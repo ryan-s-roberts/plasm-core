@@ -18,5 +18,16 @@ pub fn init_with_fmt_make_writer<W>(make_writer: W) -> anyhow::Result<()>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
 {
-    plasm_otel::init_with_fmt_make_writer("plasm-agent", make_writer)
+    init_with_fmt_make_writer_and_tui(make_writer, None)
+}
+
+/// Like [`init_with_fmt_make_writer`], with optional typed capture for alternate-screen log viewers.
+pub fn init_with_fmt_make_writer_and_tui<W>(
+    make_writer: W,
+    tui_capture: Option<plasm_otel::TuiLogCallback>,
+) -> anyhow::Result<()>
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
+{
+    plasm_otel::init_with_fmt_make_writer("plasm-agent", make_writer, tui_capture)
 }

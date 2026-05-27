@@ -330,7 +330,7 @@ pub fn run_appliance_shell(
     boot_cancel: Arc<AtomicBool>,
     ui_evt_tx: Option<Sender<UiEvent>>,
     listen_port: u16,
-    log_rx: Option<crossbeam_channel::Receiver<String>>,
+    log_rx: Option<crossbeam_channel::Receiver<crate::appliance_log::ApplianceLogEntry>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     enable_raw_mode()?;
     let mut buffer = stdout();
