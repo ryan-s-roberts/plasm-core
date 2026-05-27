@@ -2259,6 +2259,61 @@ mod tests {
         );
     }
 
+    fn linear_test_session(cgs: Arc<CGS>) -> ExecuteSession {
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(
+            cgs.as_ref(),
+            "linear",
+            &["Issue", "IssueContext", "MyWorkSnapshot", "Team", "Comment"],
+        );
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "linear".into(),
+            String::new(),
+            String::new(),
+            None,
+            exp.entities.clone(),
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    /// Linear `Issue{…}` brace filters must plan as `search` (same as live `issue_search` resolution).
+    #[test]
+    fn linear_issue_brace_filter_plans_as_search() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("../../apis/linear");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("linear"));
+        let session = linear_test_session(cgs);
+        let plan = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "t",
+            "Issue{team_key=ENG, state_name=Todo}",
+        )
+        .expect("compile");
+        assert_eq!(
+            plan["nodes"][0]["kind"].as_str(),
+            Some("search"),
+            "{plan}"
+        );
+    }
+
     /// Matrix: `lang_domain_symbol_page_size` (surface `e#.page_size` + plan node `page_size`).
     #[test]
     fn surface_line_plan_compiles_e1_with_page_size() {

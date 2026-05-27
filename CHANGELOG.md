@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.40] - 2026-05-27
+
+### Fixed
+
+- **apis/linear (v10):** `IssueContext` / `issue_navigation_link` view Gets; `comment_by_issue_query` filters by issue UUID or identifier; `Issue` / `IssueContext.comments` relation materialize; `team_get` GraphQL `key` variable.
+- **Runtime:** parameterless view Gets (`user_viewer` / `MyWorkSnapshot`); Get bind `id` aliases entity `id_field`.
+- **Parser / planner:** `Issue.search(…)` sugar; brace filters on Search-only entities resolve to `issue_search`; surface parse normalizes `capability_name` so dry-run plans match live execution.
+- **MCP:** no-op `plasm_context` expand includes compact expression-syntax hints.
+
 ## [0.1.39] - 2026-05-27
 
 ### Added

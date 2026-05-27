@@ -15,6 +15,8 @@ use plasm_core::FocusSpec;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMap;
 use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::normalize_expr_query_capabilities;
+use plasm_core::normalize_expr_query_capabilities_federated;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
@@ -145,6 +147,26 @@ pub fn parse_plasm_surface_line(
     parse_plasm_surface_line_program(session, symbol_map_cross_cache, pipeline, line, None, false)
 }
 
+/// Stamp inferred `capability_name` on queries (e.g. Linear `Issue{team_key=…}` → `issue_search`)
+/// so plan inference and dry-run match live execution.
+fn normalize_query_capabilities_for_session(
+    session: &ExecuteSession,
+    expr: &mut Expr,
+) -> Result<(), String> {
+    if session.contexts_by_entry.len() <= 1 {
+        normalize_expr_query_capabilities(expr, session.cgs.as_ref()).map_err(|e| e.to_string())
+    } else if let Some(exposure) = session.domain_exposure.as_ref() {
+        let fed = FederationDispatch::from_contexts_and_exposure(
+            session.contexts_by_entry.clone(),
+            exposure,
+        );
+        normalize_expr_query_capabilities_federated(expr, &fed, session.cgs.as_ref())
+            .map_err(|e| e.to_string())
+    } else {
+        normalize_expr_query_capabilities(expr, session.cgs.as_ref()).map_err(|e| e.to_string())
+    }
+}
+
 /// Parse one Plasm surface line with optional **program compile** context (in-scope node ids and
 /// `for_each` row binding).
 pub fn parse_plasm_surface_line_program(
@@ -163,13 +185,20 @@ pub fn parse_plasm_surface_line_program(
     );
     let layers = session_cgs_layers(session);
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-    parse_with_cgs_layers_program(
+    let mut parsed = parse_with_cgs_layers_program(
         &expanded,
         &layers,
         sym_map,
         program_nodes,
         for_each_row_context,
-    )
+    )?;
+    normalize_query_capabilities_for_session(session, &mut parsed.expr).map_err(|message| {
+        ParseError {
+            kind: plasm_core::expr_parser::ParseErrorKind::Other { message },
+            offset: 0,
+        }
+    })?;
+    Ok(parsed)
 }
 
 /// Expand DOMAIN gloss tokens the same way as [`parse_plasm_surface_line_program`], for program

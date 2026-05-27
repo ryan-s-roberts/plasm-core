@@ -1523,6 +1523,77 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// `Issue.search(team_key=ENG, q=auth)` — same capability as `Issue~"auth"{team_key=ENG}`.
+    fn try_parse_entity_dot_search(&mut self, entity: &str) -> Result<Option<Expr>, ParseError> {
+        let mark = self.pos;
+        if self.peek_char() != Some('.') {
+            return Ok(None);
+        }
+        self.pos += 1;
+        self.skip_ws();
+        let method = self.parse_ident()?;
+        if method != "search" {
+            self.pos = mark;
+            return Ok(None);
+        }
+        self.skip_ws();
+        if self.peek_char() != Some('(') {
+            self.pos = mark;
+            return Ok(None);
+        }
+        self.pos += 1;
+        self.skip_ws();
+        let preds = if self.peek_char() == Some(')') {
+            Vec::new()
+        } else {
+            self.parse_paren_preds(entity)?
+        };
+        self.skip_ws();
+        self.expect_char(')')?;
+        Ok(Some(self.build_search_query_expr(entity, preds)?))
+    }
+
+    fn parse_paren_preds(&mut self, entity_name: &str) -> Result<Vec<Predicate>, ParseError> {
+        let mut preds = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.peek_char() == Some(')') {
+                break;
+            }
+            preds.push(self.parse_pred(entity_name)?);
+            self.skip_ws();
+            if self.peek_char() == Some(',') {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        Ok(preds)
+    }
+
+    fn build_search_query_expr(
+        &mut self,
+        entity: &str,
+        preds: Vec<Predicate>,
+    ) -> Result<Expr, ParseError> {
+        let c = self.cgs_for_entity_required(entity);
+        if c
+            .find_capabilities(entity, CapabilityKind::Search)
+            .is_empty()
+        {
+            return Err(self.err(ParseErrorKind::SearchNotSupported {
+                entity: entity.to_string(),
+            }));
+        }
+        let cap_name = c
+            .find_capabilities(entity, CapabilityKind::Search)
+            .first()
+            .map(|cap| cap.name.clone());
+        let mut query = Self::preds_to_query(entity, preds);
+        query.capability_name = cap_name;
+        Ok(Expr::Query(query))
+    }
+
     fn validate_entity(&self, name: &str) -> Result<(), ParseError> {
         if self.cgs_for_entity(name).is_none() {
             return Err(ParseError {
@@ -1825,6 +1896,10 @@ impl<'a> Parser<'a> {
                 offset: self.pos,
             })?
             .clone();
+
+        if let Some(expr) = self.try_parse_entity_dot_search(&entity)? {
+            return Ok(expr);
+        }
 
         self.skip_ws();
         match self.peek_char() {
@@ -4204,5 +4279,27 @@ mod tests {
             panic!("expected comparison");
         };
         assert_eq!(value.to_value(), Value::String("report".into()));
+    }
+
+    #[test]
+    fn linear_issue_search_method_sugar() {
+        let dir = std::path::Path::new("../../apis/linear");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+        let layers = [&cgs];
+        let r = parse_with_cgs_layers(
+            r#"Issue.search(q="bug", team_key="ENG")"#,
+            &layers,
+            sym_map,
+        )
+        .expect("parse");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected query");
+        };
+        assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
     }
 }

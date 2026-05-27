@@ -407,16 +407,41 @@ fn ref_from_get_bind_params(
         }
         Ok(Ref::compound(target_ent.name.clone(), parts))
     } else {
+        let idf = target_ent.id_field.as_str();
         let id = bound_param_to_string
-            .get(target_ent.id_field.as_str())
+            .get(idf)
+            .or_else(|| bound_param_to_string.get("id"))
+            .or_else(|| {
+                (bound_param_to_string.len() == 1).then(|| {
+                    bound_param_to_string.values().next().expect("len == 1")
+                })
+            })
             .ok_or_else(|| RuntimeError::ConfigurationError {
                 message: format!(
                     "view Get node: missing binding for id parameter `{}`",
-                    target_ent.id_field
+                    idf
                 ),
             })?;
         Ok(Ref::new(target_ent.name.clone(), id.clone()))
     }
+}
+
+/// View DAG Get nodes for parameterless singleton reads (e.g. Linear `user_viewer`).
+fn ref_from_view_get_node(
+    target_ent: &EntityDef,
+    cap: &plasm_core::CapabilitySchema,
+    bound_param_to_string: &BTreeMap<String, String>,
+) -> Result<Ref, RuntimeError> {
+    if bound_param_to_string.is_empty() {
+        let required = cap
+            .object_params()
+            .map(|fields| fields.iter().any(|f| f.required))
+            .unwrap_or(false);
+        if !required {
+            return Ok(Ref::new(target_ent.name.clone(), String::new()));
+        }
+    }
+    ref_from_get_bind_params(target_ent, bound_param_to_string)
 }
 
 fn cached_row_to_target_ref(
@@ -635,7 +660,7 @@ async fn execute_view_scoped(
                         ),
                     }
                 })?;
-                let reference = ref_from_get_bind_params(target_ent, &bound)?;
+                let reference = ref_from_view_get_node(target_ent, cap, &bound)?;
                 let get = GetExpr::from_ref(reference);
                 let res = engine
                     .execute_get_for_view_dag(&get, cgs, cache, mode)

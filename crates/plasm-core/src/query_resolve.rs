@@ -79,6 +79,49 @@ fn required_predicate_field_names_for_scoped_match(cap: &CapabilitySchema) -> Ve
 }
 
 /// Required non-scope, filter-like parameter names for a query capability (stable order).
+/// When an entity has only [`CapabilityKind::Search`] (e.g. Linear `Issue`), brace filters
+/// `Issue{team_key=ENG}` must resolve to `issue_search`, not fail with "no query capability".
+fn try_resolve_search_for_filter_query<'a>(
+    query: &'a QueryExpr,
+    cgs: &'a CGS,
+) -> Option<&'a CapabilitySchema> {
+    if query.capability_name.is_some() {
+        return None;
+    }
+    let pred_fields: HashSet<String> = query
+        .predicate
+        .as_ref()
+        .map(|p| p.referenced_fields().into_iter().collect())
+        .unwrap_or_default();
+    if pred_fields.is_empty() {
+        return None;
+    }
+    let mut search_caps: Vec<_> = cgs
+        .find_capabilities(&query.entity, CapabilityKind::Search)
+        .into_iter()
+        .collect();
+    if search_caps.is_empty() {
+        return None;
+    }
+    search_caps.sort_by_key(|c| c.name.as_str());
+    let mut matching: Vec<&CapabilitySchema> = Vec::new();
+    for cap in &search_caps {
+        let Some(params) = cap.object_params() else {
+            matching.push(*cap);
+            continue;
+        };
+        let names: HashSet<String> = params.iter().map(|f| f.name.to_string()).collect();
+        if pred_fields.iter().all(|f| names.contains(f)) {
+            matching.push(*cap);
+        }
+    }
+    match matching.len() {
+        0 if search_caps.len() == 1 => Some(search_caps[0]),
+        1 => Some(matching[0]),
+        _ => None,
+    }
+}
+
 fn required_filter_like_param_names(cap: &CapabilitySchema) -> Vec<String> {
     let Some(fields) = cap.object_params() else {
         return Vec::new();
@@ -207,6 +250,9 @@ pub fn resolve_query_capability<'a>(
                         names.join(", ")
                     ),
                 });
+            }
+            if let Some(cap) = try_resolve_search_for_filter_query(query, cgs) {
+                return Ok(cap);
             }
             Err(QueryCapabilityResolveError::NoMatchingCapability {
                 entity: query.entity.to_string(),
@@ -479,5 +525,23 @@ mod tests {
             err,
             QueryCapabilityResolveError::NoMatchingCapability { .. }
         ));
+    }
+
+    #[test]
+    fn linear_issue_brace_filters_resolve_issue_search() {
+        let dir = std::path::Path::new("../../apis/linear");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let q = QueryExpr::filtered(
+            "Issue",
+            Predicate::and(vec![
+                Predicate::eq("team_key", "ENG"),
+                Predicate::eq("state_name", "Todo"),
+            ]),
+        );
+        let cap = resolve_query_capability(&q, &cgs).unwrap();
+        assert_eq!(cap.name.as_str(), "issue_search");
     }
 }

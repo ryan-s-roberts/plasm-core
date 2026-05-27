@@ -239,7 +239,7 @@ team_get:
           fields:
             - - key
               - type: var
-                name: id
+                name: key
   response:
     single: true
     items_path: [data, teams, nodes, "0"]
@@ -458,11 +458,11 @@ comment_by_issue_query:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String, $issueId: String!) { comments(first: $first, after: $after, filter: { issue: { id: { eq: $issueId } } }) { nodes { id body } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($first: Int, $after: String, $issue: String!) { comments(first: $first, after: $after, filter: { issue: { identifier: { eq: $issue } } }) { nodes { id body createdAt } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
           fields:
-            - - issueId
+            - - issue
               - type: var
                 name: issue
   response:

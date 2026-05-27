@@ -1290,8 +1290,10 @@ pub async fn federate_execute_session(
             mode: "federate".to_string(),
             entry_id: new_entry_id,
             entities: names,
-            markdown_delta: "_No new entities in this federated wave (already exposed)._"
-                .to_string(),
+            markdown_delta: format!(
+                "_No new entities in this federated wave (already exposed)._\n\n{hints}",
+                hints = PLASM_NOOP_EXPRESSION_HINTS
+            ),
             reused_session: true,
             domain_prompt_chars_added: 0,
         });
@@ -1338,6 +1340,9 @@ pub async fn federate_execute_session(
     })
 }
 
+const PLASM_NOOP_EXPRESSION_HINTS: &str = "\
+**Syntax (unchanged):** Search: `Entity~\"text\"` or `Entity.search(key=value, …)` — brace-only `Entity{…}` works when the entity has Search but no Query (e.g. Linear `Issue`). Views: abstract constructors from DOMAIN (`IssueContext(id)`, `MyWorkSnapshot`). Get + relation: `Issue(id).comments`.\n";
+
 /// Markdown reminder after an expand wave.
 ///
 /// - **Delta wave** (`noop_expand == false`): new teaching-table rows are in **this** message—point the model at them.
@@ -1349,8 +1354,9 @@ fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
             return "_No exposed entities in this session yet._\n".to_string();
         }
         return format!(
-            "_Symbols `e1`…`e{n}` are unchanged. Full Plasm teaching-table / TSV text is **not** repeated in this response (token-saving). Keep using your **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; rely on the teaching table from the prior `plasm_context` open or append wave in chat history._\n",
-            n = n
+            "_Symbols `e1`…`e{n}` are unchanged. Full Plasm teaching-table / TSV text is **not** repeated in this response (token-saving). Keep using your **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; rely on the teaching table from the prior `plasm_context` open or append wave in chat history._\n\n{hints}",
+            n = n,
+            hints = PLASM_NOOP_EXPRESSION_HINTS
         );
     }
     if n == 0 {

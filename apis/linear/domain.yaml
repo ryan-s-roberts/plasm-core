@@ -1,4 +1,4 @@
-version: 9
+version: 10
 http_backend: https://api.linear.app
 entities:
   Team:
@@ -253,6 +253,10 @@ entities:
       comments:
         target: Comment
         cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: comment_by_issue_query
+          param: issue
   MyWorkSnapshot:
     abstract: true
     id_field: viewer_id
@@ -970,8 +974,9 @@ views:
       capability: comment_by_issue_query
       bind:
         issue:
-          kind: scope
-          param: issue_identifier
+          kind: node_field
+          node: issue_row
+          field: id
     output:
       issue_identifier:
         kind: scope
