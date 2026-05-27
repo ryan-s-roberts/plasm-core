@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.37] - 2026-05-27
+
+### Fixed
+
+- **Docker bake:** post-push ELF verify works in `debian:*-slim` images (no `file(1)` dependency).
+
 ## [0.1.36] - 2026-05-27
 
 ### Fixed
