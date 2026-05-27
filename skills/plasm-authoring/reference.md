@@ -8,6 +8,37 @@ This is the canonical OSS reference for authoring Plasm API catalogs. The compil
 
 **After** the YAML is written, **validation and compilation** are deterministic: schema checks, CML parse/compile, and runtime request shaping are mechanical consequences of what you authored.
 
+## Task-oriented catalogs (mandatory)
+
+Plasm catalogs model **user tasks and domain entities**, not vendor wire surfaces. CGS exists to compress APIs into a relational graph for agents — not to mirror every REST path or GraphQL operation.
+
+**Core rule:** If capability count tracks the API's query/mutation root (or OpenAPI path list), the model is wrong. Author **what agents ask for** (search, context, dashboard, manage lifecycle), then wire CML to whatever HTTP/GraphQL the vendor exposes.
+
+**Anti-patterns (reject at review):**
+
+- One capability per GraphQL field, REST path, or SDK method
+- Granular mutation capabilities that split one domain verb (e.g. separate add-label and remove-label caps instead of `issue_update` with label parameters)
+- UUID-primary `id_field` when the vendor accepts human keys (`ENG-42`, Jira `PROJ-1`, team key `ENG`)
+- A fleet of scoped `query` capabilities that duplicate what `kind: search` should express
+- Prose playbooks ("call A then B") without a `views:` entry for multi-hop reads
+
+**Task → mechanism (issue trackers and similar):**
+
+| User task | Model as |
+|-----------|----------|
+| Find / filter work | `kind: search` with name-typed filter params; CML builds vendor filter objects |
+| "What's ENG-123?" | Human-key `id_field` on Issue + **`IssueContext` view** |
+| "What should I work on?" | **`MyWorkSnapshot` view** (viewer + filtered issues) |
+| Manage lifecycle | `create` / `update` / `delete`; human-key `entity_ref` where wire allows |
+| Portfolio / status | **`ProjectContext` view**; milestone/initiative/update entities as needed |
+| Documents | `Document` entity + search + update |
+
+**Human-key resolution:** Prefer **`id_field` = human-visible key** (Jira `Issue.id_field: key`, Linear `Issue.id_field: identifier`, `Team.id_field: key`) so agents write `Issue(ENG-42)`, `Team(ENG)`. Prefer **string/name filter params** on `kind: search` (`team_key`, `state_name`, `label_name`, `assignee_name`) over UUID **`entity_ref`** for filters — map names to vendor filter objects in **mappings.yaml**. Keep wire `id` fields on entities for decode; UUID discovery is not an agent step.
+
+**GraphQL-specific:** SDL/introspection is **evidence for CML**, not a capability checklist. Do not derive capability ids from the mutation/query root list.
+
+Reference: [Linear #1035](https://github.com/linear/linear/issues/1035) (task-shaped MCP tools) maps to Plasm `search` + `views:` + compressed writes.
+
 ## Obsolete or unsupported (do not teach)
 
 | Topic | Status |
@@ -453,7 +484,7 @@ Use this table before adding `views:` to issue trackers (Jira, Linear) or mail (
 | Child collection on parent GET | **`from_parent_get`** or **`query_scoped`** relation | Jira `Issue.comments`; Linear `Issue.labels` |
 | Multi-GET aggregate (counts, booleans, status label) | **`views:`** with `node_row_count` / `node_any_row_field_equals` / `kind: computed` | Jira `views.issue_transition_context`; Cloudflare `views.security_overview` |
 | Assembled browse / deeplink URL | **`views:`** with **`output.kind: computed`**; scope host with **`inject: session_ui_origin`** when REST/UI share the session origin | Jira `views.issue_browse_link` (`site_base` injected); Linear `views.issue_navigation_link`; Grafana `views.deeplink_generate` |
-| Reply / threading context before an action | **`views:`** read model **or** action **`invoke_preflight`** | Gmail `views.reply_context` (explicit DOMAIN teaching); `message_reply` keeps preflight for send |
+| Reply / threading context before an action | **`views:`** read model **or** action **`preflight`** | Gmail `message_reply`: `preflight: [{ kind: hydrate_invoke_target, get: message_get, prefix: parent }]` |
 | Singleton + one scoped GET | **`views:`** with empty bind + literal bind | Gmail `views.mailbox_snapshot` (`profile_get` + `label_get` id=`INBOX`) |
 | Sprint / cycle board (filter inner list from prior node output) | **`views:`** with **`node_field`** / **`computed`** node binds on inner query caps | Jira `views.sprint_board_snapshot` (`issue_jql` JQL from sprint row); Linear `views.cycle_board_snapshot` (`issue_by_cycle_query` cycle from `cycle_get`) |
 
@@ -464,6 +495,19 @@ Use this table before adding `views:` to issue trackers (Jira, Linear) or mail (
 **Issue-tracker-specific:** When the vendor GET already returns a fat graph (Linear `issue_get` GraphQL), views add value for **cross-capability snapshots** (issue + transitions) and **computed URLs**, not for re-fetching the same GET payload.
 
 Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_triage_context`, `lang_item_link`, `lang_owner_filter_demo`).
+
+### Capability `preflight` (write-time resolution)
+
+Ordered steps on **`create`**, **`update`**, **`action`**, and **`delete`** capabilities run in the runtime **before** CML compile (after path/input env assembly, before `plasm_execute_*` merge). Declared in `domain.yaml` as `preflight:` ( **`invoke_preflight` was removed** — no compat alias).
+
+| Step kind | Purpose |
+|-----------|---------|
+| `hydrate_invoke_target` | GET `invoke.target`; merge `{prefix}_{field}` (e.g. `parent_threadId`). Skipped on `create`. |
+| `hydrate_entity_ref_param` | When param set: GET `entity_ref` row; merge wire keys (`teamId: id`). |
+| `query_pick` | Scoped `query`/`search`; exact match on first page; merge wire ids (`stateId`, …). Fail on 0 or >1 matches. |
+| `label_ids_delta` | Start from prior hydrate labels; add/remove by name via lookup query; merge `labelIds`. |
+
+**Linear reference:** `issue_create` / `issue_update` use full stack (`team` → `teamId`, `state_name` → `stateId`, etc.). **Gmail:** `message_reply` uses only `hydrate_invoke_target`.
 
 ### Action output: `provides:` vs `output.side_effect`
 

@@ -167,7 +167,7 @@ message_send_simple:
   body:
     type: gmail_rfc5322_send_body
 
-# Same POST — reply defaults from preflight `parent_*` (invoke_preflight + message_get).
+# Same POST — reply defaults from preflight `parent_*` (hydrate_invoke_target + message_get).
 message_reply:
   response: single
   method: POST

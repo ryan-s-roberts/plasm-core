@@ -141,7 +141,7 @@ mod tests {
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
-            invoke_preflight: None,
+            preflight: None,
             discovery: None,
         }
     }

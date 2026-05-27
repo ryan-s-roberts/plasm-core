@@ -146,9 +146,7 @@ fn validate_expected_scope(
 /// First-row field snapshots from prior view DAG nodes (for param bind resolution).
 type ViewNodeFieldMap = IndexMap<String, IndexMap<String, Value>>;
 
-fn node_fields_from_results(
-    node_results: &IndexMap<String, ExecutionResult>,
-) -> ViewNodeFieldMap {
+fn node_fields_from_results(node_results: &IndexMap<String, ExecutionResult>) -> ViewNodeFieldMap {
     let mut out: ViewNodeFieldMap = IndexMap::new();
     for (node_id, res) in node_results {
         let Some(row) = res.entities.first() else {
@@ -192,7 +190,10 @@ fn merge_view_ambient_scope(
             ViewScopeInject::SessionTransportOrigin => transport.as_ref(),
         };
         if let Some(o) = origin.filter(|s| !s.trim().is_empty()) {
-            scope.insert(sp.name.clone(), Value::String(o.trim_end_matches('/').to_string()));
+            scope.insert(
+                sp.name.clone(),
+                Value::String(o.trim_end_matches('/').to_string()),
+            );
         }
     }
 }
@@ -213,15 +214,12 @@ fn resolve_binding(
         }
         ViewParamBinding::Literal { value } => Ok(json_to_plasm_value(value)),
         ViewParamBinding::NodeField { node, field } => {
-            let fields = node_fields.get(node).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
+            let fields = node_fields
+                .get(node)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view bind references unknown node `{node}`"),
-                }
-            })?;
-            Ok(fields
-                .get(field)
-                .cloned()
-                .unwrap_or(Value::Null))
+                })?;
+            Ok(fields.get(field).cloned().unwrap_or(Value::Null))
         }
         ViewParamBinding::Computed { template } => {
             crate::view_template::render_view_param_bind_template(template, scope, node_fields)

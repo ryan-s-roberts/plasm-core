@@ -81,14 +81,15 @@ Discard:
 
 Before writing any YAML, draft a short plan covering:
 
+- **Task inventory** — user-language agent tasks (see [plasm-authoring — Task inventory](plasm-authoring/SKILL.md#step-15-task-inventory-before-entities)); each maps to `search`, `views:`, or write verbs.
 - Entity list and one-line role for each.
 - Relation graph (which entities reference which, scoped sub-resources, self-referential parents).
-- Capability families per entity (`query`, `search`, `get`, write set, actions).
+- Capability families per entity (`query`, `search`, `get`, write set, actions) — explicit list of **caps removed vs merged** from the prior model.
 - Composed reads — if the README implies snapshot or summary concepts, plan a `views:` entry.
 - Auth scheme (carried over unless the vendor changed it).
 - Pagination shapes per list capability (from `mappings.yaml` in the spec).
 
-This plan is short, in chat. It is **not** committed to the repo. It exists so the rewrite has a deliberate target rather than drifting back into RPC shapes.
+This plan is short, in chat. It is **not** committed to the repo. It exists so the rewrite has a deliberate target rather than drifting back into RPC shapes. For issue trackers, use [Linear #1035](https://github.com/linear/linear/issues/1035) as the reference task shape (search, context, dashboard, manage) — not GraphQL operation names.
 
 ### Step 4: Author the new catalog
 

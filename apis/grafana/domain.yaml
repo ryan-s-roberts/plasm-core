@@ -1109,9 +1109,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: Run PromQL, LogQL, or other queries through the unified datasource query path.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: expr
         value_ref: nv_wire_str_short
@@ -1846,9 +1847,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: List Prometheus label names through the datasource discovery proxy.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: from
         value_ref: nv_grafana_time_range
@@ -1862,9 +1864,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: List values for one Prometheus label name.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: label_name
         value_ref: nv_grafana_label_name
@@ -1881,9 +1884,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: List Prometheus metric names (__name__ label values).
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: from
         value_ref: nv_grafana_time_range
@@ -1899,9 +1903,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: List Loki label names through the datasource discovery proxy.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: from
         value_ref: nv_grafana_time_range
@@ -1915,9 +1920,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: List Loki values for one label name.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: label_name
         value_ref: nv_grafana_label_name
@@ -1934,9 +1940,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: Detect log patterns for a Loki stream selector.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: logql
         value_ref: nv_grafana_logql
@@ -1955,9 +1962,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: Approximate Loki index stats for a stream selector.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: logql
         value_ref: nv_grafana_logql
@@ -1974,9 +1982,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: Run raw SQL against a ClickHouse datasource through unified query.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: query
         value_ref: nv_grafana_sql
@@ -1995,9 +2004,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: List ClickHouse tables from system.tables.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: database
         value_ref: nv_wire_str_short
@@ -2009,9 +2019,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: Describe columns for a ClickHouse table via system.columns.
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: table
         value_ref: nv_wire_str_short
@@ -2110,9 +2121,10 @@ capabilities:
     kind: action
     entity: Datasource
     description: Run a dashboard panel query when expr and datasource uid are known (from dashboard_get panel targets).
-    invoke_preflight:
-      hydrate_capability: datasource_get
-      env_prefix: ds
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
     parameters:
       - name: expr
         value_ref: nv_wire_str_short

@@ -20,6 +20,18 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, trace, warn};
 
+fn deserialize_forbidden_invoke_preflight_key<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<serde::de::IgnoredAny>::deserialize(deserializer)? {
+        None => Ok(()),
+        Some(_) => Err(serde::de::Error::custom(
+            "invoke_preflight was removed; use preflight: [{ kind: hydrate_invoke_target, get: <get_cap>, prefix: <env_prefix> }]",
+        )),
+    }
+}
+
 /// Hard cap for `domain.yaml` / `mappings.yaml` / combined CGS YAML (defense in depth).
 const MAX_SCHEMA_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -239,6 +251,8 @@ pub struct DomainRelation {
     pub discovery: Option<crate::DiscoveryRelationHints>,
 }
 
+/// `invoke_preflight` is rejected at deserialize time via [`deserialize_forbidden_invoke_preflight_key`].
+#[allow(clippy::manual_non_exhaustive)]
 #[derive(Debug, Deserialize)]
 pub struct DomainCapability {
     #[serde(default)]
@@ -269,7 +283,13 @@ pub struct DomainCapability {
     #[serde(default)]
     pub input_schema: Option<InputSchema>,
     #[serde(default)]
-    pub invoke_preflight: Option<crate::InvokePreflight>,
+    pub preflight: Option<crate::preflight::PreflightPlan>,
+    #[serde(
+        default,
+        rename = "invoke_preflight",
+        deserialize_with = "deserialize_forbidden_invoke_preflight_key"
+    )]
+    _invoke_preflight_removed: (),
     #[serde(default)]
     pub discovery: Option<crate::DiscoveryCapabilityHints>,
 }
@@ -832,7 +852,7 @@ fn assemble_cgs_core(
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
-            invoke_preflight: cap.invoke_preflight.clone(),
+            preflight: cap.preflight.clone(),
             discovery: cap.discovery.clone(),
         };
 

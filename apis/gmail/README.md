@@ -116,7 +116,7 @@ plasm --schema apis/gmail --backend https://gmail.googleapis.com \
 
 The same pattern applies to threads: `thread_list` / `thread_search` declare only `{id, historyId}` so rows are **summary** objects; Plasm hydrates with `threads.get` per row by default (N HTTP GETs for N threads — use `thread query --summary` to skip). `thread_get` fills `snippet` and decodes nested `messages` into the `Thread.messages` relation.
 
-**Sending mail:** `message_send` requires a pre-built base64url **`raw`** (full RFC 2822). Prefer **`message_send_simple`** when the agent should pass **from / to / subject / plain body** only; Plasm builds MIME and `raw` via the CML `gmail_rfc5322_send_body` expression (same `POST …/messages/send`). Optional **`threadId`** / **`inReplyTo`** / **`references`** support replies. Use **`message_reply`** (action on a **`Message`** row) to reply with only **`from`** and **`plainBody`**; runtime **`invoke_preflight`** runs **`message_get`** on the target id and merges **`parent_*`** fields, then CML **`gmail_rfc5322_reply_send_body`** builds `raw` (same POST).
+**Sending mail:** `message_send` requires a pre-built base64url **`raw`** (full RFC 2822). Prefer **`message_send_simple`** when the agent should pass **from / to / subject / plain body** only; Plasm builds MIME and `raw` via the CML `gmail_rfc5322_send_body` expression (same `POST …/messages/send`). Optional **`threadId`** / **`inReplyTo`** / **`references`** support replies. Use **`message_reply`** (action on a **`Message`** row) to reply with only **`from`** and **`plainBody`**; runtime **`preflight`** runs **`message_get`** on the target id and merges **`parent_*`** fields, then CML **`gmail_rfc5322_reply_send_body`** builds `raw` (same POST).
 
 ### Gmail search query syntax
 

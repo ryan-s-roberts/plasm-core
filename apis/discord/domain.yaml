@@ -1064,9 +1064,10 @@ capabilities:
       and merges parent_* (parent id/channel for the reference).
     kind: action
     entity: Message
-    invoke_preflight:
-      hydrate_capability: message_get
-      env_prefix: parent
+    preflight:
+    - kind: hydrate_invoke_target
+      get: message_get
+      prefix: parent
     parameters:
     - name: channel_id
       value_ref: nv_message_reply_channel_id

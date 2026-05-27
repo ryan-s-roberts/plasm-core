@@ -75,7 +75,7 @@ pub enum CmlExpr {
     #[serde(rename = "gmail_rfc5322_send_body")]
     GmailRfc5322SendBody {},
     /// Same wire shape as [`CmlExpr::GmailRfc5322SendBody`], but derives defaults from preflight
-    /// keys `parent_*` (see `invoke_preflight` / `message_reply`). User keys `from`, `plainBody`
+    /// keys `parent_*` (see capability `preflight` / `message_reply`). User keys `from`, `plainBody`
     /// required; optional `to`, `subject` override reply defaults.
     #[serde(rename = "gmail_rfc5322_reply_send_body")]
     GmailRfc5322ReplySendBody {},

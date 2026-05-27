@@ -75,7 +75,7 @@ Goal-oriented harness cases live in **`apis/<api>/eval/cases.yaml`** with **`sch
 
 Read the spec file directly. For large specs, read section by section — paths first, then schemas, then descriptions. Use `wc -l` to gauge size, then `grep "^  /"` to list all paths before diving in.
 
-**IMPORTANT: Do not write scripts, binaries, or "generator crates" to emit `domain.yaml` / `mappings.yaml` from OpenAPI (or any spec) as if the mapping were unique or mechanical.** There is no single deterministic reduction from RPC to CGS. You must read the spec and **author** the domain — merging endpoints, naming entities, choosing relations, classifying parameters, and deciding scope for agents. Mechanical dumps mirror the RPC surface and bypass the judgements this skill is for; they are explicitly out of scope for canonical `apis/<name>/` trees.
+**IMPORTANT: Do not write scripts, binaries, or "generator crates" to emit `domain.yaml` / `mappings.yaml` from OpenAPI (or any spec) as if the mapping were unique or mechanical.** There is no single deterministic reduction from RPC to CGS. You must read the spec and **author** the domain — merging endpoints, naming entities, choosing relations, classifying parameters, and deciding scope for agents. Mechanical dumps mirror the RPC surface and bypass the judgements this skill is for; they are explicitly out of scope for canonical `apis/<name>/` trees. **A GraphQL mutation/query list is not a capability list** — compress to user tasks per [reference.md — Task-oriented catalogs](reference.md#task-oriented-catalogs-mandatory).
 
 **Query parameters in particular are a non-deterministic inference step.** OpenAPI specs vary enormously in how they document query semantics:
 
@@ -104,6 +104,14 @@ You must read **all of the above** — not just the canonical `parameters:` arra
   - Genuinely public → `scheme: none`
 
 **Key principle:** An OpenAPI spec describes RPC operations. You are extracting the **domain model** — the business entities, how they relate, and what operations exist on them. Multiple endpoints operate on the same entity. A field like `petId: integer` is a relation, not just a number.
+
+## Step 1.5: Task inventory (before entities)
+
+Before naming entities or capabilities, list **agent tasks in user language** (what would a consolidated MCP or product UI expose?). Examples: "show my open bugs", "what's ENG-42 and its comments", "create a bug on Backend", "project status this week".
+
+Each task must map to **`kind: search`**, a **`views:`** composed read, or a small set of write verbs (`create` / `update` / `delete`). Flag any task that would require chaining multiple capabilities without a view — that task needs a `views:` entry or a merged capability.
+
+See [reference.md — Task-oriented catalogs](reference.md#task-oriented-catalogs-mandatory).
 
 ## Step 2: Author domain.yaml
 
@@ -308,6 +316,9 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 - [ ] Every entity has either a declared `fields` entry for `id_field` or a non-empty `id_from` path
 - [ ] If an entity should **not** teach projection brackets in DOMAIN, set `domain_projection_examples: false`
 - [ ] Any multi-endpoint read summary is modeled with `views:` + synthetic `query` + `transport: view` (not prose-only runbooks)
+- [ ] Every list/filter agent intent has `kind: search` where the vendor supports filter DSL (not a fleet of scoped `query` caps for the same entity)
+- [ ] Human-visible keys are `id_field` where the vendor accepts them on get/create
+- [ ] Write surface uses domain verbs, not per-input-field mutation explosion
 
 ### Scoped relation traversal (`materialize`)
 

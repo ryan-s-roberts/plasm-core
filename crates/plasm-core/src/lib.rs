@@ -99,6 +99,7 @@ pub mod loader;
 pub mod normalizer;
 pub mod paging_handle;
 pub mod predicate;
+pub mod preflight;
 pub mod prompt_pipeline;
 pub mod prompt_render;
 pub mod query_resolve;
@@ -164,6 +165,10 @@ pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
 };
 pub use predicate::Predicate;
+pub use preflight::{
+    validate_capability_preflight, PickSpec, PreflightFieldPath, PreflightPlan, PreflightStep,
+    ScopeBind,
+};
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
 pub use prompt_render::domain_tsv_table_from_wrapped_prompt;
 pub use prompt_render::render_domain_bundle;
@@ -188,13 +193,12 @@ pub use schema::{
     CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, DiscoveryCapabilityHints,
     DiscoveryEntityHints, DiscoveryRelationHints, EntityDef, FieldDeriveRule, FieldSchema,
     FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType,
-    InputValidation, InputVariantSchema, InvokePreflight, JsonPathSegment, NamedValueSchema,
-    OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
-    OutputType, ParameterRole, RelationMaterialization, RelationSchema, ResourceSchema,
-    ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate,
-    ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding,
-    ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject,
-    ViewScopeParam,
+    InputValidation, InputVariantSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
+    OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
+    RelationMaterialization, RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy,
+    ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate, ValueDomainKey,
+    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
+    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
