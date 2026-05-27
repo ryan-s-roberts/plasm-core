@@ -3,6 +3,7 @@ name = "plasm-agent-core"
 version.workspace = true
 edition.workspace = true
 readme = "README.md"
+build = "build.rs"
 
 [features]
 default = []

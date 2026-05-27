@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.36] - 2026-05-27
+
+### Fixed
+
+- **Docker bake:** export `PLASM_HOST_TARGET_TRIPLE` for `plasm-agent-core` when `cargo chef` skips `build.rs` output.
+
 ## [0.1.35] - 2026-05-27
 
 ### Fixed
