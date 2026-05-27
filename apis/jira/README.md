@@ -20,6 +20,10 @@ Jira often returns **HTTP 200** with an empty `values` (or similar) list when th
 
 ## CGS design notes
 
+### Schema overlay
+
+At execute session open, the host runs **`project_query`** → per-project **`issue_createmeta_get`**, then merges **per-project/issuetype typed `Issue` entities**. Session auth only — no client overlay scope. See [docs/schema-overlay.md](../../../docs/schema-overlay.md).
+
 ### Why JQL is `kind: search`
 
 The Jira issue model has no traditional SQL-style filter endpoint. The only way to query issues is via **JQL (Jira Query Language)**: a full-featured query language that handles filters, text search, ordering, and date ranges in a single string. Modelling this as `kind: search` with a required `jql` parameter is semantically accurate — users write JQL directly:

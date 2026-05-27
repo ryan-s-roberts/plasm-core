@@ -34,6 +34,10 @@ auth:
   env: CLICKUP_API_TOKEN
 ```
 
+### Runtime schema overlay
+
+At execute session open, the host runs the **`schema_overlay.source.steps`** pipeline using session auth only: **`team_query`** → per-team **`custom_field_query`**, then merges **custom field columns** onto **`Task`** (`augment_base`). Agents supply `{ api, entity }` seeds only — no overlay configuration. See [docs/schema-overlay.md](../../../docs/schema-overlay.md).
+
 ### ClickUp's workspace hierarchy
 
 ClickUp's data model is a strict containment tree:

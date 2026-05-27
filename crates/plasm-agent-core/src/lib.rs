@@ -48,6 +48,7 @@ pub mod mcp_plasm_meta;
 pub mod mcp_policy;
 mod mcp_run_markdown;
 pub mod mcp_runtime_config;
+pub mod schema_overlay_session;
 pub mod mcp_server;
 mod mcp_stream_auth;
 pub mod mcp_transport_auth;

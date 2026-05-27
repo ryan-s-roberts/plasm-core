@@ -1,0 +1,88 @@
+# Fibery — Plasm eval (schema key must match directory name: `fibery`)
+#
+# Run:
+#   plasm-eval --schema apis/fibery --cases apis/fibery/eval/cases.yaml --attempts 2
+#   plasm-eval coverage --schema apis/fibery --cases apis/fibery/eval/cases.yaml
+
+- id: fb-01
+  schema: fibery
+  goal: "List all databases in my Fibery workspace schema"
+  tags: [query, schema, unscoped]
+  covers: [query_all]
+  expect:
+    entities_any: [Database]
+
+- id: fb-02
+  schema: fibery
+  goal: "Show profile information for the currently authenticated Fibery user"
+  tags: [singleton, user]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: fb-03
+  schema: fibery
+  goal: "Get field definitions for the Cricket/Player database"
+  tags: [query, schema, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Field]
+    pred_fields_any: [database]
+
+- id: fb-04
+  schema: fibery
+  goal: "Query rows in database SoftDev/bug with a limit of 20"
+  tags: [query, record, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Record]
+    pred_fields_any: [database]
+
+- id: fb-05
+  schema: fibery
+  goal: "Fetch the row with fibery id 20f9b920-9752-11e9-81b9-4363f716f666 from Cricket/Player"
+  tags: [get, record]
+  covers: [get]
+  expect:
+    entities_any: [Record]
+
+- id: fb-06
+  schema: fibery
+  goal: "Search the workspace for entities matching the keyword roadmap"
+  tags: [search]
+  covers: [search]
+  expect:
+    entities_any: [SearchResult]
+
+- id: fb-07
+  schema: fibery
+  goal: "Show recent create and update history for database Product Management/feature"
+  tags: [query, history, scope]
+  covers: [query_filtered]
+  expect:
+    entities_any: [HistoryEvent]
+
+- id: fb-08
+  schema: fibery
+  goal: "List webhooks registered in my Fibery workspace"
+  tags: [query, webhook]
+  covers: [query_all]
+  expect:
+    entities_any: [Webhook]
+
+- id: fb-09
+  schema: fibery
+  goal: "Inspect schema fields and sample rows for database CRM/Lead before importing data"
+  tags: [view, context, multi_step]
+  covers: [multi_step, projection]
+  expect:
+    entities_any: [DatabaseContext, Field, Record]
+    max_steps: 4
+
+- id: fb-10
+  schema: fibery
+  goal: "Create a new row in Cricket/Player with name Curtly Ambrose"
+  tags: [create, record]
+  covers: [create]
+  expect:
+    entities_any: [Record]

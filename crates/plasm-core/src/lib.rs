@@ -105,6 +105,7 @@ pub mod prompt_render;
 pub mod query_resolve;
 pub mod result_gloss;
 pub mod schema;
+pub mod schema_overlay;
 pub mod scope_entity_ref_splat;
 pub mod step_semantics;
 pub mod string_unescape;
@@ -183,7 +184,6 @@ pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,
 };
-pub use schema::input_variant_body_type;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names,
@@ -200,6 +200,12 @@ pub use schema::{
     ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
     ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+};
+pub use schema_overlay::{
+    build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix,
+    overlay_collect_rows, overlay_entity_for_scope, overlay_merge_step_response,
+    overlay_pipeline_cache_suffix, resolve_overlay_row_bind, walk_json_path, SchemaOverlay,
+    SchemaOverlaySpec,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;

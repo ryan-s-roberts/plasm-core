@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.42] - 2026-05-27
+
+### Added
+
+- **Runtime schema overlay:** unified `schema_overlay:` spec in `domain.yaml` — host fetches workspace schema at execute session open and merges typed entities/columns into the session CGS (`effective_catalog_cgs_hash_hex`).
+- **API-driven multi-fetch pipeline:** `source.steps` with `collect` → `for_each` (row-driven `bind`) → `merge` for scoped schema endpoints (ClickUp `team_query` → `custom_field_query`; Jira `project_query` → `issue_createmeta_get`).
+- **Projection modes:** `per_scope_entity` (Fibery, Notion, Jira) and `augment_base` (ClickUp custom fields on `Task`); Minijinja filters `join_sanitize`, `sanitize_identifier`.
+- **Catalog overlays:** Fibery, Notion, ClickUp, Jira `schema_overlay` blocks; Linear overlay deferred (no public custom-field definition query).
+- **Session resolver:** `schema_overlay_session` wired at HTTP execute, MCP `plasm_context`, federated attach, and local `plasm-repl`.
+
+### Changed
+
+- **Overlay configuration is API-only:** removed HTTP `overlay_scope`, MCP seed `scope`, and client/env `source.bind` for overlay — session auth + catalog-declared pipeline only.
+- **Authoring skills / catalog READMEs:** document API-driven overlay pattern and multi-fetch for scoped schema APIs.
+
 ## [0.1.41] - 2026-05-27
 
 ### Fixed

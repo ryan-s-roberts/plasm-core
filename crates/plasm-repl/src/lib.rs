@@ -108,10 +108,22 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
         ..ExecutionConfig::default()
     };
 
-    let auth_resolver = cgs.auth.clone().map(AuthResolver::from_env);
+    let auth_scheme = cgs.auth.clone();
+    let auth_resolver = auth_scheme.clone().map(AuthResolver::from_env);
     let engine = ExecutionEngine::new_with_auth(config, auth_resolver)?;
+    let base_cgs = std::sync::Arc::new(cgs);
+    let cgs = plasm_agent::schema_overlay_session::resolve_schema_overlay_for_local(
+        &engine,
+        mode,
+        base_cgs,
+        backend.as_ref(),
+        schema_path.as_str(),
+    )
+    .await
+    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    plasm_agent::schema_overlay_session::eprint_schema_overlay_status(cgs.as_ref());
 
-    repl::run_repl(&cgs, &engine, mode, output_format, prompt_focus).await?;
+    repl::run_repl(cgs.as_ref(), &engine, mode, output_format, prompt_focus).await?;
 
     Ok(())
 }

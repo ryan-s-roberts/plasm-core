@@ -30,6 +30,10 @@ auth:
 
 Use **`NOTION_API_TOKEN`**, not a generic `NOTION_TOKEN`—that is what `plasm-runtime` resolves.
 
+### Schema overlay
+
+At execute session open, when **`schema_overlay:`** is present, the host runs **`database_search`**, projects each database’s **`properties`** schema into **per-database typed `Page` entities**, and merges them into the session CGS. Scoped **`database_query`** decode routes through **`decode.scope`** (`database_id`). See [docs/schema-overlay.md](../../../docs/schema-overlay.md).
+
 ### Notion-Version header
 
 Notion requires `Notion-Version` on **every** request. All capabilities in `mappings.yaml` attach:
@@ -40,7 +44,7 @@ Notion requires `Notion-Version` on **every** request. All capabilities in `mapp
 
 | Concept | In this CGS |
 |--------|----------------|
-| **Page** | One entity type for **both** standalone pages **and** database **rows**. The official API uses the same `page` object; `parent.type` distinguishes workspace/page vs database. This schema models shared metadata (`id`, `url`, timestamps, trash, …). **Per-database `properties` are not decoded** as typed fields—use Notion’s API or export flows if you need full property columns. |
+| **Page** | One entity type for **both** standalone pages **and** database **rows**. The official API uses the same `page` object; `parent.type` distinguishes workspace/page vs database. This schema models shared metadata (`id`, `url`, timestamps, trash, …). **Per-database `properties` are typed at session open** via **`schema_overlay:`** (see [schema-overlay.md](../../../docs/schema-overlay.md)); bootstrap `Page` remains the generic row shape. |
 | **Database** | Container with a schema; **`database_query`** returns **Page** rows (`POST /v1/databases/{id}/query`). Relation `Database.pages` uses `via_param: database_id` for scoped query. |
 | **User** | Person or bot (`type`: `person` \| `bot`). |
 | **Comment** | Thread comment; **`comment_query`** is scoped by `block_id` (Notion accepts **page IDs** as block IDs). Relation `Page.comments` uses `via_param: block_id` → `GET /v1/comments?block_id=…`. |

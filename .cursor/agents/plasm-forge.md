@@ -32,6 +32,7 @@ Treat those skills as **single source of truth** for entities, capabilities, CML
 
 - Gather **public** API specifications (OpenAPI, GraphQL SDL, vendor docs) and skim **auth**, **pagination**, **nesting**, and **cross-resource** patterns.
 - Produce a **task inventory** first (user-language agent tasks: search, context, dashboard, manage) — then a **phased scope** for entity clusters and capability families — always favor **task-oriented relational design** that **compresses** the RPC/GraphQL surface, never mirrors it operation-for-operation.
+- Flag APIs with **user-defined columns** (Fibery/Notion databases, Jira/ClickUp custom fields, spreadsheet headers): plan a **bootstrap generic row entity** + **`schema_overlay:`** rather than static custom-field explosion — see [reference.md — Runtime schema overlay](../skills/plasm-authoring/reference.md#runtime-schema-overlay-schema_overlay).
 
 **Hard anathema — programmatic `domain.yaml` authoring**
 

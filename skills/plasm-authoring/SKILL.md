@@ -234,6 +234,17 @@ When the agent-facing concept is a **single read row** that **no single vendor e
 
 **Anti-pattern:** Long playbook text that says "call A, then B, then aggregate" **without** a **`views:`** entry leaves agents without a single **`query`** symbol for the composed row. Canonical example: **`apis/cloudflare`** — **`SecurityOverview`** + **`security_overview_query`** + **`views.security_overview`**. Full grammar: [reference.md — Composed read views](reference.md#composed-read-views).
 
+### Runtime schema overlay (`schema_overlay:`)
+
+When the API has **workspace-defined columns** on generic rows (Fibery databases, Notion database properties, Jira custom fields per project/issue type, ClickUp custom fields on tasks), add a top-level **`schema_overlay:`** block **after** the bootstrap entity and schema-fetch capability exist. Do **not** mirror every column statically in `entities:` when the schema is fetched at runtime.
+
+- **Static vendor schema** (GitHub, Slack, PokéAPI) → **no overlay**
+- **Multi-hop reads without dynamic columns** → **`views:`**, not overlay
+- **Per-scope typed entities** → `projection.mode: per_scope_entity` (Fibery, Notion, Jira)
+- **Shared entity + extra columns** → `projection.mode: augment_base` ([ClickUp](../apis/clickup/domain.yaml); Linear deferred until GraphQL exposes custom-field defs)
+
+Authoring details, spec table, checklists, and reference catalogs: [reference.md — Runtime schema overlay](reference.md#runtime-schema-overlay-schema_overlay). Runtime behavior: monorepo [docs/schema-overlay.md](../../../docs/schema-overlay.md).
+
 **`kind: action` output:** Every action must declare either non-empty **`provides:`** or **`output:`** with **`type: side_effect`** and a non-empty `description:` that states **what** the operation changes. There is no `output.type: none`. See [reference.md — Action output](reference.md#action-output-provides-vs-outputside_effect).
 
 ### Authentication — top-level `auth:` block
@@ -316,6 +327,7 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 - [ ] Every entity has either a declared `fields` entry for `id_field` or a non-empty `id_from` path
 - [ ] If an entity should **not** teach projection brackets in DOMAIN, set `domain_projection_examples: false`
 - [ ] Any multi-endpoint read summary is modeled with `views:` + synthetic `query` + `transport: view` (not prose-only runbooks)
+- [ ] User-defined / workspace schema uses `schema_overlay:` (not hundreds of static custom-field columns) — see [reference.md — Runtime schema overlay](reference.md#runtime-schema-overlay-schema_overlay)
 - [ ] Every list/filter agent intent has `kind: search` where the vendor supports filter DSL (not a fleet of scoped `query` caps for the same entity)
 - [ ] Human-visible keys are `id_field` where the vendor accepts them on get/create
 - [ ] Write surface uses domain verbs, not per-input-field mutation explosion

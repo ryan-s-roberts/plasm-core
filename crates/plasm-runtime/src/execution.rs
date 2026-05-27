@@ -737,6 +737,61 @@ impl ExecutionEngine {
         }
     }
 
+    /// Execute a schema-overlay source capability and return the raw JSON response body.
+    pub async fn fetch_overlay_source_response(
+        &self,
+        cgs: &CGS,
+        capability_name: &str,
+        http_base: &str,
+        auth_resolver_override: Option<Arc<AuthResolver>>,
+        mode: ExecutionMode,
+        bind: Option<&IndexMap<String, String>>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        use plasm_core::CapabilityKind;
+        use plasm_core::value::Value;
+
+        let cap = cgs.get_capability(capability_name).ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!("schema overlay source capability '{capability_name}' not found"),
+            }
+        })?;
+        if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Get | CapabilityKind::Search) {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "schema overlay source capability '{capability_name}' must be query, get, or search"
+                ),
+            });
+        }
+        let template = parse_capability_template(&cap.mapping.template.0).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: format!("schema overlay source template: {e}"),
+            }
+        })?;
+        let mut env = CmlEnv::new();
+        if let Some(bind) = bind {
+            for (key, value) in bind {
+                env.insert(key.clone(), Value::String(value.clone()));
+            }
+        }
+        let compiled = compile_operation(&template, &env).map_err(|e| RuntimeError::CmlError {
+            source: e,
+        })?;
+        let base = http_base.trim().trim_end_matches('/').to_string();
+        Self::run_in_execute_task_scopes(
+            base.into(),
+            auth_resolver_override,
+            PluginCompileHooks {
+                compile_operation_fn: None,
+                compile_query_fn: None,
+            },
+            None,
+            None,
+            None,
+            async move { self.execute_with_replay(&compiled, mode).await.map(|(j, _)| j) },
+        )
+        .await
+    }
+
     /// Execute an HTTP request with replay awareness.
     /// In Live mode: execute and optionally record.
     /// In Replay mode: look up by fingerprint.
@@ -1146,9 +1201,10 @@ impl ExecutionEngine {
             let (normalized, decoder) = match &capability_template {
                 CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Ok((
                     prepare_http_query_response(response, cml, &env),
-                    create_entity_decoder(
+                    create_entity_decoder_for_capability(
                         &query.entity,
                         cgs,
+                        Some(capability.name.as_str()),
                         Some(http_collection_source(cml)),
                         None,
                         Some(&cml_env_to_identity_strings(&env)),
@@ -1248,9 +1304,10 @@ impl ExecutionEngine {
         let (decoder, wrap_key) = match &capability_template {
             plasm_compile::CapabilityTemplate::Http(ref req)
             | plasm_compile::CapabilityTemplate::GraphQl(ref req) => (
-                create_entity_decoder(
+                create_entity_decoder_for_capability(
                     &query.entity,
                     cgs,
+                    Some(capability.name.as_str()),
                     Some(http_collection_source(req)),
                     None,
                     Some(&cml_env_to_identity_strings(&env)),
@@ -2017,9 +2074,10 @@ impl ExecutionEngine {
             .get_entity(&get.reference.entity_type)
             .filter(|e| e.implicit_request_identity)
             .and_then(|_| get.reference.simple_id().map(|id| id.as_str()));
-        let decoder = create_entity_decoder(
+        let decoder = create_entity_decoder_for_capability(
             &get.reference.entity_type,
             cgs,
+            Some(capability.name.as_str()),
             None,
             rid,
             Some(&ref_to_identity_ambient(&get.reference)),
@@ -5141,6 +5199,70 @@ fn create_entity_decoder(
     request_identity: Option<&str>,
     identity_ambient: Option<&IndexMap<String, String>>,
 ) -> plasm_compile::EntityDecoder {
+    create_entity_decoder_for_capability(
+        entity_type,
+        cgs,
+        None,
+        collection_source,
+        request_identity,
+        identity_ambient,
+    )
+}
+
+fn resolve_overlay_decode_entity(
+    cgs: &CGS,
+    capability_name: &str,
+    identity_ambient: Option<&IndexMap<String, String>>,
+) -> Option<String> {
+    let spec = cgs.schema_overlay.as_ref()?;
+    let listed = if spec.decode.capabilities.is_empty() {
+        capability_name == "entity_query" || capability_name == "entity_get"
+    } else {
+        spec.decode
+            .capabilities
+            .iter()
+            .any(|c| c == capability_name)
+    };
+    if !listed {
+        return None;
+    }
+    let ambient = identity_ambient?;
+    let scope_value = plasm_core::schema_overlay::build_decode_scope_key(
+        &spec.decode.scope,
+        ambient,
+    )?;
+    cgs.schema_overlay_scope_index
+        .get(scope_value.as_str())
+        .map(|n| n.to_string())
+}
+
+fn create_entity_decoder_for_capability(
+    declared_entity: &str,
+    cgs: &CGS,
+    capability_name: Option<&str>,
+    collection_source: Option<PathExpr>,
+    request_identity: Option<&str>,
+    identity_ambient: Option<&IndexMap<String, String>>,
+) -> plasm_compile::EntityDecoder {
+    let entity_type = capability_name
+        .and_then(|cap| resolve_overlay_decode_entity(cgs, cap, identity_ambient))
+        .unwrap_or_else(|| declared_entity.to_string());
+    create_entity_decoder_inner(
+        &entity_type,
+        cgs,
+        collection_source,
+        request_identity,
+        identity_ambient,
+    )
+}
+
+fn create_entity_decoder_inner(
+    entity_type: &str,
+    cgs: &CGS,
+    collection_source: Option<PathExpr>,
+    request_identity: Option<&str>,
+    identity_ambient: Option<&IndexMap<String, String>>,
+) -> plasm_compile::EntityDecoder {
     use plasm_compile::{EntityDecoder, FieldDecoder, PathExpr, PathSegment};
 
     let ambient = identity_ambient.cloned().unwrap_or_default();
@@ -6403,5 +6525,93 @@ mod tests {
         });
         let out = prepare_http_query_response(body, &cml, &env);
         assert_eq!(out, serde_json::json!({ "intervals": [ {"i": 1} ] }));
+    }
+
+    #[test]
+    fn schema_overlay_decode_routes_to_typed_entity() {
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::schema_overlay::build_schema_overlay;
+
+        let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures/schemas/fibery_schema_overlay/bootstrap");
+        let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        ))
+        .expect("sample schema JSON");
+        let spec = base.schema_overlay.as_ref().unwrap();
+        let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
+        let cgs = base.with_overlay(overlay).expect("merge");
+
+        let mut ambient = IndexMap::new();
+        ambient.insert("database".to_string(), "Cricket/Player".to_string());
+        let entity = resolve_overlay_decode_entity(&cgs, "entity_query", Some(&ambient))
+            .expect("overlay entity for scope");
+        assert_eq!(entity, "Cricket__Player");
+        let ent = cgs.get_entity("Cricket__Player").expect("overlay entity");
+        assert!(ent.fields.contains_key(&plasm_core::EntityFieldName::from(
+            "Cricket_name"
+        )));
+    }
+
+    #[test]
+    fn schema_overlay_decode_composite_scope_key() {
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::schema_overlay::{build_decode_scope_key, build_schema_overlay};
+
+        let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures/schemas/fibery_schema_overlay/bootstrap");
+        let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        ))
+        .expect("sample schema JSON");
+        let spec = base.schema_overlay.as_ref().unwrap();
+        let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
+        let cgs = base.with_overlay(overlay).expect("merge");
+
+        let mut ambient = IndexMap::new();
+        ambient.insert("project".into(), "MYPROJ".into());
+        ambient.insert("issuetype".into(), "Story".into());
+        let composite_spec = plasm_core::schema_overlay::OverlayDecodeScopeSpec {
+            params: vec!["project".into(), "issuetype".into()],
+            key: plasm_core::schema_overlay::OverlayTemplateSpec {
+                template: "{{ ambient.project }}:{{ ambient.issuetype }}".into(),
+            },
+        };
+        let key = build_decode_scope_key(&composite_spec, &ambient).expect("composite key");
+        assert_eq!(key, "MYPROJ:Story");
+
+        let mut single = IndexMap::new();
+        single.insert("database".to_string(), "Cricket/Player".to_string());
+        let entity = resolve_overlay_decode_entity(&cgs, "entity_query", Some(&single))
+            .expect("overlay entity for scope");
+        assert_eq!(entity, "Cricket__Player");
+    }
+
+    #[test]
+    fn schema_overlay_augment_base_global_decode_without_ambient() {
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::schema_overlay::build_schema_overlay;
+
+        let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures/schemas/clickup_schema_overlay/bootstrap");
+        let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
+        ))
+        .expect("sample custom field JSON");
+        let spec = base.schema_overlay.as_ref().unwrap();
+        let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
+        let cgs = base.with_overlay(overlay).expect("merge");
+
+        let empty = IndexMap::new();
+        let entity = resolve_overlay_decode_entity(&cgs, "task_get", Some(&empty))
+            .expect("overlay entity for global augment_base");
+        assert_eq!(entity, "Task");
+        let task = cgs.get_entity("Task").expect("augmented Task");
+        assert!(task
+            .fields
+            .contains_key(&plasm_core::EntityFieldName::from("Priority_Level")));
     }
 }

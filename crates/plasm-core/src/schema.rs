@@ -1766,6 +1766,15 @@ pub struct CGS {
     /// Composed read models (`views:`), executed by the runtime without dedicated HTTP mappings.
     #[serde(default, skip_serializing_if = "views_map_is_empty")]
     pub views: IndexMap<String, ViewDefinition>,
+    /// Declarative runtime schema overlay spec (`schema_overlay:` in domain.yaml).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_overlay: Option<crate::schema_overlay::SchemaOverlaySpec>,
+    /// Digest of the merged runtime overlay (session-local; not part of base catalog hash).
+    #[serde(skip, default)]
+    pub schema_overlay_hash: Option<String>,
+    /// Scope key → overlay entity name (session-local; populated by [`CGS::with_overlay`]).
+    #[serde(skip, default)]
+    pub schema_overlay_scope_index: IndexMap<String, EntityName>,
     /// Lazily built index for [`Self::find_capabilities`] / [`Self::find_capability`].
     #[serde(skip, default = "new_capability_index_lock")]
     capability_index: OnceLock<Arc<CgsCapabilityIndex>>,
@@ -1805,6 +1814,9 @@ impl Clone for CGS {
             entry_id: self.entry_id.clone(),
             version: self.version,
             views: self.views.clone(),
+            schema_overlay: self.schema_overlay.clone(),
+            schema_overlay_hash: self.schema_overlay_hash.clone(),
+            schema_overlay_scope_index: self.schema_overlay_scope_index.clone(),
             capability_index: OnceLock::new(),
             capability_names_by_domain: OnceLock::new(),
             catalog_hash_hex: OnceLock::new(),
@@ -1823,6 +1835,9 @@ impl PartialEq for CGS {
             && self.entry_id == other.entry_id
             && self.version == other.version
             && self.views == other.views
+            && self.schema_overlay == other.schema_overlay
+            && self.schema_overlay_hash == other.schema_overlay_hash
+            && self.schema_overlay_scope_index == other.schema_overlay_scope_index
     }
 }
 
@@ -1955,6 +1970,9 @@ impl CGS {
             entry_id: None,
             version: 0,
             views: IndexMap::new(),
+            schema_overlay: None,
+            schema_overlay_hash: None,
+            schema_overlay_scope_index: IndexMap::new(),
             capability_index: new_capability_index_lock(),
             capability_names_by_domain: new_capability_names_by_domain_lock(),
             catalog_hash_hex: new_catalog_hash_lock(),
@@ -2650,6 +2668,7 @@ impl CGS {
             }
         }
 
+        self.validate_schema_overlay()?;
         self.validate_views()?;
 
         if !crate::loader::plasm_cgs_fast_load_enabled() {

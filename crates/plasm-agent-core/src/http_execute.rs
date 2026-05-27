@@ -417,7 +417,7 @@ pub struct CreateExecuteSessionBody {
     pub ranked_capabilities: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilitySeed {
     /// Registry catalog id (JSON key `api`; `entry_id` accepted as legacy alias for MCP seeds).
     #[serde(rename = "api", alias = "entry_id")]
@@ -980,6 +980,7 @@ fn patch_cgs_context_outbound_hosted(ctx: CgsContext, hosted_kv_key: &str) -> Cg
 ///
 /// Reuses an existing non-expired session when `entry_id` and the sorted entity set match a prior open
 /// (same `prompt_hash` / `session` pair), avoiding redundant `render_domain_prompt_bundle` work.
+#[allow(clippy::too_many_arguments)]
 async fn execute_session_create_response_inner(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
@@ -1021,7 +1022,21 @@ async fn execute_session_create_response_inner(
         }
     }
     let ctx_arc = Arc::new(ctx);
-    let catalog_cgs_hash = ctx_arc.cgs.catalog_cgs_hash_hex();
+    let http_backend = ctx_arc.cgs.http_backend.clone();
+    let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
+        st.engine.as_ref(),
+        st.mode,
+        st.effective_outbound_secret_provider(),
+        ctx_arc.cgs.clone(),
+        http_backend.as_str(),
+        body.entry_id.as_str(),
+    )
+    .await?;
+    let catalog_cgs_hash = effective_cgs.effective_catalog_cgs_hash_hex();
+    let ctx_arc = Arc::new(plasm_core::CgsContext::entry(
+        body.entry_id.clone(),
+        effective_cgs.clone(),
+    ));
 
     let plugin_generation = st
         .plugin_manager
@@ -1084,7 +1099,7 @@ async fn execute_session_create_response_inner(
     let mut contexts_by_entry = IndexMap::new();
     contexts_by_entry.insert(body.entry_id.clone(), ctx_arc.clone());
 
-    let cgs: Arc<CGS> = ctx_arc.cgs.clone();
+    let cgs: Arc<CGS> = effective_cgs;
     for e in &names {
         if cgs.get_entity(e).is_none() {
             crate::metrics::record_execute_session_outcome("error", "unknown_entity");
@@ -1184,6 +1199,7 @@ pub async fn execute_session_create_response(
 
 /// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same
 /// `prompt_hash` / `session`); monotonic `e#` / `m#` / `p#` via [`plasm_core::DomainExposureSession`].
+#[allow(clippy::too_many_arguments)]
 pub async fn federate_execute_session(
     st: &PlasmHostState,
     prompt_hash: &str,
@@ -1234,7 +1250,20 @@ pub async fn federate_execute_session(
             ctx = patch_cgs_context_outbound_hosted(ctx, kv);
         }
     }
-    let ctx_arc = Arc::new(ctx);
+    let http_backend = ctx.cgs.http_backend.clone();
+    let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
+        st.engine.as_ref(),
+        st.mode,
+        st.effective_outbound_secret_provider(),
+        ctx.cgs.clone(),
+        http_backend.as_str(),
+        new_entry_id.as_str(),
+    )
+    .await?;
+    let ctx_arc = Arc::new(plasm_core::CgsContext::entry(
+        new_entry_id.clone(),
+        effective_cgs,
+    ));
 
     for e in &names {
         if ctx_arc.get_entity(e).is_none() {

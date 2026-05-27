@@ -17,6 +17,10 @@ Personal API keys use a **raw** `Authorization` header (no `Bearer` prefix).
 export LINEAR_API_TOKEN='lin_api_…'
 ```
 
+## Schema overlay (deferred)
+
+Linear workspaces can define **issue custom fields**, but the **public GraphQL schema** exposed in [Linear's SDK](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql) does not yet include a stable **`customFields`** (or equivalent) query for field definitions and issue value shapes. When Linear publishes that surface, add **`custom_field_query`** + **`schema_overlay:`** with `projection.mode: augment_base` on **`Issue`** (same pattern as [ClickUp](../clickup/domain.yaml)). Until then, use static `Issue` fields and `issue_update` for standard properties only.
+
 ## REPL
 
 ```bash

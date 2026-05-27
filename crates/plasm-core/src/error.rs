@@ -490,6 +490,9 @@ pub enum SchemaError {
 
     #[error("View '{view}': node '{node}' computed bind template must be non-empty")]
     ViewNodeBindEmptyTemplate { view: String, node: String },
+
+    #[error("schema_overlay: {detail}")]
+    SchemaOverlayInvalid { detail: String },
 }
 
 #[derive(Error, Debug, Clone)]

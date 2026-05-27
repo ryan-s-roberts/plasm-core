@@ -1,0 +1,1094 @@
+# Fibery HTTP API — CML mappings. Semantic model is in domain.yaml.
+#
+# Base URL: https://YOUR_ACCOUNT.fibery.io (per-account host; set via --backend).
+# Auth: api_key_header — token sent verbatim as Authorization (Fibery expects "Token …" prefix in the token value).
+#
+# Command envelope: POST /api/commands with { "command": "…", "args": {…} } unless noted.
+# Views use JSON-RPC at /api/views/json-rpc. History and search use dedicated REST paths.
+
+# ── Discovery ────────────────────────────────────────────────────────────────
+
+schema_query:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/query
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - "with-description?"
+                - type: const
+                  value: false
+  response:
+    items: result
+    items_path:
+      - result
+      - fibery/types
+
+schema_detail_query:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/query
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - "with-description?"
+                - type: const
+                  value: false
+  response:
+    items: result
+    items_path:
+      - result
+      - fibery/types
+      - "0"
+      - fibery/fields
+
+user_get_me:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/query
+      - - args
+        - type: object
+          fields:
+            - - query
+              - type: object
+                fields:
+                  - - q/from
+                    - type: const
+                      value: fibery/user
+                  - - q/select
+                    - type: const
+                      value:
+                        - fibery/id
+                        - user/name
+                        - user/email
+                        - user/role
+                        - "user/admin?"
+                  - - q/where
+                    - type: const
+                      value:
+                        - "="
+                        - - fibery/id
+                        - $my-id
+                  - - q/limit
+                    - type: const
+                      value: 1
+  response:
+    items: result
+    single: true
+
+# ── Entities ─────────────────────────────────────────────────────────────────
+
+entity_query:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/query
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - query
+                - type: object
+                  fields:
+                    - - q/from
+                      - type: var
+                        name: database
+                    - - q/select
+                      - type: const
+                        value:
+                          - fibery/id
+                          - fibery/public-id
+                    - - q/limit
+                      - type: const
+                        value: 100
+  response:
+    items: result
+
+entity_get:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/query
+      - - args
+        - type: object
+          fields:
+            - - query
+              - type: object
+                fields:
+                  - - q/from
+                    - type: var
+                      name: database
+                  - - q/select
+                    - type: const
+                      value: ["fibery/id", "fibery/public-id"]
+                  - - q/where
+                    - type: const
+                      value: ["=", ["fibery/id"], "$entity-id"]
+                  - - q/limit
+                    - type: const
+                      value: 1
+            - - params
+              - type: object
+                fields:
+                  - - $entity-id
+                    - type: var
+                      name: id
+  response:
+    items: result
+    single: true
+
+entity_create:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/create
+      - - args
+        - type: object
+          fields:
+            - - type
+              - type: var
+                name: database
+            - - entity
+              - type: var
+                name: input
+  response: single
+
+entity_update:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/update
+      - - args
+        - type: object
+          fields:
+            - - type
+              - type: var
+                name: database
+            - - entity
+              - type: var
+                name: input
+  response: single
+
+entity_delete:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/delete
+      - - args
+        - type: object
+          fields:
+            - - type
+              - type: var
+                name: database
+            - - entity
+              - type: object
+                fields:
+                  - - fibery/id
+                    - type: var
+                      name: id
+  response: single
+
+entity_upsert:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity.batch/create-or-update
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - type
+                - type: var
+                  name: database
+  response:
+    items: result
+
+entity_search:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: search
+    - type: literal
+      value: v2
+  body:
+    type: object
+    fields:
+      - - query
+        - type: var
+          name: query
+      - - database
+        - type: if
+          condition:
+            type: exists
+            var: database
+          then_expr:
+            type: var
+            name: database
+          else_expr:
+            type: const
+            value: null
+      - - limit
+        - type: if
+          condition:
+            type: exists
+            var: limit
+          then_expr:
+            type: var
+            name: limit
+          else_expr:
+            type: const
+            value: 20
+  response:
+    items: items
+
+search_history:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: history
+    - type: literal
+      value: v2
+    - type: literal
+      value: search
+  body:
+    type: if
+    condition:
+      type: exists
+      var: input
+    then_expr:
+      type: var
+      name: input
+    else_expr:
+      type: object
+      fields:
+        - - where
+          - type: const
+            value: []
+        - - limit
+          - type: if
+            condition:
+              type: exists
+              var: limit
+            then_expr:
+              type: var
+              name: limit
+            else_expr:
+              type: const
+              value: 50
+  response:
+    items: items
+
+# ── Documents ────────────────────────────────────────────────────────────────
+
+document_get:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: documents
+    - type: var
+      name: secret
+  query:
+    type: object
+    fields:
+      - - format
+        - type: if
+          condition:
+            type: exists
+            var: format
+          then_expr:
+            type: var
+            name: format
+          else_expr:
+            type: const
+            value: md
+  response: single
+
+document_set:
+  method: PUT
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: documents
+    - type: var
+      name: secret
+  query:
+    type: object
+    fields:
+      - - format
+        - type: if
+          condition:
+            type: exists
+            var: format
+          then_expr:
+            type: var
+            name: format
+          else_expr:
+            type: const
+            value: md
+  body:
+    type: var
+    name: content
+  response: single
+
+document_append:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: documents
+    - type: literal
+      value: commands
+  query:
+    type: object
+    fields:
+      - - format
+        - type: if
+          condition:
+            type: exists
+            var: format
+          then_expr:
+            type: var
+            name: format
+          else_expr:
+            type: const
+            value: md
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: append-to-documents
+      - - args
+        - type: object
+          fields:
+            - - secret
+              - type: var
+                name: secret
+            - - content
+              - type: var
+                name: content
+  response: single
+
+# ── Collections & workflow ───────────────────────────────────────────────────
+
+collection_add:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/add-collection-items
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - type
+                - type: var
+                  name: database
+              - - entity
+                - type: object
+                  fields:
+                  - - fibery/id
+                    - type: var
+                      name: id
+  response: single
+
+collection_remove:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/remove-collection-items
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - type
+                - type: var
+                  name: database
+              - - entity
+                - type: object
+                  fields:
+                  - - fibery/id
+                    - type: var
+                      name: id
+  response: single
+
+workflow_state_set:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/update
+      - - args
+        - type: object
+          fields:
+            - - type
+              - type: var
+                name: database
+            - - entity
+              - type: var
+                name: input
+  response: single
+
+# ── Structure (schema batch) ─────────────────────────────────────────────────
+
+schema_batch:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+space_create:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+space_delete:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+database_create:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+database_rename:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+database_delete:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+field_create_primitive:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+field_create_relation:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+field_create_select:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+field_update_select:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+field_create_workflow:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+field_delete:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/batch
+      - - args
+        - type: var
+          name: input
+  response: single
+
+# ── Views (JSON-RPC) ─────────────────────────────────────────────────────────
+
+view_query:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: views
+    - type: literal
+      value: json-rpc
+  body:
+    type: if
+    condition:
+      type: exists
+      var: input
+    then_expr:
+      type: var
+      name: input
+    else_expr:
+      type: object
+      fields:
+        - - jsonrpc
+          - type: const
+            value: "2.0"
+        - - method
+          - type: const
+            value: query-views
+        - - params
+          - type: object
+            fields: []
+  response:
+    items: result
+    items_path:
+      - result
+      - views
+
+view_create:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: views
+    - type: literal
+      value: json-rpc
+  body:
+    type: var
+    name: input
+  response:
+    items: result
+    single: true
+
+view_update:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: views
+    - type: literal
+      value: json-rpc
+  body:
+    type: var
+    name: input
+  response: single
+
+view_delete:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: views
+    - type: literal
+      value: json-rpc
+  body:
+    type: if
+    condition:
+      type: exists
+      var: input
+    then_expr:
+      type: var
+      name: input
+    else_expr:
+      type: object
+      fields:
+        - - jsonrpc
+          - type: const
+            value: "2.0"
+        - - method
+          - type: const
+            value: delete-views
+        - - params
+          - type: object
+            fields:
+              - - ids
+                - type: array
+                  elements:
+                    - type: var
+                      name: id
+  response: single
+
+view_fetch_data:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: views
+    - type: literal
+      value: json-rpc
+  body:
+    type: if
+    condition:
+      type: exists
+      var: input
+    then_expr:
+      type: var
+      name: input
+    else_expr:
+      type: object
+      fields:
+        - - jsonrpc
+          - type: const
+            value: "2.0"
+        - - method
+          - type: const
+            value: fetch-view-data
+        - - params
+          - type: object
+            fields:
+              - - publicId
+                - type: var
+                  name: public_id
+  response: single
+
+# ── Webhooks ─────────────────────────────────────────────────────────────────
+
+webhook_query:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: webhooks
+    - type: literal
+      value: v2
+  response:
+    items: items
+
+webhook_create:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: webhooks
+    - type: literal
+      value: v2
+  body:
+    type: object
+    fields:
+      - - url
+        - type: var
+          name: url
+      - - type
+        - type: var
+          name: database
+  response: single
+
+webhook_delete:
+  method: DELETE
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: webhooks
+    - type: literal
+      value: v2
+    - type: var
+      name: id
+  response: single
+
+# ── Files ────────────────────────────────────────────────────────────────────
+
+file_upload_from_url:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: files
+    - type: literal
+      value: from-url
+  body:
+    type: if
+    condition:
+      type: exists
+      var: input
+    then_expr:
+      type: var
+      name: input
+    else_expr:
+      type: object
+      fields:
+        - - url
+          - type: var
+            name: url
+        - - name
+          - type: if
+            condition:
+              type: exists
+              var: name
+            then_expr:
+              type: var
+              name: name
+            else_expr:
+              type: const
+              value: null
+  response: single
+
+file_download:
+  method: GET
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: files
+    - type: var
+      name: secret
+  response: single
+
+file_sign_urls:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: files
+    - type: literal
+      value: sign-urls
+  body:
+    type: var
+    name: input
+  response:
+    items: items
+
+file_attach:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/add-collection-items
+      - - args
+        - type: if
+          condition:
+            type: exists
+            var: input
+          then_expr:
+            type: var
+            name: input
+          else_expr:
+            type: object
+            fields:
+              - - type
+                - type: var
+                  name: database
+              - - entity
+                - type: object
+                  fields:
+                  - - fibery/id
+                    - type: var
+                      name: id
+  response: single
+
+# ── Composed views ───────────────────────────────────────────────────────────
+
+database_context_query:
+  transport: view
+  view: database_context
+
+database_context_get:
+  transport: view
+  view: database_context
+
+entity_with_document_get:
+  transport: view
+  view: entity_with_document

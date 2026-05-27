@@ -21,6 +21,7 @@ Plasm catalogs model **user tasks and domain entities**, not vendor wire surface
 - UUID-primary `id_field` when the vendor accepts human keys (`ENG-42`, Jira `PROJ-1`, team key `ENG`)
 - A fleet of scoped `query` capabilities that duplicate what `kind: search` should express
 - Prose playbooks ("call A then B") without a `views:` entry for multi-hop reads
+- Static explosion of workspace custom columns (`customfield_*`, per-database property fields) when runtime schema fetch exists — use **`schema_overlay:`** (see [Runtime schema overlay](#runtime-schema-overlay-schema_overlay))
 
 **Task → mechanism (issue trackers and similar):**
 
@@ -32,6 +33,7 @@ Plasm catalogs model **user tasks and domain entities**, not vendor wire surface
 | Manage lifecycle | `create` / `update` / `delete`; human-key `entity_ref` where wire allows |
 | Portfolio / status | **`ProjectContext` view**; milestone/initiative/update entities as needed |
 | Documents | `Document` entity + search + update |
+| User-defined columns on rows (DB properties, custom fields) | Bootstrap generic row + **`schema_overlay:`** at session open |
 
 **Human-key resolution:** Prefer **`id_field` = human-visible key** (Jira `Issue.id_field: key`, Linear `Issue.id_field: identifier`, `Team.id_field: key`) so agents write `Issue(ENG-42)`, `Team(ENG)`. Prefer **string/name filter params** on `kind: search` (`team_key`, `state_name`, `label_name`, `assignee_name`) over UUID **`entity_ref`** for filters — map names to vendor filter objects in **mappings.yaml**. Keep wire `id` fields on entities for decode; UUID discovery is not an agent step.
 
@@ -54,7 +56,7 @@ Reference: [Linear #1035](https://github.com/linear/linear/issues/1035) (task-sh
 
 | Layer | Artifact / crate | Role in list queries |
 |-------|------------------|----------------------|
-| **CGS** | `domain.yaml` | Declares entities and capability **kinds** (`query`, `get`, …). Optional **`views:`** declares **composed read-only** DAGs over existing capabilities (see [Composed read views](#composed-read-views)). Whether an entity has **both** query and get determines whether **hydration** is eligible — not how HTTP works. |
+| **CGS** | `domain.yaml` | Declares entities and capability **kinds** (`query`, `get`, …). Optional **`views:`** declares **composed read-only** DAGs over existing capabilities (see [Composed read views](#composed-read-views)). Optional **`schema_overlay:`** merges **workspace-specific typed entities or columns** at execute session open (see [Runtime schema overlay](#runtime-schema-overlay-schema_overlay)). Whether an entity has **both** query and get determines whether **hydration** is eligible — not how HTTP works. |
 | **CML** | `mappings.yaml` | Compiles each capability to HTTP/GraphQL — or **`transport: view`** for view-backed queries (no outer HTTP template). Optional composable **`pagination:`** (`PaginationConfig`: `params`, `location`, …) on **query** mappings drives multi-request pagination; list decode shape lives in **`response:`** / decoder config. |
 | **Runtime** | `plasm-runtime`, `plasm` | Evaluates CML, executes **views** as internal DAGs (HTTP only for inner nodes), loops pages when execution asks for more rows (postfix limits, session **`page(pg#)`** continuations, or internal caps), decodes rows, merges into `GraphCache`. **LLM / MCP execute** uses opaque **`page(pg#)`** handles instead of exposing raw API pagination field names. Then (by default) runs **concurrent GET** per row to upgrade **summary → complete** when CGS has a **get** for that entity. |
 
@@ -495,6 +497,79 @@ Use this table before adding `views:` to issue trackers (Jira, Linear) or mail (
 **Issue-tracker-specific:** When the vendor GET already returns a fat graph (Linear `issue_get` GraphQL), views add value for **cross-capability snapshots** (issue + transitions) and **computed URLs**, not for re-fetching the same GET payload.
 
 Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_triage_context`, `lang_item_link`, `lang_owner_filter_demo`).
+
+### Runtime schema overlay (`schema_overlay:`)
+
+**Use when** the vendor exposes **user-defined columns** (or admin-defined custom fields) that vary by workspace, database, project, list, or sheet — and row payloads are **generic maps** or nested field bags on a stable bootstrap entity. At **execute session open**, the host runs an existing **schema-fetch capability**, projects the JSON into extra entity fields (or per-scope typed entities), and merges the result into the session CGS. **No vendor-specific Rust** — the catalog declares projection rules in YAML.
+
+**Do not use when:**
+
+| Situation | Prefer instead |
+|-----------|----------------|
+| Fixed OpenAPI / GraphQL schema (GitHub, Linear core fields, Slack, …) | Static `entities:` + `path:` / `derive:` on fields |
+| Multi-hop read that does not depend on workspace schema | **`views:`** composed reads |
+| Per-contract ABI (EVM, plugin generation) | **Compile plugin** pipeline |
+| You can list every column in `domain.yaml` without a runtime schema call | Static fields only |
+| Hierarchical field inheritance needs multiple schema sources merged | **`source.steps`** multi-fetch pipeline (list → scoped fetch per row → merge) |
+
+**Decision guide (dynamic schema APIs):**
+
+| Pattern | `projection.mode` | Typical `source` | Field catalog | Example catalogs |
+|---------|-------------------|------------------|---------------|------------------|
+| One typed row entity per database / table | `per_scope_entity` | Workspace-wide schema list | `from.kind: array` | Fibery (`schema_query`) |
+| One typed row entity per container property map | `per_scope_entity` | Search/list databases with embedded schema | `from.kind: object_map` | Notion (`database_search` → `properties`) |
+| One typed row entity per project + issue type | `per_scope_entity` + `nested_items_path` | `project_query` → `issue_createmeta_get` per project | `from.kind: object_map` on nested `fields` | Jira |
+| Extra columns on one shared entity | `augment_base` | `team_query` → `custom_field_query` per team | `from.kind: array`; `extract: name_value_array` for row values | ClickUp |
+| Linear custom fields on issues | `augment_base` *(planned)* | — | — | **Deferred** — public GraphQL schema has no `customFields` query yet |
+| Spreadsheet header row as columns | `column_schema` | **Not implemented** — needs row entity model first | — | Google Sheets (future) |
+
+**Bootstrap shape (author first, overlay second):**
+
+1. **Generic row entity** — e.g. Fibery `Record`, Notion `Page`, Jira `Issue` — with `payload` / `properties` JSON or fixed core columns agents can use without overlay.
+2. **Schema-fetch capability** — already modeled in `capabilities:` + `mappings.yaml` (`query`, `get`, or `search`).
+3. **Scoped read** — query/get whose **scope param** matches `decode.scope.params` (e.g. `database`, `database_id`, composite `project` + `issuetype`).
+4. **`schema_overlay:` block** — declarative projection; see spec table below.
+
+**Spec (authoring surface):**
+
+| Key | Role |
+|-----|------|
+| `source.capability` | Single-step unscoped fetch (Fibery, Notion) |
+| `source.steps` | Multi-fetch pipeline: `collect` list step + `for_each` scoped steps with row-driven `bind` |
+| `source.steps[].merge` | Accumulate scoped responses (e.g. `append_array` on `fields` / `projects`) |
+| `projection.mode` | `per_scope_entity` (default) or `augment_base` |
+| `projection.items_path` | JSON path to generator row array |
+| `projection.nested_items_path` | Optional; expands each top-level row via nested array — templates get `{ row, parent }` |
+| `entity.from_template` | Bootstrap entity to clone |
+| `entity.name.template` | Minijinja → Plasm entity name (`per_scope_entity`) |
+| `entity.scope_key.template` | Scope index key for decode routing |
+| `entity.dynamic_fields.from` | `kind: array` or `kind: object_map` + `path` |
+| `entity.dynamic_fields.extract` | `top_level_key`, `path_segments`, or `name_value_array` → `wire_path` + optional `derive:` |
+| `decode.scope.params` + `decode.scope.key` | Ambient params → composite lookup key; **empty `params`** allowed when `key` is static (e.g. `global` for workspace-wide `augment_base`) |
+| `decode.capabilities` | Capabilities that route decode through overlay entities (list explicitly; empty defaults to Fibery-style `entity_query` / `entity_get` only) |
+
+**Minijinja filters (overlay projector):** `join_sanitize(separator, split_on)`, `sanitize_identifier`.
+
+**Authoring checklist:**
+
+- [ ] Bootstrap entity + schema capability exist and validate **without** overlay
+- [ ] Single-step: `source.capability` is `query`, `get`, or `search`; multi-step: list + scoped capabilities declared in `source.steps`
+- [ ] Row-driven `bind` templates use **`{{ row.<field> }}`** from prior API responses — never client-supplied overlay scope
+- [ ] `type_map` covers vendor field types; `default` value_ref for unknown types
+- [ ] `skip.values_in` excludes system columns already on bootstrap entity (ids, summary, …)
+- [ ] Matrix fixture under `fixtures/schemas/<name>_schema_overlay/` (JSON sample + bootstrap `domain.yaml`) — **not** `apis/*` in `plasm-core` tests
+- [ ] Bump `version:` when changing overlay spec (affects session pin hash / DOMAIN)
+
+**Reference catalogs:** `apis/fibery/`, `apis/notion/`, `apis/jira/`, `apis/clickup/` (see each README). **Runtime / MCP wiring** (session resolver, TTL cache): monorepo [docs/schema-overlay.md](../../../docs/schema-overlay.md) when working from the private `plasm` repo.
+
+**Tests:**
+
+```bash
+cargo test -p plasm-core schema_overlay
+cargo test -p plasm-runtime schema_overlay
+```
+
+Fixtures: `fixtures/schemas/fibery_schema_overlay/`, `notion_schema_overlay/`, `jira_schema_overlay/`, `augment_base_overlay/`, `clickup_schema_overlay/`.
 
 ### Capability `preflight` (write-time resolution)
 

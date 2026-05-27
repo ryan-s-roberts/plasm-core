@@ -108,6 +108,9 @@ pub struct DomainFile {
     /// Composed read-only capabilities (`transport: view` in mappings).
     #[serde(default)]
     pub views: IndexMap<String, ViewDefinition>,
+    /// Declarative runtime schema overlay (`schema_overlay:` in domain.yaml).
+    #[serde(default)]
+    pub schema_overlay: Option<crate::schema_overlay::SchemaOverlaySpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -758,6 +761,7 @@ fn assemble_cgs_core(
     cgs.auth = domain.auth;
     cgs.oauth = domain.oauth;
     cgs.version = domain.version;
+    cgs.schema_overlay = domain.schema_overlay;
     cgs.values = compile_domain_named_values(&domain.values)?;
 
     for (name, entity) in &domain.entities {
