@@ -80,14 +80,14 @@ opentelemetry_sdk = { version = "0.31", features = [
     "logs",
     "rt-tokio",
 ] }
-opentelemetry-otlp = { version = "0.31", features = [
+opentelemetry-otlp = { version = "0.31", default-features = false, features = [
     "trace",
     "metrics",
     "logs",
     "http-proto",
     "grpc-tonic",
     "gzip-http",
-    "reqwest-blocking-client",
+    "reqwest-rustls-webpki-roots",
 ] }
 opentelemetry-appender-tracing = { version = "0.31", features = [
     "tracing-opentelemetry",
@@ -107,7 +107,8 @@ beavuck-hermit = "1.4"
 
 # Auth / tokens / OAuth
 jsonwebtoken = "9"
-oauth2 = { version = "5", features = ["reqwest"] }
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
+# Upstream reqwest dep uses default TLS (native-tls/openssl on Linux); see monorepo RELEASING.md.
 auth-framework = { version = "0.5.0-rc1", default-features = false, features = [
     "axum-integration",
     "postgres-storage",
