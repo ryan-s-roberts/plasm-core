@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.39] - 2026-05-27
+
+### Added
+
+- **preflight:** typed capability `preflight` steps (full cutover from `invoke_preflight`) — `hydrate_invoke_target`, `hydrate_entity_ref_param`, `query_pick`, `label_ids_delta`; runtime press on create/invoke before CML merge.
+- **apis/linear:** task-oriented catalog (v9) aligned with [linear/linear#1035](https://github.com/linear/linear/issues/1035) — `issue_search` with team/state/assignee **names**, `IssueContext` / `MyWorkSnapshot` views, consolidated `issue_create` / `issue_update` with name→ID preflight, `user_search`, unified comment `issue` entity_ref.
+- **Catalog:** Gmail, Google Drive, Discord, and Grafana capabilities migrated to `preflight` hydrate steps.
+
+### Changed
+
+- **plasm-server:** typed Logs tab (level colors, compact timestamps); Clients tab MCP JSON display and copy.
+
 ## [0.1.38] - 2026-05-27
 
 ### Fixed
