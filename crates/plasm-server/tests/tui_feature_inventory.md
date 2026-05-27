@@ -7,7 +7,7 @@
 | RUN shell / quit `q` | `tui/mod.rs` | `run_footer_includes_quit_hint` | `plasm-server-pty-tests` `tui_pty_quit_smoke` |
 | Tab navigation | `tui/mod.rs` | `run_screen_wraps_left_and_right` | PTY smoke (implicit: footer visible) |
 | Status — listeners | `tui/mod.rs` | — | headless diag |
-| Clients — Bearer / curl | `tui/mod.rs` | `clients_curl_snippet_uses_bearer_header` | — |
+| Clients — MCP JSON display + copy | `tui/mod.rs` | `mcp_client_json_config_has_streamable_http_shape`, `clients_tab_footer_includes_copy_config` | — |
 | APIs — filter bar + row clip | `tui/mod.rs`, `tui/log_render.rs` | `apis_filter_bar_heading`, `api_filter_mode_enters_and_esc_clears`, `format_api_catalogue_row_respects_display_width` | — |
 | OAuth — wizard Esc cancel | `tui/mod.rs` | `oauth_wizard_esc_sets_cancel_notice`, `oauth_disable_confirm_cancels_cleanly` | — |
 | Keys — add / footer | `tui/mod.rs` | `keys_tab_footer_includes_add`, `add_key_modal_confirms_and_cancels` | — |

@@ -56,9 +56,86 @@ fn mcp_streamable_url(mcp_port: u16) -> String {
     format!("http://127.0.0.1:{mcp_port}/mcp")
 }
 
-fn mcp_curl_snippet(mcp_port: u16) -> String {
-    let url = mcp_streamable_url(mcp_port);
-    format!(r#"curl -sS -H "Authorization: Bearer $PLASM_MCP_KEY" {url}"#)
+const MCP_JSON_PLACEHOLDER_BEARER: &str = "Bearer <api_key>";
+
+fn bearer_authorization_value(raw_secret: Option<&str>) -> String {
+    match raw_secret {
+        None => MCP_JSON_PLACEHOLDER_BEARER.to_string(),
+        Some(raw) => {
+            let t = raw.trim();
+            if t.is_empty() {
+                MCP_JSON_PLACEHOLDER_BEARER.to_string()
+            } else if t.len() >= 7 && t[..7].eq_ignore_ascii_case("bearer ") {
+                t.to_string()
+            } else {
+                format!("Bearer {t}")
+            }
+        }
+    }
+}
+
+fn mcp_client_json_config(mcp_port: u16, raw_secret: Option<&str>) -> Result<String, String> {
+    let auth = bearer_authorization_value(raw_secret);
+    let value = serde_json::json!({
+        "mcpServers": {
+            "plasm": {
+                "type": "streamableHttp",
+                "url": mcp_streamable_url(mcp_port),
+                "headers": {
+                    "Authorization": auth
+                }
+            }
+        }
+    });
+    serde_json::to_string_pretty(&value)
+        .map(|s| format!("{s}\n"))
+        .map_err(|e| e.to_string())
+}
+
+fn build_clients_panel_lines(
+    listen_port: u16,
+    selected_key: Option<&McpConfigApiKeyRow>,
+) -> Vec<Line<'static>> {
+    let accent = if no_color() {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .add_modifier(Modifier::BOLD)
+            .fg(Color::Cyan)
+    };
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines = Vec::new();
+    if let Some(sel) = selected_key {
+        lines.push(Line::from(vec![
+            Span::styled("Key: ", bold),
+            Span::styled(api_key_row_label(sel), accent),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Press ", dim_style()),
+            Span::styled("c", dim_style().add_modifier(Modifier::BOLD)),
+            Span::styled(" to copy config with API key", dim_style()),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("No keys yet", dim_style()),
+            Span::raw(" — add one on the "),
+            Span::styled("Keys", bold),
+            Span::raw(" tab."),
+        ]));
+    }
+    lines.push(Line::from(""));
+    match mcp_client_json_config(listen_port, None) {
+        Ok(json) => {
+            for line in json.lines() {
+                lines.push(Line::from(Span::styled(line.to_string(), dim_style())));
+            }
+        }
+        Err(e) => lines.push(Line::from(vec![
+            Span::styled("! ", err_emphasis_style()),
+            Span::styled(format!("Could not build MCP JSON: {e}"), err_emphasis_style()),
+        ])),
+    }
+    lines
 }
 
 fn api_key_row_label(k: &McpConfigApiKeyRow) -> String {
@@ -312,7 +389,7 @@ fn split_main_notice_area(area: Rect, show_notice: bool) -> (Rect, Option<Rect>)
 }
 
 /// Long reference string appended to the footer when `?` was pressed.
-const FOOTER_HELP_OVERLAY: &str = "Clients: # % · APIs: / Space s a o · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G";
+const FOOTER_HELP_OVERLAY: &str = "Clients: c # ↑↓ · APIs: / Space s a o · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G";
 
 fn sync_log_cursor_scroll(logs: &mut LogState, visible: usize) {
     let total = logs.lines.len();
@@ -342,8 +419,9 @@ fn screen_footer_items(model: &RunState) -> Vec<chrome::FooterItem> {
             FooterItem::new("PgUp/Dn", "page"),
         ],
         RunScreen::Clients => vec![
+            FooterItem::new("c", "copy MCP config"),
             FooterItem::new("#", "copy URL"),
-            FooterItem::new("%", "copy curl"),
+            FooterItem::new("↑↓", "scroll"),
         ],
         RunScreen::Apis => vec![
             FooterItem::new("/", "filter"),
@@ -855,6 +933,11 @@ struct OverviewState {
     scroll: u16,
 }
 
+#[derive(Default)]
+struct ClientsState {
+    scroll: u16,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AdminTaskKind {
     Refreshing,
@@ -867,6 +950,7 @@ enum AdminTaskKind {
     RotatingKey,
     RevokingKey,
     RevealingKey,
+    CopyingMcpJson,
 }
 
 impl AdminTaskKind {
@@ -882,6 +966,7 @@ impl AdminTaskKind {
             Self::RotatingKey => "Rotating key…",
             Self::RevokingKey => "Revoking key…",
             Self::RevealingKey => "Revealing key…",
+            Self::CopyingMcpJson => "Copying MCP config…",
         }
     }
 }
@@ -964,6 +1049,7 @@ struct RunState {
     notice: Option<RunNotice>,
     show_help: bool,
     overview: OverviewState,
+    clients: ClientsState,
     policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
 }
 
@@ -977,6 +1063,7 @@ impl RunState {
             keys: KeysState::default(),
             logs: LogState::default(),
             overview: OverviewState::default(),
+            clients: ClientsState::default(),
             resources: ResourceState::default(),
             notice: None,
             show_help: false,
@@ -1104,6 +1191,7 @@ fn apply_refreshed_ui_data(state: &mut RunState, data: RefreshedUiData) {
 fn apply_admin_completion(
     state: &mut RunState,
     bridge: Option<&AdminBridge>,
+    listen_port: u16,
     comp: AdminCompletion,
 ) {
     match comp {
@@ -1359,9 +1447,9 @@ fn apply_admin_completion(
             }
         }
         AdminCompletion::RevealApiKey { corr, result } => {
-            if state.resources.admin.finish_inline(corr).is_some() {
-                match result {
-                    Ok(raw) => set_notice(
+            if let Some(kind) = state.resources.admin.finish_inline(corr) {
+                match (kind, result) {
+                    (AdminTaskKind::RevealingKey, Ok(raw)) => set_notice(
                         state,
                         copy_notice(
                             "API key secret copied",
@@ -1369,7 +1457,29 @@ fn apply_admin_completion(
                             copy_text_to_clipboard(&raw),
                         ),
                     ),
-                    Err(e) => set_notice(
+                    (AdminTaskKind::CopyingMcpJson, Ok(raw)) => match mcp_client_json_config(
+                        listen_port,
+                        Some(&raw),
+                    ) {
+                        Ok(json) => set_notice(
+                            state,
+                            copy_notice(
+                                "MCP client config copied",
+                                "MCP client config copy failed",
+                                copy_text_to_clipboard(&json),
+                            ),
+                        ),
+                        Err(e) => set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Error,
+                                "MCP client config build failed",
+                                "Could not build MCP JSON for clipboard.",
+                            )
+                            .with_details(vec![e]),
+                        ),
+                    },
+                    (_, Err(e)) => set_notice(
                         state,
                         RunNotice::new(
                             NoticeSeverity::Error,
@@ -1378,6 +1488,7 @@ fn apply_admin_completion(
                         )
                         .with_details(vec![e]),
                     ),
+                    _ => {}
                 }
             }
         }
@@ -1764,17 +1875,6 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                     "MCP URL copied",
                     "MCP URL copy failed",
                     copy_text_to_clipboard(&url),
-                ),
-            );
-        }
-        KeyCode::Char('%') if state.screen == RunScreen::Clients => {
-            let curl = mcp_curl_snippet(deps.listen_port);
-            set_notice(
-                state,
-                copy_notice(
-                    "curl snippet copied",
-                    "curl snippet copy failed",
-                    copy_text_to_clipboard(&curl),
                 ),
             );
         }
@@ -2265,10 +2365,20 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
             }
         }
         KeyCode::Char('c')
-            if state.screen == RunScreen::Keys
+            if (state.screen == RunScreen::Keys || state.screen == RunScreen::Clients)
                 && !key.modifiers.contains(KeyModifiers::CONTROL) =>
         {
-            if state.admin_busy() {
+            if state.screen == RunScreen::Clients && snap.keys.get(state.keys.selected).is_none() {
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "No key selected",
+                        "Add a transport API key on the Keys tab before copying MCP config.",
+                    )
+                    .with_sticky(false),
+                );
+            } else if state.admin_busy() {
                 set_notice(
                     state,
                     RunNotice::new(
@@ -2281,12 +2391,15 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
             } else if let (Some(bridge), Some(cid)) = (deps.admin_bridge, state.resources.config_id)
             {
                 if let Some(key_id) = snap.keys.get(state.keys.selected).map(|k| k.key_id) {
-                    submit_inline_admin_job(state, bridge, AdminTaskKind::RevealingKey, |c| {
-                        AdminJob::RevealApiKey {
-                            corr: c,
-                            config_id: cid,
-                            key_id,
-                        }
+                    let kind = if state.screen == RunScreen::Clients {
+                        AdminTaskKind::CopyingMcpJson
+                    } else {
+                        AdminTaskKind::RevealingKey
+                    };
+                    submit_inline_admin_job(state, bridge, kind, |c| AdminJob::RevealApiKey {
+                        corr: c,
+                        config_id: cid,
+                        key_id,
                     });
                 }
             }
@@ -2305,6 +2418,21 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
         }
         KeyCode::Char('g') if state.screen == RunScreen::Status => {
             state.overview.scroll = 0;
+        }
+        KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::Clients => {
+            state.clients.scroll = state.clients.scroll.saturating_add(1);
+        }
+        KeyCode::Up | KeyCode::Char('k') if state.screen == RunScreen::Clients => {
+            state.clients.scroll = state.clients.scroll.saturating_sub(1);
+        }
+        KeyCode::PageDown if state.screen == RunScreen::Clients => {
+            state.clients.scroll = state.clients.scroll.saturating_add(20);
+        }
+        KeyCode::PageUp if state.screen == RunScreen::Clients => {
+            state.clients.scroll = state.clients.scroll.saturating_sub(20);
+        }
+        KeyCode::Char('g') if state.screen == RunScreen::Clients => {
+            state.clients.scroll = 0;
         }
         KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::Logs => {
             let total = state.logs.lines.len();
@@ -2347,7 +2475,7 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
             false
         }
         UiMsg::Admin(comp) => {
-            apply_admin_completion(state, deps.admin_bridge, *comp);
+            apply_admin_completion(state, deps.admin_bridge, deps.listen_port, *comp);
             false
         }
         UiMsg::LogLine(line) => {
@@ -2385,6 +2513,9 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
 fn set_run_screen(state: &mut RunState, screen: RunScreen) {
     if state.screen == RunScreen::Status && screen != RunScreen::Status {
         state.overview.scroll = 0;
+    }
+    if state.screen == RunScreen::Clients && screen != RunScreen::Clients {
+        state.clients.scroll = 0;
     }
     state.screen = screen;
 }
@@ -2491,11 +2622,13 @@ fn build_overview_lines(
     lines
 }
 
-fn render_overview_panel(
+fn render_scrollable_panel(
     frame: &mut ratatui::Frame<'_>,
     area: ratatui::layout::Rect,
     lines: &[Line<'static>],
     scroll: u16,
+    title: &str,
+    title_hotkey: Option<char>,
 ) {
     let visible = area.height.saturating_sub(2) as usize;
     let scroll = clamp_overview_scroll(scroll, lines.len(), visible);
@@ -2503,9 +2636,18 @@ fn render_overview_panel(
         Paragraph::new(lines.to_vec())
             .scroll((scroll, 0))
             .wrap(Wrap { trim: false })
-            .block(chrome::panel_block("Overview", Some('o'))),
+            .block(chrome::panel_block(title, title_hotkey)),
         area,
     );
+}
+
+fn render_overview_panel(
+    frame: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    lines: &[Line<'static>],
+    scroll: u16,
+) {
+    render_scrollable_panel(frame, area, lines, scroll, "Overview", Some('o'));
 }
 
 fn render_running_frame(
@@ -2542,71 +2684,17 @@ fn render_running_frame(
         RunScreen::Clients => {
             let (content_area, notice_area) =
                 split_main_notice_area(layout.body, shared_notice.is_some());
-            let url = mcp_streamable_url(listen_port);
-            let curl = mcp_curl_snippet(listen_port);
-            let accent = if no_color() {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .fg(Color::Cyan)
-            };
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled("├─ ", dim_style()),
-                    Span::styled("URL", Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-                Line::from(vec![Span::styled(format!("│  {url}"), accent)]),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("├─ ", dim_style()),
-                    Span::styled(
-                        "Authorization",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from("│  Header: Authorization: Bearer <api_key>"),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("└─ ", dim_style()),
-                    Span::styled(
-                        "curl (generic)",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(vec![Span::styled(format!("   {curl}"), dim_style())]),
-            ];
-            if let Some(sel) = snap.keys.get(model.keys.selected) {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled("├─ ", dim_style()),
-                    Span::styled(
-                        "Selected key (label)",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled("  — use ", dim_style()),
-                    Span::styled("c", dim_style().add_modifier(Modifier::BOLD)),
-                    Span::styled(" on Keys tab for secret", dim_style()),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::styled("│  ", dim_style()),
-                    Span::styled(api_key_row_label(sel), accent),
-                ]));
-            } else {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled("│  ", dim_style()),
-                    Span::styled("No keys yet", dim_style()),
-                    Span::raw(" — add one on the "),
-                    Span::styled("Keys", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" tab."),
-                ]));
-            }
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .wrap(Wrap { trim: true })
-                    .block(chrome::panel_block("Endpoint", Some('e'))),
+            let lines = build_clients_panel_lines(
+                listen_port,
+                snap.keys.get(model.keys.selected),
+            );
+            render_scrollable_panel(
+                frame,
                 content_area,
+                &lines,
+                model.clients.scroll,
+                "MCP client",
+                Some('e'),
             );
             if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
                 render_notice_panel(frame, area, notice);
@@ -3715,6 +3803,7 @@ mod tests {
         apply_admin_completion(
             &mut state,
             None,
+            4100,
             AdminCompletion::OAuthDeviceBindStarted {
                 corr: 42,
                 prompt: crate::appliance_oauth_admin::DeviceBindPrompt {
@@ -3814,8 +3903,43 @@ mod tests {
     }
 
     #[test]
-    fn clients_curl_snippet_uses_bearer_header() {
-        assert!(mcp_curl_snippet(4100).contains("Authorization: Bearer"));
+    fn mcp_client_json_config_has_streamable_http_shape() {
+        let json = mcp_client_json_config(4100, None).expect("json");
+        let v: serde_json::Value = serde_json::from_str(json.trim()).expect("parse");
+        let plasm = v
+            .get("mcpServers")
+            .and_then(|m| m.get("plasm"))
+            .expect("plasm entry");
+        assert_eq!(plasm.get("type").and_then(|t| t.as_str()), Some("streamableHttp"));
+        assert_eq!(
+            plasm.get("url").and_then(|u| u.as_str()),
+            Some("http://127.0.0.1:4100/mcp")
+        );
+        assert_eq!(
+            plasm
+                .get("headers")
+                .and_then(|h| h.get("Authorization"))
+                .and_then(|a| a.as_str()),
+            Some(MCP_JSON_PLACEHOLDER_BEARER)
+        );
+    }
+
+    #[test]
+    fn mcp_client_json_display_never_includes_raw_secret() {
+        let secret = "plasm_test_secret_abc123xyz";
+        let display = mcp_client_json_config(4100, None).expect("display");
+        assert!(!display.contains(secret));
+        let with_secret = mcp_client_json_config(4100, Some(secret)).expect("copy");
+        assert!(with_secret.contains(secret));
+        assert!(with_secret.contains("Bearer plasm_test_secret"));
+    }
+
+    #[test]
+    fn clients_tab_footer_includes_copy_config() {
+        let mut state = RunState::new();
+        state.screen = RunScreen::Clients;
+        let items = screen_footer_items(&state);
+        assert!(items.iter().any(|i| i.key == "c" && i.desc.contains("MCP")));
     }
 
     #[test]
