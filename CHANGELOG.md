@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.42] - 2026-05-27
 
+### Fixed
+
+- **apis/fibery:** restore complete `domain.yaml` (entities, capabilities, views, `schema_overlay`) so `plasm-pack-plugins` can load the catalog in release Docker builds.
+
 ### Added
 
 - **Runtime schema overlay:** unified `schema_overlay:` spec in `domain.yaml` — host fetches workspace schema at execute session open and merges typed entities/columns into the session CGS (`effective_catalog_cgs_hash_hex`).
