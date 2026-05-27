@@ -91,13 +91,72 @@ async fn project_mcp_configs_table_exists(pool: &PgPool) -> Result<bool, sqlx::E
     .await
 }
 
+async fn sqlx_migrations_table_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"SELECT EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relname = '_sqlx_migrations'
+              AND c.relkind = 'r'
+        )"#,
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// Pre-squash migration versions (see `migrations/20260601000000_plasm_agent_schema.sql`).
+const LEGACY_SQUASHED_MIGRATION_VERSIONS: &[i64] = &[
+    20260216120000,
+    20260510140000,
+    20260511120000,
+    20260512130000,
+];
+
+async fn delete_migration_ledger_version(pool: &PgPool, version: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
+        .bind(version)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Remove ledger rows for migrations squashed out of the embedded set so `sqlx::migrate` can run.
+async fn prune_squashed_migration_ledger(pool: &PgPool) -> Result<(), sqlx::Error> {
+    if !sqlx_migrations_table_exists(pool).await? {
+        return Ok(());
+    }
+    for version in LEGACY_SQUASHED_MIGRATION_VERSIONS {
+        delete_migration_ledger_version(pool, *version).await?;
+    }
+    Ok(())
+}
+
+async fn run_mcp_config_migrations(pool: &PgPool) -> Result<(), McpConfigRepositoryError> {
+    prune_squashed_migration_ledger(pool).await?;
+    let migrator = sqlx::migrate!("./migrations");
+    match migrator.run(pool).await {
+        Ok(()) => Ok(()),
+        Err(sqlx::migrate::MigrateError::VersionMissing(version)) => {
+            delete_migration_ledger_version(pool, version).await?;
+            migrator.run(pool).await?;
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 impl McpConfigRepository {
     pub async fn connect_and_migrate(database_url: &str) -> Result<Self, McpConfigRepositoryError> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(database_url)
             .await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        if !project_mcp_configs_table_exists(&pool).await? {
+            prune_squashed_migration_ledger(&pool).await?;
+        }
+        run_mcp_config_migrations(&pool).await?;
         if !project_mcp_configs_table_exists(&pool).await? {
             return Err(McpConfigRepositoryError::PostMigrateSchemaMissing);
         }

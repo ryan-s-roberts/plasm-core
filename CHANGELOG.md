@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.38] - 2026-05-27
+
+### Fixed
+
+- **MCP sqlx migrate:** prune squashed `_sqlx_migrations` ledger rows (e.g. `20260216120000`) before embedded migrate so init containers succeed on upgraded clusters.
+
 ## [0.1.37] - 2026-05-27
 
 ### Fixed
