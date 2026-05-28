@@ -93,6 +93,7 @@ pub mod error_render;
 pub mod expr;
 pub mod expr_correction;
 pub mod expr_parser;
+pub mod expr_sugar;
 pub mod identifiers;
 pub mod identity;
 pub mod loader;
@@ -103,6 +104,7 @@ pub mod preflight;
 pub mod prompt_pipeline;
 pub mod prompt_render;
 pub mod query_resolve;
+pub mod resolved_identity;
 pub mod result_gloss;
 pub mod schema;
 pub mod schema_overlay;
@@ -111,6 +113,7 @@ pub mod step_semantics;
 pub mod string_unescape;
 pub mod summary_render;
 pub mod symbol_tuning;
+pub mod template_interpolate;
 pub mod temporal;
 pub mod tests;
 pub mod type_checker;
@@ -149,6 +152,7 @@ pub use entity_ref_value::{
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
 };
 pub use error::{NormalizationError, SchemaError, TypeError};
+pub use expr_sugar::rewrite_id_field_brace_query_to_get;
 pub use expr::{
     lift_invoke_payloads_in_expr, ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr,
     GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, PAGE_EXPR_PRIMARY_ENTITY,
@@ -180,6 +184,11 @@ pub use prompt_render::DomainPromptSettings;
 pub use prompt_render::DomainPromptSource;
 pub use prompt_render::PromptRenderMode;
 pub use prompt_render::TSV_DOMAIN_TABLE_HEADER;
+pub use resolved_identity::ResolvedIdentity;
+pub use template_interpolate::{
+    contains_dollar_interpolation, dollar_interpolation_roots, interpolate_string,
+    interpolate_string_map, interpolate_string_with_max, BindingScope, InterpolateError,
+};
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,

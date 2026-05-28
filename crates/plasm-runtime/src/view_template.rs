@@ -95,6 +95,31 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
         },
     );
     env.add_filter(
+        "split",
+        |s: String, sep: String| -> Result<Vec<String>, minijinja::Error> {
+            if sep.is_empty() {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "split: separator must be non-empty",
+                ));
+            }
+            Ok(s.split(&sep).map(str::to_string).collect())
+        },
+    );
+    env.add_filter(
+        "split_part",
+        |s: String, sep: String, index: i64| -> Result<String, minijinja::Error> {
+            if sep.is_empty() {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "split_part: separator must be non-empty",
+                ));
+            }
+            let idx = usize::try_from(index.max(0)).unwrap_or(0);
+            Ok(s.split(&sep).nth(idx).unwrap_or("").to_string())
+        },
+    );
+    env.add_filter(
         "wire_time",
         |v: minijinja::Value, format: String| -> Result<String, minijinja::Error> {
             let fmt = temporal_wire_format_from_name(&format)
@@ -171,13 +196,92 @@ pub fn render_view_param_bind_template(
     render_view_template_with_nodes(template, scope, &IndexMap::new(), node_fields)
 }
 
+/// Rewrite agent-friendly `.split('sep')[n]` into `| split_part('sep', n)` for view templates.
+pub fn desugar_view_computed_template(template: &str) -> String {
+    let mut s = template.to_string();
+    loop {
+        let Some(dot) = s.find(".split(") else {
+            break;
+        };
+        let expr_start = s[..dot]
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !c.is_ascii_alphanumeric() && *c != '_')
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        let expr = s[expr_start..dot].trim();
+        if expr.is_empty()
+            || !expr
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            break;
+        }
+        let Some((sep, index, span_len)) = parse_split_index_suffix(&s[dot..]) else {
+            break;
+        };
+        let replacement = format!(" | split_part('{sep}', {index})");
+        let end = dot + span_len;
+        s.replace_range(dot..end, &replacement);
+    }
+    s
+}
+
+fn parse_split_index_suffix(s: &str) -> Option<(String, usize, usize)> {
+    let prefix = ".split(";
+    if !s.starts_with(prefix) {
+        return None;
+    }
+    let after_paren = &s[prefix.len()..];
+    let (sep, after_sep) = parse_quoted_sep(after_paren)?;
+    let mut tail = after_sep.trim_start();
+    if let Some(rest) = tail.strip_prefix(')') {
+        tail = rest.trim_start();
+    }
+    if !tail.starts_with('[') {
+        return None;
+    }
+    let tail = &tail[1..];
+    let end = tail.find(']')?;
+    let index: usize = tail[..end].trim().parse().ok()?;
+    let span_len = s.len() - tail[end + 1..].len();
+    Some((sep, index, span_len))
+}
+
+fn parse_quoted_sep(s: &str) -> Option<(String, &str)> {
+    let s = s.trim_start();
+    let q = s.chars().next()?;
+    if q != '\'' && q != '"' {
+        return None;
+    }
+    let mut sep = String::new();
+    let mut escaped = false;
+    for (i, ch) in s.char_indices().skip(1) {
+        if escaped {
+            sep.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == q {
+            return Some((sep, &s[i + ch.len_utf8()..]));
+        }
+        sep.push(ch);
+    }
+    None
+}
+
 fn render_view_template_with_nodes(
     template: &str,
     scope: &IndexMap<String, Value>,
     fields_plain: &IndexMap<String, Value>,
     node_fields: &IndexMap<String, IndexMap<String, Value>>,
 ) -> Result<Value, RuntimeError> {
-    let trimmed = template.trim();
+    let trimmed = desugar_view_computed_template(template.trim());
+    let trimmed = trimmed.trim();
     if trimmed.is_empty() {
         return Err(RuntimeError::ConfigurationError {
             message: "computed view template must be non-empty".into(),
@@ -266,6 +370,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, Value::String("&foo=bar".into()));
+    }
+
+    #[test]
+    fn split_part_filter_extracts_team_key() {
+        let mut scope = IndexMap::new();
+        scope.insert(
+            "issue_identifier".to_string(),
+            Value::String("EVA-60".into()),
+        );
+        let out = render_view_computed_template(
+            "{{ issue_identifier | split_part('-', 0) }}",
+            &scope,
+            &IndexMap::new(),
+        )
+        .unwrap();
+        assert_eq!(out, Value::String("EVA".into()));
+    }
+
+    #[test]
+    fn desugared_split_in_set_statement() {
+        let mut scope = IndexMap::new();
+        scope.insert(
+            "issue_identifier".to_string(),
+            Value::String("EVA-60".into()),
+        );
+        let raw = "{%- set team_key = issue_identifier.split('-')[0] -%}\n{{ team_key }}";
+        let out = render_view_computed_template(raw, &scope, &IndexMap::new()).unwrap();
+        assert_eq!(out, Value::String("EVA".into()));
+    }
+
+    #[test]
+    fn desugar_split_index_to_filter_pipe() {
+        let raw = "issue_identifier.split('-')[0]";
+        assert_eq!(
+            desugar_view_computed_template(raw),
+            "issue_identifier | split_part('-', 0)"
+        );
     }
 
     #[test]

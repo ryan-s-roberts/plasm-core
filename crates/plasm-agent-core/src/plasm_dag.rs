@@ -259,6 +259,14 @@ fn collect_value_for_template_uses(acc: &mut Vec<serde_json::Value>, v: &Value) 
                 collect_value_for_template_uses(acc, x);
             }
         }
+        Value::String(s) => {
+            for root in plasm_core::dollar_interpolation_roots(s) {
+                acc.push(serde_json::json!({
+                    "node": root,
+                    "as": root,
+                }));
+            }
+        }
         _ => {}
     }
 }
@@ -508,6 +516,48 @@ fn lookup_dag_node<'a>(
     id: &str,
 ) -> Option<&'a DagNode> {
     state.get(id).or_else(|| staged.iter().find(|n| n.id == id))
+}
+
+/// Infer `[p#,…]` columns from `{{ r.field }}` / `{{ field }}` references in a row template body.
+fn infer_columns_from_minijinja_template(template: &str) -> Option<Vec<OutputName>> {
+    let mut cols = Vec::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            break;
+        };
+        let expr = after[..end].trim();
+        let field = expr
+            .strip_prefix("r.")
+            .or_else(|| expr.strip_prefix("rows[0]."))
+            .map(|f| f.split('|').next().unwrap_or(f).trim());
+        let Some(field) = field else {
+            rest = &after[end + 2..];
+            continue;
+        };
+        if field == "rows" || field.is_empty() {
+            rest = &after[end + 2..];
+            continue;
+        }
+        if field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        {
+            if let Ok(name) = OutputName::new(field.to_string()) {
+                if !cols
+                    .iter()
+                    .any(|c: &OutputName| c.as_str() == name.as_str())
+                {
+                    cols.push(name);
+                }
+            }
+        }
+        rest = &after[end + 2..];
+    }
+    if cols.is_empty() {
+        None
+    } else {
+        Some(cols)
+    }
 }
 
 fn infer_render_columns_for_node(
@@ -1015,6 +1065,8 @@ fn compile_render_chain(
     };
 
     let columns: Vec<OutputName> = if let Some(cols) = explicit_columns {
+        cols
+    } else if let Some(cols) = infer_columns_from_minijinja_template(&template) {
         cols
     } else {
         let tail_node =
@@ -1855,15 +1907,22 @@ fn parse_plan_value_expr(
         }
     }
     if state.contains(raw) {
+        let path = if row_binding.is_some() {
+            vec!["content".to_string()]
+        } else {
+            Vec::new()
+        };
         return Ok((
-            PlanValue::EntityRefKey {
-                api: String::new(),
-                entity: String::new(),
-                key: Box::new(PlanValue::Symbol {
-                    path: raw.to_string(),
-                }),
+            PlanValue::NodeSymbol {
+                node: raw.to_string(),
+                alias: raw.to_string(),
+                path,
             },
-            Vec::new(),
+            vec![serde_json::json!({
+                "node": raw,
+                "alias": raw,
+                "cardinality": "singleton"
+            })],
         ));
     }
     if raw.starts_with("<<") {
@@ -2206,7 +2265,7 @@ mod tests {
             None,
             &session,
             "t",
-            "LangLine",
+            "LangLine(\"L1\")",
         )
         .expect("compile");
         let qe = &plan["nodes"][0]["qualified_entity"];
@@ -2458,7 +2517,7 @@ mod tests {
     #[test]
     fn multiline_heredoc_binding_then_parallel_roots_compiles() {
         let session = test_session();
-        let source = "body = <<T\nhello\nT\nLangItem, LangLine";
+        let source = "body = <<T\nhello\nT\nLangItem, LangLine(\"L1\")";
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,

@@ -449,7 +449,9 @@ fn coerce_value_for_field_type(
 /// without failing the whole line.
 pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
     let mut p = Parser::new(input, cgs);
-    p.parse_expr()
+    let mut parsed = p.parse_expr()?;
+    parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    Ok(parsed)
 }
 
 /// Parse against multiple disjoint [`CGS`] graphs (federated execute). Caller supplies the session
@@ -484,7 +486,11 @@ pub fn parse_with_cgs_layers_program(
     let mut p = Parser::new_with_sym_map(input, ParserLayers::Many(layers), sym_map);
     p.program_nodes = program_nodes;
     p.for_each_row_context = for_each_row_context;
-    p.parse_expr()
+    let mut parsed = p.parse_expr()?;
+    if let Some(cgs) = layers.first() {
+        parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    }
+    Ok(parsed)
 }
 
 // ── Internal parser ────────────────────────────────────────────────────────

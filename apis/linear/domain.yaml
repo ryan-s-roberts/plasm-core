@@ -974,9 +974,8 @@ views:
       capability: comment_by_issue_query
       bind:
         issue:
-          kind: node_field
-          node: issue_row
-          field: id
+          kind: scope
+          param: issue_identifier
     output:
       issue_identifier:
         kind: scope

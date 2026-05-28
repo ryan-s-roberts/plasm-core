@@ -388,41 +388,59 @@ fn build_view_row_reference(
     }
 }
 
+fn bound_scalar_for_get_param(
+    param: &str,
+    cap: &plasm_core::CapabilitySchema,
+    bound_param_to_string: &BTreeMap<String, String>,
+) -> Option<String> {
+    if let Some(v) = bound_param_to_string.get(param) {
+        return Some(v.clone());
+    }
+    if let Some(fields) = cap.object_params() {
+        let required: Vec<_> = fields.iter().filter(|f| f.required).collect();
+        if required.len() == 1 && required[0].name == param && bound_param_to_string.len() == 1 {
+            return bound_param_to_string.values().next().cloned();
+        }
+        for f in fields {
+            if f.name == param {
+                if let Some(v) = bound_param_to_string.get(f.name.as_str()) {
+                    return Some(v.clone());
+                }
+            }
+        }
+    }
+    bound_param_to_string.get("id").cloned()
+}
+
 fn ref_from_get_bind_params(
     target_ent: &EntityDef,
+    cap: &plasm_core::CapabilitySchema,
     bound_param_to_string: &BTreeMap<String, String>,
 ) -> Result<Ref, RuntimeError> {
     if !target_ent.key_vars.is_empty() {
         let mut parts = BTreeMap::new();
         for kv in &target_ent.key_vars {
-            let s = bound_param_to_string.get(kv.as_str()).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
+            let s = bound_scalar_for_get_param(kv.as_str(), cap, bound_param_to_string)
+                .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!(
                         "view Get node: missing binding for parameter `{}` (needed for `{}` key_vars)",
                         kv, target_ent.name
                     ),
-                }
-            })?;
-            parts.insert(kv.to_string(), s.clone());
+                })?;
+            parts.insert(kv.to_string(), s);
         }
         Ok(Ref::compound(target_ent.name.clone(), parts))
     } else {
         let idf = target_ent.id_field.as_str();
-        let id = bound_param_to_string
-            .get(idf)
-            .or_else(|| bound_param_to_string.get("id"))
-            .or_else(|| {
-                (bound_param_to_string.len() == 1).then(|| {
-                    bound_param_to_string.values().next().expect("len == 1")
-                })
-            })
-            .ok_or_else(|| RuntimeError::ConfigurationError {
+        let id = bound_scalar_for_get_param(idf, cap, bound_param_to_string).ok_or_else(
+            || RuntimeError::ConfigurationError {
                 message: format!(
                     "view Get node: missing binding for id parameter `{}`",
                     idf
                 ),
-            })?;
-        Ok(Ref::new(target_ent.name.clone(), id.clone()))
+            },
+        )?;
+        Ok(Ref::new(target_ent.name.clone(), id))
     }
 }
 
@@ -441,7 +459,7 @@ fn ref_from_view_get_node(
             return Ok(Ref::new(target_ent.name.clone(), String::new()));
         }
     }
-    ref_from_get_bind_params(target_ent, bound_param_to_string)
+    ref_from_get_bind_params(target_ent, cap, bound_param_to_string)
 }
 
 fn cached_row_to_target_ref(

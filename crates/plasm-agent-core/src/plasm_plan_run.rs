@@ -2671,7 +2671,52 @@ fn instantiate_expr_template_value(
             .map(|(k, v)| Ok((k.clone(), instantiate_expr_template_value(v, env)?)))
             .collect::<Result<serde_json::Map<_, _>, String>>()
             .map(serde_json::Value::Object),
+        serde_json::Value::String(s) => {
+            if !plasm_core::contains_dollar_interpolation(s) {
+                return Ok(serde_json::Value::String(s.clone()));
+            }
+            let scope = plan_binding_scope_owned(env);
+            let out = plasm_core::interpolate_string_map(s, &scope)
+                .map_err(|e| format!("string interpolation: {e}"))?;
+            Ok(serde_json::Value::String(out))
+        }
         other => Ok(other.clone()),
+    }
+}
+
+fn plan_binding_scope_owned(env: &PlanEvalEnv<'_>) -> BTreeMap<String, plasm_core::Value> {
+    let mut scope = BTreeMap::new();
+    for (alias, input) in env.inputs.rows {
+        let row_value = json_row_to_plasm_value(&input.row);
+        scope.insert(alias.as_str().to_string(), row_value.clone());
+        scope.insert(input.node.as_str().to_string(), row_value);
+    }
+    if let EvalScope::Bound { row, binding } = &env.scope {
+        scope.insert(binding.as_str().to_string(), json_row_to_plasm_value(row));
+    }
+    scope
+}
+
+fn json_row_to_plasm_value(row: &serde_json::Value) -> plasm_core::Value {
+    match row {
+        serde_json::Value::Null => plasm_core::Value::Null,
+        serde_json::Value::Bool(b) => plasm_core::Value::Bool(*b),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(plasm_core::Value::Integer)
+            .or_else(|| n.as_f64().map(plasm_core::Value::Float))
+            .unwrap_or(plasm_core::Value::Null),
+        serde_json::Value::String(s) => plasm_core::Value::String(s.clone()),
+        serde_json::Value::Array(items) => plasm_core::Value::Array(
+            items.iter().map(json_row_to_plasm_value).collect(),
+        ),
+        serde_json::Value::Object(map) => {
+            let mut out = indexmap::IndexMap::new();
+            for (k, v) in map {
+                out.insert(k.clone(), json_row_to_plasm_value(v));
+            }
+            plasm_core::Value::Object(out)
+        }
     }
 }
 

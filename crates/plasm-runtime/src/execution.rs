@@ -2035,10 +2035,12 @@ impl ExecutionEngine {
             merge_plasm_execute_session_share_token_env(&mut env);
             merge_plasm_execute_session_proof_base_token_env(&mut env);
         }
+        let target_ent = cgs.get_entity(get.reference.entity_type.as_str());
         populate_template_path_env(
             &mut env,
             capability_template,
             &get.reference,
+            target_ent,
             get.path_vars.as_ref(),
             None,
         );
@@ -2405,10 +2407,12 @@ impl ExecutionEngine {
         let mut env = CmlEnv::new();
         merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
+        let target_ent = cgs.get_entity(delete.target.entity_type.as_str());
         populate_template_path_env(
             &mut env,
             &capability_template,
             &delete.target,
+            target_ent,
             delete.path_vars.as_ref(),
             None,
         );
@@ -2496,10 +2500,12 @@ impl ExecutionEngine {
         let mut env = CmlEnv::new();
         merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
+        let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
         populate_template_path_env(
             &mut env,
             &capability_template,
             &invoke.target,
+            target_ent,
             invoke.path_vars.as_ref(),
             input_for_env.as_ref(),
         );
@@ -3783,23 +3789,22 @@ fn ensure_http_operation(operation: &CompiledOperation, action: &str) -> Result<
 }
 
 /// Bind template variables for get/delete/invoke:
-/// explicit `path_vars` first, then keys from `input_overlay`, while preserving
-/// the legacy HTTP single-path-var => positional `id` behavior.
+/// explicit `path_vars` first, then keys from `input_overlay`, then identity slots
+/// ([`ResolvedIdentity`]), while preserving the legacy HTTP single-path-var => `id` alias.
 fn populate_template_path_env(
     env: &mut CmlEnv,
     template: &CapabilityTemplate,
     reference: &Ref,
+    ent: Option<&plasm_core::schema::EntityDef>,
     path_vars: Option<&indexmap::IndexMap<String, Value>>,
     input_overlay: Option<&Value>,
 ) {
+    let identity = plasm_core::ResolvedIdentity::from_ref(reference, ent);
     let primary_id = reference.primary_slot_str();
     let id_val = Value::String(primary_id.clone());
-    env.insert("id".to_string(), id_val.clone());
 
-    if let EntityKey::Compound(parts) = &reference.key {
-        for (k, v) in parts {
-            env.insert(k.clone(), Value::String(v.clone()));
-        }
+    for (k, v) in &identity.slots {
+        env.insert(k.clone(), Value::String(v.clone()));
     }
 
     let single_http_id_alias = match template {
@@ -3825,6 +3830,11 @@ fn populate_template_path_env(
                     Value::Object(map) => map.get(&var_name).cloned(),
                     _ => None,
                 })
+            })
+            .or_else(|| {
+                identity
+                    .get(&var_name)
+                    .map(|s| Value::String(s.to_string()))
             })
             .or_else(|| {
                 single_http_id_alias
@@ -6083,6 +6093,7 @@ mod tests {
             &mut env,
             &template,
             &Ref::new("Pet", "ignored-id"),
+            None,
             Some(&vars),
             None,
         );
@@ -6118,6 +6129,7 @@ mod tests {
             &Ref::new("Pet", "primary-id"),
             None,
             None,
+            None,
         );
 
         assert_eq!(
@@ -6127,6 +6139,62 @@ mod tests {
         assert!(
             !env.contains_key("owner"),
             "non-id EVM vars should be explicitly supplied, not silently bound to the primary id"
+        );
+    }
+
+    #[test]
+    fn populate_template_path_env_binds_graphql_id_field_var() {
+        use indexmap::IndexMap;
+        use plasm_core::identity::{EntityFieldName, EntityName};
+        use plasm_core::schema::EntityDef;
+
+        let template = parse_capability_template(&serde_json::json!({
+            "transport": "graphql",
+            "method": "POST",
+            "path": [{ "type": "literal", "value": "graphql" }],
+            "body": {
+                "type": "object",
+                "fields": [
+                    ["query", { "type": "const", "value": "query($key: String!) { teams { nodes { key } } }" }],
+                    ["variables", {
+                        "type": "object",
+                        "fields": [["key", { "type": "var", "name": "key" }]]
+                    }]
+                ]
+            }
+        }))
+        .unwrap();
+
+        let ent = EntityDef {
+            name: EntityName::from("Team"),
+            description: String::new(),
+            id_field: EntityFieldName::from("key"),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: None,
+        };
+
+        let mut env = CmlEnv::new();
+        populate_template_path_env(
+            &mut env,
+            &template,
+            &Ref::new("Team", "EVA"),
+            Some(&ent),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            env.get("key"),
+            Some(&Value::String("EVA".to_string()))
         );
     }
 
@@ -6157,7 +6225,7 @@ mod tests {
         );
 
         let mut env = CmlEnv::new();
-        populate_template_path_env(&mut env, &template, &reference, Some(&pv), None);
+        populate_template_path_env(&mut env, &template, &reference, None, Some(&pv), None);
 
         assert_eq!(
             env.get("owner"),

@@ -1006,6 +1006,59 @@ pub fn derive_intent_exposure_surface_batch(
         }
     }
 
+    // Mutation closure: 1-hop relation targets may expose create/update capabilities when intent
+    // matches (e.g. Document seed + "share link" intent surfaces ShareLink.create).
+    for raw_ent in entity_batch {
+        let Some(ename) = resolve_canonical_entity_name(cgs, raw_ent) else {
+            continue;
+        };
+        let Some(ent) = cgs.get_entity(ename.as_str()) else {
+            continue;
+        };
+        for rel in ent.relations.values() {
+            let target = rel.target_resource.as_str();
+            let Some(_target_ent) = cgs.get_entity(target) else {
+                continue;
+            };
+            let tkey = ExposureEntityKey {
+                entry_id: cid.clone(),
+                entity: EntityName::from(target),
+            };
+            surface.entities.insert(tkey.clone());
+            let Some(cap_names) = cgs.capability_names_by_domain().get(target) else {
+                continue;
+            };
+            for cap_name in cap_names {
+                let Some(cap) = cgs.capabilities.get(cap_name) else {
+                    continue;
+                };
+                if !matches!(
+                    cap.kind,
+                    CapabilityKind::Create
+                        | CapabilityKind::Update
+                        | CapabilityKind::Delete
+                        | CapabilityKind::Action
+                ) {
+                    continue;
+                }
+                let (score, _) = score_capability(&query_tokens, cgs, cap);
+                if score == 0 {
+                    continue;
+                }
+                #[cfg(feature = "ranked_capability_gate")]
+                if !ranked_gate_allows_mutation(ranked_capability_names, cap.name.as_str()) {
+                    continue;
+                }
+                let ckey = ExposureCapabilityKey {
+                    entry_id: cid.clone(),
+                    domain: EntityName::from(target),
+                    capability: cap.name.clone(),
+                };
+                surface.capabilities.insert(ckey);
+            }
+        }
+    }
+
     ExposureSurfaceDelta { required: surface }
 }
 

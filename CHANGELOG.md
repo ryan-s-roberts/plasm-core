@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.47] - 2026-05-28
+
+### Added
+
+- **Runtime:** `ResolvedIdentity` binds entity `id_field` names (e.g. `Team.key`) into CML env for GET, preflight, and views.
+- **Language:** `${binding.path}` interpolation in program strings at plan instantiate; `Issue{identifier=…}` rewrites to Get on search-only entities; view template `split` / `split_part` filters and `.split()[n]` desugar.
+- **Planner:** `=>` bare binding resolves to `NodeSymbol` (`.content` in derive context); Minijinja render column inference from `r.field` refs; relation-target mutation closure in intent DOMAIN exposure.
+
+### Fixed
+
+- **Linear catalog:** `issue_context` comments bind human `issue_identifier` for GraphQL filter.
+
 ## [0.1.46] - 2026-05-28
 
 ### Added
