@@ -695,6 +695,14 @@ pub fn capability_template_all_var_names(template: &serde_json::Value) -> Vec<St
     out
 }
 
+/// True when the mapping sends the whole create/invoke aggregate via `body: { type: var, name: input }`.
+pub fn mapping_body_is_whole_var_input(template: &serde_json::Value) -> bool {
+    template.get("body").is_some_and(|body| {
+        body.get("type").and_then(|t| t.as_str()) == Some("var")
+            && body.get("name").and_then(|n| n.as_str()) == Some("input")
+    })
+}
+
 /// `type: var` / `name` entries under GraphQL `body` → `variables` (operation variables only).
 ///
 /// Used with [`path_var_names_from_mapping_json`] for zero-arity `Issue(id).get()`: the HTTP `path` is
@@ -2689,6 +2697,7 @@ impl CGS {
 
         self.validate_schema_overlay()?;
         self.validate_views()?;
+        self.validate_body_var_input_param_collisions()?;
 
         if !crate::loader::plasm_cgs_fast_load_enabled() {
             crate::cgs_expression_validate::validate_cgs_expression_surface(self)?;
@@ -2705,6 +2714,46 @@ impl CGS {
         self.validate_oauth_extension()?;
 
         Ok(())
+    }
+
+    /// Reject `body: { type: var, name: input }` when a scalar capability parameter is also named
+    /// `input`. [`execute_create`](../../crates/plasm-runtime/src/execution.rs) splats each param key
+    /// into the CML env after binding the aggregate, overwriting `env["input"]` with the scalar.
+    fn validate_body_var_input_param_collisions(&self) -> Result<(), SchemaError> {
+        for (cap_name, cap) in &self.capabilities {
+            if !mapping_body_is_whole_var_input(&cap.mapping.template.0) {
+                continue;
+            }
+            let Some(fields) = cap.object_params() else {
+                continue;
+            };
+            for param in fields {
+                if param.name.as_str() != "input" {
+                    continue;
+                }
+                if !Self::input_param_whole_body_var_safe(self, param)? {
+                    return Err(SchemaError::BodyVarInputParamCollision {
+                        capability: cap_name.to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// When `body` is the whole aggregate via `var input`, param `input` may only be the entire
+    /// payload object (`FieldType::Json` or inline `InputType::Object`), not a scalar wire field.
+    fn input_param_whole_body_var_safe(
+        cgs: &CGS,
+        param: &InputFieldSchema,
+    ) -> Result<bool, SchemaError> {
+        match &param.wire {
+            InputFieldWire::Registry(_) => {
+                let nv = param.named_value(cgs)?;
+                Ok(matches!(nv.field_type, FieldType::Json))
+            }
+            InputFieldWire::Inline(ty) => Ok(matches!(ty.as_ref(), InputType::Object { .. })),
+        }
     }
 
     fn validate_oauth_extension(&self) -> Result<(), SchemaError> {
@@ -4560,6 +4609,17 @@ mod oauth_extension_tests {
         assert!(!req.satisfied_by(&g));
         g.insert("c".into());
         assert!(req.satisfied_by(&g));
+    }
+
+    #[test]
+    fn tavily_research_create_passes_body_var_input_validation() {
+        let p = Path::new("../../apis/tavily");
+        if !p.exists() {
+            return;
+        }
+        let cgs = crate::loader::load_schema_dir(p).expect("tavily");
+        cgs.validate()
+            .expect("tavily validate after research_create body fix");
     }
 }
 

@@ -1092,6 +1092,27 @@ pet_create:
 
 For input `{name: "Fido", status: "available"}`: env `{input: {...}}` → `POST /pet` with that JSON.
 
+**Do not combine `body: { type: var, name: input }` with a scalar parameter also named `input`.** On create/invoke, the runtime binds the full param object to `env["input"]`, then splats each param key into the env — including `input` again — so `env["input"]` becomes the scalar field value, not the aggregate object. CML `body: { type: var, name: input }` then serializes a JSON string/number instead of `{ "input": "…", … }`.
+
+Use an explicit object body with named fields instead (same pattern as optional-param null stripping elsewhere):
+
+```yaml
+research_create:
+  method: POST
+  path:
+    - type: literal
+      value: research
+  body:
+    type: object
+    fields:
+      - [input, { type: var, name: input }]
+      - [model, { type: if, condition: { type: exists, var: model },
+                  then_expr: { type: var, name: model },
+                  else_expr: { type: const, value: null } }]
+```
+
+Reserve `body: { type: var, name: input }` for capabilities whose **`input` parameter is the entire JSON body** (`values:` row with `type: json`, or inline `input_type: object` with nested payload) and whose param names do not collide with aggregate keys after splat. `schema validate` rejects scalar `input` params on this mapping shape ([`BodyVarInputParamCollision`](../../../crates/plasm-core/src/error.rs)).
+
 ### Request body formats (`body_format`)
 
 Default is `json`: `body:` is evaluated to a Plasm `Value` and POSTed as `application/json` (nulls stripped on the wire).

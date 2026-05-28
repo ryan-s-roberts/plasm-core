@@ -123,6 +123,11 @@ pub enum SchemaError {
     },
 
     #[error(
+        "Capability '{capability}': `body: {{ type: var, name: input }}` with a scalar parameter also named `input` — execute_create splats params over env['input']; use an explicit body object with named fields (see plasm-authoring reference — Request body)"
+    )]
+    BodyVarInputParamCollision { capability: String },
+
+    #[error(
         "Entity '{entity}' has multiple unscoped {kind} capabilities: {capabilities:?}. At most one unscoped (primary) capability per kind is allowed; add role: scope to the parent-FK parameter on sub-resource capabilities."
     )]
     DuplicateCapability {

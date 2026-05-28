@@ -144,16 +144,22 @@ site_crawl:
 
 research_create:
   # POST /research — async, returns {request_id, created_at, status, input, model}
-  # kind: create; the CLI builds input = {input: "...", model: "...", citation_format: "..."}
-  # and body: {type: var, name: input} sends that object as the JSON request body.
-  # execute_create strips null fields before sending.
+  # Explicit object body (not body: {type: var, name: input}): execute_create splats each
+  # param key into env, overwriting env["input"] with the scalar question string.
   method: POST
   path:
     - { type: literal, value: research }
   response: single
   body:
-    type: var
-    name: input
+    type: object
+    fields:
+      - [input,            { type: var, name: input }]
+      - [model,            { type: if, condition: { type: exists, var: model },
+                             then_expr: { type: var, name: model },
+                             else_expr: { type: const, value: null } }]
+      - [citation_format,  { type: if, condition: { type: exists, var: citation_format },
+                             then_expr: { type: var, name: citation_format },
+                             else_expr: { type: const, value: null } }]
 
 research_get:
   # GET /research/{request_id} — poll for task status and results

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.49] - 2026-05-28
+
+### Fixed
+
+- **Tavily catalog:** `research_create` uses an explicit JSON object body so POST `/research` sends `{"input":"…","model":"…"}` instead of a bare string (execute_create env splat overwrote `env["input"]` when mapping used `body: { type: var, name: input }` alongside a scalar `input` parameter).
+
+### Added
+
+- **Schema validate:** reject `BodyVarInputParamCollision` when a capability maps `body: { type: var, name: input }` but parameter `input` is scalar (not `type: json` / inline object).
+- **E2E:** `tavily_smoke` asserts compiled `research_create` body is a JSON object with an `input` key.
+- **Authoring:** reference.md documents the env-splat pitfall and the explicit-object fix.
+
 ## [0.1.48] - 2026-05-28
 
 ### Fixed
