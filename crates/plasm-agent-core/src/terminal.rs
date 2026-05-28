@@ -3,7 +3,7 @@
 //! See `docs/plasm-cgs-remote-terminal.md` in the parent repo.
 
 use anyhow::{anyhow, Context as _, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use reqwest::header::{
     HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE,
 };
@@ -23,22 +23,29 @@ use crate::resolved_plan_http::{
     ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
     RESOLVED_PLAN_CONTENT_TYPE,
 };
+use crate::terminal_cli::{validate_context_args, Cli, Cmd};
 use crate::terminal_session::ClientSymbolSession;
+use crate::terminal_mirror::{mirror_eprintln, MirrorOpKind, SessionMirror};
 use crate::terminal_state::{
-    format_qualified_capabilities, merge_and_write_latest_discovery, mint_client_session_id,
-    read_current_session_pointer, resolve_capability_seeds, resolve_current_session,
-    write_current_session_pointer, write_language_frontmatter_markdown, write_session_file,
+    display_mirror_path, format_qualified_capabilities, merge_and_write_latest_discovery,
+    mint_client_session_id, read_current_session_pointer, resolve_capability_seeds,
+    resolve_current_session, write_current_session_pointer, write_language_frontmatter_markdown,
     ExecutionBinding,
 };
 
 /// Default HTTP origin written by `plasm init` when `--server` is omitted.
 pub const DEFAULT_PLASM_HTTP_ORIGIN: &str = "http://127.0.0.1:3000";
 
+/// Hosted Plasm API origin (`plasm init --server …` / device OAuth login).
+pub const DEFAULT_PLATFORM_HTTP_ORIGIN: &str = "https://platform.plasm.tools";
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TerminalProfile {
     pub server: Option<String>,
     pub api_key: Option<String>,
-    pub bearer_token: Option<String>,
+    /// OAuth / GitHub sign-in JWT from [`run_device_login`] (stored as Bearer on HTTP).
+    #[serde(alias = "bearer_token")]
+    pub access_token: Option<String>,
 }
 
 /// Auth view for HTTP helpers shared with [`crate::terminal_session`].
@@ -56,58 +63,8 @@ impl<'a> TerminalProfileRef<'a> {
     }
 }
 
-#[derive(Parser)]
-#[command(
-    name = "plasm",
-    version = env!("CARGO_PKG_VERSION"),
-    about = "Remote Plasm terminal — search, context, run (HTTP). Run `plasm init` once, then `doctor` if needed.",
-)]
-struct Cli {
-    #[arg(long, global = true, default_value = "default")]
-    profile: String,
-    #[command(subcommand)]
-    cmd: Cmd,
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    Init {
-        #[arg(long)]
-        server: Option<String>,
-        #[arg(long)]
-        api_key: Option<String>,
-        #[arg(long)]
-        bearer_token: Option<String>,
-    },
-    Doctor,
-    Search {
-        #[arg(required = true)]
-        intent: String,
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    Context {
-        #[arg(long)]
-        new: bool,
-        #[arg(long)]
-        verbose: bool,
-        intent: Option<String>,
-        capabilities: Vec<String>,
-    },
-    Run {
-        #[arg(long, default_value = "run")]
-        mode: String,
-        #[arg(long, default_value = "text/plain")]
-        accept: String,
-        #[arg(long)]
-        file: Option<PathBuf>,
-    },
-}
-
 fn profile_path(name: &str) -> PathBuf {
-    crate::terminal_state::home_dir()
-        .join(".plasm/cgs/profiles")
-        .join(format!("{name}.json"))
+    crate::terminal_state::profile_path(name)
 }
 
 fn load_profile(name: &str) -> Result<TerminalProfile> {
@@ -154,17 +111,34 @@ fn resolve_api_key(profile: &TerminalProfile) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn resolve_bearer(profile: &TerminalProfile) -> Option<String> {
+fn resolve_access_token(profile: &TerminalProfile) -> Option<String> {
     profile
-        .bearer_token
+        .access_token
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
 
+/// True when the origin is the hosted platform (device OAuth), not a local appliance.
+pub fn is_managed_platform_origin(server: &str) -> bool {
+    let s = normalize_http_origin(server).to_ascii_lowercase();
+    if s == DEFAULT_PLATFORM_HTTP_ORIGIN {
+        return true;
+    }
+    if let Ok(extra) = std::env::var("PLASM_CLI_PLATFORM_ORIGINS") {
+        for o in extra.split(',') {
+            let o = o.trim();
+            if !o.is_empty() && normalize_http_origin(o).to_ascii_lowercase() == s {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn apply_auth_headers(headers: &mut HeaderMap, profile: &TerminalProfile) -> Result<()> {
     let api_key = resolve_api_key(profile);
-    let bearer = resolve_bearer(profile);
+    let bearer = resolve_access_token(profile);
     match (api_key, bearer) {
         (Some(k), _) => {
             headers.insert(
@@ -190,7 +164,6 @@ fn run_init(
     profile: &mut TerminalProfile,
     server: Option<String>,
     api_key: Option<String>,
-    bearer_token: Option<String>,
 ) -> Result<()> {
     if let Some(s) = server {
         let t = s.trim();
@@ -209,15 +182,13 @@ fn run_init(
     if let Some(k) = api_key {
         profile.api_key = Some(k);
     }
-    if let Some(b) = bearer_token {
-        profile.bearer_token = Some(b);
-    }
     let path = profile_path(profile_name);
     save_profile(profile_name, profile)?;
     let grammar_path = write_language_frontmatter_markdown(
         &plasm_core::prompt_render::render_plasm_mcp_language_frontmatter(),
     )?;
     println!("configured {}", path.display());
+    println!("  workspace: {}", crate::terminal_state::plasm_root_dir().display());
     println!("  grammar: {}", grammar_path.display());
     println!(
         "  server: {}",
@@ -232,14 +203,121 @@ fn run_init(
         }
     );
     println!(
-        "  bearer_token: {}",
-        if profile.bearer_token.as_ref().is_some_and(|s| !s.is_empty()) {
+        "  access_token: {}",
+        if profile.access_token.as_ref().is_some_and(|s| !s.is_empty()) {
             "set"
         } else {
             "unset"
         }
     );
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceStartResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    #[serde(default)]
+    verification_uri_complete: Option<String>,
+    expires_in: u64,
+    interval: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct DevicePollSuccess {
+    access_token: String,
+}
+
+async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> Result<()> {
+    if resolve_api_key(profile).is_some() {
+        return Err(anyhow!(
+            "device login is not used when an api_key is set in the profile"
+        ));
+    }
+    let server = require_configured_server(profile)?;
+    if !is_managed_platform_origin(&server) {
+        return Err(anyhow!(
+            "device login applies to managed platform hosts (e.g. {DEFAULT_PLATFORM_HTTP_ORIGIN}); \
+             for local servers use `plasm init --server http://127.0.0.1:3000 --api-key …`"
+        ));
+    }
+
+    let client = Client::builder()
+        .build()
+        .map_err(|e| anyhow!("http client: {e}"))?;
+    let start_body = serde_json::json!({ "client_id": "plasm-cli" });
+    let (st, _, body) = send_bytes(
+        &client,
+        &server,
+        profile,
+        Method::POST,
+        "/v1/incoming-auth/device/start",
+        Some("application/json"),
+        Some("application/json"),
+        Some(serde_json::to_vec(&start_body)?),
+    )
+    .await?;
+    if !st.is_success() {
+        let msg = String::from_utf8_lossy(&body);
+        return Err(anyhow!("device login start failed HTTP {st}: {msg}"));
+    }
+    let start: DeviceStartResponse = serde_json::from_slice(&body)
+        .context("parse device start response")?;
+
+    let open_url = start
+        .verification_uri_complete
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(start.verification_uri.as_str());
+    println!("Sign in to Plasm (device authorization)");
+    println!("  user code: {}", start.user_code);
+    println!("  open: {open_url}");
+    println!("  (expires in {}s)", start.expires_in);
+    let _ = std::process::Command::new("open").arg(open_url).status();
+
+    let poll_body = serde_json::json!({ "device_code": start.device_code });
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(start.expires_in.max(60));
+    let mut interval = start.interval.max(3);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(anyhow!("device login timed out"));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        let (pst, _, pbody) = send_bytes(
+            &client,
+            &server,
+            profile,
+            Method::POST,
+            "/v1/incoming-auth/device/poll",
+            Some("application/json"),
+            Some("application/json"),
+            Some(serde_json::to_vec(&poll_body)?),
+        )
+        .await?;
+        if pst.is_success() {
+            if let Ok(ok) = serde_json::from_slice::<DevicePollSuccess>(&pbody) {
+                profile.access_token = Some(ok.access_token);
+                save_profile(profile_name, profile)?;
+                println!("signed in — access_token saved to {}", profile_path(profile_name).display());
+                return Ok(());
+            }
+        }
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&pbody) {
+            if v.get("error").and_then(|e| e.as_str()) == Some("authorization_pending") {
+                if let Some(i) = v.get("interval").and_then(|x| x.as_u64()) {
+                    interval = i.max(1);
+                }
+                continue;
+            }
+            if v.get("error").and_then(|e| e.as_str()) == Some("expired_token") {
+                return Err(anyhow!("device login expired; run `plasm login` again"));
+            }
+        }
+        let msg = String::from_utf8_lossy(&pbody);
+        return Err(anyhow!("device login poll failed HTTP {pst}: {msg}"));
+    }
 }
 
 fn read_program_body(path: Option<&PathBuf>) -> Result<Vec<u8>> {
@@ -456,14 +534,15 @@ async fn ensure_execution_binding(
 }
 
 fn print_context_summary(capabilities: &[(String, String)], mirror: &Path, rows_added: usize) {
-    println!(
+    eprintln!(
         "Active context: {}",
         format_qualified_capabilities(capabilities)
     );
+    let shown = display_mirror_path(mirror);
     if rows_added > 0 {
-        eprintln!("mirror: {} (+{rows_added} rows)", mirror.display());
+        eprintln!("mirror: {shown} (+{rows_added} rows)");
     } else {
-        eprintln!("mirror: {}", mirror.display());
+        eprintln!("mirror: {shown}");
     }
 }
 
@@ -477,7 +556,7 @@ async fn run_context_command(
     capability_names: Vec<String>,
 ) -> Result<()> {
     let discovery = crate::terminal_state::read_latest_discovery(server)?;
-    let seeds = resolve_capability_seeds(&capability_names, discovery.as_ref())?;
+    let seeds = resolve_capability_seeds(&capability_names, discovery.as_ref(), new_session)?;
 
     let resolved_intent = intent_arg
         .as_ref()
@@ -497,7 +576,7 @@ async fn run_context_command(
         let id = mint_client_session_id();
         let intent = resolved_intent.clone().ok_or_else(|| {
             anyhow!(
-                "context: pass an intent string as the first argument, or run `plasm search` first"
+                "context: pass --intent (-i), or run `plasm search` first"
             )
         })?;
         ClientSymbolSession::new(id, intent)
@@ -507,7 +586,7 @@ async fn run_context_command(
         let id = mint_client_session_id();
         let intent = resolved_intent.clone().ok_or_else(|| {
             anyhow!(
-                "context: pass an intent string as the first argument, or run `plasm search` first"
+                "context: pass --intent (-i), or run `plasm search` first"
             )
         })?;
         ClientSymbolSession::new(id, intent)
@@ -527,23 +606,42 @@ async fn run_context_command(
     }
 
     let tsv_delta = sym.expose_seeds(&seeds)?;
-    let (mirror_path, rows_added) = if tsv_delta.is_empty() {
-        (
-            crate::terminal_state::domain_tsv_path(server, &sym.client_session_id),
-            0,
-        )
+    let rows_added = if tsv_delta.is_empty() {
+        0
     } else {
-        sym.append_rendered_tsv(server, &tsv_delta)?
+        sym.append_rendered_tsv(server, &tsv_delta)?.1
     };
 
-    if verbose && !tsv_delta.is_empty() {
-        println!("\n--- client exposure ---\n{tsv_delta}");
+    let mut session_mirror = SessionMirror::open(&sym.client_session_id)?;
+    let op_dir = session_mirror.alloc_dir(MirrorOpKind::Context)?;
+    let wave_path = session_mirror.write_file(&op_dir, "wave.tsv", tsv_delta.as_bytes())?;
+    let meta_json = serde_json::json!({
+        "intent": sym.intent,
+        "capabilities": sym.capabilities.iter().map(|(a, e)| format!("{a}:{e}")).collect::<Vec<_>>(),
+        "seeds": seeds.iter().map(|s| serde_json::json!({"api": s.entry_id, "entity": s.entity})).collect::<Vec<_>>(),
+    });
+    session_mirror.write_file(
+        &op_dir,
+        "meta.json",
+        serde_json::to_string_pretty(&meta_json)?.as_bytes(),
+    )?;
+    let rel = session_mirror.rel_dir_for_display(&op_dir);
+    session_mirror.update_latest_pointer(&rel)?;
+
+    if !tsv_delta.is_empty() {
+        if verbose {
+            eprintln!("\n--- client exposure (symbol wave) ---");
+        }
+        print!("{tsv_delta}");
+        if !tsv_delta.ends_with('\n') {
+            println!();
+        }
     }
 
     sym.persist(server)?;
     write_current_session_pointer(server, &sym.client_session_id)?;
 
-    print_context_summary(&sym.capabilities, &mirror_path, rows_added);
+    print_context_summary(&sym.capabilities, &wave_path, rows_added);
     Ok(())
 }
 
@@ -570,6 +668,7 @@ async fn mirror_run_snapshot(
     prompt_hash: &str,
     session: &str,
     run_id: &str,
+    op_dir: &Path,
 ) -> Result<PathBuf> {
     let path = format!("/execute/{prompt_hash}/{session}/artifacts/{run_id}");
     let (st, _, body) = send_bytes(
@@ -586,18 +685,8 @@ async fn mirror_run_snapshot(
     if !st.is_success() {
         return Err(anyhow!("artifact GET failed HTTP {st}"));
     }
-    let run_dir = crate::terminal_state::client_session_dir(server, client_session_id)
-        .join("runs")
-        .join(run_id);
-    std::fs::create_dir_all(&run_dir)?;
-    let snap = run_dir.join("snapshot.txt");
-    let text = serde_json::to_string_pretty(&serde_json::from_slice::<serde_json::Value>(&body)?)
-        .unwrap_or_else(|_| String::from_utf8_lossy(&body).into_owned());
-    std::fs::write(&snap, &text)?;
-    let latest =
-        crate::terminal_state::client_session_dir(server, client_session_id).join("latest_run.txt");
-    std::fs::write(latest, format!("runs/{run_id}/snapshot.txt\n"))?;
-    Ok(snap)
+    let mirror = SessionMirror::open(client_session_id)?;
+    mirror.write_artifact_pair(op_dir, &body)
 }
 
 async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()> {
@@ -613,7 +702,7 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
             println!("HTTP API origin: (not configured)");
             println!("  {e}");
             println!();
-            println!("Agent flow: `plasm init` → `search` → `context \"intent\" Cap …` → `run`");
+            println!("Agent flow: `plasm init` → `search` → `plasm context -i \"…\" api:Entity …` → `run`");
             return Ok(());
         }
     };
@@ -628,8 +717,8 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
         }
     );
     println!(
-        "  bearer_token: {}",
-        if resolve_bearer(profile).is_some() {
+        "  access_token: {}",
+        if resolve_access_token(profile).is_some() {
             "set"
         } else {
             "unset"
@@ -655,8 +744,11 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
         Err(e) => println!("  GET /v1/health -> error: {e}"),
     }
     println!();
-    println!("Agent flow: `search` → `context \"intent\" Cap …` → `run`");
-    println!("Local state: ~/.plasm/cgs/servers/<slug>/current_session.txt → sessions/<client_session_id>/");
+    println!("Agent flow: `search` → `context -i \"…\" api:Entity …` → `run`");
+    println!(
+        "Local state: {}/hosts/<slug>/current → s/<session_id>/ (domain.tsv, out/NNNN-*/)",
+        crate::terminal_state::plasm_root_dir().display()
+    );
     Ok(())
 }
 
@@ -670,14 +762,20 @@ pub async fn run_terminal() -> Result<()> {
         Cmd::Init {
             server,
             api_key,
-            bearer_token,
-        } => run_init(
-            cli.profile.as_str(),
-            &mut profile,
-            server,
-            api_key,
-            bearer_token,
-        ),
+            no_login,
+        } => {
+            run_init(cli.profile.as_str(), &mut profile, server, api_key)?;
+            let origin = require_configured_server(&profile).ok();
+            let should_login = !no_login
+                && resolve_api_key(&profile).is_none()
+                && resolve_access_token(&profile).is_none()
+                && origin.as_deref().is_some_and(is_managed_platform_origin);
+            if should_login {
+                run_device_login(cli.profile.as_str(), &mut profile).await?;
+            }
+            Ok(())
+        }
+        Cmd::Login => run_device_login(cli.profile.as_str(), &mut profile).await,
         Cmd::Doctor => run_doctor(cli.profile.as_str(), &profile).await,
         Cmd::Search { intent, limit } => {
             let utterance = intent.trim().to_string();
@@ -712,19 +810,28 @@ pub async fn run_terminal() -> Result<()> {
             let md = String::from_utf8_lossy(&body);
             let disc = crate::terminal_state::discovery_from_search_markdown(&md, &utterance)?;
             let path = merge_and_write_latest_discovery(&server, &disc)?;
-            eprintln!("discovery cache: {}", path.display());
+            eprintln!(
+                "discovery cache: {}",
+                display_mirror_path(&path)
+            );
+            if let Some(sid) = read_current_session_pointer(&server)? {
+                let mut session_mirror = SessionMirror::open(&sid)?;
+                let op_dir = session_mirror.alloc_dir(MirrorOpKind::Search)?;
+                session_mirror.write_file(&op_dir, "body.md", &body)?;
+                let disc_json = serde_json::to_string_pretty(&disc)?;
+                let json_path = session_mirror.write_file(&op_dir, "body.json", disc_json.as_bytes())?;
+                let rel = session_mirror.rel_dir_for_display(&op_dir);
+                session_mirror.update_latest_pointer(&rel)?;
+                mirror_eprintln(&json_path);
+            }
             std::io::stdout().write_all(&body)?;
             if !body.ends_with(b"\n") {
                 println!();
             }
             Ok(())
         }
-        Cmd::Context {
-            new,
-            verbose,
-            intent,
-            capabilities,
-        } => {
+        Cmd::Context { context } => {
+            validate_context_args(&context)?;
             let server = require_configured_server(&profile)?;
             let client = Client::builder()
                 .build()
@@ -733,18 +840,18 @@ pub async fn run_terminal() -> Result<()> {
                 &client,
                 &server,
                 &profile,
-                new,
-                verbose,
-                intent,
-                capabilities,
+                context.new,
+                context.verbose,
+                context.intent,
+                context.seeds,
             )
             .await
         }
-        Cmd::Run { mode, accept, file } => {
+        Cmd::Run { run } => {
             let server = require_configured_server(&profile)?;
             let meta = resolve_current_session(&server)?;
             let mut sym = ClientSymbolSession::load_from_disk(&server, &meta.client_session_id)?;
-            let body = read_program_body(file.as_ref())?;
+            let body = read_program_body(run.file.as_ref())?;
             if body.is_empty() {
                 return Err(anyhow!("run: empty program (stdin or --file)"));
             }
@@ -757,30 +864,22 @@ pub async fn run_terminal() -> Result<()> {
             parse_and_validate_plan_json(&plan_json).map_err(|e| anyhow!("plan: {e}"))?;
             let plan_bytes =
                 serde_json::to_vec_pretty(&plan_json).map_err(|e| anyhow!("plan json: {e}"))?;
-            let _ = write_session_file(
-                server.as_str(),
-                &sym.client_session_id,
-                "latest_program.plasm",
-                program.as_bytes(),
-            );
-            let _ = write_session_file(
-                server.as_str(),
-                &sym.client_session_id,
-                "latest_plan.json",
-                &plan_bytes,
-            );
+            let run_mode = run.mode.into();
+            let mode_kind = if run_mode == ResolvedPlanRunMode::Plan {
+                MirrorOpKind::Plan
+            } else {
+                MirrorOpKind::Run
+            };
+            let mut session_mirror = SessionMirror::open(&sym.client_session_id)?;
+            let op_dir = session_mirror.alloc_dir(mode_kind)?;
+            session_mirror.write_file(&op_dir, "program.plasm", program.as_bytes())?;
+            session_mirror.write_file(&op_dir, "plan.json", &plan_bytes)?;
             let client = Client::builder()
                 .build()
                 .map_err(|e| anyhow!("http client: {e}"))?;
             let binding = ensure_execution_binding(&client, &server, &profile, &mut sym).await?;
             let ph = binding.prompt_hash.trim();
             let sid = binding.session.trim();
-            let mode_trim = mode.trim().to_lowercase();
-            let run_mode = if mode_trim == "plan" {
-                ResolvedPlanRunMode::Plan
-            } else {
-                ResolvedPlanRunMode::Run
-            };
             let req = ResolvedPlanRequest {
                 protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
                 client_session_id: sym.client_session_id.clone(),
@@ -794,7 +893,7 @@ pub async fn run_terminal() -> Result<()> {
             apply_auth_headers(&mut headers, &profile)?;
             headers.insert(
                 ACCEPT,
-                HeaderValue::from_str(accept.trim()).map_err(|e| anyhow!("accept: {e}"))?,
+                HeaderValue::from_static(run.accept.as_accept_header()),
             );
             headers.insert(
                 CONTENT_TYPE,
@@ -815,14 +914,16 @@ pub async fn run_terminal() -> Result<()> {
             let st = res.status();
             let rh = res.headers().clone();
             let out = res.bytes().await?.to_vec();
-            let label = if mode_trim == "plan" {
-                "latest_plan.txt"
-            } else {
-                "latest_result.txt"
-            };
-            let mirror_resp =
-                write_session_file(server.as_str(), &sym.client_session_id, label, &out)?;
-            eprintln!("mirror: {}", mirror_resp.display());
+            let accept_hint = run.accept.as_accept_header();
+            let (_, body_txt) = session_mirror.write_pair(
+                &op_dir,
+                "body",
+                &out,
+                Some(accept_hint),
+            )?;
+            let rel = session_mirror.rel_dir_for_display(&op_dir);
+            session_mirror.update_latest_pointer(&rel)?;
+            mirror_eprintln(&body_txt);
             if !st.is_success() {
                 eprintln!("run: HTTP {}", st);
                 std::io::stdout().write_all(&out)?;
@@ -832,7 +933,7 @@ pub async fn run_terminal() -> Result<()> {
             if !out.ends_with(b"\n") {
                 println!();
             }
-            if mode_trim != "plan" {
+            if run_mode != ResolvedPlanRunMode::Plan {
                 if let Some(rid) = extract_run_id_from_response(&rh, &out) {
                     match mirror_run_snapshot(
                         &client,
@@ -842,10 +943,11 @@ pub async fn run_terminal() -> Result<()> {
                         ph,
                         sid,
                         &rid,
+                        &op_dir,
                     )
                     .await
                     {
-                        Ok(p) => eprintln!("mirror run snapshot: {}", p.display()),
+                        Ok(p) => mirror_eprintln(&p),
                         Err(e) => eprintln!("mirror run snapshot: {e}"),
                     }
                 }

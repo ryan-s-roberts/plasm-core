@@ -54,20 +54,34 @@ fn plasm_remote_help_ok() {
     assert!(ctx.status.success());
     let ctx_help = String::from_utf8_lossy(&ctx.stdout);
     assert!(
-        ctx_help.contains("--new") && ctx_help.contains("--verbose"),
-        "context should expose --new and --verbose: {ctx_help}"
+        ctx_help.contains("--new")
+            && ctx_help.contains("--verbose")
+            && ctx_help.contains("--intent")
+            && ctx_help.contains("CATALOG:ENTITY"),
+        "context should expose structured flags and seeds: {ctx_help}"
+    );
+
+    let run = std::process::Command::new(&exe)
+        .arg("run")
+        .arg("--help")
+        .output()
+        .expect("run --help");
+    assert!(run.status.success());
+    let run_help = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run_help.contains("plan") && run_help.contains("plain") && run_help.contains("toon"),
+        "run should list value_enum choices: {run_help}"
     );
 }
 
 #[test]
 fn plasm_init_writes_profile_and_search_uses_it() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path();
+    let workspace = tmp.path();
     let exe = plasm_exe();
-    std::fs::create_dir_all(home.join(".plasm/cgs/profiles")).expect("mkdir");
 
     let out = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["init", "--server", "http://127.0.0.1:9"])
         .output()
         .expect("spawn init");
@@ -78,18 +92,18 @@ fn plasm_init_writes_profile_and_search_uses_it() {
     );
 
     let prof_raw =
-        std::fs::read_to_string(home.join(".plasm/cgs/profiles/default.json")).expect("profile");
+        std::fs::read_to_string(workspace.join(".plasm/profiles/default.json")).expect("profile");
     let v: Value = serde_json::from_str(&prof_raw).expect("json");
     assert_eq!(v["server"], "http://127.0.0.1:9");
     let grammar_raw =
-        std::fs::read_to_string(home.join(".plasm/cgs/plasm_grammar.md")).expect("grammar");
+        std::fs::read_to_string(workspace.join(".plasm/grammar.md")).expect("grammar");
     assert!(grammar_raw.contains("# Plasm Grammar"));
     let expected_frontmatter = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
     let expected_block = format!("```text\n{}\n```", expected_frontmatter.trim());
     assert!(grammar_raw.contains(&expected_block));
 
     let search = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["search", "hello"])
         .output()
         .expect("spawn search");
@@ -107,40 +121,40 @@ fn plasm_init_writes_profile_and_search_uses_it() {
 #[test]
 fn plasm_init_default_server_without_flag() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path();
+    let workspace = tmp.path();
     let exe = plasm_exe();
     let out = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .arg("init")
         .output()
         .expect("spawn init");
     assert!(out.status.success());
     let v: Value = serde_json::from_str(
-        &std::fs::read_to_string(home.join(".plasm/cgs/profiles/default.json")).unwrap(),
+        &std::fs::read_to_string(workspace.join(".plasm/profiles/default.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(v["server"], "http://127.0.0.1:3000");
-    assert!(home.join(".plasm/cgs/plasm_grammar.md").exists());
+    assert!(workspace.join(".plasm/grammar.md").exists());
 }
 
 #[test]
 fn plasm_init_api_key_only_preserves_server() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path();
+    let workspace = tmp.path();
     let exe = plasm_exe();
     std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["init", "--server", "http://127.0.0.1:21112"])
         .output()
         .expect("init server");
     let out = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["init", "--api-key", "k_only"])
         .output()
         .expect("init key");
     assert!(out.status.success());
     let v: Value = serde_json::from_str(
-        &std::fs::read_to_string(home.join(".plasm/cgs/profiles/default.json")).unwrap(),
+        &std::fs::read_to_string(workspace.join(".plasm/profiles/default.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(v["server"], "http://127.0.0.1:21112");
@@ -152,7 +166,7 @@ fn plasm_doctor_runs_without_server() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let exe = plasm_exe();
     let out = std::process::Command::new(&exe)
-        .env("HOME", tmp.path())
+        .env("PLASM_WORKSPACE", tmp.path())
         .args(["doctor"])
         .output()
         .expect("spawn doctor");
@@ -167,16 +181,16 @@ fn plasm_doctor_runs_without_server() {
 #[test]
 fn plasm_doctor_uses_profile_server() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path();
+    let workspace = tmp.path();
     let exe = plasm_exe();
     std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["init", "--server", "http://127.0.0.1:21112"])
         .output()
         .expect("init");
 
     let out = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["doctor"])
         .output()
         .expect("spawn doctor");
@@ -195,12 +209,11 @@ fn plasm_doctor_uses_profile_server() {
 #[test]
 fn plasm_search_requires_init() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path();
+    let workspace = tmp.path();
     let exe = plasm_exe();
-    std::fs::create_dir_all(home.join(".plasm/cgs/profiles")).expect("mkdir");
 
     let out = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["search", "x"])
         .output()
         .expect("spawn search");
@@ -218,15 +231,15 @@ fn plasm_search_requires_init() {
 #[test]
 fn plasm_run_without_active_context_fails_actionably() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path();
+    let workspace = tmp.path();
     let exe = plasm_exe();
     std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["init"])
         .output()
         .expect("init");
     let out = std::process::Command::new(&exe)
-        .env("HOME", home)
+        .env("PLASM_WORKSPACE", workspace)
         .args(["run"])
         .stdin(std::process::Stdio::piped())
         .output()

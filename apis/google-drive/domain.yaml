@@ -1149,7 +1149,7 @@ oauth:
         - https://www.googleapis.com/auth/drive
         - https://www.googleapis.com/auth/drive.readonly
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: GOOGLE_DRIVE_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:google-drive
 values:

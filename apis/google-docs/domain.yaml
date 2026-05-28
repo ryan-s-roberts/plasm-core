@@ -137,7 +137,7 @@ oauth:
         - https://www.googleapis.com/auth/drive.file
         - https://www.googleapis.com/auth/drive
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: GOOGLE_DOCS_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:google-docs
 values:

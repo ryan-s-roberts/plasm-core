@@ -554,7 +554,7 @@ oauth:
         - any_of:
           - users.read
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: TWITTER_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:twitter
 values:

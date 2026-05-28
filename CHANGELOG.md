@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.45] - 2026-05-28
+
+### Added
+
+- **Remote `plasm` CLI:** compressed workspace layout (`.plasm/hosts/<8hex>/`, `.plasm/s/<8hex>/`) and append-only `out/NNNN-{search,context,plan,run}/` mirror archive with dual `body.json` + `body.txt` (and `artifact.*` on live runs).
+- **Remote `plasm` CLI:** device OAuth login (`plasm login`, platform `plasm init`), pwd-local profiles, typed `context`/`run` flags, `incoming_auth_device` HTTP helpers.
+
+### Changed
+
+- **Breaking (local state):** drop `.plasm/cgs/` tree — remove `.plasm` once after upgrade; no migration.
+
 ## [0.1.44] - 2026-05-28
 
 ### Fixed

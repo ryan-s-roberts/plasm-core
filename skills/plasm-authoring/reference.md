@@ -1136,6 +1136,8 @@ Declare authentication once at the top level of `domain.yaml` under the `auth:` 
 
 **Constraint:** `auth: { scheme: none }` cannot be combined with a top-level `oauth:` block.
 
+**Connect UX (`oauth_bearer` vs `bearer_token`):** Both inject `Authorization: Bearer …` at runtime. Use **`oauth_bearer`** with an `oauth:` block when operators connect **only via OAuth** (Google Workspace, LinkedIn, Reddit, X, etc.) — UIs show OAuth only. Use **`bearer_token`** with `oauth:` when operators may **also paste a PAT / API token** (GitHub, Cloudflare, Slack, Figma).
+
 ### Supported schemes
 
 | Scheme | YAML `scheme:` value | Injected as | Env var fields |
@@ -1143,7 +1145,8 @@ Declare authentication once at the top level of `domain.yaml` under the `auth:` 
 | No outbound credentials (public API) | `none` | *(nothing)* | — |
 | Static API key in a header | `api_key_header` | `<header>: <value>` | `header`, `env` |
 | Static API key in query param | `api_key_query` | `?<param>=<value>` | `param`, `env` |
-| Bearer token | `bearer_token` | `Authorization: Bearer <token>` | `env` |
+| Bearer token (operator PAT / API token) | `bearer_token` | `Authorization: Bearer <token>` | `env`, `hosted_kv` |
+| OAuth access-token injection | `oauth_bearer` | `Authorization: Bearer <token>` (from OAuth link / hosted KV envelope) | `env`, `hosted_kv` |
 | OAuth 2.0 client credentials | `oauth2_client_credentials` | `Authorization: Bearer <token>` (token cached + auto-refreshed) | `token_url`, `client_id_env`, `client_secret_env`, `scopes` (optional) |
 
 ### Examples

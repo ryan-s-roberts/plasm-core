@@ -944,6 +944,11 @@ fn patch_auth_scheme_for_tenant_hosted(
             hosted_kv: kv,
             optional_env: *optional_env,
         },
+        Some(AuthScheme::OauthBearer { optional_env, .. }) => AuthScheme::OauthBearer {
+            env: None,
+            hosted_kv: kv,
+            optional_env: *optional_env,
+        },
         None => AuthScheme::BearerToken {
             env: None,
             hosted_kv: kv,

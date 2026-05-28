@@ -379,7 +379,7 @@ oauth:
         any_of:
         - submit
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: REDDIT_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:reddit
 values:

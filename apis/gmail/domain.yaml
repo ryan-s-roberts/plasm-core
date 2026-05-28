@@ -1106,7 +1106,7 @@ oauth:
         - https://www.googleapis.com/auth/gmail.modify
         - https://mail.google.com/
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: GMAIL_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:gmail
 values:

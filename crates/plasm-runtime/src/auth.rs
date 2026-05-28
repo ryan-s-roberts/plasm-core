@@ -212,7 +212,16 @@ impl AuthResolver {
                 env,
                 hosted_kv,
                 optional_env,
+            }
+            | AuthScheme::OauthBearer {
+                env,
+                hosted_kv,
+                optional_env,
             } => {
+                let scheme_label = match &self.scheme {
+                    AuthScheme::OauthBearer { .. } => "oauth_bearer",
+                    _ => "bearer_token",
+                };
                 let e = env.as_deref().map(str::trim).filter(|s| !s.is_empty());
                 let h = hosted_kv
                     .as_deref()
@@ -220,7 +229,7 @@ impl AuthResolver {
                     .filter(|s| !s.is_empty());
                 let token = match (e, h) {
                     (_, Some(kv)) => {
-                        self.resolve_hosted_oauth_envelope_or_bare(kv, "bearer_token")
+                        self.resolve_hosted_oauth_envelope_or_bare(kv, scheme_label)
                             .await?
                     }
                     (Some(name), None) => self.require_secret_trimmed(name).await?,
@@ -232,8 +241,9 @@ impl AuthResolver {
                             });
                         }
                         return Err(RuntimeError::AuthenticationError {
-                            message: "Invalid auth schema: missing credential for bearer_token (expected env or hosted_kv)."
-                                .to_string(),
+                            message: format!(
+                                "Invalid auth schema: missing credential for {scheme_label} (expected env or hosted_kv)."
+                            ),
                         });
                     }
                 };

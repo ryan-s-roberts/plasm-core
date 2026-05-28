@@ -12,6 +12,7 @@ use crate::catalog_runtime::CatalogRuntime;
 use crate::discovery_embedding_repository::DiscoveryEmbeddingRepository;
 use crate::execute_session::ExecuteSessionStore;
 use crate::incoming_auth::IncomingAuthVerifier;
+use crate::incoming_auth_device::IncomingAuthDeviceStore;
 use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
@@ -60,6 +61,8 @@ pub struct PlasmOssHostState {
     pub plugin_manager: Option<Arc<PluginManager>>,
     /// When set, HTTP routes run [`crate::incoming_auth::incoming_auth_http_middleware`].
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
+    /// Pending CLI device-login sessions ([`crate::incoming_auth_device`]).
+    pub incoming_auth_device: Arc<IncomingAuthDeviceStore>,
     /// MCP transport session traces (demo/debug; in-memory).
     pub trace_hub: Arc<TraceHub>,
     /// Effective [`TraceHubConfig`] after startup (matches [`TraceHub::bounds`] on the hub).
@@ -145,6 +148,10 @@ impl PlasmHostState {
 
     pub fn tenant_binding(&self) -> Option<&Arc<TenantBindingStore>> {
         self.saas.as_ref()?.tenant_binding.as_ref()
+    }
+
+    pub fn incoming_auth_device(&self) -> &IncomingAuthDeviceStore {
+        &self.oss.incoming_auth_device
     }
 
     /// Hosted KV + catalog outbound resolver; absent when not wired.

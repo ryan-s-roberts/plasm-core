@@ -1102,6 +1102,7 @@ fn auth_scheme_name(scheme: &AuthScheme) -> &'static str {
         AuthScheme::ApiKeyHeader { .. } => "api_key_header",
         AuthScheme::ApiKeyQuery { .. } => "api_key_query",
         AuthScheme::BearerToken { .. } => "bearer_token",
+        AuthScheme::OauthBearer { .. } => "oauth_bearer",
         AuthScheme::Oauth2ClientCredentials { .. } => "oauth2_client_credentials",
     }
 }
@@ -1527,12 +1528,12 @@ mod tests {
             entity: vec![],
         };
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
-        assert_eq!(m.auth.scheme.as_deref(), Some("bearer_token"));
+        assert_eq!(m.auth.scheme.as_deref(), Some("oauth_bearer"));
         assert_eq!(
             m.auth.connect_profile.capability,
-            plasm_core::CatalogAuthCapability::ApiKeyAndOauth
+            plasm_core::CatalogAuthCapability::OauthOnly
         );
-        assert!(m.auth.connect_profile.has_api_key);
+        assert!(!m.auth.connect_profile.has_api_key);
         assert!(m.auth.connect_profile.has_oauth);
         assert!(m.auth.connect_profile.oauth.provider_present);
         let oauth = m.auth.oauth.as_ref().expect("gmail oauth block");

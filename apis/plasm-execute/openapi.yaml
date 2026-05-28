@@ -312,7 +312,7 @@ components:
         Capability Graph Schema. When `GET /v1/registry/{entry_id}?include_cgs=true` or discovery returns
         embedded contexts, JSON matches the Rust `CGS` type (`entities`, `capabilities`, optional `auth`, optional `oauth`).
         When present, `auth` is a tagged object whose `scheme` may be `none` (no outbound credentials), `api_key_header`,
-        `api_key_query`, `bearer_token`, or `oauth2_client_credentials`.
+        `api_key_query`, `bearer_token`, `oauth_bearer`, or `oauth2_client_credentials`.
       properties:
         entities:
           type: object

@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
+source: crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.norm(&combined_output(&search1))
 ---
 status: exit status: 0
@@ -16,4 +16,4 @@ overshow	RecordedContent	A hit from full-text or profile-scoped search over capt
 
 
 stderr:
-discovery cache: $HOME/.plasm/cgs/servers/SERVER_SLUG/latest_discovery.tsv
+discovery cache: .plasm/hosts/HOST_SLUG/discovery.tsv

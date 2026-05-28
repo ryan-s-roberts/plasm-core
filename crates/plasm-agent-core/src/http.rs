@@ -24,6 +24,7 @@ use crate::execute_session::ExecuteSessionStore;
 use crate::http_discovery::{discovery_routes_protected, get_auth_status, health_response};
 use crate::http_execute::execute_routes;
 use crate::http_incoming_context::incoming_context_routes;
+use crate::incoming_auth_device::incoming_auth_device_public_routes;
 use crate::http_oauth_link;
 use crate::http_outbound_secrets;
 use crate::http_traces::trace_routes;
@@ -115,6 +116,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             session_graph_persistence,
             plugin_manager,
             incoming_auth,
+            incoming_auth_device: Arc::new(crate::incoming_auth_device::IncomingAuthDeviceStore::new()),
             trace_hub,
             trace_hub_config,
             trace_ingest,
@@ -145,6 +147,7 @@ pub fn health_public_routes() -> Router {
     Router::new()
         .route("/v1/health", get(health_response))
         .route("/v1/auth/status", get(get_auth_status))
+        .merge(incoming_auth_device_public_routes())
 }
 
 /// The traced OSS tool/discovery/execute surface (and related `/v1/*` helpers) under incoming-auth

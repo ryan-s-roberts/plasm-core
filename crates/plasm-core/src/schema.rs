@@ -1323,7 +1323,7 @@ pub enum OutputType {
 /// - `env` — environment variable name (local dev / operator-managed)
 /// - `hosted_kv` — auth-framework `kv_store` key path (must start with `plasm:outbound:`)
 ///
-/// For `api_key_header`, `api_key_query`, and `bearer_token`, **both** may be set: the runtime
+/// For `api_key_header`, `api_key_query`, `bearer_token`, and `oauth_bearer`, **both** may be set: the runtime
 /// prefers a non-empty `hosted_kv` value (e.g. set from `plasm-server`) and falls back to `env`
 /// when the hosted slot is unset or empty.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1356,8 +1356,8 @@ pub enum AuthScheme {
         #[serde(default)]
         hosted_kv: Option<String>,
     },
-    /// Bearer token sent as `Authorization: Bearer <token>`.
-    /// Semantically distinct from `ApiKeyHeader` for agent tooling.
+    /// Bearer token sent as `Authorization: Bearer <token>` — operator-supplied PAT / API token
+    /// (env or catalog `hosted_kv`). With an `oauth:` block, connect UX offers API key + OAuth.
     BearerToken {
         /// Name of the environment variable holding the bearer token
         #[serde(default)]
@@ -1367,6 +1367,16 @@ pub enum AuthScheme {
         hosted_kv: Option<String>,
         /// When `true`, allows omitting both `env` and `hosted_kv` in the catalog — operators rely on a
         /// **session-bound** bearer (host/runtime `AuthResolver` session override, e.g. share-link bind).
+        #[serde(default)]
+        optional_env: bool,
+    },
+    /// Same HTTP injection as [`BearerToken`], but connect UX treats this as **OAuth-only** when
+    /// paired with an `oauth:` block (Google Workspace, LinkedIn, etc.).
+    OauthBearer {
+        #[serde(default)]
+        env: Option<String>,
+        #[serde(default)]
+        hosted_kv: Option<String>,
         #[serde(default)]
         optional_env: bool,
     },
@@ -1457,6 +1467,11 @@ impl AuthScheme {
                 env,
                 hosted_kv,
                 optional_env,
+            }
+            | AuthScheme::OauthBearer {
+                env,
+                hosted_kv,
+                optional_env,
             } => {
                 let e = env.as_deref().map(str::trim).filter(|s| !s.is_empty());
                 let h = hosted_kv
@@ -1466,7 +1481,11 @@ impl AuthScheme {
                 if *optional_env && e.is_none() && h.is_none() {
                     return Ok(());
                 }
-                at_least_one_env_or_hosted(env.as_deref(), hosted_kv.as_deref(), "bearer_token")
+                let ctx = match self {
+                    AuthScheme::OauthBearer { .. } => "oauth_bearer",
+                    _ => "bearer_token",
+                };
+                at_least_one_env_or_hosted(env.as_deref(), hosted_kv.as_deref(), ctx)
             }
             AuthScheme::Oauth2ClientCredentials {
                 token_url,

@@ -30,7 +30,7 @@ pub struct ExecutionBinding {
     pub session: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveryRow {
     pub row: usize,
     pub api: String,
@@ -38,71 +38,115 @@ pub struct DiscoveryRow {
     pub description: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LatestDiscovery {
     pub intent: Option<String>,
     pub rows: Vec<DiscoveryRow>,
 }
 
-pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
+/// Project-local CLI workspace root (default: current working directory).
+///
+/// Override with `PLASM_WORKSPACE` (tests, scripts).
+pub fn workspace_dir() -> PathBuf {
+    std::env::var_os("PLASM_WORKSPACE")
         .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-pub fn cgs_root_dir() -> PathBuf {
-    home_dir().join(".plasm/cgs")
+/// Project-local Plasm CLI state root (`.plasm/` under [`workspace_dir`]).
+pub fn plasm_root_dir() -> PathBuf {
+    workspace_dir().join(".plasm")
+}
+
+pub fn profile_path(profile_name: &str) -> PathBuf {
+    plasm_root_dir()
+        .join("profiles")
+        .join(format!("{profile_name}.json"))
 }
 
 pub fn language_frontmatter_markdown_path() -> PathBuf {
-    cgs_root_dir().join("plasm_grammar.md")
+    plasm_root_dir().join("grammar.md")
 }
 
-pub fn server_slug(server: &str) -> String {
+pub fn host_slug(server: &str) -> String {
     let h = Sha256::digest(server.as_bytes());
-    hex::encode(h)[..12].to_string()
+    hex::encode(h)[..8].to_string()
+}
+
+/// Truncated SHA256 of server origin (8 hex chars).
+pub fn server_slug(server: &str) -> String {
+    host_slug(server)
+}
+
+pub fn host_mirror_dir(server: &str) -> PathBuf {
+    plasm_root_dir().join("hosts").join(host_slug(server))
 }
 
 pub fn server_mirror_dir(server: &str) -> PathBuf {
-    home_dir()
-        .join(".plasm/cgs/servers")
-        .join(server_slug(server))
+    host_mirror_dir(server)
+}
+
+pub fn discovery_cache_path(server: &str) -> PathBuf {
+    host_mirror_dir(server).join("discovery.tsv")
 }
 
 pub fn latest_discovery_path(server: &str) -> PathBuf {
-    server_mirror_dir(server).join("latest_discovery.tsv")
+    discovery_cache_path(server)
 }
 
 pub fn current_session_pointer_path(server: &str) -> PathBuf {
-    server_mirror_dir(server).join("current_session.txt")
+    host_mirror_dir(server).join("current")
 }
 
-pub fn client_session_dir(server: &str, client_session_id: &str) -> PathBuf {
-    server_mirror_dir(server)
-        .join("sessions")
-        .join(client_session_id)
+pub fn session_dir(client_session_id: &str) -> PathBuf {
+    plasm_root_dir().join("s").join(client_session_id)
 }
 
-pub fn session_meta_path(server: &str, client_session_id: &str) -> PathBuf {
-    client_session_dir(server, client_session_id).join("session_meta.txt")
+pub fn client_session_dir(_server: &str, client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id)
 }
 
-pub fn symbol_state_path(server: &str, client_session_id: &str) -> PathBuf {
-    client_session_dir(server, client_session_id).join("symbol_state.json")
+pub fn session_meta_path(_server: &str, client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id).join("meta.txt")
 }
 
-pub fn domain_tsv_path(server: &str, client_session_id: &str) -> PathBuf {
-    client_session_dir(server, client_session_id).join("domain.tsv")
+pub fn symbol_state_path(_server: &str, client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id).join("symbols.json")
 }
 
-pub fn catalog_cache_path(server: &str, client_session_id: &str, api: &str) -> PathBuf {
-    client_session_dir(server, client_session_id)
+pub fn domain_tsv_path(_server: &str, client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id).join("domain.tsv")
+}
+
+pub fn session_out_dir(client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id).join("out")
+}
+
+pub fn latest_op_pointer_path(client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id).join("latest")
+}
+
+pub fn catalog_cache_path(_server: &str, client_session_id: &str, api: &str) -> PathBuf {
+    session_dir(client_session_id)
         .join("catalogs")
         .join(format!("{api}.json"))
 }
 
+/// Short relative path for stderr `mirror:` lines (workspace-relative when possible).
+pub fn display_mirror_path(path: &Path) -> String {
+    let ws = workspace_dir();
+    if let Ok(rel) = path.strip_prefix(&ws) {
+        rel.display().to_string()
+    } else if let Ok(rel) = path.strip_prefix(plasm_root_dir()) {
+        format!(".plasm/{}", rel.display())
+    } else {
+        path.display().to_string()
+    }
+}
+
 pub fn mint_client_session_id() -> String {
-    format!("cs_{}", Uuid::new_v4().simple())
+    hex::encode(Uuid::new_v4().as_bytes())[..8].to_string()
 }
 
 pub fn format_session_meta(meta: &SessionMeta) -> String {
@@ -192,10 +236,10 @@ pub fn read_session_meta(server: &str, client_session_id: &str) -> Result<Sessio
 }
 
 pub fn write_current_session_pointer(server: &str, client_session_id: &str) -> Result<PathBuf> {
-    let dir = server_mirror_dir(server);
+    let dir = host_mirror_dir(server);
     std::fs::create_dir_all(&dir)?;
     let path = current_session_pointer_path(server);
-    std::fs::write(&path, format!("client_session_id {client_session_id}\n"))?;
+    std::fs::write(&path, format!("{client_session_id}\n"))?;
     Ok(path)
 }
 
@@ -207,11 +251,16 @@ pub fn read_current_session_pointer(server: &str) -> Result<Option<String>> {
     let raw = std::fs::read_to_string(&path)?;
     for line in raw.lines() {
         let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
         if let Some(id) = line.strip_prefix("client_session_id ") {
             let id = id.trim();
             if !id.is_empty() {
                 return Ok(Some(id.to_string()));
             }
+        } else if !line.contains(char::is_whitespace) {
+            return Ok(Some(line.to_string()));
         }
     }
     Ok(None)
@@ -220,7 +269,7 @@ pub fn read_current_session_pointer(server: &str) -> Result<Option<String>> {
 pub fn resolve_current_session(server: &str) -> Result<SessionMeta> {
     let id = read_current_session_pointer(server)?.ok_or_else(|| {
         anyhow!(
-            "No active plasm context for {server}. Run `plasm context \"intent\" CapabilityName ...` first."
+            "No active plasm context for {server}. Run `plasm context -i \"…\" api:Entity …` first."
         )
     })?;
     read_session_meta(server, &id)
@@ -390,14 +439,72 @@ pub fn merge_capabilities(
     out
 }
 
-/// Resolve positional capability names using `latest_discovery.tsv`.
+fn push_qualified_seed(seeds: &mut Vec<CapabilitySeed>, name: &str) -> Result<()> {
+    let (api, entity) = name.split_once(':').ok_or_else(|| {
+        anyhow!("context: expected catalog:entity seed, got `{name}`")
+    })?;
+    let api = api.trim();
+    let entity = entity.trim();
+    if api.is_empty() || entity.is_empty() {
+        bail!("context: invalid catalog:entity seed `{name}`");
+    }
+    seeds.push(CapabilitySeed {
+        entry_id: api.to_string(),
+        entity: entity.to_string(),
+    });
+    Ok(())
+}
+
+/// Resolve capability seeds from CLI names using `hosts/…/discovery.tsv` when needed.
 pub fn resolve_capability_seeds(
     names: &[String],
     discovery: Option<&LatestDiscovery>,
+    require_qualified: bool,
 ) -> Result<Vec<CapabilitySeed>> {
     if names.is_empty() {
-        bail!("context: pass at least one capability name (e.g. Pokemon Move Type)");
+        bail!("context: pass at least one catalog:entity seed (e.g. pokeapi:Pokemon)");
     }
+
+    let all_qualified = names.iter().all(|n| {
+        let n = n.trim();
+        !n.is_empty() && n.contains(':')
+    });
+
+    if require_qualified {
+        let mut seeds = Vec::new();
+        for name in names {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if !name.contains(':') {
+                bail!(
+                    "context --new requires catalog:entity seeds (e.g. pokeapi:Pokemon), not `{name}`"
+                );
+            }
+            push_qualified_seed(&mut seeds, name)?;
+        }
+        if seeds.is_empty() {
+            bail!("context: pass at least one catalog:entity seed");
+        }
+        return Ok(crate::http_execute::normalize_capability_seeds(seeds));
+    }
+
+    if all_qualified {
+        let mut seeds = Vec::new();
+        for name in names {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            push_qualified_seed(&mut seeds, name)?;
+        }
+        if seeds.is_empty() {
+            bail!("context: pass at least one catalog:entity seed");
+        }
+        return Ok(crate::http_execute::normalize_capability_seeds(seeds));
+    }
+
     let disc = discovery.ok_or_else(|| {
         anyhow!("context: no local discovery cache — run `plasm search \"…\"` first")
     })?;
@@ -408,9 +515,14 @@ pub fn resolve_capability_seeds(
             continue;
         }
         if let Some((api, entity)) = name.split_once(':') {
+            let api = api.trim();
+            let entity = entity.trim();
+            if api.is_empty() || entity.is_empty() {
+                bail!("context: invalid catalog:entity seed `{name}`");
+            }
             seeds.push(CapabilitySeed {
-                entry_id: api.trim().to_string(),
-                entity: entity.trim().to_string(),
+                entry_id: api.to_string(),
+                entity: entity.to_string(),
             });
             continue;
         }
@@ -440,7 +552,7 @@ pub fn resolve_capability_seeds(
         }
     }
     if seeds.is_empty() {
-        bail!("context: pass at least one capability name");
+        bail!("context: pass at least one catalog:entity seed");
     }
     Ok(crate::http_execute::normalize_capability_seeds(seeds))
 }
@@ -556,9 +668,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn workspace_dir_honors_plasm_workspace_env() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let want = dir.path().join("proj");
+        std::fs::create_dir_all(&want).expect("mkdir");
+        std::env::set_var("PLASM_WORKSPACE", &want);
+        assert_eq!(workspace_dir(), want);
+        std::env::remove_var("PLASM_WORKSPACE");
+    }
+
+    #[test]
+    fn display_mirror_path_under_workspace() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let want = dir.path().join("proj");
+        std::fs::create_dir_all(&want).expect("mkdir");
+        std::env::set_var("PLASM_WORKSPACE", &want);
+        let p = session_dir("abcd1234").join("out/0001-run/body.txt");
+        let shown = display_mirror_path(&p);
+        assert!(shown.contains(".plasm/s/abcd1234"));
+        std::env::remove_var("PLASM_WORKSPACE");
+    }
+
+    #[test]
     fn session_meta_roundtrip() {
         let meta = SessionMeta {
-            client_session_id: "cs_abc".into(),
+            client_session_id: "abcd1234".into(),
             intent: "inspect pokemon".into(),
             capabilities: vec![
                 ("pokeapi".into(), "Pokemon".into()),
@@ -572,7 +706,7 @@ mod tests {
         };
         let raw = format_session_meta(&meta);
         let parsed = parse_session_meta(&raw).expect("parse");
-        assert_eq!(parsed.client_session_id, "cs_abc");
+        assert_eq!(parsed.client_session_id, "abcd1234");
         assert_eq!(parsed.capabilities.len(), 2);
         assert_eq!(parsed.catalogs[0].digest, "sha256:dead");
     }
@@ -616,8 +750,36 @@ mod tests {
                 description: String::new(),
             }],
         };
-        let seeds = resolve_capability_seeds(&["Pokemon".into()], Some(&disc)).expect("ok");
+        let seeds =
+            resolve_capability_seeds(&["Pokemon".into()], Some(&disc), false).expect("ok");
         assert_eq!(seeds[0].entry_id, "pokeapi");
+    }
+
+    #[test]
+    fn resolve_qualified_without_discovery_cache() {
+        let seeds = resolve_capability_seeds(
+            &["pokeapi:Pokemon".into(), "pokeapi:Move".into()],
+            None,
+            false,
+        )
+        .expect("ok");
+        assert_eq!(seeds.len(), 2);
+        assert_eq!(seeds[0].entry_id, "pokeapi");
+    }
+
+    #[test]
+    fn resolve_require_qualified_rejects_short_name() {
+        let disc = LatestDiscovery {
+            intent: None,
+            rows: vec![DiscoveryRow {
+                row: 1,
+                api: "pokeapi".into(),
+                entity: "Pokemon".into(),
+                description: String::new(),
+            }],
+        };
+        let err = resolve_capability_seeds(&["Pokemon".into()], Some(&disc), true).unwrap_err();
+        assert!(err.to_string().contains("catalog:entity"));
     }
 
     #[test]

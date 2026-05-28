@@ -60,13 +60,14 @@ fn normalized_auth_kind_tags(
                 out.push("api_key".to_string());
             }
         }
-        // Env-/KV-held bearer secrets (PATs, Cloudflare API tokens, etc.) are API-key style for
-        // outbound connect UX — distinct from OAuth client-credentials machine flow below.
+        // Operator-paste bearer secrets (PATs, API tokens). Distinct from `oauth_bearer`.
         Some(AuthScheme::BearerToken { .. }) => {
             if !out.iter().any(|k| k == "api_key") {
                 out.push("api_key".to_string());
             }
         }
+        // OAuth access-token injection slot — never API-key connect UX.
+        Some(AuthScheme::OauthBearer { .. }) => {}
         Some(AuthScheme::Oauth2ClientCredentials { .. }) => {
             if !out.iter().any(|k| k == "oauth2") {
                 out.push("oauth2".to_string());
@@ -182,6 +183,25 @@ mod tests {
         assert_eq!(p.capability, CatalogAuthCapability::ApiKeyOnly);
         assert!(p.has_api_key);
         assert!(!p.has_oauth);
+    }
+
+    #[test]
+    fn oauth_bearer_plus_oauth_extension_is_oauth_only() {
+        let auth = AuthScheme::OauthBearer {
+            env: Some("GMAIL_ACCESS_TOKEN".into()),
+            hosted_kv: None,
+            optional_env: false,
+        };
+        let oauth = OauthExtension {
+            provider: "google".into(),
+            scopes: Default::default(),
+            default_scope_sets: Default::default(),
+            requirements: Default::default(),
+        };
+        let p = catalog_connect_profile(Some(&auth), Some(&oauth));
+        assert_eq!(p.capability, CatalogAuthCapability::OauthOnly);
+        assert!(!p.has_api_key);
+        assert!(p.has_oauth);
     }
 
     #[test]

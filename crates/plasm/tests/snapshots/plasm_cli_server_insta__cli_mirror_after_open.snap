@@ -1,17 +1,19 @@
 ---
-source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
+source: crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.mirror_layout_snapshot()
 ---
 tree:
-current_session.txt:
-client_session_id cs_SESSION
-active_context.txt exists: false
-session_dir: sessions/cs_SESSION/
-session_meta.txt: present
-client_session_id cs_SESSION
+current:
+dd12084b
+session_dir: s/dd12084b/
+meta.txt: present
+client_session_id dd12084b
 intent profile query
 catalog overshow DIGEST64
 capability overshow Profile
 capability overshow RecordedContent
-symbol_state.json: present
+symbols.json: present
+latest: present
+out/NNNN-context
+out/: 0001-context
 catalogs/overshow.json: present

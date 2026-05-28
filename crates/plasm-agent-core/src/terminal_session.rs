@@ -379,7 +379,7 @@ impl ClientSymbolSession {
         let raw =
             std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         let file: SymbolStateFile =
-            serde_json::from_str(&raw).map_err(|e| anyhow!("symbol_state.json: {e}"))?;
+            serde_json::from_str(&raw).map_err(|e| anyhow!("symbols.json: {e}"))?;
         let mut sess = ClientSymbolSession::new(file.client_session_id, file.intent);
         sess.capabilities = file.capabilities;
         sess.execution = file.execution;

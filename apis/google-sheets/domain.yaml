@@ -440,7 +440,7 @@ oauth:
         - https://www.googleapis.com/auth/spreadsheets
         - https://www.googleapis.com/auth/spreadsheets.readonly
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: GOOGLE_SHEETS_ACCESS_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:google-sheets
 values:

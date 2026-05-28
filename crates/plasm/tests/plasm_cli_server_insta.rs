@@ -21,9 +21,9 @@ use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 
-fn server_slug(server: &str) -> String {
+fn host_slug(server: &str) -> String {
     let h = Sha256::digest(server.as_bytes());
-    hex::encode(h)[..12].to_string()
+    hex::encode(h)[..8].to_string()
 }
 
 fn plasm_exe() -> PathBuf {
@@ -82,33 +82,47 @@ fn spawn_test_server() -> (String, ThreadJoinHandle<()>) {
 }
 
 /// Normalize volatile paths and ids for insta snapshots.
-fn normalize_snapshot(raw: &str, home: &Path, server_url: &str) -> String {
+fn normalize_snapshot(raw: &str, workspace: &Path, server_url: &str) -> String {
     let mut s = raw.to_string();
-    if let Ok(canon) = home.canonicalize() {
-        s = s.replace(&canon.to_string_lossy().to_string(), "$HOME");
+    if let Ok(canon) = workspace.canonicalize() {
+        s = s.replace(&canon.to_string_lossy().to_string(), "$WORKSPACE");
     }
-    s = s.replace(&home.to_string_lossy().to_string(), "$HOME");
+    s = s.replace(&workspace.to_string_lossy().to_string(), "$WORKSPACE");
     s = s.replace(server_url, "$SERVER");
     // per-server mirror directory (slug from URL; port changes each test run)
-    let slug = server_slug(server_url);
-    s = s.replace(&format!("/servers/{slug}/"), "/servers/SERVER_SLUG/");
-    s = s.replace(&format!("servers/{slug}/"), "servers/SERVER_SLUG/");
-    // client session ids (`cs_` + 32 hex from `Uuid::simple()`)
+    let slug = host_slug(server_url);
+    s = s.replace(&format!("/hosts/{slug}/"), "/hosts/HOST_SLUG/");
+    s = s.replace(&format!("hosts/{slug}/"), "hosts/HOST_SLUG/");
+    // session ids (8 hex under `.plasm/s/`)
     let mut scan = 0;
     while scan < s.len() {
-        let Some(rel) = s[scan..].find("cs_") else {
+        let Some(rel) = s[scan..].find("/s/") else {
             break;
         };
-        let start = scan + rel;
-        let end = s[start + 3..]
+        let start = scan + rel + 3;
+        let hex_len = s[start..]
             .chars()
             .take_while(|c| c.is_ascii_hexdigit())
             .count();
-        if end >= 8 {
-            s.replace_range(start..start + 3 + end, "cs_SESSION");
-            scan = start + "cs_SESSION".len();
+        if hex_len >= 8 {
+            s.replace_range(start..start + hex_len, "SESSION8");
+            scan = start + "SESSION8".len();
         } else {
-            scan = start + 3;
+            scan = start;
+        }
+    }
+    // normalize out/NNNN-kind dirs
+    while let Some(i) = s.find("out/") {
+        let after = i + 4;
+        if s[after..].chars().take(4).all(|c| c.is_ascii_digit()) {
+            if let Some(dash) = s[after + 4..].find('-') {
+                let end = after + 4 + dash;
+                s.replace_range(after..end, "NNNN");
+            } else {
+                break;
+            }
+        } else {
+            break;
         }
     }
     // prompt_hash / catalog digests (64 hex)
@@ -128,14 +142,13 @@ fn normalize_snapshot(raw: &str, home: &Path, server_url: &str) -> String {
             break;
         }
     }
-    // mirror path noise: collapse duplicate $HOME
-    s = s.replace("$HOME/$HOME", "$HOME");
+    s = s.replace("$WORKSPACE/$WORKSPACE", "$WORKSPACE");
     s
 }
 
 struct CliHarness {
-    _home_dir: TempDir,
-    home: PathBuf,
+    _workspace_dir: TempDir,
+    workspace: PathBuf,
     server_url: String,
     _server: ThreadJoinHandle<()>,
 }
@@ -143,11 +156,11 @@ struct CliHarness {
 impl CliHarness {
     fn new() -> Self {
         let (server_url, server) = spawn_test_server();
-        let home_dir = tempfile::tempdir().expect("tempdir");
-        let home = home_dir.path().to_path_buf();
+        let workspace_dir = tempfile::tempdir().expect("tempdir");
+        let workspace = workspace_dir.path().to_path_buf();
         let exe = plasm_exe();
         let init = Command::new(&exe)
-            .env("HOME", &home)
+            .env("PLASM_WORKSPACE", &workspace)
             .args(["init", "--server", &server_url])
             .output()
             .expect("init");
@@ -157,8 +170,8 @@ impl CliHarness {
             String::from_utf8_lossy(&init.stderr)
         );
         Self {
-            _home_dir: home_dir,
-            home,
+            _workspace_dir: workspace_dir,
+            workspace,
             server_url,
             _server: server,
         }
@@ -166,7 +179,7 @@ impl CliHarness {
 
     fn plasm(&self, args: &[&str]) -> Output {
         Command::new(plasm_exe())
-            .env("HOME", &self.home)
+            .env("PLASM_WORKSPACE", &self.workspace)
             .args(args)
             .output()
             .expect("spawn plasm")
@@ -174,7 +187,7 @@ impl CliHarness {
 
     fn plasm_stdin(&self, args: &[&str], stdin: &str) -> Output {
         Command::new(plasm_exe())
-            .env("HOME", &self.home)
+            .env("PLASM_WORKSPACE", &self.workspace)
             .args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -192,61 +205,78 @@ impl CliHarness {
     }
 
     fn norm(&self, raw: &str) -> String {
-        normalize_snapshot(raw, &self.home, &self.server_url)
+        normalize_snapshot(raw, &self.workspace, &self.server_url)
     }
 
-    fn server_root(&self) -> PathBuf {
-        self.home
-            .join(".plasm/cgs/servers")
-            .join(server_slug(&self.server_url))
+    fn host_root(&self) -> PathBuf {
+        self.workspace
+            .join(".plasm/hosts")
+            .join(host_slug(&self.server_url))
     }
 
     fn discovery_tsv(&self) -> String {
-        let path = self.server_root().join("latest_discovery.tsv");
+        let path = self.host_root().join("discovery.tsv");
         std::fs::read_to_string(path).unwrap_or_default()
     }
 
     fn current_session_id(&self) -> Option<String> {
-        let raw = std::fs::read_to_string(self.server_root().join("current_session.txt")).ok()?;
+        let raw = std::fs::read_to_string(self.host_root().join("current")).ok()?;
         for line in raw.lines() {
             let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
             if let Some(id) = line.strip_prefix("client_session_id ") {
                 let id = id.trim();
                 if !id.is_empty() {
                     return Some(id.to_string());
                 }
+            } else if !line.contains(char::is_whitespace) {
+                return Some(line.to_string());
             }
         }
         None
     }
 
+    fn session_root(&self, sid: &str) -> PathBuf {
+        self.workspace.join(".plasm/s").join(sid)
+    }
+
     fn mirror_layout_snapshot(&self) -> String {
-        let root = self.server_root();
+        let root = self.host_root();
         let mut out = String::new();
         out.push_str("tree:\n");
-        if let Ok(ptr) = std::fs::read_to_string(root.join("current_session.txt")) {
-            out.push_str("current_session.txt:\n");
+        if let Ok(ptr) = std::fs::read_to_string(root.join("current")) {
+            out.push_str("current:\n");
             out.push_str(&self.norm(&ptr));
         }
-        let active_legacy = root.join("active_context.txt");
-        out.push_str(&format!(
-            "active_context.txt exists: {}\n",
-            active_legacy.exists()
-        ));
         if let Some(sid) = self.current_session_id() {
-            let sess = root.join("sessions").join(&sid);
-            out.push_str(&format!("session_dir: sessions/{sid}/\n"));
-            for name in ["session_meta.txt", "symbol_state.json", "domain.tsv"] {
+            let sess = self.session_root(&sid);
+            out.push_str(&format!("session_dir: s/{sid}/\n"));
+            for name in ["meta.txt", "symbols.json", "domain.tsv", "latest"] {
                 let p = sess.join(name);
                 if p.exists() {
                     out.push_str(&format!("{name}: present\n"));
-                    if name != "symbol_state.json" {
+                    if name != "symbols.json" {
                         let body = std::fs::read_to_string(&p).unwrap_or_default();
                         let excerpt: String = body.lines().take(12).collect::<Vec<_>>().join("\n");
                         out.push_str(&self.norm(&excerpt));
                         out.push('\n');
                     }
                 }
+            }
+            let out_dir = sess.join("out");
+            if out_dir.is_dir() {
+                let mut entries: Vec<_> = std::fs::read_dir(&out_dir)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| !n.starts_with('.'))
+                    .collect();
+                entries.sort();
+                out.push_str(&format!("out/: {}\n", entries.join(", ")));
             }
             let catalog = sess.join("catalogs/overshow.json");
             out.push_str(&format!(
@@ -315,7 +345,13 @@ fn cli_context_first_exposure_mirror_snapshot() {
     with_insta(|| {
         let h = CliHarness::new();
         assert!(h.plasm(&["search", "profile query"]).status.success());
-        let ctx = h.plasm(&["context", "profile query", "Profile", "RecordedContent"]);
+        let ctx = h.plasm(&[
+            "context",
+            "-i",
+            "profile query",
+            "Profile",
+            "RecordedContent",
+        ]);
         assert!(ctx.status.success(), "{}", combined_output(&ctx));
         insta::assert_snapshot!("cli_context_open", h.norm(&combined_output(&ctx)));
         insta::assert_snapshot!("cli_mirror_after_open", h.mirror_layout_snapshot());
@@ -333,16 +369,22 @@ fn cli_context_expand_and_new_snapshot() {
         let h = CliHarness::new();
         assert!(h.plasm(&["search", "profile query"]).status.success());
         assert!(h
-            .plasm(&["context", "profile query", "Profile"])
+            .plasm(&["context", "-i", "profile query", "Profile"])
             .status
             .success());
         let ptr1 = h.current_session_id().expect("session after open");
-        let expand = h.plasm(&["context", "profile query", "RecordedContent"]);
+        let expand = h.plasm(&["context", "-i", "profile query", "RecordedContent"]);
         assert!(expand.status.success(), "{}", combined_output(&expand));
         let ptr2 = h.current_session_id().expect("session after expand");
         assert_eq!(ptr1, ptr2, "expand should keep same client session");
 
-        let new_ctx = h.plasm(&["context", "--new", "recorded only", "RecordedContent"]);
+        let new_ctx = h.plasm(&[
+            "context",
+            "--new",
+            "-i",
+            "recorded only",
+            "overshow:RecordedContent",
+        ]);
         assert!(new_ctx.status.success(), "{}", combined_output(&new_ctx));
         let ptr3 = h.current_session_id().expect("session after --new");
         assert_ne!(ptr1, ptr3, "--new should change client session pointer");
@@ -358,15 +400,32 @@ fn cli_run_plan_snapshot() {
         let h = CliHarness::new();
         assert!(h.plasm(&["search", "profile query"]).status.success());
         assert!(h
-            .plasm(&["context", "profile query", "Profile"])
+            .plasm(&["context", "-i", "profile query", "Profile"])
             .status
             .success());
-        let plan = h.plasm_stdin(
-            &["run", "--mode", "plan", "--accept", "application/json"],
-            "Profile{}",
-        );
+        let plan = h.plasm_stdin(&["run", "--mode", "plan", "--accept", "json"], "Profile{}");
         assert!(plan.status.success(), "plan: {}", combined_output(&plan));
         insta::assert_snapshot!("cli_run_plan", h.norm(&combined_output(&plan)));
+
+        let plan2 = h.plasm_stdin(&["run", "--mode", "plan", "--accept", "json"], "Profile{}");
+        assert!(plan2.status.success(), "plan2: {}", combined_output(&plan2));
+        let sid = h.current_session_id().expect("session");
+        let out_root = h.session_root(&sid).join("out");
+        let plan_dirs: Vec<_> = std::fs::read_dir(&out_root)
+            .expect("out")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with("-plan"))
+            .collect();
+        assert!(
+            plan_dirs.len() >= 2,
+            "expected two plan mirror dirs, got {plan_dirs:?}"
+        );
+        for name in &plan_dirs {
+            let dir = out_root.join(name);
+            assert!(dir.join("body.json").is_file(), "{name}/body.json");
+            assert!(dir.join("body.txt").is_file(), "{name}/body.txt");
+        }
     });
 }
 
@@ -383,11 +442,11 @@ fn cli_error_paths_snapshot() {
             }
         );
 
-        let ctx_no_disc = h.plasm(&["context", "profile query", "Profile"]);
+        let ctx_no_disc = h.plasm(&["context", "-i", "profile query", "Profile"]);
         assert!(!ctx_no_disc.status.success());
-        let amb = write_ambiguous_discovery(&h.home, &h.server_url);
+        let amb = write_ambiguous_discovery(&h.workspace, &h.server_url);
         assert!(amb);
-        let ctx_amb = h.plasm(&["context", "intent", "Issue"]);
+        let ctx_amb = h.plasm(&["context", "-i", "intent", "Issue"]);
         assert!(!ctx_amb.status.success());
         let amb_out = combined_output(&ctx_amb);
         assert!(amb_out.contains("ambiguous"));
@@ -405,13 +464,13 @@ fn cli_error_paths_snapshot() {
 }
 
 fn write_ambiguous_discovery(home: &Path, server_url: &str) -> bool {
-    let slug = server_slug(server_url);
-    let dir = home.join(".plasm/cgs/servers").join(slug);
+    let slug = host_slug(server_url);
+    let dir = home.join(".plasm/hosts").join(slug);
     if std::fs::create_dir_all(&dir).is_err() {
         return false;
     }
     let tsv = "intent\ttest\nrow\tapi\tentity\tdescription\n\
                1\tapi_a\tIssue\tfirst\n\
                2\tapi_b\tIssue\tsecond\n";
-    std::fs::write(dir.join("latest_discovery.tsv"), tsv).is_ok()
+    std::fs::write(dir.join("discovery.tsv"), tsv).is_ok()
 }

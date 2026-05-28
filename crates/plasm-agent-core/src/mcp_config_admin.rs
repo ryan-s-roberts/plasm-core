@@ -637,6 +637,9 @@ fn auth_scheme_summary_for_entry(
         Some(AuthScheme::BearerToken { hosted_kv, .. }) => {
             ("bearer token".into(), hosted_kv.clone())
         }
+        Some(AuthScheme::OauthBearer { hosted_kv, .. }) => {
+            ("oauth bearer".into(), hosted_kv.clone())
+        }
         Some(AuthScheme::Oauth2ClientCredentials { .. }) => {
             ("oauth2 client credentials".into(), None)
         }

@@ -52,11 +52,16 @@ fn raw_tty_wants_process_quit(key: &KeyEvent) -> bool {
             && matches!(key.code, KeyCode::Char('c' | 'C')))
 }
 
+fn plasm_http_origin(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
 fn mcp_streamable_url(mcp_port: u16) -> String {
-    format!("http://127.0.0.1:{mcp_port}/mcp")
+    format!("{}/mcp", plasm_http_origin(mcp_port))
 }
 
 const MCP_JSON_PLACEHOLDER_BEARER: &str = "Bearer <api_key>";
+const PLASM_CLI_PLACEHOLDER_API_KEY: &str = "<api_key>";
 
 fn bearer_authorization_value(raw_secret: Option<&str>) -> String {
     match raw_secret {
@@ -92,6 +97,47 @@ fn mcp_client_json_config(mcp_port: u16, raw_secret: Option<&str>) -> Result<Str
         .map_err(|e| e.to_string())
 }
 
+fn plasm_cli_api_key_value(raw_secret: Option<&str>) -> String {
+    match raw_secret {
+        None => PLASM_CLI_PLACEHOLDER_API_KEY.to_string(),
+        Some(raw) => {
+            let t = raw.trim();
+            if t.is_empty() {
+                PLASM_CLI_PLACEHOLDER_API_KEY.to_string()
+            } else {
+                t.to_string()
+            }
+        }
+    }
+}
+
+fn plasm_cli_profile_json_config(
+    listen_port: u16,
+    raw_secret: Option<&str>,
+) -> Result<String, String> {
+    let value = serde_json::json!({
+        "server": plasm_http_origin(listen_port),
+        "api_key": plasm_cli_api_key_value(raw_secret),
+    });
+    serde_json::to_string_pretty(&value)
+        .map(|s| format!("{s}\n"))
+        .map_err(|e| e.to_string())
+}
+
+fn plasm_cli_init_command_line(listen_port: u16, raw_secret: Option<&str>) -> String {
+    format!(
+        "plasm init --server {} --api-key {}",
+        plasm_http_origin(listen_port),
+        plasm_cli_api_key_value(raw_secret)
+    )
+}
+
+fn push_json_block_lines(lines: &mut Vec<Line<'static>>, json: &str) {
+    for line in json.lines() {
+        lines.push(Line::from(Span::styled(line.to_string(), dim_style())));
+    }
+}
+
 fn build_clients_panel_lines(
     listen_port: u16,
     selected_key: Option<&McpConfigApiKeyRow>,
@@ -104,6 +150,7 @@ fn build_clients_panel_lines(
             .fg(Color::Cyan)
     };
     let bold = Style::default().add_modifier(Modifier::BOLD);
+    let section = Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
     let mut lines = Vec::new();
     if let Some(sel) = selected_key {
         lines.push(Line::from(vec![
@@ -113,7 +160,9 @@ fn build_clients_panel_lines(
         lines.push(Line::from(vec![
             Span::styled("Press ", dim_style()),
             Span::styled("c", dim_style().add_modifier(Modifier::BOLD)),
-            Span::styled(" to copy config with API key", dim_style()),
+            Span::styled(" MCP config · ", dim_style()),
+            Span::styled("p", dim_style().add_modifier(Modifier::BOLD)),
+            Span::styled(" plasm CLI profile (with API key)", dim_style()),
         ]));
     } else {
         lines.push(Line::from(vec![
@@ -124,15 +173,26 @@ fn build_clients_panel_lines(
         ]));
     }
     lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("MCP client", section)));
     match mcp_client_json_config(listen_port, None) {
-        Ok(json) => {
-            for line in json.lines() {
-                lines.push(Line::from(Span::styled(line.to_string(), dim_style())));
-            }
-        }
+        Ok(json) => push_json_block_lines(&mut lines, &json),
         Err(e) => lines.push(Line::from(vec![
             Span::styled("! ", err_emphasis_style()),
             Span::styled(format!("Could not build MCP JSON: {e}"), err_emphasis_style()),
+        ])),
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Plasm CLI (plasm)", section)));
+    lines.push(Line::from(Span::styled(
+        plasm_cli_init_command_line(listen_port, None),
+        dim_style(),
+    )));
+    lines.push(Line::from(""));
+    match plasm_cli_profile_json_config(listen_port, None) {
+        Ok(json) => push_json_block_lines(&mut lines, &json),
+        Err(e) => lines.push(Line::from(vec![
+            Span::styled("! ", err_emphasis_style()),
+            Span::styled(format!("Could not build CLI profile JSON: {e}"), err_emphasis_style()),
         ])),
     }
     lines
@@ -389,7 +449,7 @@ fn split_main_notice_area(area: Rect, show_notice: bool) -> (Rect, Option<Rect>)
 }
 
 /// Long reference string appended to the footer when `?` was pressed.
-const FOOTER_HELP_OVERLAY: &str = "Clients: c # ↑↓ · APIs: / Space s a o · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G";
+const FOOTER_HELP_OVERLAY: &str = "Clients: c p # ↑↓ · APIs: / Space s a o · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G";
 
 fn sync_log_cursor_scroll(logs: &mut LogState, visible: usize) {
     let total = logs.lines.len();
@@ -420,7 +480,8 @@ fn screen_footer_items(model: &RunState) -> Vec<chrome::FooterItem> {
         ],
         RunScreen::Clients => vec![
             FooterItem::new("c", "copy MCP config"),
-            FooterItem::new("#", "copy URL"),
+            FooterItem::new("p", "copy plasm CLI profile"),
+            FooterItem::new("#", "copy MCP URL"),
             FooterItem::new("↑↓", "scroll"),
         ],
         RunScreen::Apis => vec![
@@ -951,6 +1012,7 @@ enum AdminTaskKind {
     RevokingKey,
     RevealingKey,
     CopyingMcpJson,
+    CopyingPlasmCliProfile,
 }
 
 impl AdminTaskKind {
@@ -967,6 +1029,7 @@ impl AdminTaskKind {
             Self::RevokingKey => "Revoking key…",
             Self::RevealingKey => "Revealing key…",
             Self::CopyingMcpJson => "Copying MCP config…",
+            Self::CopyingPlasmCliProfile => "Copying plasm CLI profile…",
         }
     }
 }
@@ -1479,6 +1542,27 @@ fn apply_admin_completion(
                             .with_details(vec![e]),
                         ),
                     },
+                    (AdminTaskKind::CopyingPlasmCliProfile, Ok(raw)) => {
+                        match plasm_cli_profile_json_config(listen_port, Some(&raw)) {
+                            Ok(json) => set_notice(
+                                state,
+                                copy_notice(
+                                    "Plasm CLI profile copied",
+                                    "Plasm CLI profile copy failed",
+                                    copy_text_to_clipboard(&json),
+                                ),
+                            ),
+                            Err(e) => set_notice(
+                                state,
+                                RunNotice::new(
+                                    NoticeSeverity::Error,
+                                    "Plasm CLI profile build failed",
+                                    "Could not build ~/.plasm/cgs/profiles JSON for clipboard.",
+                                )
+                                .with_details(vec![e]),
+                            ),
+                        }
+                    }
                     (_, Err(e)) => set_notice(
                         state,
                         RunNotice::new(
@@ -2364,6 +2448,46 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                 });
             }
         }
+        KeyCode::Char('p')
+            if state.screen == RunScreen::Clients
+                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            if snap.keys.get(state.keys.selected).is_none() {
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "No key selected",
+                        "Add a transport API key on the Keys tab before copying the plasm CLI profile.",
+                    )
+                    .with_sticky(false),
+                );
+            } else if state.admin_busy() {
+                set_notice(
+                    state,
+                    RunNotice::new(
+                        NoticeSeverity::Warning,
+                        "Busy",
+                        "Wait for the current admin task to finish.",
+                    )
+                    .with_sticky(false),
+                );
+            } else if let (Some(bridge), Some(cid)) = (deps.admin_bridge, state.resources.config_id)
+            {
+                if let Some(key_id) = snap.keys.get(state.keys.selected).map(|k| k.key_id) {
+                    submit_inline_admin_job(
+                        state,
+                        bridge,
+                        AdminTaskKind::CopyingPlasmCliProfile,
+                        |c| AdminJob::RevealApiKey {
+                            corr: c,
+                            config_id: cid,
+                            key_id,
+                        },
+                    );
+                }
+            }
+        }
         KeyCode::Char('c')
             if (state.screen == RunScreen::Keys || state.screen == RunScreen::Clients)
                 && !key.modifiers.contains(KeyModifiers::CONTROL) =>
@@ -2374,7 +2498,7 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                     RunNotice::new(
                         NoticeSeverity::Warning,
                         "No key selected",
-                        "Add a transport API key on the Keys tab before copying MCP config.",
+                        "Add a transport API key on the Keys tab before copying client config.",
                     )
                     .with_sticky(false),
                 );
@@ -2693,7 +2817,7 @@ fn render_running_frame(
                 content_area,
                 &lines,
                 model.clients.scroll,
-                "MCP client",
+                "Clients",
                 Some('e'),
             );
             if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
@@ -3936,6 +4060,30 @@ mod tests {
         state.screen = RunScreen::Clients;
         let items = screen_footer_items(&state);
         assert!(items.iter().any(|i| i.key == "c" && i.desc.contains("MCP")));
+        assert!(items.iter().any(|i| i.key == "p" && i.desc.contains("plasm CLI")));
+    }
+
+    #[test]
+    fn plasm_cli_profile_json_has_server_and_api_key() {
+        let json = plasm_cli_profile_json_config(3001, None).expect("json");
+        let v: serde_json::Value = serde_json::from_str(json.trim()).expect("parse");
+        assert_eq!(
+            v.get("server").and_then(|s| s.as_str()),
+            Some("http://127.0.0.1:3001")
+        );
+        assert_eq!(
+            v.get("api_key").and_then(|s| s.as_str()),
+            Some(PLASM_CLI_PLACEHOLDER_API_KEY)
+        );
+    }
+
+    #[test]
+    fn plasm_cli_profile_display_never_includes_raw_secret() {
+        let secret = "plasm_test_secret_abc123xyz";
+        let display = plasm_cli_profile_json_config(3001, None).expect("display");
+        assert!(!display.contains(secret));
+        let with_secret = plasm_cli_profile_json_config(3001, Some(secret)).expect("copy");
+        assert!(with_secret.contains(secret));
     }
 
     #[test]

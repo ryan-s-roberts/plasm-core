@@ -368,7 +368,7 @@ oauth:
         - https://www.googleapis.com/auth/calendar.events.owned
         - https://www.googleapis.com/auth/calendar.events.owned.readonly
 auth:
-  scheme: bearer_token
+  scheme: oauth_bearer
   env: GCAL_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:google-calendar
 values:
