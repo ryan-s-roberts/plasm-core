@@ -30,6 +30,9 @@ ALLOWLIST = [
     "genco-plugin-pipeline.md",
     "cgs-extensions-roadmap.md",
     "correction-catalogue.md",
+    "schema-overlay.md",
+    "plasm-cgs-remote-terminal.md",
+    "appliance-surface-inventory.md",
 ]
 
 
@@ -40,7 +43,9 @@ def main() -> int:
 
     monorepo = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else script_dir.parent.parent.parent
     docs_src = monorepo / "docs"
-    authoring_skill = monorepo / ".cursor" / "skills" / "plasm-authoring"
+    authoring_skill = monorepo / "plasm-oss" / "skills" / "plasm-authoring"
+    if not authoring_skill.is_dir():
+        authoring_skill = monorepo / "skills" / "plasm-authoring"
     apis_readme = monorepo / "apis" / "README.md"
 
     if not docs_src.is_dir():

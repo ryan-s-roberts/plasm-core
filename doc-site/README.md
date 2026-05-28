@@ -23,9 +23,14 @@ Org-owned repos: confirm **Pages** is enabled under organization policy and that
 
 Sources under `docs/` are **allowlisted**. Maintainer workflow:
 
-1. Edit canonical markdown under the **private monorepo** `docs/` and `plasm-oss/skills/plasm-forge/` as needed.
-2. Run **`python scripts/sync_allowlisted_docs.py`** from `doc-site/` with monorepo root containing sibling `docs/` (paths adjusted in the script).
+1. Edit canonical markdown under the **private monorepo** `docs/` and **`plasm-oss/skills/plasm-authoring/`** (authoring reference + SKILL) as needed.
+2. Run **`python scripts/sync_allowlisted_docs.py`** from `doc-site/` with monorepo root containing sibling `docs/` and `plasm-oss/skills/` (paths adjusted in the script).
 3. Commit updates under **`doc-site/docs/`** so the OSS repo stays self-contained for CI.
+4. Re-apply **link sanitization** on synced pages (monorepo-relative paths → doc-site or GitHub links). Do **not** edit committed snapshots under `doc-site/docs/authoring/` or `doc-site/docs/reference/` directly — change upstream sources and re-sync.
+
+**Allowlisted reference docs** (from monorepo `docs/`): language, MCP, auth, plugins, plus **`schema-overlay.md`**, **`plasm-cgs-remote-terminal.md`**, and **`appliance-surface-inventory.md`**.
+
+**OSS release surface in prose:** document **`plasm-server`**, **`plasm`** (remote terminal), and dev tooling (`plasm-cgs`, `plasm-repl`). Do not teach **`plasm-mcp`** as an operator-facing product in hand-written pages; sanitize synced copies where they still mention it for historical context.
 
 Excluded from sync (never published): SaaS architecture, OSS/SaaS boundary essays, private control-plane specs, Phoenix/UI UX docs — see project IA.
 

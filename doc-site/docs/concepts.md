@@ -24,8 +24,10 @@ The **CGS** describes:
 
 - **Entities** — Nouns in the domain (`Issue`, `Repository`, …).
 - **Fields & relations** — Data on those entities and links between them.
-- **Value domains** — In split `domain.yaml`, top-level **`values:`** holds **semantic slots** (wire `type` plus gloss); entity fields and capability parameters use **`value_ref`** into those rows. Splitting vs sharing keys is an authoring judgement (like entity boundaries), not something you infer from wire type alone.
-- **Capabilities** — Observable actions or queries the runtime can perform (`get_issue`, `list_issues`, …), with typed inputs and outputs.
+- **Value domains** — In split `domain.yaml`, top-level **`values:`** holds **semantic slots**; fields and parameters use **`value_ref`**.
+- **Capabilities** — Observable actions or queries (`get_issue`, `list_issues`, …).
+- **Views** — Optional **composed read-only** DAGs over existing capabilities (dashboards, scoped snapshots). See [Composed views](authoring/views.md).
+- **Schema overlay** — Optional **`schema_overlay:`** merges **user-defined columns** (Notion properties, Jira custom fields, …) at execute session open. See [Schema overlays](reference/schema-overlay.md).
 
 Think of CGS as *the contract the agent reasons about*. It is authored as YAML (`domain.yaml`) and loaded into the runtime.
 
@@ -36,31 +38,35 @@ Think of CGS as *the contract the agent reasons about*. It is authored as YAML (
 **CML** attaches **transport-specific templates** to each capability—typically REST paths, methods, headers, and JSON bodies (`mappings.yaml`).
 
 - Same CGS idea (“get this issue”) can map to **REST today** and **GraphQL tomorrow** with different mapping files.
-- The compiler/runtime fills templates from evaluated inputs and executes the HTTP stack.
+- View capabilities use **`transport: view`** stubs; the runtime executes the declared DAG instead of HTTP templates.
 
 ---
 
 ## Plasm language: what agents actually write
 
-Agents don’t POST arbitrary JSON against raw URLs (unless you bypass Plasm). They write **Plasm** programs against symbols exposed in **DOMAIN** instructions:
+Agents write **Plasm** programs against symbols exposed in **DOMAIN** instructions:
 
 - **`e#`** — Entity rows (nouns in context).
-- **`m#`** — Scalar metrics / counts / summaries that showed up in the session.
+- **`m#`** — Scalar metrics / counts / summaries.
 - **`p#`** — Plans or projections from earlier steps.
 
-Expressions compose with pipes and postfix transforms (`.limit`, `.sort`, …). Multi-line payloads use tagged **heredocs** or bracket render—see the [Language definition](reference/plasm-language-definition.md).
+Expressions compose with pipes and postfix transforms. Multi-line payloads use tagged **heredocs** — see the [Language definition](reference/plasm-language-definition.md).
+
+With the **`plasm`** remote client, the **client owns the monotonic symbol table** locally; the server executes expanded programs over HTTP. See [Remote terminal](reference/plasm-cgs-remote-terminal.md).
 
 ---
 
-## Runtime + host: sessions, cache, MCP
+## Runtime + host: three OSS surfaces
 
-The **runtime** evaluates programs, deduplicates work with **cooperative caching**, enforces capability semantics, and records traces.
+| Surface | Binary | Role |
+|---------|--------|------|
+| **Appliance** | **`plasm-server`** | In-process kernel, HTTP + MCP, Ratatui control station, embedded Postgres |
+| **Remote client** | **`plasm`** | Strict transport-only terminal (`init` → `search` → `context` → `run`) |
+| **Dev tooling** | **`plasm-repl`**, **`plasm-cgs`** | Local schema validation and wire debugging |
 
-The **`plasm-mcp` host** exposes:
+The **runtime** evaluates programs, caches cooperatively, enforces capability semantics, and records traces.
 
-- **Streamable HTTP MCP** — Tools such as `discover_capabilities`, `plasm_context`, `plasm`, `plasm_run`.
-
-Session shaping (`intent`, reuse keys) matters when agents reconnect—see [MCP session reuse](reference/mcp-session-reuse.md).
+Session shaping (`intent`, reuse keys) matters when agents reconnect — see [MCP session reuse](reference/mcp-session-reuse.md).
 
 ---
 
@@ -72,23 +78,14 @@ One logical session can load **multiple registry entries** (different APIs). Sym
 
 ## Where transport requirements belong
 
-Some transports impose extra constraints (pagination envelopes, error shapes, auth headers). That detail is essential **when designing new mappings or transports**, but it is **not** the first lesson.
-
-If you are implementing a **new** backend binding or debugging HTTP glue, start from [CML — mappings.yaml](authoring/reference.md#cml-capability-mapping-language--mappingsyaml) and vendor examples under `apis/<name>/` in the repository; repo **`AGENTS.md`** carries additional wire notes. Everyone else can defer deep transport detail until a concrete integration fails at the wire layer.
-
----
-
-## Common misconceptions
-
-| Myth | Reality |
-|------|---------|
-| “DOMAIN merges APIs.” | Federation keeps distinct graphs; prompts label rows per catalog entry. |
-| “YAML is runtime magic.” | YAML is authoring input; packed plugins or loaded schemas drive production binaries. |
+Wire details (pagination envelopes, auth headers) belong in **CML** and vendor `apis/<name>/` examples. Start from [Authoring reference — CML](authoring/reference.md) when debugging HTTP glue.
 
 ---
 
 ## Next steps
 
-- Hands-on: [Start here](getting-started.md)
-- Operator focus: [Run the MCP appliance](appliance/onboarding.md)
-- Catalog authoring: [Connect an API](authoring/index.md)
+| If you want to… | Read |
+|-----------------|------|
+| Install and operate locally | [Appliance quick start](appliance/quickstart.md) |
+| Connect agents via HTTP CLI | [Remote terminal (`plasm`)](reference/plasm-cgs-remote-terminal.md) |
+| Author a new API catalog | [Catalog authoring tutorial](authoring/index.md) |

@@ -1,5 +1,5 @@
 site_name: Plasm OSS
-site_description: Technical documentation for plasm-core — compiler, runtime, plasm-mcp, and apis/.
+site_description: Technical documentation for plasm-core — plasm-server, plasm CLI, compiler, runtime, and apis/.
 site_url: https://plasmtools.github.io/plasm-core/
 repo_url: https://github.com/PlasmTools/plasm-core
 repo_name: plasm-core
@@ -67,7 +67,13 @@ nav:
   - Home: index.md
   - Concepts: concepts.md
   - Start here: getting-started.md
-  - Run the MCP appliance: appliance/onboarding.md
+  - Run the appliance:
+      - Quick start: appliance/quickstart.md
+      - Control station (TUI): appliance/tui.md
+      - MCP & credentials: appliance/onboarding.md
+      - CLI reference: reference/appliance-cli.md
+      - Surface inventory: reference/appliance-surface-inventory.md
+  - Remote terminal (plasm): reference/plasm-cgs-remote-terminal.md
   - Glossary: glossary.md
   - Language:
       - Language definition: reference/plasm-language-definition.md
@@ -85,9 +91,11 @@ nav:
       - Appliance persistence: reference/oss-appliance-mcp-persistence.md
       - Outgoing OAuth (promotion): reference/oss-outgoing-oauth-promotion.md
   - Catalogs: reference/apis-readme.md
-  - Connect an API:
+  - Catalog authoring:
       - Tutorial: authoring/index.md
       - Reference: authoring/reference.md
+      - Composed views: authoring/views.md
+      - Schema overlays: reference/schema-overlay.md
   - Plugins & compile pipeline: reference/genco-plugin-pipeline.md
   - Extensions roadmap: reference/cgs-extensions-roadmap.md
   - Embed Plasm: crates/index.md

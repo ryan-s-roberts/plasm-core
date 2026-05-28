@@ -11,7 +11,7 @@ See also: [MCP logical sessions](mcp-logical-sessions.md), [incremental DOMAIN p
   - If a live execute session is already bound for that logical id, the server **expands** or **federates** into that session (no fresh-open path).
   - **Duplicate seeds (already exposed):** if the request does not add new entity picks, the expand path returns a **short notice only**—the full DOMAIN / TSV teaching table is **not** replayed (token-saving). Steady state remains **`plasm`** / **`plasm_run`** with the existing **`logical_session_ref`**.
   - If there is no binding, or the stored binding points at an **expired or missing** execute row, the server may **open** a new `(prompt_hash, session)`.
-  - The **primary** `entry_id` for the first open is chosen in **lexicographic order** among distinct catalog ids in the seed set, so two calls with the same set of catalog seeds in different order still agree on the same primary for [SessionReuseKey](plasm-oss/crates/plasm-agent-core/src/execute_session.rs) matching.
+  - The **primary** `entry_id` for the first open is chosen in **lexicographic order** among distinct catalog ids in the seed set, so two calls with the same set of catalog seeds in different order still agree on the same primary for `SessionReuseKey` matching.
   - The tool response JSON includes `logical_session_id`, `logical_session_ref`, and `execute_binding: { prompt_hash, session_id }`.
 2. **`plasm`** with **`logical_session_ref`** and **`program`**
   - Steady state for most user turns: use **`plasm`** only; do not repeat `plasm_context` unless you need a new **`intent`** or new seeds.
@@ -24,7 +24,7 @@ See also: [MCP logical sessions](mcp-logical-sessions.md), [incremental DOMAIN p
 
 ## 3. `SessionReuseKey` (when execute open can reuse a row)
 
-Defined in [execute_session.rs](plasm-oss/crates/plasm-agent-core/src/execute_session.rs) as the key for in-memory `try_reuse_session` on **new open**:
+Defined in `execute_session.rs` as the key for in-memory `try_reuse_session` on **new open**:
 
 
 | Field                  | Role                                                                                                                 |
@@ -58,7 +58,7 @@ Large-result guidance: prefer projection in expressions first; when the surface 
 
 ## 6. Related code
 
-- `plasm_context` / `plasm`: [mcp_server.rs](plasm-oss/crates/plasm-agent-core/src/mcp_server.rs)
-- `apply_capability_seeds`, `execute_session_create_response_inner`, primary entry: [http_execute.rs](plasm-oss/crates/plasm-agent-core/src/http_execute.rs)
-- `SessionReuseKey`, `ExecuteSessionStore::try_reuse_session`: [execute_session.rs](plasm-oss/crates/plasm-agent-core/src/execute_session.rs)
-- MCP Markdown previews and threshold: [mcp_run_markdown.rs](plasm-oss/crates/plasm-agent-core/src/mcp_run_markdown.rs)
+- `plasm_context` / `plasm`: `mcp_server.rs`
+- `apply_capability_seeds`, `execute_session_create_response_inner`, primary entry: `http_execute.rs`
+- `SessionReuseKey`, `ExecuteSessionStore::try_reuse_session`: `execute_session.rs`
+- MCP Markdown previews and threshold: `mcp_run_markdown.rs`

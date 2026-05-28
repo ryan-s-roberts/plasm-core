@@ -2,7 +2,7 @@
 
 This document is the **canonical specification** of the user-facing Plasm surface language: path expressions, multi-line programs (bindings, postfix transforms, roots), structured values and heredocs, row-to-text templates, and the **CGS load-time rules** for structured capability inputs. It aligns with the reference implementation in **`plasm_core::expr_parser`** and with program lowering in **`plasm-agent-core`** (Plan/DAG).
 
-For API authoring (YAML catalogs, transport), use the OSS documentation **Connect an API → Reference**, or the skill file `skills/plasm-authoring/reference.md` in this repository.
+For API authoring (YAML catalogs, transport), use the OSS documentation **Connect an API → Reference**, or in the Plasm monorepo the skill file `plasm-oss/skills/plasm-authoring/reference.md` (repository root–relative).
 
 ---
 
@@ -47,14 +47,15 @@ Surface scanning lives in **`plasm-oss/crates/plasm-core/src/expr_parser/`**:
 
 | Module | Responsibility |
 |--------|----------------|
-| [`heredoc_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/heredoc_surface.rs) | Tagged `<<TAG …` open/close detection shared by values, postfix render tails, and multi-line program staging. |
-| [`program_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/program_surface.rs) | Physical-line merging across heredocs (`collect_program_statement_lines`), `;;` stripping, top-level comma/`=>` splitting (`split_top_level`, `split_token_top_level`), binding `=` splitting (`split_assignment_at_top_level` / `split_assignment_for_binding`), program label validation. |
-| [`program.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/program.rs) | Optional shape AST: bindings + postfix-peeled primaries (`parse_program_shape`). Does not attach CGS typing. |
-| [`postfix.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `[projection]`, row-to-text `<<TAG`). |
-| [`mod.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs) (path parser) | CGS-aware **path expression** → [`Expr`](../plasm-oss/crates/plasm-core/src/expr.rs) + optional trailing `[projection]`. |
-| [`value.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/value.rs) | Scalar/collection literals, strict vs lenient RHS, structured heredocs, `PlasmInputRef` holes when program context is enabled. |
+| ``heredoc_surface.rs`` | Tagged `<<TAG …` open/close detection shared by values, postfix render tails, and multi-line program staging. |
+| ``program_surface.rs`` | Physical-line merging across heredocs (`collect_program_statement_lines`), `;;` stripping, top-level comma/`=>` splitting (`split_top_level`, `split_token_top_level`), binding `=` splitting (`split_assignment_at_top_level` / `split_assignment_for_binding`), program label validation. |
+| ``predicate_surface.rs`` | Query `{…}` predicate list: same comma splitting as `split_top_level`, plus quote/heredoc-aware comparison-operator scan for ``expr_correction`` (no duplicate lexer). |
+| ``program.rs`` | Optional shape AST: bindings + postfix-peeled primaries (`parse_program_shape`). Does not attach CGS typing. |
+| ``postfix.rs`` | Postfix peel (`.limit`, `.sort`, `[projection]`, row-to-text `<<TAG`). |
+| ``mod.rs`` (path parser) | CGS-aware **path expression** → ``Expr`` + optional trailing `[projection]`. |
+| ``value.rs`` | Scalar/collection literals, strict vs lenient RHS, structured heredocs, `PlasmInputRef` holes when program context is enabled. |
 
-Multi-line **program → Plan/DAG** lowering remains in [**`plasm_dag.rs`**](../plasm-oss/crates/plasm-agent-core/src/plasm_dag.rs), which calls **`program_surface`** and **`postfix`**, then [`parse_with_cgs_layers_program`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs) on each session-expanded primary.
+Multi-line **program → Plan/DAG** lowering remains in `**`plasm_dag.rs`**`, which calls **`program_surface`** and **`postfix`**, then ``parse_with_cgs_layers_program`` on each session-expanded primary.
 
 **Lenient single-expression parse:** `expr_parser::parse` reads **one** path expression from the start of a string and **ignores trailing non-whitespace** (noisy LLM paste tolerance). Whole-program compilation uses **statement-collected lines** and does not apply that tail-ignore rule to binding/root lines.
 
@@ -82,17 +83,19 @@ TAG           = IDENT_START , { IDENT_CONT } ;
 
 ### Tagged structured heredoc (formal shell)
 
-Opener/close rules are implemented in [`heredoc_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/heredoc_surface.rs). **Operational discipline** for choosing `TAG` (collision-safe payloads) is under [Tagged heredocs and tag collision](#tagged-heredocs-and-tag-collision) below.
+Opener/close rules are implemented in ``heredoc_surface.rs``. **Operational discipline** for choosing `TAG` (collision-safe payloads) is under [Tagged heredocs and tag collision](#tagged-heredocs-and-tag-collision) below.
 
 ```ebnf
-HEREDOC_OPEN_LINE = "<<" , TAG , { WS_CHAR } , NEWLINE ;
+HEREDOC_OPEN_LINE  = "<<" , TAG , { WS_CHAR } , NEWLINE ;
+HEREDOC_CLOSE_TAIL = { WS_CHAR | ")" | "]" | "}" | "," } ;
+HEREDOC_CLOSE_LINE = TAG , HEREDOC_CLOSE_TAIL ;
 STRUCTURED_HEREDOC = HEREDOC_OPEN_LINE , HEREDOC_BODY , HEREDOC_CLOSE_LINE ;
-(* HEREDOC_BODY / HEREDOC_CLOSE_LINE: first trimmed matching close line wins — see implementation. *)
+(* HEREDOC_BODY / HEREDOC_CLOSE_LINE: first trimmed matching close line wins; delimiter tail is parser-owned. *)
 ```
 
 ### Program shape (multi-line)
 
-Logical statements come from [`collect_program_statement_lines`](../plasm-oss/crates/plasm-core/src/expr_parser/program_surface.rs) (heredocs may span physical lines).
+Logical statements come from ``collect_program_statement_lines`` (heredocs may span physical lines).
 
 ```ebnf
 PROGRAM       = { STATEMENT } , ROOTS_LINE ;
@@ -108,7 +111,7 @@ Binding lines use `split_assignment_at_top_level` then **`validate_program_label
 
 ### Postfix chain (per `RHS` fragment)
 
-After [`peel_postfix_suffixes`](../plasm-oss/crates/plasm-core/src/expr_parser/postfix.rs), surface postfix applies **inner-to-outer** per the [chaining order](#chaining-order) invariant.
+After ``peel_postfix_suffixes``, surface postfix applies **inner-to-outer** per the [chaining order](#chaining-order) invariant.
 
 ```ebnf
 POSTFIX_OP    = "singleton"
@@ -121,11 +124,11 @@ POSTFIX_OP    = "singleton"
 FIELD_LIST    = IDENT , { "," , IDENT } ;
 ```
 
-**Row-to-text:** optional render tail after the postfix head — `… [ fields ]? <<TAG …`; see [`try_parse_render_tail`](../plasm-oss/crates/plasm-core/src/expr_parser/postfix.rs) and [Row-to-Text Templates](#row-to-text-templates-content-and-minijinja).
+**Row-to-text:** optional render tail after the postfix head — `… [ fields ]? <<TAG …`; see ``try_parse_render_tail`` and [Row-to-Text Templates](#row-to-text-templates-content-and-minijinja).
 
 ### Path expression (CGS-aware)
 
-Abbreviated from [`expr_parser/mod.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs).
+Abbreviated from ``expr_parser/mod.rs``.
 
 ```ebnf
 EXPR          = SOURCE , { PIPE_SEGMENT } , [ "[" , FIELD_LIST , "]" ] ;
@@ -135,9 +138,13 @@ SOURCE        = Entity , "(" , ARG_LIST , ")"
               | Entity
               | PAGE_CALL ;
 PIPE_SEGMENT  = "." , FIELD_NAME
-              | "." , METHOD , [ "(" , DOTTED_ARGS , ")" ]
+              | "." , METHOD , [ "(" , METHOD_ARGS , ")" ]
               | "." , METHOD , "()"
               | ".^" , Entity , [ "{" , PRED_LIST , "}" ] ;
+METHOD_ARGS   = DOTTED_ARG_LIST | UNION_CTOR_PAYLOAD ;
+DOTTED_ARG_LIST = (* empty *) | ".." | KEY , "=" , VALUE , { "," , KEY , "=" , VALUE } , [ "," , ".." ] ;
+UNION_CTOR_PAYLOAD = "v" , DIGITS , "{" , ARG_MAP , "}" ;
+(* ARG_MAP: same key/value surface as dotted-call args — see value.rs; no leading `v`+digits+`{` form inside the map. *)
 PRED          = FIELD_NAME , COMP_OP , [ VALUE ]
               | ForeignEntity , "." , FIELD_NAME , COMP_OP , [ VALUE ] ;
 COMP_OP       = "=" | "!=" | ">" | "<" | ">=" | "<=" | "~" ;
@@ -147,13 +154,35 @@ VALUE         = QUOTED_STRING | STRUCTURED_HEREDOC | UUID | NUMBER | BARE_WORD
               ;
 ```
 
-**Context sensitivity:** classification into field navigation vs invoke vs zero-arity depends on **`CGS`**. Federation uses [`parse_with_cgs_layers_program`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs) with the session [`SymbolMap`](../plasm-oss/crates/plasm-core/src/symbol_tuning.rs).
+**Method arguments (`METHOD_ARGS`)** are **catalog-sensitive** after the left-hand receiver and method label resolve to a capability:
+
+- If that capability’s merged `input_schema.input_type` is **`InputType::Object`**, only **`DOTTED_ARG_LIST`** is valid (`key=value`, optional `..` ellipsis).
+- If it is **`InputType::Union`** (a *root* tagged union), the parentheses may contain **either** a full **`DOTTED_ARG_LIST`** (including a wire-style object with the variant discriminator field, when applicable) **or** exactly one **`UNION_CTOR_PAYLOAD`**: `v` + ASCII digits + `{` … `}` matching a variant’s `constructor_symbol` and body fields.
+- **Mixed forms are rejected** (e.g. `method(v111{…}, p2=$)`): `UNION_CTOR_PAYLOAD` must be the sole contents of `( … )` for that overload.
+
+**Lowering:** a sole `UNION_CTOR_PAYLOAD` is stored on the invoke IR as raw ``Value::UnionCtor`` inside ``InvokeInputPayload`` (deserialized as `InvokeInputPayload::Raw`). The runtime lifts it with the capability `input_schema` into wire JSON (discriminator merged per variant `wire`) before CML template evaluation — same path as nested union rows inside object bodies.
+
+**Context sensitivity:** classification into field navigation vs invoke vs zero-arity depends on **`CGS`**. Federation uses ``parse_with_cgs_layers_program`` with the session ``SymbolMap``.
+
+**Predicate lists (`Entity{ … }`):** comma-separated clauses use ``split_top_level`` (`()`, `[]`, `{}`, quotes, tagged heredocs). Within each clause, the first top-level comparison operator (`!=`, `>=`, `<=`, `=`, `~`, `>`, `<`) is located with the same nesting rules — see ``predicate_surface.rs``. ``try_auto_correct`` delegates to that module so correction never runs a parallel comma/`=` scanner.
 
 ---
 
 ## Tagged heredocs and tag collision
 
-Structured string values may use **tagged heredocs** (`<<TAG` … closing line `TAG` / `TAG)` / …), implemented in `plasm_core::expr_parser` ([`value.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/value.rs), shared close rules in [`heredoc_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/heredoc_surface.rs)). The close delimiter is recognized on the **first** line (after the opener) whose **trimmed** content equals `TAG` or `TAG` followed by optional ASCII space and a single `)` / `,` / `}` on the same line. There is no “last closing tag wins” scan.
+Structured string values may use **tagged heredocs** (`<<TAG` … closing line `TAG` / `TAG)` / `TAG})` / …), implemented in `plasm_core::expr_parser` (``value.rs``, shared close rules in ``heredoc_surface.rs``). The close delimiter is recognized on the **first** line (after the opener) whose **trimmed** content equals `TAG` or `TAG` followed by optional ASCII space and a parser-owned delimiter tail containing only `)`, `]`, `}`, and/or `,` on the same line. The heredoc scanner closes the string at `TAG`; the enclosing parser then consumes and validates the suffix delimiters. There is no “last closing tag wins” scan.
+
+**Unified object-expression rule:** heredocs are **value atoms**, not statement terminators. Program staging must keep accumulating physical lines until the heredoc is closed **and** the enclosing expression delimiters balance. This makes direct arguments and nested object/union payloads equivalent:
+
+```text
+Document(x).comment(text=<<T
+hello
+T)
+
+Document(x).suggest(v111{content=<<T
+hello
+T})
+```
 
 **Implication:** pick a `TAG` that **cannot** appear as a trimmed line anywhere inside the intended payload. Short tags (`RFC`, `END`, `BODY`) are unsafe for arbitrary RFC822/MIME or markdown blobs because a real line may equal `TAG` and **truncate** the value early. Prefer high-entropy labels such as `PLASM_MAIL_9c2e` or `GMAIL_RAW_EOF`.
 
@@ -192,7 +221,7 @@ Not a complete Lean formalisation; judgement forms intended to be mechanisable (
 - **`Catalog`** — loaded CGS slice(s) + mappings metadata (entities, fields, capabilities, parameter slots).
 - **`Γ`** — program environment: labels → node / value types.
 - **`Value`** — literals + structured objects + **`Hole`** (`PlasmInputRef`).
-- **`Expr`** — path IR ([`Expr`](../plasm-oss/crates/plasm-core/src/expr.rs)).
+- **`Expr`** — path IR (``Expr``).
 - **`Plan`** — lowered DAG (opaque; host-defined).
 
 ### Representative judgements
@@ -219,23 +248,24 @@ Not a complete Lean formalisation; judgement forms intended to be mechanisable (
 - **Entity fields** (`FieldSchema`) always use `value_ref` → a row in top-level `values:`.
 - **Capability object parameters** (`parameters:` entries) use **exactly one** of:
   - `value_ref` → `values:` (registry), or
-  - `input_type` → inline structural [`InputType`](../plasm-oss/crates/plasm-core/src/schema.rs) (object / array / union / value / none).
+  - `input_type` → inline structural ``InputType`` (object / array / union / value / none).
 - **`input_schema.input_type.fields`** use the same XOR: each field is either registry-backed (`value_ref`) or structural (`input_type`). When both `parameters` and `input_schema` are present, loader-merged object fields must not duplicate names.
 
 Structural inline fields are **not** `values:` slots; registry-only consumers may skip them when a `NamedValueSchema` is required.
 
 ### Tagged unions (`InputType::Union`)
 
-- Each variant has **`wire`** (`field` + `value`) — the **discriminator** merged into HTTP/CML JSON when lowering ([`TypedInvokeInput::Union`](../plasm-oss/crates/plasm-core/src/typed_invoke.rs)).
+- Each variant has **`wire`** (`field` + `value`) — the **discriminator** merged into HTTP/CML JSON when lowering (``TypedInvokeInput::Union``).
 - **Surface typing** matches the variant **body** only (no discriminator in the Plasm value before lowering).
 - **Lifting** tries each variant’s body shape in order until one matches.
+- When the union is the **root** `input_schema.input_type` of an invoke/update/create dotted call, the surface may use a **`UNION_CTOR_PAYLOAD`** as the entire parenthesized argument list (see [`METHOD_ARGS` above](#path-expression-cgs-aware)); the parser records ``Value::UnionCtor`` with `constructor_symbol` matching the variant.
 
 ### Surface constructor literals (`v` + digits + `{…}`)
 
-A token **`v`** plus ASCII digits plus a braced map parses as JSON-like [`Value::Object`](../plasm-oss/crates/plasm-core/src/expr_parser/value.rs). Digits may align with DOMAIN constructor mnemonics; the runtime does not reinterpret them beyond parsing.
+A token **`v`** plus ASCII digits plus a braced map parses as a **union constructor literal** ``Value::UnionCtor`` when it appears in value positions that accept constructors (including **`UNION_CTOR_PAYLOAD`** in method calls, and **standalone** DOMAIN teaching rows as ``Expr::TeachingValue``). Digits align with DOMAIN `constructor_symbol` mnemonics; the type checker ties them to `InputType::Union` variants in scope.
 
 ---
 
 ## Proof catalog
 
-[`apis/proof/`](../apis/proof/) ships split **`domain.yaml`** + **`mappings.yaml`**. See [`apis/proof/README.md`](../apis/proof/README.md) for regeneration and exploration.
+The **`apis/proof/`** catalog in the repository ships split **`domain.yaml`** + **`mappings.yaml`** for language regression exploration.

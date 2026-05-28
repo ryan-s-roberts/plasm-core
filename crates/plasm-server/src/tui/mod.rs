@@ -448,9 +448,6 @@ fn split_main_notice_area(area: Rect, show_notice: bool) -> (Rect, Option<Rect>)
     chrome::split_with_notice(area, show_notice)
 }
 
-/// Long reference string appended to the footer when `?` was pressed.
-const FOOTER_HELP_OVERLAY: &str = "Clients: c p # ↑↓ · APIs: / Space s a o · OAuth: n d x+y · Keys: a r d c # · ^C quit · Logs: ↑↓ PgUp/Dn g/G";
-
 fn sync_log_cursor_scroll(logs: &mut LogState, visible: usize) {
     let total = logs.lines.len();
     if total == 0 {
@@ -1110,7 +1107,6 @@ struct RunState {
     logs: LogState,
     resources: ResourceState,
     notice: Option<RunNotice>,
-    show_help: bool,
     overview: OverviewState,
     clients: ClientsState,
     policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
@@ -1129,7 +1125,6 @@ impl RunState {
             clients: ClientsState::default(),
             resources: ResourceState::default(),
             notice: None,
-            show_help: false,
             policy_bootstrap_detail: None,
         }
     }
@@ -1950,7 +1945,6 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
     let snap = state.resources.snapshot.clone();
     match key.code {
         KeyCode::Char('q') => return true,
-        KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('#') if state.screen == RunScreen::Clients => {
             let url = mcp_streamable_url(deps.listen_port);
             set_notice(
@@ -2619,7 +2613,6 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
             false
         }
         UiMsg::Key(key) => {
-            state.show_help = false;
             match state.mode {
                 InputMode::ApiFilter
                 | InputMode::ApiSecretEdit { .. }
@@ -3467,12 +3460,10 @@ fn render_running_frame(
     let global = [
         chrome::FooterItem::new("←/→", "tab"),
         chrome::FooterItem::new("Tab", "next"),
-        chrome::FooterItem::new("?", "help"),
         chrome::FooterItem::new("q", "quit"),
     ];
     let screen_items = screen_footer_items(model);
     let mode_l = input_mode_label(&model.mode);
-    let help = model.show_help.then_some(FOOTER_HELP_OVERLAY);
     let admin = model.resources.admin.busy_task().map(|t| {
         format!(
             "{} {:.0}s",
@@ -3480,7 +3471,7 @@ fn render_running_frame(
             t.started_at.elapsed().as_secs_f32()
         )
     });
-    let footer_line = chrome::footer_line(&global, &screen_items, mode_l, help, admin.as_deref());
+    let footer_line = chrome::footer_line(&global, &screen_items, mode_l, admin.as_deref());
     chrome::render_footer_bar(frame, layout.footer, footer_line);
 }
 
@@ -4013,13 +4004,8 @@ mod tests {
             chrome::FooterItem::new("←/→", "tab"),
             chrome::FooterItem::new("q", "quit"),
         ];
-        let text = line_text(&chrome::footer_line(&global, &[], None, None, None));
+        let text = line_text(&chrome::footer_line(&global, &[], None, None));
         assert!(text.contains("q: quit"));
-    }
-
-    #[test]
-    fn help_overlay_documents_keys_tab_shortcuts() {
-        assert!(FOOTER_HELP_OVERLAY.contains("Keys: a r d c"));
     }
 
     #[test]

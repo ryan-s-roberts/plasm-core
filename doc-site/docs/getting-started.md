@@ -1,24 +1,33 @@
 # Start here
 
-**Outcome:** From a **[plasm-core](https://github.com/ryan-s-roberts/plasm-core)** checkout you will (1) prove a catalog validates, (2) run one successful REPL query against a public HTTP API, and (3) know how to start `plasm-mcp` with separate health/discovery and MCP listeners—then pick your next path.
-
-**Prerequisites:** Rust toolchain (`cargo`), repo cloned with `apis/` populated.
+**Outcome:** You will (1) run a released **`plasm-server`** appliance or (2) from a **[plasm-core](https://github.com/PlasmTools/plasm-core)** checkout validate a catalog and run one REPL query — then pick your next path.
 
 ---
 
-## Step 1 — Validate a catalog
+## Track A — Released appliance (recommended)
+
+1. **Install** — [plasm.tools/get](https://plasm.tools/get/) → **`plasm-server`**
+2. **Boot** — TTY → control station; scripts → **`--no-tui`**
+3. **Enable APIs + MCP key** — control station **APIs** / **Keys** tabs ([TUI guide](appliance/tui.md)) or `plasm-server mcp …`
+4. **Client** — `plasm init` → `plasm context` → `plasm run` against the HTTP listener
+
+Full walkthrough: [Appliance quick start](appliance/quickstart.md).
+
+---
+
+## Track B — From source (catalog authors)
+
+**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated.
+
+### Step 1 — Validate a catalog
 
 ```bash
 cargo run -p plasm-cli --bin plasm -- schema validate apis/dnd5e
 ```
 
-**Verify:** Exit code `0` and no validation errors. The argument is the **catalog directory** (`apis/<name>/`), not `domain.yaml` alone—both `domain.yaml` and `mappings.yaml` must load together. Swap `dnd5e` for another catalog when exploring. Split catalogs use **`values:`** + **`value_ref`** on fields and parameters—see [Authoring reference — Value domains](authoring/reference.md#value-domains-values-and-value_ref).
+**Verify:** Exit code `0`. The argument is the **catalog directory** (`apis/<name>/`), not `domain.yaml` alone.
 
----
-
-## Step 2 — REPL: one live read against the wire
-
-Examples below use **public HTTP** backends only:
+### Step 2 — REPL: one live read
 
 ```bash
 cargo run -p plasm --bin plasm-repl -- \
@@ -26,25 +35,9 @@ cargo run -p plasm --bin plasm-repl -- \
   --backend https://www.dnd5eapi.co
 ```
 
-At the `repl>` prompt, run a simple query aligned with that catalog (for example list spells or read one spell—see the catalog’s DOMAIN or README if unsure).
+**Verify:** Decoded rows at the `repl>` prompt (no transport errors).
 
-**Verify:** You see decoded rows (no transport errors). That confirms **CGS + CML + runtime + backend** agree for this catalog.
-
-Other quick sandboxes:
-
-```bash
-cargo run -p plasm --bin plasm-repl -- \
-  --schema apis/rickandmorty \
-  --backend https://rickandmortyapi.com/api
-```
-
-**Authenticated APIs** (e.g. GitHub): set the token env vars described in `apis/<name>/README.md` before passing `--backend`.
-
----
-
-## Step 3 — Static CLI smoke test (`plasm-cgs`)
-
-Optional one-shot command without the REPL:
+### Step 3 — Static CLI smoke (`plasm-cgs`)
 
 ```bash
 cargo run -p plasm --bin plasm-cgs -- \
@@ -53,108 +46,33 @@ cargo run -p plasm --bin plasm-cgs -- \
   pokemon pikachu
 ```
 
-**Verify:** Printed JSON (or table-style output) for the requested capability—confirms compile + HTTP path without MCP.
-
----
-
-## Step 4 — Start `plasm-mcp` (two listeners)
-
-Build once, then run **both** transports:
+### Step 4 — Pack plugins and run the appliance
 
 ```bash
-cargo build -p plasm --release --bin plasm-mcp
-./target/release/plasm-mcp --schema apis/dnd5e --http --port 3001 --mcp --mcp-port 3000
+cargo run -p plasm --bin plasm-pack-plugins -- \
+  --apis-root apis --output-dir target/plasm-plugins
+
+cargo run -p plasm-server --release -- --plugin-dir target/plasm-plugins
 ```
 
 **Verify:**
 
+| Check | Command |
+|-------|---------|
+| Health | `curl -sS http://127.0.0.1:3000/v1/health` |
+| Registry | `curl -sS http://127.0.0.1:3000/v1/registry` lists multiple `entry_id`s |
 
-| Listener              | Default in this example | Quick check                                                                         |
-| --------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
-| Health/discovery      | `--port` → **3001**     | `curl -sS http://127.0.0.1:3001/v1/health` → JSON `{"status":"ok"}`                  |
-| MCP (Streamable HTTP) | `--mcp-port` → **3000** | Point an MCP client at the configured path (often `/mcp`); see repo `**AGENTS.md`** |
-
-
-**Important:** `--http` and `--mcp` must **not** share one port; raise `--mcp-port` if it collides.
-
-Full flag matrix, execute `Accept` negotiation, MCP tool semantics, and env vars are maintained in repository `**AGENTS.md`** (too large to mirror here).
-
----
-
-## Step 5 — Multi-entry catalogs (plugins)
-
-Pack YAML catalogs to ABI v4 `cdylib`s and run with `**--plugin-dir`**:
-
-- Catalog index: [Catalogs](reference/apis-readme.md)
-- Packing and loader behavior: `**AGENTS.md**`
-
-**Verify:** `GET` discovery lists multiple `entry_id`s when several plugins load.
-
----
-
-## Docker appliance
-
-**One container:** embedded PostgreSQL, OSS **`plasm-mcp`** (**HTTP + MCP**), and **Phoenix Desktop**—built from `docker/oss-appliance.Dockerfile` in **[plasm-core](https://github.com/ryan-s-roberts/plasm-core)**.
-
-**Prerequisites:** Docker with Buildx; clone **plasm-core** with `desktop/` and `elixir/plasm_ui_core` present (the image copies both).
-
-### Build and run
-
-From the **repository root** of plasm-core:
-
-```bash
-docker buildx build -f docker/oss-appliance.Dockerfile -t plasm-oss-appliance:local \
-  --platform linux/arm64 --load .
-
-docker run --rm \
-  -p 4000:4000 -p 3001:3001 -p 3000:3000 \
-  -v plasm-oss-data:/data \
-  plasm-oss-appliance:local
-```
-
-Multi-arch bake, CI publishing, and Zig/cross-compile notes live in **`docker/README.md`** in the repo.
-
-### Published ports
-
-| Port | Service |
-|------|---------|
-| **4000** | Plasm Desktop (Phoenix); bind `PHX_HOST` / `PORT` if you change defaults |
-| **3001** | Agent HTTP plane (discovery, execute, `/internal/*` when configured) |
-| **3000** | MCP Streamable HTTP (path **`/mcp`**); **`GET /health`** for liveness |
-
-Quick checks from the host:
-
-```bash
-curl -sS http://127.0.0.1:3001/v1/health
-curl -sS http://127.0.0.1:3000/health
-```
-
-### Storage on `/data` (mount a volume or bind-mount)
-
-Persist **`/data`** so Postgres, trace archives, run snapshots, and generated secrets survive container restarts.
-
-| Path (inside container) | Role |
-|-------------------------|------|
-| **`/data/postgres`** | PostgreSQL **cluster directory** (`PGDATA`). Holds the on-disk database files for the embedded server. |
-| **`postgresql://…/plasm_appliance`** | Logical database **`plasm_appliance`** (created on first boot). Shared by Phoenix (Ecto) and `plasm-mcp` (`DATABASE_URL` / `project_mcp_*` sqlx). Not a separate folder—it lives under the cluster above. |
-| **`/data/plasm/trace-archive`** | **`PLASM_TRACE_ARCHIVE_DIR`** — durable **trace** history on disk (completed traces under `traces/{tenant_id}/{trace_id}/`). See [Trace & run artifacts](reference/oss-core-trace-artifacts.md). |
-| **`/data/plasm/run-artifacts`** | **`PLASM_RUN_ARTIFACTS_DIR`** — filesystem-backed **execute run snapshots** / plan material when you are not using `PLASM_RUN_ARTIFACTS_URL` object storage. Same reference doc. |
-| **`/data/plasm/secrets/`** | Auto-generated on first boot if unset: `secret_key_base`, `plasm_auth_jwt_secret` (and optional overrides you inject via env). |
-
-You may override directories with **`PLASM_TRACE_ARCHIVE_DIR`**, **`PLASM_RUN_ARTIFACTS_DIR`**, **`DATABASE_URL`**, **`PLASM_AUTH_STORAGE_URL`**, and **`SECRET_KEY_BASE`** / **`PLASM_AUTH_JWT_SECRET`** as described in **`docker/README.md`** and [Run the MCP appliance](appliance/onboarding.md).
+MCP Streamable HTTP is on the same host at **`/mcp`** (see [Appliance quick start](appliance/quickstart.md) for Bearer keys).
 
 ---
 
 ## Choose your next path
 
-
-| Goal                                           | Go to                                                                       |
-| ---------------------------------------------- | --------------------------------------------------------------------------- |
-| Docker image, `/data` layout, env overrides    | **Start here** → [Docker appliance](#docker-appliance); repo `docker/README.md` |
-| Credentials, OAuth vs PAT, Postgres MCP policy | [Run the MCP appliance](appliance/onboarding.md)                            |
-| Mental model (CGS / CML / Plasm / runtime)     | [Concepts](concepts.md)                                                     |
-| Author `domain.yaml` + `mappings.yaml`         | [Connect an API](authoring/index.md)                                        |
-| Incoming JWT / API keys                        | [Incoming auth](reference/plasm-mcp-incoming-auth.md)                       |
-| `project_mcp_`* persistence                    | [OSS appliance MCP persistence](reference/oss-appliance-mcp-persistence.md) |
-
-
+| Goal | Go to |
+|------|------|
+| Install, TUI, MCP keys | [Appliance quick start](appliance/quickstart.md) |
+| `plasm init` / remote terminal | [Remote terminal (`plasm`)](reference/plasm-cgs-remote-terminal.md) |
+| Credentials, OAuth vs PAT | [MCP & credentials](appliance/onboarding.md) |
+| Mental model | [Concepts](concepts.md) |
+| Author catalogs | [Catalog authoring](authoring/index.md) |
+| Optional incoming JWT | [Incoming auth](reference/plasm-mcp-incoming-auth.md) |

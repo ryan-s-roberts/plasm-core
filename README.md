@@ -4,7 +4,7 @@
 
 **[Documentation (GitHub Pages)](https://plasmtools.github.io/plasm-core/)** · **[Source](https://github.com/PlasmTools/plasm-core)**
 
-Plasm is a **typed capability graph** (CGS), **wire mappings** (CML), and a **path-expression language** agents use against real APIs: validate before transport, compact session symbols, HTTP and MCP hosts, and curated catalogs under `apis/`. Deep dives—architecture, `plasm-mcp`, execute semantics, authoring, and env flags—live in the docs site above, not in this file.
+Plasm is a **typed capability graph** (CGS), **wire mappings** (CML), and a **path-expression language** agents use against real APIs: validate before transport, compact session symbols, HTTP and MCP hosts, and curated catalogs under `apis/`. Deep dives—**`plasm-server`**, **`plasm`** remote terminal, execute semantics, authoring, views, schema overlays, and env flags—live in the **[documentation site](https://plasmtools.github.io/plasm-core/)**.
 
 ### Why this exists
 
@@ -19,13 +19,12 @@ Prerequisites: **Rust** (`cargo`). Optional: **Just**, **Elixir** (for downstrea
 ```bash
 cargo build -p plasm-server --release
 cargo run -p plasm-server --release -- \
-  --schema fixtures/schemas/capability_with_input.cgs.yaml \
-  --http-port 3001 --mcp-port 3000
+  --schema fixtures/schemas/capability_with_input.cgs.yaml
 ```
 
-Use **`--plugin-dir target/plasm-plugins`** after packing plugins (see **`AGENTS.md`**). **`--no-tui`** runs headless. For `project_mcp_*` persistence set **`DATABASE_URL`** / **`PLASM_MCP_CONFIG_DATABASE_URL`** (and run **`plasm-server mcp migrate-db`** or **`--migrate-mcp-config-db`**). Details: [`crates/plasm-server/README.md`](crates/plasm-server/README.md).
+After **`install.sh`**, run **`plasm-server`** with no flags. From a checkout with packed plugins, pass **`--plugin-dir target/plasm-plugins`** (see **[Plugins & compile pipeline](https://plasmtools.github.io/plasm-core/reference/genco-plugin-pipeline/)**). **`--no-tui`** runs headless. For `project_mcp_*` persistence run **`plasm-server mcp migrate-db`**. Details: [Appliance quick start](https://plasmtools.github.io/plasm-core/appliance/quickstart/).
 
-**SaaS Phoenix + Tool Explorer** lives in the **[plasm](https://github.com/PlasmTools/plasm)** monorepo under **`web/`** (`just local-web` from that checkout).
+**Remote client:** install **`plasm`** from [plasm.tools/get](https://plasm.tools/get/) and follow [Remote terminal](https://plasmtools.github.io/plasm-core/reference/plasm-cgs-remote-terminal/).
 
 Full flags, `/execute`, MCP tools, plugins, and catalog workflows are covered in **[the documentation](https://plasmtools.github.io/plasm-core/)**; contributor-oriented commands and boundaries are summarized in [`AGENTS.md`](AGENTS.md). Doc sources: [`doc-site/`](doc-site/README.md).
 

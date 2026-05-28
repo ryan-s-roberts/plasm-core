@@ -70,7 +70,6 @@ struct BootModel {
     detail_lines: Vec<String>,
     fatal: Option<String>,
     started: Instant,
-    show_help: bool,
 }
 
 impl BootModel {
@@ -81,7 +80,6 @@ impl BootModel {
             detail_lines: Vec::new(),
             fatal: None,
             started: Instant::now(),
-            show_help: false,
         }
     }
 
@@ -222,30 +220,7 @@ fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen_port: u16) {
         chunks[0],
     );
 
-    if model.show_help {
-        let help_text = vec![
-            Line::from(Span::styled("Bootstrap", accent_style())),
-            Line::from(""),
-            Line::from("Phases match the checklist (load catalog through listeners)."),
-            Line::from("Detail shows live status for the current phase."),
-            Line::from(""),
-            Line::from(Span::styled("After RUN mode", accent_style())),
-            Line::from("  Tab — next tab"),
-            Line::from("  Shift+Tab / Left — previous tab"),
-            Line::from("  q — quit control station"),
-            Line::from("  Ctrl+C — shutdown (terminal signal)"),
-            Line::from("  OAuth tab — outbound providers + device bind (d)"),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("?", dim_style()),
-                Span::raw(" closes this panel"),
-            ]),
-        ];
-        frame.render_widget(
-            Paragraph::new(help_text).block(Block::default().borders(Borders::ALL).title("Help")),
-            chunks[1],
-        );
-    } else if let Some(ref fatal) = model.fatal {
+    if let Some(ref fatal) = model.fatal {
         let fatal_split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
@@ -299,8 +274,6 @@ fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen_port: u16) {
 
     let footer_spans = if model.fatal.is_some() {
         vec![
-            Span::styled("?", dim_style()),
-            Span::raw(" help   "),
             Span::styled("q", dim_style()),
             Span::raw(" exit   "),
             Span::styled("^C", dim_style()),
@@ -310,8 +283,6 @@ fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen_port: u16) {
         ]
     } else {
         vec![
-            Span::styled("?", dim_style()),
-            Span::raw(" help   "),
             Span::styled("q", dim_style()),
             Span::raw(" cancel startup   "),
             Span::styled("^C", dim_style()),
@@ -404,10 +375,6 @@ pub fn run_appliance_shell(
                             }
                         } else {
                             match key.code {
-                                KeyCode::Char('?') => {
-                                    model.show_help = !model.show_help;
-                                    dirty = true;
-                                }
                                 KeyCode::Char('q') => {
                                     boot_cancel.store(true, Ordering::SeqCst);
                                     if model.fatal.is_some() {

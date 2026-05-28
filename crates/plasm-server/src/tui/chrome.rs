@@ -199,7 +199,6 @@ pub fn footer_line(
     global: &[FooterItem],
     screen: &[FooterItem],
     mode_label: Option<&str>,
-    help_extra: Option<&str>,
     admin_hint: Option<&str>,
 ) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -227,13 +226,6 @@ pub fn footer_line(
         first = false;
         spans.push(Span::styled("mode: ", dim_style()));
         spans.push(Span::raw(m.to_string()));
-    }
-    if let Some(extra) = help_extra {
-        if !first {
-            spans.push(Span::styled(" | ", dim_style()));
-        }
-        first = false;
-        spans.push(Span::raw(extra.to_string()));
     }
     if let Some(h) = admin_hint {
         if !first {
@@ -301,14 +293,13 @@ mod tests {
     fn footer_line_contains_screen_keys() {
         let global = [
             FooterItem::new("←/→", "tab"),
-            FooterItem::new("?", "help"),
             FooterItem::new("q", "quit"),
         ];
         let screen = [
             FooterItem::new("/", "filter"),
             FooterItem::new("Space", "toggle"),
         ];
-        let line = footer_line(&global, &screen, None, None, None);
+        let line = footer_line(&global, &screen, None, None);
         let flat = line.to_string();
         assert!(flat.contains("filter"));
         assert!(flat.contains("toggle"));
