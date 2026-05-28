@@ -30,14 +30,20 @@ use crate::terminal_state::{
     display_mirror_path, format_qualified_capabilities, merge_and_write_latest_discovery,
     mint_client_session_id, read_current_session_pointer, resolve_capability_seeds,
     resolve_current_session, write_current_session_pointer, write_language_frontmatter_markdown,
+    write_plasm_cli_agent_skill,
     ExecutionBinding,
 };
 
 /// Default HTTP origin written by `plasm init` when `--server` is omitted.
 pub const DEFAULT_PLASM_HTTP_ORIGIN: &str = "http://127.0.0.1:3000";
 
-/// Hosted Plasm API origin (`plasm init --server …` / device OAuth login).
-pub const DEFAULT_PLATFORM_HTTP_ORIGIN: &str = "https://platform.plasm.tools";
+/// Hosted Plasm **data-plane** HTTP base (`plasm init --server …` / device OAuth login).
+///
+/// SaaS ingress serves agent routes under `/plasm/http/…` on the public host (not bare `/v1/…`).
+pub const DEFAULT_PLATFORM_HTTP_ORIGIN: &str = "https://platform.plasm.tools/plasm/http";
+
+/// Legacy platform origin (profiles created before `/plasm/http` prefix).
+pub const LEGACY_PLATFORM_HTTP_ORIGIN: &str = "https://platform.plasm.tools";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TerminalProfile {
@@ -122,7 +128,9 @@ fn resolve_access_token(profile: &TerminalProfile) -> Option<String> {
 /// True when the origin is the hosted platform (device OAuth), not a local appliance.
 pub fn is_managed_platform_origin(server: &str) -> bool {
     let s = normalize_http_origin(server).to_ascii_lowercase();
-    if s == DEFAULT_PLATFORM_HTTP_ORIGIN {
+    if s == DEFAULT_PLATFORM_HTTP_ORIGIN.to_ascii_lowercase()
+        || s == LEGACY_PLATFORM_HTTP_ORIGIN.to_ascii_lowercase()
+    {
         return true;
     }
     if let Ok(extra) = std::env::var("PLASM_CLI_PLATFORM_ORIGINS") {
@@ -184,12 +192,13 @@ fn run_init(
     }
     let path = profile_path(profile_name);
     save_profile(profile_name, profile)?;
-    let grammar_path = write_language_frontmatter_markdown(
-        &plasm_core::prompt_render::render_plasm_mcp_language_frontmatter(),
-    )?;
+    let grammar = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
+    let grammar_path = write_language_frontmatter_markdown(&grammar)?;
+    let skill_path = write_plasm_cli_agent_skill(&grammar)?;
     println!("configured {}", path.display());
     println!("  workspace: {}", crate::terminal_state::plasm_root_dir().display());
     println!("  grammar: {}", grammar_path.display());
+    println!("  agent skill: {}", skill_path.display());
     println!(
         "  server: {}",
         profile.server.as_deref().unwrap_or("(none)")
@@ -954,5 +963,22 @@ pub async fn run_terminal() -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod platform_origin_tests {
+    use super::{
+        is_managed_platform_origin, DEFAULT_PLATFORM_HTTP_ORIGIN, LEGACY_PLATFORM_HTTP_ORIGIN,
+    };
+
+    #[test]
+    fn managed_platform_accepts_current_and_legacy_origins() {
+        assert!(is_managed_platform_origin(DEFAULT_PLATFORM_HTTP_ORIGIN));
+        assert!(is_managed_platform_origin(LEGACY_PLATFORM_HTTP_ORIGIN));
+        assert!(is_managed_platform_origin(
+            "https://platform.plasm.tools/plasm/http/"
+        ));
+        assert!(!is_managed_platform_origin("http://127.0.0.1:3000"));
     }
 }

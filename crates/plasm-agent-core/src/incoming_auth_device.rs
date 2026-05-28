@@ -3,16 +3,17 @@
 //! - `POST /v1/incoming-auth/device/start` — public; returns `device_code`, `user_code`, `verification_uri`.
 //! - `POST /v1/incoming-auth/device/poll` — public; CLI polls with `device_code`.
 //! - `POST /internal/incoming-auth/v1/device/complete` — control-plane; Phoenix after GitHub sign-in.
+//!
+//! Sessions are stored in auth-framework KV (`AuthStorage`) so multi-replica `plasm-mcp` works.
 
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use auth_framework::storage::core::AuthStorage;
 use axum::extract::Extension;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 
 use crate::control_plane_http::control_plane_headers_authorized;
 use crate::incoming_auth::IncomingAuthVerifier;
@@ -21,50 +22,47 @@ use crate::server_state::PlasmHostState;
 const DEFAULT_DEVICE_TTL_SECS: u64 = 900;
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
 
-#[derive(Clone)]
-pub struct IncomingAuthDeviceStore {
-    inner: Arc<RwLock<HashMap<String, DeviceSession>>>,
-    by_user_code: Arc<RwLock<HashMap<String, String>>>,
-}
-
-#[derive(Clone)]
-struct DeviceSession {
-    user_code: String,
-    expires_at: Instant,
-    poll_interval_secs: u64,
-    status: DeviceStatus,
-}
-
-#[derive(Clone)]
-enum DeviceStatus {
-    Pending,
-    Approved { access_token: String },
-    Expired,
-}
+/// Marker type — device sessions live in [`AuthStorage`], not in-process maps.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IncomingAuthDeviceStore;
 
 impl IncomingAuthDeviceStore {
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(HashMap::new())),
-            by_user_code: Arc::new(RwLock::new(HashMap::new())),
-        }
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
     }
+}
 
-    async fn purge_expired(&self) {
-        let now = Instant::now();
-        let mut inner = self.inner.write().await;
-        let expired: Vec<String> = inner
-            .iter()
-            .filter(|(_, s)| s.expires_at <= now || matches!(s.status, DeviceStatus::Expired))
-            .map(|(k, _)| k.clone())
-            .collect();
-        for code in expired {
-            if let Some(sess) = inner.remove(&code) {
-                let mut idx = self.by_user_code.write().await;
-                idx.remove(&sess.user_code);
-            }
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredDeviceSession {
+    user_code: String,
+    expires_at_unix: u64,
+    poll_interval_secs: u64,
+    status: StoredDeviceStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredDeviceStatus {
+    Pending,
+    Approved {
+        access_token: String,
+    },
+}
+
+fn device_code_key(device_code: &str) -> String {
+    format!("plasm:incoming_auth_device:v1:code:{device_code}")
+}
+
+fn user_code_index_key(user_code: &str) -> String {
+    format!("plasm:incoming_auth_device:v1:user:{user_code}")
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn public_web_origin() -> String {
@@ -85,12 +83,109 @@ fn mint_device_code() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Canonical `XXXX-XXXX` user code for KV index and session lookup.
+pub fn normalize_user_code(raw: &str) -> Option<String> {
+    let alnum: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    match alnum.len() {
+        8 => Some(format!("{}-{}", &alnum[..4], &alnum[4..8])),
+        n if n > 8 => Some(format!("{}-{}", &alnum[..4], &alnum[4..8])),
+        _ => None,
+    }
+}
+
 fn jwt_ttl_secs() -> u64 {
     std::env::var("PLASM_INCOMING_AUTH_JWT_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .filter(|&n| n > 0)
         .unwrap_or(30 * 86_400)
+}
+
+fn storage_unavailable() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "device_auth_storage_unavailable",
+            "message": "device login requires auth-framework KV (PLASM_AUTH_STORAGE_URL)",
+        })),
+    )
+}
+
+fn require_auth_storage(
+    st: &PlasmHostState,
+) -> Result<&std::sync::Arc<dyn AuthStorage>, (StatusCode, Json<serde_json::Value>)> {
+    st.auth_storage().ok_or_else(storage_unavailable)
+}
+
+async fn store_session(
+    storage: &dyn AuthStorage,
+    device_code: &str,
+    user_code: &str,
+    sess: &StoredDeviceSession,
+    ttl_secs: u64,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let bytes = serde_json::to_vec(sess).map_err(|_| storage_kv_error("encode"))?;
+    storage
+        .store_kv(
+            &device_code_key(device_code),
+            &bytes,
+            Some(Duration::from_secs(ttl_secs)),
+        )
+        .await
+        .map_err(|_| storage_kv_error("write"))?;
+    storage
+        .store_kv(
+            &user_code_index_key(user_code),
+            device_code.as_bytes(),
+            Some(Duration::from_secs(ttl_secs)),
+        )
+        .await
+        .map_err(|_| storage_kv_error("write index"))?;
+    Ok(())
+}
+
+async fn load_session(
+    storage: &dyn AuthStorage,
+    device_code: &str,
+) -> Result<Option<StoredDeviceSession>, (StatusCode, Json<serde_json::Value>)> {
+    let row = storage
+        .get_kv(&device_code_key(device_code))
+        .await
+        .map_err(|_| storage_kv_error("read"))?;
+    let Some(bytes) = row else {
+        return Ok(None);
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| storage_kv_error("decode"))
+}
+
+async fn save_session(
+    storage: &dyn AuthStorage,
+    device_code: &str,
+    user_code: &str,
+    sess: &StoredDeviceSession,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let ttl = sess.expires_at_unix.saturating_sub(now_unix()).max(1);
+    store_session(storage, device_code, user_code, sess, ttl).await
+}
+
+fn storage_kv_error(op: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": "server_error",
+            "message": format!("device session storage {op} failed"),
+        })),
+    )
+}
+
+fn session_expired(sess: &StoredDeviceSession) -> bool {
+    sess.expires_at_unix <= now_unix()
 }
 
 /// Mint an HS256 incoming JWT compatible with [`IncomingAuthVerifier`].
@@ -108,11 +203,7 @@ pub fn mint_incoming_access_token(
         .as_deref()
         .ok_or_else(|| "JWT minting not configured (PLASM_AUTH_JWT_SECRET)".to_string())?;
 
-    let exp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs()
-        + jwt_ttl_secs();
+    let exp = now_unix() + jwt_ttl_secs();
 
     let mut claims = json!({
         "sub": sub,
@@ -173,33 +264,23 @@ async fn device_start_handler(
         ));
     }
 
-    let store = st.incoming_auth_device();
-    store.purge_expired().await;
+    let storage = require_auth_storage(&st)?;
 
     let device_code = mint_device_code();
     let user_code = mint_user_code();
     let ttl = DEFAULT_DEVICE_TTL_SECS;
     let interval = DEFAULT_POLL_INTERVAL_SECS;
     let web = public_web_origin();
-    let verification_uri = format!("{web}/login?user_code={user_code}&client=plasm-cli");
+    let verification_uri = format!("{web}/device?user_code={user_code}");
     let verification_uri_complete = verification_uri.clone();
 
-    {
-        let mut inner = store.inner.write().await;
-        inner.insert(
-            device_code.clone(),
-            DeviceSession {
-                user_code: user_code.clone(),
-                expires_at: Instant::now() + Duration::from_secs(ttl),
-                poll_interval_secs: interval,
-                status: DeviceStatus::Pending,
-            },
-        );
-    }
-    {
-        let mut idx = store.by_user_code.write().await;
-        idx.insert(user_code.clone(), device_code.clone());
-    }
+    let sess = StoredDeviceSession {
+        user_code: user_code.clone(),
+        expires_at_unix: now_unix() + ttl,
+        poll_interval_secs: interval,
+        status: StoredDeviceStatus::Pending,
+    };
+    store_session(storage.as_ref(), &device_code, &user_code, &sess, ttl).await?;
 
     Ok(Json(DeviceStartResponse {
         device_code,
@@ -242,18 +323,15 @@ async fn device_poll_handler(
         ));
     }
 
-    let store = st.incoming_auth_device();
-    store.purge_expired().await;
-
-    let mut inner = store.inner.write().await;
-    let Some(sess) = inner.get_mut(device_code) else {
+    let storage = require_auth_storage(&st)?;
+    let Some(sess) = load_session(storage.as_ref(), device_code).await? else {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "expired_token", "message": "unknown or expired device_code" })),
         ));
     };
-    if sess.expires_at <= Instant::now() {
-        sess.status = DeviceStatus::Expired;
+
+    if session_expired(&sess) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "expired_token" })),
@@ -261,15 +339,14 @@ async fn device_poll_handler(
     }
 
     match &sess.status {
-        DeviceStatus::Pending => Ok(Json(serde_json::to_value(DevicePollPending {
-            error: "authorization_pending",
-            interval: Some(sess.poll_interval_secs),
-        }).expect("serialize"))),
-        DeviceStatus::Expired => Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "expired_token" })),
+        StoredDeviceStatus::Pending => Ok(Json(
+            serde_json::to_value(DevicePollPending {
+                error: "authorization_pending",
+                interval: Some(sess.poll_interval_secs),
+            })
+            .expect("serialize"),
         )),
-        DeviceStatus::Approved { access_token } => {
+        StoredDeviceStatus::Approved { access_token } => {
             let resp = DevicePollSuccess {
                 access_token: access_token.clone(),
                 token_type: "Bearer",
@@ -302,9 +379,12 @@ async fn device_complete_handler(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let user_code = body.user_code.trim().to_uppercase();
+    let user_code = match normalize_user_code(&body.user_code) {
+        Some(c) => c,
+        None => return Err(StatusCode::BAD_REQUEST),
+    };
     let subject = body.subject.trim();
-    if user_code.is_empty() || subject.is_empty() {
+    if subject.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -315,14 +395,29 @@ async fn device_complete_handler(
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
 
-    let store = st.incoming_auth_device();
-    let device_code = {
-        let idx = store.by_user_code.read().await;
-        idx.get(&user_code).cloned()
+    let storage = match st.auth_storage() {
+        Some(s) => s,
+        None => return Err(StatusCode::SERVICE_UNAVAILABLE),
     };
-    let Some(device_code) = device_code else {
+
+    let index_row = storage
+        .get_kv(&user_code_index_key(&user_code))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let Some(index_bytes) = index_row else {
         return Err(StatusCode::NOT_FOUND);
     };
+    let device_code = String::from_utf8(index_bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let Some(mut sess) = load_session(storage.as_ref(), &device_code)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    if session_expired(&sess) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let login = body
         .github_login
@@ -337,16 +432,12 @@ async fn device_complete_handler(
     let token = mint_incoming_access_token(verifier, subject, &row.tenant_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let mut inner = store.inner.write().await;
-    let Some(sess) = inner.get_mut(&device_code) else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    if sess.expires_at <= Instant::now() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    sess.status = DeviceStatus::Approved {
+    sess.status = StoredDeviceStatus::Approved {
         access_token: token,
     };
+    save_session(storage.as_ref(), &device_code, &user_code, &sess)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(DeviceCompleteResponse { ok: true }))
 }
@@ -373,6 +464,27 @@ pub fn incoming_auth_device_internal_routes() -> Router {
 mod tests {
     use super::*;
     use crate::incoming_auth::{IncomingAuthConfig, IncomingAuthMode, IncomingAuthVerifier};
+
+    #[test]
+    fn normalize_user_code_accepts_paste_variants() {
+        assert_eq!(
+            normalize_user_code("abcd-ef12").as_deref(),
+            Some("ABCD-EF12")
+        );
+        assert_eq!(
+            normalize_user_code("abcdef12").as_deref(),
+            Some("ABCD-EF12")
+        );
+        assert_eq!(
+            normalize_user_code("ABCD EFGH").as_deref(),
+            Some("ABCD-EFGH")
+        );
+        assert_eq!(
+            normalize_user_code("  abcd-efgh  ").as_deref(),
+            Some("ABCD-EFGH")
+        );
+        assert!(normalize_user_code("short").is_none());
+    }
 
     #[test]
     fn mint_incoming_access_token_round_trip() {

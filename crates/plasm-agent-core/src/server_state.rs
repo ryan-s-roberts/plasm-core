@@ -61,7 +61,7 @@ pub struct PlasmOssHostState {
     pub plugin_manager: Option<Arc<PluginManager>>,
     /// When set, HTTP routes run [`crate::incoming_auth::incoming_auth_http_middleware`].
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
-    /// Pending CLI device-login sessions ([`crate::incoming_auth_device`]).
+    /// CLI device-login marker ([`crate::incoming_auth_device`] sessions live in auth-framework KV).
     pub incoming_auth_device: Arc<IncomingAuthDeviceStore>,
     /// MCP transport session traces (demo/debug; in-memory).
     pub trace_hub: Arc<TraceHub>,
