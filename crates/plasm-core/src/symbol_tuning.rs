@@ -4313,20 +4313,26 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let refs: &[&str] = &["PromptRun"];
-        let legacy = DomainExposureSession::new(&cgs, "overshow", refs);
+        let legacy = DomainExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
+        let mut endpoints = vec!["Profile".to_string(), "Meeting".to_string()];
+        endpoints.sort_unstable();
         let delta = crate::discovery::derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
-            "list profiles read metadata only",
-            &["PromptRun".into()],
-            &["PromptRun".into()],
+            "organisation project profile metadata list",
+            &endpoints,
+            &["Profile".to_string()],
             None,
         );
-        let filtered = DomainExposureSession::new_with_intent_delta(&cgs, "overshow", refs, delta);
+        let filtered = DomainExposureSession::new_with_intent_delta(
+            &cgs,
+            "overshow",
+            &["Profile"],
+            delta,
+        );
         assert!(
             filtered.surface.capabilities.len() < legacy.surface.capabilities.len(),
-            "expected fewer admitted capabilities than legacy full closure (prompt_run_create omitted)"
+            "expected fewer capabilities when only Profile is seeded vs legacy Profile+Meeting closure"
         );
     }
 

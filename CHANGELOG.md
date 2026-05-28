@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.48] - 2026-05-28
+
+### Fixed
+
+- **DOMAIN exposure:** Explicit `plasm_context` seeds always teach that entity’s `query` / `search` / `get` / `create` (and `primary_read`) even when the stable `intent` lexicon does not score them; ranked-capability gate cannot drop seeded-entity surface (fixes federated Proof `ShareLink` + `share_link_create` without `ranked_capabilities`).
+
 ## [0.1.47] - 2026-05-28
 
 ### Added

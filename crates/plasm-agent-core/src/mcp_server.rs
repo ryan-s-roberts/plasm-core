@@ -775,7 +775,7 @@ impl PlasmMcpHandler {
             serde_json::from_value(serde_json::json!({
                 "type": ["array", "null"],
                 "items": { "type": "string" },
-                "description": "Optional capability **wire names** (e.g. from `discover_capabilities`). When non-empty and intent-scoped teaching-table exposure is active, **mutating** capabilities must appear in this list **and** score against **`intent`**. Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
+                "description": "Optional capability **wire names** (e.g. from `discover_capabilities`). When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get/create** (and `primary_read`) on that entity regardless of intent or this list. Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
             }))
             .expect("ranked_capabilities schema"),
         );

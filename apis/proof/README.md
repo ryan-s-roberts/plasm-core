@@ -90,7 +90,7 @@ Probed **2026-05** with anonymous requests (no doc secrets):
 
 To keep prompts small and monotonic (`e#` / `m#` / `p#`), open sessions with a **tight seed list** and expand in waves ([incremental-domain-prompts.md](../../../docs/incremental-domain-prompts.md)):
 
-1. **Wave 1 — `Document` (+ related entities via intent):** share flows start with **`document_share_bind`**, then reads (`document_get_markdown`, `document_get`), `presence_update`, and lightweight meta (`share_link_create`, bug reports) as needed. Intent-scored exposure may also surface **`ShareLink`** create without an explicit ShareLink seed; for deterministic DOMAIN rows, seed `{api: proof, entity: ShareLink}` when calling `share_link_create`.
+1. **Wave 1 — `Document` and/or `ShareLink`:** seed `{api: proof, entity: ShareLink}` when the program calls **`share_link_create`** — the teaching table always includes that create (and any query/get on ShareLink) even when the stable `intent` omits “share link” tokens. Document-only seeds expose Document reads/creates on the seeded entity; relation closure does not add ShareLink without a seed or relation.
 2. **Wave 2 — `EditorState`:** `editor_state_get` for revision / contract / marks before mutating.
 3. **Wave 3 — `Block`:** `block_query` + `document_edit_v2` for structural edits.
 4. **Wave 4 — `CollaborationEvent`:** `collaboration_event_query` + `collaboration_event_ack` for polling.
