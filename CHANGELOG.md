@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.44] - 2026-05-28
+
+### Fixed
+
+- **Release CI (monorepo):** `verify-vultr-release-images` accepts manifest-list/OCI index media types (buildx pushes) and polls until tags appear in Vultr CR.
+
 ## [0.1.43] - 2026-05-28
 
 ### Fixed
