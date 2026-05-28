@@ -10,6 +10,7 @@ mod boot;
 mod mcp_cli;
 mod oauth_cli;
 mod oauth_upsert_wizard;
+mod serve_ui_mode;
 mod stderr_log;
 mod tui;
 
@@ -57,7 +58,7 @@ enum TopCommand {
 }
 
 #[derive(Parser, Debug, Clone)]
-struct ServeCli {
+pub(crate) struct ServeCli {
     /// Appliance state root (default: `$PLASM_APPLIANCE_DIR` or `~/.plasm/appliance`).
     ///
     /// Always applied before boot: sets `PLASM_EMBEDDED_POSTGRES_DATA_DIR` to `{dir}/postgres`
@@ -82,9 +83,12 @@ struct ServeCli {
     /// Run `project_mcp_*` sqlx migrations then exit (respects embedded Postgres env).
     #[arg(long)]
     migrate_mcp_config_db: bool,
-    /// Headless: HTTP + MCP only (containers / systemd).
-    #[arg(long)]
+    /// Headless: HTTP + MCP only; bootstrap and milestones on stderr (containers / systemd).
+    #[arg(long, conflicts_with = "tui")]
     no_tui: bool,
+    /// Force the Ratatui control station even when stdout or stdin is not a TTY.
+    #[arg(long, conflicts_with = "no_tui")]
+    tui: bool,
 }
 
 fn env_str_nonempty(key: &str) -> bool {
@@ -957,10 +961,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     validate_serve_catalog(&cli);
 
+    let use_tui = serve_ui_mode::serve_use_tui(&cli);
+    if !use_tui && !cli.no_tui {
+        eprintln!(
+            "plasm-server: headless mode (stdout/stdin not a TTY); pass --tui to force the control station"
+        );
+    }
+
     let argv = synthesize_inner_argv(&cli);
     let mut embedded_pg: Option<EmbeddedPostgresGuard> = None;
 
-    let (appliance_log_tx, mut appliance_log_rx) = if cli.no_tui {
+    let (appliance_log_tx, mut appliance_log_rx) = if !use_tui {
         if let Err(e) = init_appliance_runtime_headless() {
             eprintln_exit_error(&*e);
             return Err(e);
@@ -980,7 +991,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let running = Arc::new(AtomicBool::new(true));
     let listen_port = cli.port;
 
-    let ui_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if cli.no_tui {
+    let ui_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if !use_tui {
         let boot_cancel = AtomicBool::new(false);
         let bootstrap_out = tokio::select! {
             _ = shutdown_signal() => {
@@ -1460,6 +1471,7 @@ mod tests {
             symbol_tuning: None,
             migrate_mcp_config_db: false,
             no_tui: true,
+            tui: false,
         };
         reconcile_appliance_db_env(&cli);
         assert!(

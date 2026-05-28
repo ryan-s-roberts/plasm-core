@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.46] - 2026-05-28
+
+### Added
+
+- **`plasm-server`:** auto headless mode when stdout or stdin is not a TTY; `--tui` forces the Ratatui control station; `--no-tui` unchanged.
+
 ## [0.1.45] - 2026-05-28
 
 ### Added
