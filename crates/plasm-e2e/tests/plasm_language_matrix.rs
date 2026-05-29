@@ -87,6 +87,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "for_each_effect",
     "domain_symbol_e1",
     "postfix_group_by",
+    "federated_relation_target_entry",
     "pagination_page_size",
     "surface_line_compile",
 ];
@@ -96,6 +97,8 @@ struct MatrixRow {
     program: &'static str,
     /// Use [`compile_plasm_surface_line_to_plan`] for this row (single expression / comma roots).
     surface_line: bool,
+    /// Federated session: primary `linear` + secondary `pokeapi` (same matrix CGS, distinct `Arc`).
+    federated: bool,
     features: &'static [&'static str],
     /// Minimum [`PlasmPlanRunResult::node_results`] length after live run.
     min_node_results: usize,
@@ -660,24 +663,43 @@ fn assert_planning_ir(
             }
         }
         "lang_bind_projection_then_relation" => {
-            let rel = plan_relation_named(plan, "tags").ok_or_else(|| {
-                "expected `.tags` relation after projection anchor".to_string()
-            })?;
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation after projection anchor".to_string())?;
             if rel["source"].as_str() != Some("trimmed") {
                 return Err(format!("expected source trimmed, got {rel:?}"));
             }
         }
         "lang_bind_relation_hop_one_one" => {
-            let detail = plan_relation_named(plan, "detail").ok_or_else(|| {
-                "expected second one-cardinality `.detail` hop".to_string()
-            })?;
+            let detail = plan_relation_named(plan, "detail")
+                .ok_or_else(|| "expected second one-cardinality `.detail` hop".to_string())?;
             if detail["source_cardinality"].as_str() != Some("single") {
                 return Err(format!(
                     "second hop requires single source_cardinality, got {detail:?}"
                 ));
             }
             if detail["cardinality"].as_str() != Some("one") {
-                return Err(format!("expected one-cardinality detail rel, got {detail:?}"));
+                return Err(format!(
+                    "expected one-cardinality detail rel, got {detail:?}"
+                ));
+            }
+        }
+        "lang_federated_relation_target_entry" => {
+            let summary = plan_relation_named(plan, "summary")
+                .ok_or_else(|| "expected `.summary` relation in federated session".to_string())?;
+            if summary.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some("pokeapi") {
+                return Err(format!(
+                    "relation target must own pokeapi catalog, not primary linear: {summary:?}"
+                ));
+            }
+            if summary.pointer("/target/entity").and_then(|v| v.as_str()) != Some("LangSummary") {
+                return Err(format!("expected LangSummary target, got {summary:?}"));
+            }
+            let ir = summary
+                .pointer("/ir/expr")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            if ir.contains("\"$\"") {
+                return Err("relation IR must not use teaching placeholder $".into());
             }
         }
         "lang_effect_create_literal" => {
@@ -843,6 +865,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_query_all",
         program: "LangItem",
         surface_line: false,
+        federated: false,
         features: &["entity_query"],
         min_node_results: 1,
         expect_markdown_substrings: &["Query(LangItem", "```"],
@@ -851,6 +874,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_surface_line_limit",
         program: "LangItem.limit(2)",
         surface_line: true,
+        federated: false,
         features: &["surface_line_compile", "postfix_limit"],
         min_node_results: 1,
         expect_markdown_substrings: &["compute", "PlanLimit"],
@@ -859,6 +883,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_bind_first_limit",
         program: "items = LangItem\nitems.limit(3)",
         surface_line: false,
+        federated: false,
         features: &["bind_first_postfix_limit", "postfix_limit"],
         min_node_results: 2,
         expect_markdown_substrings: &["compute", "PlanLimit"],
@@ -867,6 +892,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_search",
         program: r#"LangItem~"Alpha""#,
         surface_line: false,
+        federated: false,
         features: &["entity_search"],
         min_node_results: 1,
         expect_markdown_substrings: &["langitem_search", "filtered"],
@@ -875,6 +901,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_get_by_id",
         program: r#"LangItem("i1")"#,
         surface_line: false,
+        federated: false,
         features: &["entity_get"],
         min_node_results: 1,
         expect_markdown_substrings: &["Get(LangItem", "i1"],
@@ -883,6 +910,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_predicate_brace_owner",
         program: r#"LangItem{owner="alice"}"#,
         surface_line: false,
+        federated: false,
         features: &["predicate_brace_equality"],
         min_node_results: 1,
         // Routed to `langitem_query_owner` in CGS; planner markdown is still `Query(LangItem filtered)`.
@@ -892,6 +920,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_predicate_brace_score_cmp",
         program: "LangItem{score>1}",
         surface_line: false,
+        federated: false,
         features: &["predicate_brace_comparison"],
         min_node_results: 1,
         expect_markdown_substrings: &["Query(LangItem", "filtered"],
@@ -900,6 +929,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_limit_projection",
         program: "LangItem.limit(1)[id,title]",
         surface_line: false,
+        federated: false,
         features: &["postfix_limit", "postfix_projection"],
         min_node_results: 1,
         expect_markdown_substrings: &["compute", "projection"],
@@ -908,6 +938,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_sort_limit",
         program: "LangItem.sort(score, desc).limit(2)[id,score]",
         surface_line: false,
+        federated: false,
         features: &["postfix_sort"],
         min_node_results: 1,
         expect_markdown_substrings: &["score", "projection"],
@@ -916,6 +947,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_sort_asc",
         program: "LangItem.sort(score, asc).limit(3)[id,score]",
         surface_line: false,
+        federated: false,
         features: &["postfix_sort", "postfix_sort_ascending"],
         min_node_results: 1,
         expect_markdown_substrings: &["score", "projection"],
@@ -924,6 +956,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_aggregate",
         program: "LangItem.aggregate(n=count)",
         surface_line: false,
+        federated: false,
         features: &["postfix_aggregate"],
         min_node_results: 1,
         expect_markdown_substrings: &["PlanAggregate", "n"],
@@ -932,6 +965,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_aggregate_sugar_count",
         program: "LangItem.aggregate(count)",
         surface_line: false,
+        federated: false,
         features: &["aggregate_sugar_count", "postfix_aggregate"],
         min_node_results: 1,
         expect_markdown_substrings: &["PlanAggregate", "count"],
@@ -940,6 +974,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_aggregate_sum",
         program: "LangItem.aggregate(t=sum(score))",
         surface_line: false,
+        federated: false,
         features: &["aggregate_sum", "postfix_aggregate"],
         min_node_results: 1,
         // Aggregate label `sum(...)` is not spelled in short markdown; binding `t` is stable.
@@ -949,6 +984,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_group_by",
         program: "LangItem.group_by(owner, n=count)",
         surface_line: false,
+        federated: false,
         features: &["postfix_group_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["PlanGroup", "key"],
@@ -957,6 +993,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_relation_lines",
         program: r#"LangItem("i1").lines[id,note]"#,
         surface_line: false,
+        federated: false,
         features: &["relation_from_parent_get"],
         min_node_results: 1,
         expect_markdown_substrings: &["compute", "note"],
@@ -965,6 +1002,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_query_singleton",
         program: "LangItem.limit(5).singleton()",
         surface_line: false,
+        federated: false,
         features: &["postfix_singleton"],
         min_node_results: 1,
         expect_markdown_substrings: &["PlanLimit", "langmatrix"],
@@ -973,6 +1011,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         id: "lang_relation_tags_scoped",
         program: r#"LangItem("i1").tags"#,
         surface_line: false,
+        federated: false,
         features: &["relation_query_scoped"],
         min_node_results: 1,
         expect_markdown_substrings: &["tags", "LangTag"],
@@ -984,6 +1023,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
 MD
 hdr"#,
         surface_line: false,
+        federated: false,
         features: &["bindings_assignment", "bracket_render"],
         min_node_results: 2,
         expect_markdown_substrings: &["row(s)", "```"],
@@ -995,6 +1035,7 @@ hdr"#,
 PLASM_TITLE_PIPE
 LangItem.create(title=hdr.content, score=0, owner="render-pipe-owner")"#,
         surface_line: false,
+        federated: false,
         features: &[
             "bracket_render_content_ref",
             "effect_create",
@@ -1011,6 +1052,7 @@ PLASM_LANG_MATRIX_EOF
 one = LangItem.limit(1)[title]
 one, note"#,
         surface_line: false,
+        federated: false,
         features: &["static_heredoc_binding", "parallel_final_roots"],
         min_node_results: 2,
         expect_markdown_substrings: &["hello-matrix", "parallel"],
@@ -1022,6 +1064,7 @@ sumry = hits[id,title]
 cards = sumry => { t: _.title }
 sumry, cards"#,
         surface_line: false,
+        federated: false,
         features: &["derive_map", "parallel_final_roots"],
         min_node_results: 3,
         expect_markdown_substrings: &["derive", "parallel["],
@@ -1032,6 +1075,7 @@ sumry, cards"#,
 tags = root.tags
 tags"#,
         surface_line: false,
+        federated: false,
         features: &["binding_continuation"],
         min_node_results: 2,
         expect_markdown_substrings: &["tags", "LangTag"],
@@ -1043,6 +1087,7 @@ one = root.limit(1)
 tags = one.tags
 tags"#,
         surface_line: false,
+        federated: false,
         features: &["bind_limit1_continuation", "postfix_limit"],
         min_node_results: 3,
         expect_markdown_substrings: &["tags", "LangTag"],
@@ -1054,6 +1099,7 @@ trimmed = root[id,title]
 tags = trimmed.tags
 tags"#,
         surface_line: false,
+        federated: false,
         features: &["bind_projection_then_relation", "postfix_projection"],
         min_node_results: 3,
         expect_markdown_substrings: &["tags", "LangTag"],
@@ -1065,6 +1111,7 @@ summary = item.summary
 detail = summary.detail
 detail"#,
         surface_line: false,
+        federated: false,
         features: &["bind_relation_hop_one_one", "relation_from_parent_get"],
         min_node_results: 3,
         expect_markdown_substrings: &["detail", "LangDetail"],
@@ -1073,6 +1120,7 @@ detail"#,
         id: "lang_effect_create_literal",
         program: r#"LangItem.create(title="MatrixCreated", score=7, owner="bot")"#,
         surface_line: false,
+        federated: false,
         features: &["effect_create"],
         min_node_results: 1,
         expect_markdown_substrings: &["Create(LangItem", "MatrixCreated"],
@@ -1081,6 +1129,7 @@ detail"#,
         id: "lang_effect_update",
         program: r#"LangItem("i1").update(title="MatrixPatch", score=42, owner="alice")"#,
         surface_line: false,
+        federated: false,
         features: &["effect_update"],
         min_node_results: 1,
         expect_markdown_substrings: &["langitem_update", "42"],
@@ -1089,6 +1138,7 @@ detail"#,
         id: "lang_effect_action_ping",
         program: r#"LangItem("i1").ping()"#,
         surface_line: false,
+        federated: false,
         features: &["effect_action"],
         min_node_results: 1,
         expect_markdown_substrings: &["langitem_ping", "Invoke"],
@@ -1097,6 +1147,7 @@ detail"#,
         id: "lang_effect_delete",
         program: r#"LangItem("i2").delete()"#,
         surface_line: false,
+        federated: false,
         features: &["effect_delete"],
         min_node_results: 1,
         expect_markdown_substrings: &["Delete(LangItem", "i2"],
@@ -1105,14 +1156,27 @@ detail"#,
         id: "lang_for_each_update",
         program: "items = LangItem(\"i1\")[id,title,owner]\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
         surface_line: false,
+        federated: false,
         features: &["for_each_effect"],
         min_node_results: 2,
         expect_markdown_substrings: &["Invoke(langitem_update", "langmatrix", "i1"],
     },
     MatrixRow {
+        id: "lang_federated_relation_target_entry",
+        program: r#"item = LangItem("i1")
+summary = item.summary
+summary"#,
+        surface_line: false,
+        federated: true,
+        features: &["federated_relation_target_entry", "relation_from_parent_get"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["summary", "LangSummary"],
+    },
+    MatrixRow {
         id: "lang_domain_symbol_page_size",
         program: "e1.page_size(10)",
         surface_line: false,
+        federated: false,
         features: &["domain_symbol_e1", "pagination_page_size"],
         min_node_results: 1,
         expect_markdown_substrings: &["langmatrix.LangItem", "Query(LangItem"],
@@ -1132,21 +1196,42 @@ async fn plasm_language_matrix_live_runs() {
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
 
     let es = language_matrix::matrix_execute_session(cgs.clone());
-    let engine = ExecutionEngine::new(ExecutionConfig {
-        base_url: Some(base.clone()),
-        ..Default::default()
-    })
-    .expect("ExecutionEngine");
-    let st = language_matrix::matrix_host_state(engine, cgs);
+    let cgs_secondary = language_matrix::load_language_matrix_cgs();
+    let es_federated = language_matrix::matrix_federated_relation_target_session(
+        cgs.clone(),
+        cgs_secondary.clone(),
+    );
+    let st = language_matrix::matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base.clone()),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs.clone(),
+    );
+    let st_federated = language_matrix::matrix_federated_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base.clone()),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs.clone(),
+        cgs_secondary,
+    );
 
     let mut tags_seen: BTreeSet<String> = BTreeSet::new();
 
     for row in MATRIX_ROWS {
+        let (row_es, row_st) = if row.federated {
+            (&es_federated, &st_federated)
+        } else {
+            (&es, &st)
+        };
         let plan_json = if row.surface_line {
             compile_plasm_surface_line_to_plan(
                 &PromptPipelineConfig::default(),
                 None,
-                &es,
+                row_es,
                 row.id,
                 row.program,
             )
@@ -1154,7 +1239,7 @@ async fn plasm_language_matrix_live_runs() {
             compile_plasm_dag_to_plan(
                 &PromptPipelineConfig::default(),
                 None,
-                &es,
+                row_es,
                 row.id,
                 row.program,
             )
@@ -1166,15 +1251,15 @@ async fn plasm_language_matrix_live_runs() {
         let validated = validate_plan_artifact(&plan)
             .unwrap_or_else(|e| panic!("row {} validate_plan_artifact: {e}", row.id));
 
-        let dry = evaluate_validated_plasm_plan_dry(&es, &validated)
+        let dry = evaluate_validated_plasm_plan_dry(row_es, &validated)
             .unwrap_or_else(|e| panic!("row {} evaluate_validated_plasm_plan_dry: {e}", row.id));
         assert_planning_ir(row, &dry, &plan_json)
             .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
 
         let live = run_validated_plasm_plan(
-            &es,
-            &st,
-            es.prompt_hash.as_str(),
+            row_es,
+            row_st,
+            row_es.prompt_hash.as_str(),
             "matrix_sess",
             &validated,
             true,

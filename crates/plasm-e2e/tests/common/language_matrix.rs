@@ -69,6 +69,74 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
     )
 }
 
+pub fn matrix_federated_relation_target_session(
+    cgs_primary: Arc<plasm_core::CGS>,
+    cgs_secondary: Arc<plasm_core::CGS>,
+) -> ExecuteSession {
+    let mut ctxs = IndexMap::new();
+    ctxs.insert(
+        "linear".into(),
+        Arc::new(CgsContext::entry("linear", cgs_primary.clone())),
+    );
+    ctxs.insert(
+        "pokeapi".into(),
+        Arc::new(CgsContext::entry("pokeapi", cgs_secondary.clone())),
+    );
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
+    let mut exp = DomainExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
+    exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
+    let wave: &[&str] = &["LangItem", "LangLine"];
+    ExecuteSession::new(
+        "matrix_ph".into(),
+        String::new(),
+        cgs_primary.clone(),
+        ctxs,
+        "linear".into(),
+        String::new(),
+        String::new(),
+        None,
+        wave.iter().map(|s| (*s).to_string()).collect(),
+        Some(exp),
+        None,
+        None,
+        cgs_primary.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}
+
+pub fn matrix_federated_host_state(
+    engine: ExecutionEngine,
+    cgs_primary: Arc<plasm_core::CGS>,
+    cgs_secondary: Arc<plasm_core::CGS>,
+) -> plasm_agent::server_state::PlasmHostState {
+    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![
+        (
+            "linear".into(),
+            "Linear (matrix federated primary)".into(),
+            vec!["matrix".into()],
+            cgs_primary,
+        ),
+        (
+            "pokeapi".into(),
+            "Pokeapi (matrix federated secondary)".into(),
+            vec!["matrix".into()],
+            cgs_secondary,
+        ),
+    ]));
+    build_plasm_host_state(PlasmHostBootstrap {
+        engine,
+        mode: ExecutionMode::Live,
+        registry,
+        catalog_bootstrap: CatalogBootstrap::Fixed,
+        plugin_manager: None,
+        incoming_auth: None,
+        run_artifacts: Arc::new(RunArtifactStore::memory()),
+        session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
+    })
+}
+
 pub fn matrix_host_state(
     engine: ExecutionEngine,
     cgs: Arc<plasm_core::CGS>,

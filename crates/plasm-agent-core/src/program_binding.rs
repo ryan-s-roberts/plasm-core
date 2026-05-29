@@ -4,7 +4,7 @@
 //! consumed by [`crate::plasm_dag`] when lowering `label.relation` / postfix chains.
 
 use crate::plasm_plan::{
-    InputCardinalityProof, RelationSourceCardinality, ResultShape, QualifiedEntityKey,
+    InputCardinalityProof, QualifiedEntityKey, RelationSourceCardinality, ResultShape,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

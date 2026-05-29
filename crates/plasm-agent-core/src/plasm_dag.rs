@@ -5,16 +5,16 @@
 //! stitches labels, postfix transforms, and `=>` derives into a single coherent program surface.
 
 use crate::execute_session::ExecuteSession;
+use crate::plasm_plan::{
+    AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,
+    PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+};
+use crate::plasm_plan_run::{parse_plasm_surface_line_program, symbol_map_for_plasm_surface_parse};
 use crate::program_binding::{
     BoundedSingletonKind, ContinuationCapability, ProgramBindingContract, RowCardinalityProof,
     SegmentPolicy,
 };
-use crate::plasm_plan::{
-    AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,
-    PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
-    RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
-};
-use crate::plasm_plan_run::{parse_plasm_surface_line_program, symbol_map_for_plasm_surface_parse};
 use plasm_core::expr_parser::{
     collect_program_statement_lines, is_valid_program_label, peel_postfix_suffixes,
     split_assignment_at_top_level, split_token_top_level, split_top_level, strip_line_comment,
@@ -23,6 +23,7 @@ use plasm_core::expr_parser::{
 use plasm_core::schema::EntityDef;
 use plasm_core::ChainExpr;
 use plasm_core::ChainStep;
+use plasm_core::EntityKey;
 use plasm_core::Expr;
 use plasm_core::GetExpr;
 use plasm_core::PlasmInputRef;
@@ -32,7 +33,6 @@ use plasm_core::Ref;
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::Value;
 use plasm_core::CGS;
-use plasm_core::{EntityKey, EntityName};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
@@ -1268,24 +1268,26 @@ fn binding_contract_inner(
             result_shape,
             ..
         } => {
-            let row_cardinality = if matches!(kind, PlanNodeKind::Get)
-                || matches!(parsed.expr, Expr::Get(_))
-            {
-                RowCardinalityProof::StaticSingleton
-            } else if matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search) {
-                RowCardinalityProof::StaticPlural
-            } else {
-                RowCardinalityProof::RuntimeChecked
-            };
-            let continuation = if matches!(kind, PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search)
-                || matches!(parsed.expr, Expr::Get(_) | Expr::Query(_) | Expr::Chain(_))
-            {
-                ContinuationCapability::RelationDot {
-                    segments: SegmentPolicy::MultiSegment,
-                }
-            } else {
-                ContinuationCapability::Terminal
-            };
+            let row_cardinality =
+                if matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_)) {
+                    RowCardinalityProof::StaticSingleton
+                } else if matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search) {
+                    RowCardinalityProof::StaticPlural
+                } else {
+                    RowCardinalityProof::RuntimeChecked
+                };
+            let continuation =
+                if matches!(
+                    kind,
+                    PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search
+                ) || matches!(parsed.expr, Expr::Get(_) | Expr::Query(_) | Expr::Chain(_))
+                {
+                    ContinuationCapability::RelationDot {
+                        segments: SegmentPolicy::MultiSegment,
+                    }
+                } else {
+                    ContinuationCapability::Terminal
+                };
             ProgramBindingContract {
                 label: label.to_string(),
                 row_entity: qualified_entity.clone(),
@@ -1427,7 +1429,10 @@ fn synthetic_row_contract(label: &str, schema: &SyntheticResultSchema) -> Progra
     }
 }
 
-fn synthetic_terminal_contract(label: &str, schema: &SyntheticResultSchema) -> ProgramBindingContract {
+fn synthetic_terminal_contract(
+    label: &str,
+    schema: &SyntheticResultSchema,
+) -> ProgramBindingContract {
     ProgramBindingContract {
         label: label.to_string(),
         row_entity: QualifiedEntityKey {
@@ -1479,6 +1484,57 @@ fn resolve_relation_wire_on_entity(
     None
 }
 
+fn relation_continuation_expr_from_source_row_hole(
+    session: &ExecuteSession,
+    row_qe: &QualifiedEntityKey,
+    relation_wire: &str,
+) -> Result<Expr, String> {
+    let fed_holder = session.federation_dispatch();
+    let cgs: &CGS = match fed_holder.as_ref() {
+        Some(fed) => fed.resolve_cgs(row_qe.entity.as_str(), session.cgs.as_ref()),
+        None => session.cgs.as_ref(),
+    };
+    let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
+        format!(
+            "unknown entity `{}` for relation continuation",
+            row_qe.entity
+        )
+    })?;
+    let source_get = if ent.key_vars.is_empty() {
+        let path_key = format!("{}_id", row_qe.entity.to_lowercase());
+        let hole = Value::PlasmInputRef(PlasmInputRef::NodeInput {
+            node: "source".into(),
+            path: vec![ent.id_field.as_str().to_string()],
+        });
+        Expr::Get(GetExpr::from_ref_with_path_vars(
+            Ref::new(row_qe.entity.as_str(), ""),
+            Some(indexmap::IndexMap::from([(path_key, hole)])),
+        ))
+    } else {
+        let mut path_vars = indexmap::IndexMap::new();
+        for key in &ent.key_vars {
+            path_vars.insert(
+                key.as_str().to_string(),
+                Value::PlasmInputRef(PlasmInputRef::NodeInput {
+                    node: "source".into(),
+                    path: vec![key.as_str().to_string()],
+                }),
+            );
+        }
+        Expr::Get(GetExpr::from_ref_with_path_vars(
+            Ref {
+                entity_type: row_qe.entity.as_str().into(),
+                key: EntityKey::Compound(BTreeMap::new()),
+            },
+            Some(path_vars),
+        ))
+    };
+    Ok(Expr::Chain(ChainExpr::auto_get(
+        source_get,
+        relation_wire.to_string(),
+    )))
+}
+
 fn try_compile_typed_relation_continuation(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -1486,41 +1542,81 @@ fn try_compile_typed_relation_continuation(
     expr: &str,
     source_label: &str,
     tail: &str,
-    source_qe: &QualifiedEntityKey,
+    _source_qe: &QualifiedEntityKey,
 ) -> Result<Option<DagNode>, String> {
     let segment = tail.split('.').next().unwrap_or(tail).trim();
     if segment.is_empty() || tail.contains('.') {
         return Ok(None);
     }
+    let contract = binding_contract(state, source_label).ok_or_else(|| {
+        format!("Plasm program `{id}`: unknown binding `{source_label}` for typed relation continuation")
+    })?;
+    let anchor_plasm = contract.anchor_plasm.as_ref().ok_or_else(|| {
+        format!(
+            "Plasm program `{id}`: `{source_label}.{segment}` requires a Plasm anchor on `{source_label}` — bind an intermediate row before continuing the relation chain"
+        )
+    })?;
+    let expanded = format!("{anchor_plasm}.{segment}");
+    let refs = state.program_node_id_set();
+    let parsed = match parse_plasm_surface_line_program(
+        session,
+        state.cross_cache,
+        state.pipeline,
+        &expanded,
+        Some(&refs),
+        false,
+    ) {
+        Ok(parsed) => {
+            if let Expr::Chain(ref chain) = parsed.expr {
+                if chain.source.primary_entity() == contract.row_entity.entity.as_str() {
+                    parsed
+                } else {
+                    plasm_core::expr_parser::ParsedExpr {
+                        expr: relation_continuation_expr_from_source_row_hole(
+                            session,
+                            &contract.row_entity,
+                            segment,
+                        )?,
+                        projection: None,
+                    }
+                }
+            } else {
+                plasm_core::expr_parser::ParsedExpr {
+                    expr: relation_continuation_expr_from_source_row_hole(
+                        session,
+                        &contract.row_entity,
+                        segment,
+                    )?,
+                    projection: None,
+                }
+            }
+        }
+        Err(_) => plasm_core::expr_parser::ParsedExpr {
+            expr: relation_continuation_expr_from_source_row_hole(
+                session,
+                &contract.row_entity,
+                segment,
+            )?,
+            projection: None,
+        },
+    };
+    let Expr::Chain(ref chain) = parsed.expr else {
+        return Ok(None);
+    };
     let Some(wire) =
-        resolve_relation_wire_on_entity(session, state.cross_cache, source_qe, segment)
+        resolve_relation_wire_on_entity(session, state.cross_cache, &contract.row_entity, segment)
     else {
         return Ok(None);
     };
-    let chain = ChainExpr {
-        source: Box::new(Expr::Get(GetExpr {
-            reference: Ref {
-                entity_type: EntityName::from(source_qe.entity.as_str()),
-                key: EntityKey::Simple("$".into()),
-            },
-            path_vars: None,
-        })),
-        selector: wire.clone(),
-        step: ChainStep::default(),
-    };
+    if chain.selector.as_str() != wire.as_str() {
+        return Ok(None);
+    }
     let (target_qe, rel_cardinality) =
-        lookup_relation_chain_meta(session, state.cross_cache, &chain)?;
-    let source_card = binding_contract(state, source_label)
-        .map(|c| c.relation_source_cardinality())
-        .unwrap_or(RelationSourceCardinality::RuntimeCheckedSingleton);
+        lookup_relation_chain_meta(session, state.cross_cache, chain)?;
+    let source_card = contract.relation_source_cardinality();
     let result_shape = match rel_cardinality {
         RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
         RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
-    };
-    let expanded = format!("{source_label}.{segment}");
-    let parsed = plasm_core::expr_parser::ParsedExpr {
-        expr: Expr::Chain(chain),
-        projection: None,
     };
     let ir = PlanExprIr {
         expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
@@ -1594,15 +1690,8 @@ fn lookup_relation_chain_meta(
             chain.selector, source_entity, target_ent
         ));
     }
-    let qe = session
-        .domain_exposure
-        .as_ref()
-        .and_then(|e| e.qualified_entity_for_exposed_entity(target_ent))
-        .map(QualifiedEntityKey::from)
-        .unwrap_or_else(|| QualifiedEntityKey {
-            entry_id: session.entry_id.clone(),
-            entity: target_ent.to_string(),
-        });
+    let qe =
+        crate::catalog_ownership::resolve_qualified_entity_key(session, target_ent, Some(cgs))?;
     let cardinality = match rel.cardinality {
         plasm_core::Cardinality::One => RelationCardinality::One,
         plasm_core::Cardinality::Many => RelationCardinality::Many,
@@ -1621,8 +1710,10 @@ fn compile_surface_node(
             format!("Plasm program `{id}`: unknown binding `{label}` for continuation")
         })?;
         let tail_trim = tail.trim();
-        if matches!(contract.continuation, ContinuationCapability::RenderContentScalar)
-            && (tail_trim == "content" || tail_trim.starts_with("content."))
+        if matches!(
+            contract.continuation,
+            ContinuationCapability::RenderContentScalar
+        ) && (tail_trim == "content" || tail_trim.starts_with("content."))
         {
             return Err(plan_render_content_scalar_reference_err(id, expr, &label));
         }
@@ -2342,29 +2433,25 @@ fn infer_surface_contract(
     }
 
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
+    let fed_holder = session.federation_dispatch();
+    let resolving_cgs: &CGS = match fed_holder.as_ref() {
+        Some(fed) => fed.resolve_cgs(entity.as_str(), session.cgs.as_ref()),
+        None => session.cgs.as_ref(),
+    };
     if let Expr::Query(q) = expr {
         if let Some(capability_name) = q.capability_name.as_ref() {
-            let fed_holder = session.federation_dispatch();
-            let q_cgs: &CGS = match fed_holder.as_ref() {
-                Some(fed) => fed.resolve_cgs(q.entity.as_str(), session.cgs.as_ref()),
-                None => session.cgs.as_ref(),
-            };
-            if let Some(cap) = q_cgs.capabilities.get(capability_name.as_str()) {
+            if let Some(cap) = resolving_cgs.capabilities.get(capability_name.as_str()) {
                 if cap.kind == plasm_core::CapabilityKind::Search {
                     kind = PlanNodeKind::Search;
                 }
             }
         }
     }
-    let qe = session
-        .domain_exposure
-        .as_ref()
-        .and_then(|e| e.qualified_entity_for_exposed_entity(entity.as_str()))
-        .map(QualifiedEntityKey::from)
-        .unwrap_or_else(|| QualifiedEntityKey {
-            entry_id: session.entry_id.clone(),
-            entity,
-        });
+    let qe = crate::catalog_ownership::resolve_qualified_entity_key(
+        session,
+        entity.as_str(),
+        Some(resolving_cgs),
+    )?;
     Ok((kind, qe, effect, shape))
 }
 
@@ -2592,6 +2679,107 @@ mod tests {
         let qe = &plan["nodes"][0]["qualified_entity"];
         assert_eq!(qe["entry_id"], "linear", "{plan}");
         assert_eq!(qe["entity"], "LangLine");
+    }
+
+    /// Federated primary is `linear` but relation target `LangDetail` resolves via owning CGS pointer, not primary `entry_id`.
+    #[test]
+    fn federated_relation_target_qe_from_owning_catalog() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs_primary = Arc::new(
+            load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix")).expect("cgs"),
+        );
+        let cgs_secondary = Arc::new(
+            load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix")).expect("cgs"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs_primary.clone())),
+        );
+        ctxs.insert(
+            "pokeapi".into(),
+            Arc::new(CgsContext::entry("pokeapi", cgs_secondary.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
+        let mut exp = DomainExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
+        exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs_primary.clone(),
+            ctxs,
+            "linear".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into(), "LangLine".into()],
+            Some(exp),
+            None,
+            None,
+            cgs_primary.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        let source = r#"item = LangItem("LI1")
+summary = item.summary
+summary"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "fed-relation-target",
+            source,
+        )
+        .expect("compile");
+        let summary = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "summary")
+            .expect("summary node");
+        assert_eq!(summary["kind"], "relation");
+        assert_eq!(
+            summary["relation"]["target"]["entry_id"], "pokeapi",
+            "{summary}"
+        );
+        assert_eq!(summary["relation"]["target"]["entity"], "LangSummary");
+        let ir = summary["relation"]["ir"]["expr"].to_string();
+        assert!(
+            !ir.contains(r#""$""#),
+            "typed continuation IR must not use teaching placeholder: {ir}"
+        );
+        let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
+        crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
+    }
+
+    #[test]
+    fn typed_relation_continuation_ir_has_no_domain_placeholder() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits
+one = commits.singleton()
+author = one.author
+author"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "no-dollar-ir",
+            source,
+        )
+        .expect("compile");
+        let author = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "author")
+            .expect("author");
+        let ir = author["relation"]["ir"]["expr"].to_string();
+        assert!(
+            !ir.contains(r#""$""#),
+            "relation IR must not contain Get($): {ir}"
+        );
+        assert!(ir.contains("author") || ir.contains("Commit"), "{ir}");
     }
 
     /// Matrix analogue: parallel comma roots + search sugar (`lang_derive_map_parallel`, `lang_search`).
@@ -2902,8 +3090,15 @@ author"#;
             Some("runtime_checked_singleton")
         );
         assert_eq!(author["relation"]["cardinality"], "one");
+        let ir = author["relation"]["ir"]["expr"].to_string();
+        assert!(!ir.contains(r#""$""#), "author IR: {ir}");
         let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
         crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(
+            dry.node_results.len(),
+            plan["nodes"].as_array().unwrap().len()
+        );
     }
 
     /// `repo.<relation>` continues the bound repository Plasm and compiles to a `kind: relation` plan node.

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.52] - 2026-05-29
+
+### Fixed
+
+- **Federation:** `resolve_qualified_entity_key` replaces blind `session.entry_id` fallbacks when labeling plan `qualified_entity` rows — relation targets (e.g. `EvolutionChain` in pokeapi+linear sessions) resolve to the owning catalog, not the lexicographic primary.
+- **Plasm programs:** typed relation continuations emit executable IR (`anchor` re-parse or `node_input` holes) instead of `Get($)` placeholders that dry-run accepted but live execution rejected.
+
+### Added
+
+- **`catalog_ownership`:** shared QE resolution for `plasm_dag`, HTTP execute traces, and plan materialization.
+- **Language matrix:** `lang_federated_relation_target_entry` row (federated primary `linear` + secondary `pokeapi`).
+
 ## [0.1.51] - 2026-05-29
 
 ### Fixed

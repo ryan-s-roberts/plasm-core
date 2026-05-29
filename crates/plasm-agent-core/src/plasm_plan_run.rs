@@ -2185,6 +2185,15 @@ async fn run_validated_plan_phased(
                         .qualified_entity
                         .as_ref()
                         .map(|q| q.entry_id.clone())
+                        .or_else(|| {
+                            crate::catalog_ownership::resolve_qualified_entity_key(
+                                &scoped_es,
+                                parsed.expr.primary_entity(),
+                                None,
+                            )
+                            .ok()
+                            .map(|q| q.entry_id)
+                        })
                         .unwrap_or_else(|| es.entry_id.clone()),
                     entity: surface
                         .qualified_entity
