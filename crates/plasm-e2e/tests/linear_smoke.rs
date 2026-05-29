@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use plasm_core::expr_parser::parse_with_cgs_layers;
 use plasm_core::entity_slices_for_render;
+use plasm_core::expr_parser::parse_with_cgs_layers;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::normalize_expr_query_capabilities;
 use plasm_core::resolve_query_capability;

@@ -3,6 +3,8 @@
 //! SqlCatalog metadata uses **Postgres** only. Tests use [`PLASM_TEST_POSTGRES_URL`](../../plasm-agent-core/tests/support/postgres.rs)
 //! when set and reachable, else **testcontainers** when Docker is available. If neither works, tests **return early** (skip).
 
+#![allow(dead_code)] // not every integration-test binary uses every helper export
+
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
@@ -59,14 +61,10 @@ pub async fn iceberg_test_state() -> Option<IcebergTestCtx> {
             .await
             .expect("IcebergSink::connect"),
     );
-    let store: Arc<dyn AuditSpanStore> = PersistedTraceSink::connect(
-        &connect,
-        sink.clone(),
-        0,
-        300,
-    )
-    .await
-    .expect("PersistedTraceSink::connect");
+    let store: Arc<dyn AuditSpanStore> =
+        PersistedTraceSink::connect(&connect, sink.clone(), 0, 300)
+            .await
+            .expect("PersistedTraceSink::connect");
     let state = AppState::new(store);
     Some(IcebergTestCtx {
         _dir: dir,

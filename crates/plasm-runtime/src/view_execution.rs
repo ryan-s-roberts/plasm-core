@@ -432,14 +432,11 @@ fn ref_from_get_bind_params(
         Ok(Ref::compound(target_ent.name.clone(), parts))
     } else {
         let idf = target_ent.id_field.as_str();
-        let id = bound_scalar_for_get_param(idf, cap, bound_param_to_string).ok_or_else(
-            || RuntimeError::ConfigurationError {
-                message: format!(
-                    "view Get node: missing binding for id parameter `{}`",
-                    idf
-                ),
-            },
-        )?;
+        let id = bound_scalar_for_get_param(idf, cap, bound_param_to_string).ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!("view Get node: missing binding for id parameter `{}`", idf),
+            }
+        })?;
         Ok(Ref::new(target_ent.name.clone(), id))
     }
 }

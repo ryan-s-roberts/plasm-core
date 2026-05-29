@@ -4324,12 +4324,8 @@ mod tests {
             &["Profile".to_string()],
             None,
         );
-        let filtered = DomainExposureSession::new_with_intent_delta(
-            &cgs,
-            "overshow",
-            &["Profile"],
-            delta,
-        );
+        let filtered =
+            DomainExposureSession::new_with_intent_delta(&cgs, "overshow", &["Profile"], delta);
         assert!(
             filtered.surface.capabilities.len() < legacy.surface.capabilities.len(),
             "expected fewer capabilities when only Profile is seeded vs legacy Profile+Meeting closure"

@@ -210,11 +210,7 @@ pub fn desugar_view_computed_template(template: &str) -> String {
             .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         let expr = s[expr_start..dot].trim();
-        if expr.is_empty()
-            || !expr
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if expr.is_empty() || !expr.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             break;
         }
         let Some((sep, index, span_len)) = parse_split_index_suffix(&s[dot..]) else {

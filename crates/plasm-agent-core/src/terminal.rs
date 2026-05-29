@@ -24,14 +24,13 @@ use crate::resolved_plan_http::{
     RESOLVED_PLAN_CONTENT_TYPE,
 };
 use crate::terminal_cli::{validate_context_args, Cli, Cmd};
-use crate::terminal_session::ClientSymbolSession;
 use crate::terminal_mirror::{mirror_eprintln, MirrorOpKind, SessionMirror};
+use crate::terminal_session::ClientSymbolSession;
 use crate::terminal_state::{
     display_mirror_path, format_qualified_capabilities, merge_and_write_latest_discovery,
     mint_client_session_id, read_current_session_pointer, resolve_capability_seeds,
     resolve_current_session, write_current_session_pointer, write_language_frontmatter_markdown,
-    write_plasm_cli_agent_skill,
-    ExecutionBinding,
+    write_plasm_cli_agent_skill, ExecutionBinding,
 };
 
 /// Default HTTP origin written by `plasm init` when `--server` is omitted.
@@ -196,7 +195,10 @@ fn run_init(
     let grammar_path = write_language_frontmatter_markdown(&grammar)?;
     let skill_path = write_plasm_cli_agent_skill(&grammar)?;
     println!("configured {}", path.display());
-    println!("  workspace: {}", crate::terminal_state::plasm_root_dir().display());
+    println!(
+        "  workspace: {}",
+        crate::terminal_state::plasm_root_dir().display()
+    );
     println!("  grammar: {}", grammar_path.display());
     println!("  agent skill: {}", skill_path.display());
     println!(
@@ -271,8 +273,8 @@ async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> 
         let msg = String::from_utf8_lossy(&body);
         return Err(anyhow!("device login start failed HTTP {st}: {msg}"));
     }
-    let start: DeviceStartResponse = serde_json::from_slice(&body)
-        .context("parse device start response")?;
+    let start: DeviceStartResponse =
+        serde_json::from_slice(&body).context("parse device start response")?;
 
     let open_url = start
         .verification_uri_complete
@@ -309,7 +311,10 @@ async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> 
             if let Ok(ok) = serde_json::from_slice::<DevicePollSuccess>(&pbody) {
                 profile.access_token = Some(ok.access_token);
                 save_profile(profile_name, profile)?;
-                println!("signed in — access_token saved to {}", profile_path(profile_name).display());
+                println!(
+                    "signed in — access_token saved to {}",
+                    profile_path(profile_name).display()
+                );
                 return Ok(());
             }
         }
@@ -583,21 +588,17 @@ async fn run_context_command(
 
     let mut sym = if new_session {
         let id = mint_client_session_id();
-        let intent = resolved_intent.clone().ok_or_else(|| {
-            anyhow!(
-                "context: pass --intent (-i), or run `plasm search` first"
-            )
-        })?;
+        let intent = resolved_intent
+            .clone()
+            .ok_or_else(|| anyhow!("context: pass --intent (-i), or run `plasm search` first"))?;
         ClientSymbolSession::new(id, intent)
     } else if let Some(id) = read_current_session_pointer(server)? {
         ClientSymbolSession::load_from_disk(server, &id)?
     } else {
         let id = mint_client_session_id();
-        let intent = resolved_intent.clone().ok_or_else(|| {
-            anyhow!(
-                "context: pass --intent (-i), or run `plasm search` first"
-            )
-        })?;
+        let intent = resolved_intent
+            .clone()
+            .ok_or_else(|| anyhow!("context: pass --intent (-i), or run `plasm search` first"))?;
         ClientSymbolSession::new(id, intent)
     };
 
@@ -669,21 +670,25 @@ fn extract_run_id_from_response(headers: &HeaderMap, body: &[u8]) -> Option<Stri
         .map(str::to_string)
 }
 
-async fn mirror_run_snapshot(
-    client: &Client,
-    server: &str,
-    profile: &TerminalProfile,
-    client_session_id: &str,
-    prompt_hash: &str,
-    session: &str,
-    run_id: &str,
-    op_dir: &Path,
-) -> Result<PathBuf> {
-    let path = format!("/execute/{prompt_hash}/{session}/artifacts/{run_id}");
+struct MirrorRunSnapshotCtx<'a> {
+    server: &'a str,
+    profile: &'a TerminalProfile,
+    client_session_id: &'a str,
+    prompt_hash: &'a str,
+    session: &'a str,
+    run_id: &'a str,
+    op_dir: &'a Path,
+}
+
+async fn mirror_run_snapshot(client: &Client, ctx: &MirrorRunSnapshotCtx<'_>) -> Result<PathBuf> {
+    let path = format!(
+        "/execute/{}/{}/artifacts/{}",
+        ctx.prompt_hash, ctx.session, ctx.run_id
+    );
     let (st, _, body) = send_bytes(
         client,
-        server,
-        profile,
+        ctx.server,
+        ctx.profile,
         Method::GET,
         &path,
         Some("application/json"),
@@ -694,8 +699,8 @@ async fn mirror_run_snapshot(
     if !st.is_success() {
         return Err(anyhow!("artifact GET failed HTTP {st}"));
     }
-    let mirror = SessionMirror::open(client_session_id)?;
-    mirror.write_artifact_pair(op_dir, &body)
+    let mirror = SessionMirror::open(ctx.client_session_id)?;
+    mirror.write_artifact_pair(ctx.op_dir, &body)
 }
 
 async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()> {
@@ -819,16 +824,14 @@ pub async fn run_terminal() -> Result<()> {
             let md = String::from_utf8_lossy(&body);
             let disc = crate::terminal_state::discovery_from_search_markdown(&md, &utterance)?;
             let path = merge_and_write_latest_discovery(&server, &disc)?;
-            eprintln!(
-                "discovery cache: {}",
-                display_mirror_path(&path)
-            );
+            eprintln!("discovery cache: {}", display_mirror_path(&path));
             if let Some(sid) = read_current_session_pointer(&server)? {
                 let mut session_mirror = SessionMirror::open(&sid)?;
                 let op_dir = session_mirror.alloc_dir(MirrorOpKind::Search)?;
                 session_mirror.write_file(&op_dir, "body.md", &body)?;
                 let disc_json = serde_json::to_string_pretty(&disc)?;
-                let json_path = session_mirror.write_file(&op_dir, "body.json", disc_json.as_bytes())?;
+                let json_path =
+                    session_mirror.write_file(&op_dir, "body.json", disc_json.as_bytes())?;
                 let rel = session_mirror.rel_dir_for_display(&op_dir);
                 session_mirror.update_latest_pointer(&rel)?;
                 mirror_eprintln(&json_path);
@@ -924,12 +927,8 @@ pub async fn run_terminal() -> Result<()> {
             let rh = res.headers().clone();
             let out = res.bytes().await?.to_vec();
             let accept_hint = run.accept.as_accept_header();
-            let (_, body_txt) = session_mirror.write_pair(
-                &op_dir,
-                "body",
-                &out,
-                Some(accept_hint),
-            )?;
+            let (_, body_txt) =
+                session_mirror.write_pair(&op_dir, "body", &out, Some(accept_hint))?;
             let rel = session_mirror.rel_dir_for_display(&op_dir);
             session_mirror.update_latest_pointer(&rel)?;
             mirror_eprintln(&body_txt);
@@ -946,13 +945,15 @@ pub async fn run_terminal() -> Result<()> {
                 if let Some(rid) = extract_run_id_from_response(&rh, &out) {
                     match mirror_run_snapshot(
                         &client,
-                        &server,
-                        &profile,
-                        &sym.client_session_id,
-                        ph,
-                        sid,
-                        &rid,
-                        &op_dir,
+                        &MirrorRunSnapshotCtx {
+                            server: &server,
+                            profile: &profile,
+                            client_session_id: &sym.client_session_id,
+                            prompt_hash: ph,
+                            session: sid,
+                            run_id: &rid,
+                            op_dir: &op_dir,
+                        },
                     )
                     .await
                     {

@@ -26,9 +26,9 @@ use plasm_core::Predicate;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::Ref;
 use plasm_core::SymbolMapCrossRequestCache;
-use plasm_core::{EntityKey, EntityName};
 use plasm_core::Value;
 use plasm_core::CGS;
+use plasm_core::{EntityKey, EntityName};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
@@ -544,7 +544,9 @@ fn infer_columns_from_minijinja_template(template: &str) -> Option<Vec<OutputNam
             rest = &after[end + 2..];
             continue;
         }
-        if field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        if field
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
         {
             if let Ok(name) = OutputName::new(field.to_string()) {
                 if !cols
@@ -1230,7 +1232,9 @@ fn relation_continuation_source_entity(
 ) -> Option<QualifiedEntityKey> {
     let node = state.get(label)?;
     match &node.source {
-        DagNodeSource::RelationTraversal { qualified_entity, .. } => Some(qualified_entity.clone()),
+        DagNodeSource::RelationTraversal {
+            qualified_entity, ..
+        } => Some(qualified_entity.clone()),
         DagNodeSource::Compute {
             source,
             op: ComputeOp::Project { .. },
@@ -1477,13 +1481,7 @@ fn compile_surface_node(
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
         if let Some(source_qe) = relation_continuation_source_entity(state, &label) {
             if let Some(node) = try_compile_typed_relation_continuation(
-                session,
-                state,
-                id,
-                expr,
-                &label,
-                &tail,
-                &source_qe,
+                session, state, id, expr, &label, &tail, &source_qe,
             )? {
                 return Ok(node);
             }
@@ -2514,11 +2512,7 @@ mod tests {
             "Issue{team_key=ENG, state_name=Todo}",
         )
         .expect("compile");
-        assert_eq!(
-            plan["nodes"][0]["kind"].as_str(),
-            Some("search"),
-            "{plan}"
-        );
+        assert_eq!(plan["nodes"][0]["kind"].as_str(), Some("search"), "{plan}");
     }
 
     /// Matrix: `lang_domain_symbol_page_size` (surface `e#.page_size` + plan node `page_size`).

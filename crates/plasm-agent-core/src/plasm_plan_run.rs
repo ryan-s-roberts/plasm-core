@@ -4,6 +4,8 @@ use plasm_core::cgs_federation::FederationDispatch;
 use plasm_core::entity_slices_for_render;
 use plasm_core::expr_parser::{parse_with_cgs_layers_program, ParseError, ParsedExpr};
 use plasm_core::expr_simulation_bindings;
+use plasm_core::normalize_expr_query_capabilities;
+use plasm_core::normalize_expr_query_capabilities_federated;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
 use plasm_core::symbol_map_cache_key_federated;
@@ -15,8 +17,6 @@ use plasm_core::FocusSpec;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMap;
 use plasm_core::SymbolMapCrossRequestCache;
-use plasm_core::normalize_expr_query_capabilities;
-use plasm_core::normalize_expr_query_capabilities_federated;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
@@ -2740,9 +2740,9 @@ fn json_row_to_plasm_value(row: &serde_json::Value) -> plasm_core::Value {
             .or_else(|| n.as_f64().map(plasm_core::Value::Float))
             .unwrap_or(plasm_core::Value::Null),
         serde_json::Value::String(s) => plasm_core::Value::String(s.clone()),
-        serde_json::Value::Array(items) => plasm_core::Value::Array(
-            items.iter().map(json_row_to_plasm_value).collect(),
-        ),
+        serde_json::Value::Array(items) => {
+            plasm_core::Value::Array(items.iter().map(json_row_to_plasm_value).collect())
+        }
         serde_json::Value::Object(map) => {
             let mut out = indexmap::IndexMap::new();
             for (k, v) in map {

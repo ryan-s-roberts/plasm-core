@@ -747,15 +747,18 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         bind: Option<&IndexMap<String, String>>,
     ) -> Result<serde_json::Value, RuntimeError> {
-        use plasm_core::CapabilityKind;
         use plasm_core::value::Value;
+        use plasm_core::CapabilityKind;
 
         let cap = cgs.get_capability(capability_name).ok_or_else(|| {
             RuntimeError::ConfigurationError {
                 message: format!("schema overlay source capability '{capability_name}' not found"),
             }
         })?;
-        if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Get | CapabilityKind::Search) {
+        if !matches!(
+            cap.kind,
+            CapabilityKind::Query | CapabilityKind::Get | CapabilityKind::Search
+        ) {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
                     "schema overlay source capability '{capability_name}' must be query, get, or search"
@@ -773,9 +776,8 @@ impl ExecutionEngine {
                 env.insert(key.clone(), Value::String(value.clone()));
             }
         }
-        let compiled = compile_operation(&template, &env).map_err(|e| RuntimeError::CmlError {
-            source: e,
-        })?;
+        let compiled =
+            compile_operation(&template, &env).map_err(|e| RuntimeError::CmlError { source: e })?;
         let base = http_base.trim().trim_end_matches('/').to_string();
         Self::run_in_execute_task_scopes(
             base.into(),
@@ -787,7 +789,11 @@ impl ExecutionEngine {
             None,
             None,
             None,
-            async move { self.execute_with_replay(&compiled, mode).await.map(|(j, _)| j) },
+            async move {
+                self.execute_with_replay(&compiled, mode)
+                    .await
+                    .map(|(j, _)| j)
+            },
         )
         .await
     }
@@ -2310,17 +2316,7 @@ impl ExecutionEngine {
             }
         })?;
 
-        apply_preflight_steps(
-            self,
-            capability,
-            cgs,
-            cache,
-            mode,
-            &mut env,
-            None,
-            true,
-        )
-        .await?;
+        apply_preflight_steps(self, capability, cgs, cache, mode, &mut env, None, true).await?;
 
         merge_plasm_execute_session_env(&mut env);
 
@@ -5237,10 +5233,8 @@ fn resolve_overlay_decode_entity(
         return None;
     }
     let ambient = identity_ambient?;
-    let scope_value = plasm_core::schema_overlay::build_decode_scope_key(
-        &spec.decode.scope,
-        ambient,
-    )?;
+    let scope_value =
+        plasm_core::schema_overlay::build_decode_scope_key(&spec.decode.scope, ambient)?;
     cgs.schema_overlay_scope_index
         .get(scope_value.as_str())
         .map(|n| n.to_string())
@@ -6192,10 +6186,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(
-            env.get("key"),
-            Some(&Value::String("EVA".to_string()))
-        );
+        assert_eq!(env.get("key"), Some(&Value::String("EVA".to_string())));
     }
 
     #[test]
@@ -6617,9 +6608,9 @@ mod tests {
             .expect("overlay entity for scope");
         assert_eq!(entity, "Cricket__Player");
         let ent = cgs.get_entity("Cricket__Player").expect("overlay entity");
-        assert!(ent.fields.contains_key(&plasm_core::EntityFieldName::from(
-            "Cricket_name"
-        )));
+        assert!(ent
+            .fields
+            .contains_key(&plasm_core::EntityFieldName::from("Cricket_name")));
     }
 
     #[test]

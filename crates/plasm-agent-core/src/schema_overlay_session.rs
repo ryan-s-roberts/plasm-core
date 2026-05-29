@@ -3,15 +3,13 @@
 //! Wired at session open for HTTP execute ([`crate::http_execute`]), MCP `plasm_context`
 //! (same execute path), federated catalog attach, and local [`plasm_repl`](../../plasm-repl).
 
+use indexmap::IndexMap;
 use plasm_core::{
     build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
-    overlay_merge_step_response, overlay_pipeline_cache_suffix, resolve_overlay_row_bind, CGS,
-    SchemaOverlaySpec,
+    overlay_merge_step_response, overlay_pipeline_cache_suffix, resolve_overlay_row_bind,
+    SchemaOverlaySpec, CGS,
 };
-use indexmap::IndexMap;
-use plasm_runtime::{
-    AuthResolver, ExecutionEngine, ExecutionMode, RuntimeError, SecretProvider,
-};
+use plasm_runtime::{AuthResolver, ExecutionEngine, ExecutionMode, RuntimeError, SecretProvider};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::env;
@@ -106,12 +104,13 @@ async fn fetch_overlay_merged_response(
         }
 
         let for_each_name = step.for_each.as_ref().expect("validated for_each");
-        let rows = collections.get(for_each_name).ok_or_else(|| {
-            format!("overlay pipeline missing collect '{for_each_name}'")
-        })?;
+        let rows = collections
+            .get(for_each_name)
+            .ok_or_else(|| format!("overlay pipeline missing collect '{for_each_name}'"))?;
         let merge = step.merge.as_ref().expect("validated merge");
         for row in rows {
-            let bind = resolve_overlay_row_bind(&step.bind, row, None).map_err(|e| e.to_string())?;
+            let bind =
+                resolve_overlay_row_bind(&step.bind, row, None).map_err(|e| e.to_string())?;
             let response = fetch_overlay_source_response(
                 engine,
                 base,
@@ -123,7 +122,8 @@ async fn fetch_overlay_merged_response(
             )
             .await?;
             pipeline_responses.push(response.clone());
-            overlay_merge_step_response(&mut merged, merge, &response).map_err(|e| e.to_string())?;
+            overlay_merge_step_response(&mut merged, merge, &response)
+                .map_err(|e| e.to_string())?;
         }
     }
 

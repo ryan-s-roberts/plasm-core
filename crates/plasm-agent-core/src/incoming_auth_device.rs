@@ -45,9 +45,7 @@ struct StoredDeviceSession {
 #[serde(rename_all = "snake_case")]
 enum StoredDeviceStatus {
     Pending,
-    Approved {
-        access_token: String,
-    },
+    Approved { access_token: String },
 }
 
 fn device_code_key(device_code: &str) -> String {
@@ -319,7 +317,9 @@ async fn device_poll_handler(
     if device_code.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "invalid_request", "message": "device_code is required" })),
+            Json(
+                serde_json::json!({ "error": "invalid_request", "message": "device_code is required" }),
+            ),
         ));
     }
 
@@ -327,7 +327,9 @@ async fn device_poll_handler(
     let Some(sess) = load_session(storage.as_ref(), device_code).await? else {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "expired_token", "message": "unknown or expired device_code" })),
+            Json(
+                serde_json::json!({ "error": "expired_token", "message": "unknown or expired device_code" }),
+            ),
         ));
     };
 
@@ -407,7 +409,8 @@ async fn device_complete_handler(
     let Some(index_bytes) = index_row else {
         return Err(StatusCode::NOT_FOUND);
     };
-    let device_code = String::from_utf8(index_bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let device_code =
+        String::from_utf8(index_bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let Some(mut sess) = load_session(storage.as_ref(), &device_code)
         .await
@@ -445,10 +448,7 @@ async fn device_complete_handler(
 /// Public device authorization routes (no incoming-auth middleware).
 pub fn incoming_auth_device_public_routes() -> Router {
     Router::new()
-        .route(
-            "/v1/incoming-auth/device/start",
-            post(device_start_handler),
-        )
+        .route("/v1/incoming-auth/device/start", post(device_start_handler))
         .route("/v1/incoming-auth/device/poll", post(device_poll_handler))
 }
 

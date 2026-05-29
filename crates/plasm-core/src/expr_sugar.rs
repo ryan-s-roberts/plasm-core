@@ -41,7 +41,10 @@ fn try_brace_query_to_get(q: &QueryExpr, cgs: &CGS) -> Option<GetExpr> {
     if field != ent.id_field.as_str() {
         return None;
     }
-    if cgs.find_capabilities(&q.entity, CapabilityKind::Get).is_empty() {
+    if cgs
+        .find_capabilities(&q.entity, CapabilityKind::Get)
+        .is_empty()
+    {
         return None;
     }
     // Search-only entities: brace with only id_field is almost always meant as Get.
@@ -105,10 +108,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered(
-            "Issue",
-            Predicate::eq("identifier", "EVA-60"),
-        );
+        let q = QueryExpr::filtered("Issue", Predicate::eq("identifier", "EVA-60"));
         let expr = rewrite_id_field_brace_query_to_get(Expr::Query(q), &cgs);
         match expr {
             Expr::Get(g) => assert_eq!(g.reference.primary_slot_str(), "EVA-60"),

@@ -7,9 +7,7 @@ use auth_framework::storage::MemoryStorage;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
-use plasm_agent_core::incoming_auth::{
-    IncomingAuthConfig, IncomingAuthMode, IncomingAuthVerifier,
-};
+use plasm_agent_core::incoming_auth::{IncomingAuthConfig, IncomingAuthMode, IncomingAuthVerifier};
 use plasm_agent_core::incoming_auth_device::{
     incoming_auth_device_public_routes, mint_incoming_access_token,
 };
@@ -24,7 +22,8 @@ use tower::ServiceExt;
 const TEST_SECRET: &str = "device-http-test-secret-01234567890123456789012";
 
 fn fixture_registry() -> Arc<InMemoryCgsRegistry> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix");
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix");
     let cgs = Arc::new(load_schema(&dir).expect("prompt matrix schema"));
     Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
         "prompt_matrix".into(),
@@ -112,8 +111,7 @@ async fn device_start_and_poll_approved_via_kv() {
         .unwrap()
         .contains("/device?user_code="));
 
-    let token =
-        mint_incoming_access_token(&verifier, "github:99", "tenant-device").unwrap();
+    let token = mint_incoming_access_token(&verifier, "github:99", "tenant-device").unwrap();
 
     let sess = json!({
         "user_code": user_code,

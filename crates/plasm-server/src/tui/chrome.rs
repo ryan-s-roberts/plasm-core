@@ -147,10 +147,7 @@ pub fn tab_rail_line(
     }
     spans.push(Span::raw(" >"));
     spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        format!("listen:{listen_port}"),
-        dim_style(),
-    ));
+    spans.push(Span::styled(format!("listen:{listen_port}"), dim_style()));
     if max_cols >= 72 {
         spans.push(Span::raw("  "));
         spans.push(Span::styled("(←/→ or Tab)", dim_style()));
@@ -276,7 +273,9 @@ mod tests {
     #[test]
     fn tab_rail_truncates_on_narrow_terminal() {
         use unicode_width::UnicodeWidthStr;
-        let titles = ["Status", "Clients", "APIs", "OAuth", "Keys", "Runs", "Storage", "Logs"];
+        let titles = [
+            "Status", "Clients", "APIs", "OAuth", "Keys", "Runs", "Storage", "Logs",
+        ];
         let line = tab_rail_line(2, &titles, 8080, 40);
         assert!(line.to_string().width() <= 40);
     }
@@ -291,10 +290,7 @@ mod tests {
 
     #[test]
     fn footer_line_contains_screen_keys() {
-        let global = [
-            FooterItem::new("←/→", "tab"),
-            FooterItem::new("q", "quit"),
-        ];
+        let global = [FooterItem::new("←/→", "tab"), FooterItem::new("q", "quit")];
         let screen = [
             FooterItem::new("/", "filter"),
             FooterItem::new("Space", "toggle"),

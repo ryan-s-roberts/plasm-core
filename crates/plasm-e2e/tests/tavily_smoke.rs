@@ -55,11 +55,9 @@ fn research_create_compiled_body_is_json_object_with_input_key() {
         panic!("research_create body must be a JSON object, got {body:?}");
     };
     assert!(
-        map.get("input").is_some_and(|v| matches!(v, Value::String(_))),
+        map.get("input")
+            .is_some_and(|v| matches!(v, Value::String(_))),
         "body must include string input field: {map:?}"
     );
-    assert_eq!(
-        map.get("model"),
-        Some(&Value::String("auto".to_string()))
-    );
+    assert_eq!(map.get("model"), Some(&Value::String("auto".to_string())));
 }

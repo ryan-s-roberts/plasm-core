@@ -1583,8 +1583,7 @@ impl<'a> Parser<'a> {
         preds: Vec<Predicate>,
     ) -> Result<Expr, ParseError> {
         let c = self.cgs_for_entity_required(entity);
-        if c
-            .find_capabilities(entity, CapabilityKind::Search)
+        if c.find_capabilities(entity, CapabilityKind::Search)
             .is_empty()
         {
             return Err(self.err(ParseErrorKind::SearchNotSupported {
@@ -4297,12 +4296,8 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
-        let r = parse_with_cgs_layers(
-            r#"Issue.search(q="bug", team_key="ENG")"#,
-            &layers,
-            sym_map,
-        )
-        .expect("parse");
+        let r = parse_with_cgs_layers(r#"Issue.search(q="bug", team_key="ENG")"#, &layers, sym_map)
+            .expect("parse");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };

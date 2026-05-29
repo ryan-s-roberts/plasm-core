@@ -52,13 +52,7 @@ fn ts_micros(dt: chrono::DateTime<chrono::Utc>) -> i64 {
 }
 
 fn iceberg_struct_field(id: i32, name: &str, required: bool, t: PrimitiveType) -> StructField {
-    StructField {
-        id,
-        name: name.to_string(),
-        required,
-        field_type: Type::Primitive(t),
-        doc: None,
-    }
+    StructField::new(id, name, required, Type::Primitive(t), None)
 }
 
 fn utc_timestamp_micros_array(v: Vec<i64>) -> TimestampMicrosecondArray {
@@ -1089,9 +1083,9 @@ impl IcebergSink {
                     .await?
             }
         };
-        let buckets = head.as_ref().map(|h| {
-            year_month_buckets_for_trace_ms(h.started_at_ms, h.ended_at_ms)
-        });
+        let buckets = head
+            .as_ref()
+            .map(|h| year_month_buckets_for_trace_ms(h.started_at_ms, h.ended_at_ms));
         let (events, _) = self
             .load_trace_events_for_tenant_pruned(
                 tenant_partition,
@@ -1128,8 +1122,7 @@ impl IcebergSink {
                 "load_trace_events_for_tenant_pruned: empty pruned scan; retrying without year_month_bucket"
             );
             record_iceberg_detail_prune_fallback();
-            let where_clause =
-                audit_trace_detail_where(tenant_partition, trace_id, None, true);
+            let where_clause = audit_trace_detail_where(tenant_partition, trace_id, None, true);
             events = self.load_trace_events_with_where(&where_clause).await?;
             prune_fallback = true;
         }

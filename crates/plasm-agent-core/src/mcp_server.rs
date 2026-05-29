@@ -80,9 +80,9 @@ use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::plasm_dag::{compile_plasm_expression_to_plan, split_bare_plasm_roots};
 use crate::plasm_plan::parse_and_validate_plan_json;
 use crate::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines_with_mode,
-    render_plasm_plan_dry_text_with_guidance, run_plasm_plan, DryPlanGuidanceMode, PlasmPlanRunHooks,
-    PlasmPlanRunResult,
+    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json,
+    plasm_plan_review_guidance_lines_with_mode, render_plasm_plan_dry_text_with_guidance,
+    run_plasm_plan, DryPlanGuidanceMode, PlasmPlanRunHooks, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
@@ -1431,17 +1431,15 @@ impl PlasmMcpHandler {
                                                 DryPlanGuidanceMode::Full
                                             }
                                         };
-                                        let dry_text =
-                                            render_plasm_plan_dry_text_with_guidance(
-                                                &dry,
-                                                None,
-                                                guidance_mode,
-                                            );
-                                        let guidance =
-                                            plasm_plan_review_guidance_lines_with_mode(
-                                                &dry,
-                                                guidance_mode,
-                                            );
+                                        let dry_text = render_plasm_plan_dry_text_with_guidance(
+                                            &dry,
+                                            None,
+                                            guidance_mode,
+                                        );
+                                        let guidance = plasm_plan_review_guidance_lines_with_mode(
+                                            &dry,
+                                            guidance_mode,
+                                        );
                                         {
                                             let mut g = state.lock().await;
                                             g.dry_plan_boilerplate_shown = true;
@@ -1936,11 +1934,8 @@ impl PlasmMcpHandler {
             r = mcp_policy::filter_discovery_result(r, cfg.as_ref());
         }
         let formatted = format_discovery_markdown_for_mcp(&r, &DiscoveryTablePolicy::default());
-        let mut res = CallToolResult::text_content(vec![TextContent::new(
-            formatted.markdown,
-            None,
-            None,
-        )]);
+        let mut res =
+            CallToolResult::text_content(vec![TextContent::new(formatted.markdown, None, None)]);
         if formatted.omission.truncated {
             let mut meta = serde_json::Map::new();
             let mut discovery = serde_json::Map::new();

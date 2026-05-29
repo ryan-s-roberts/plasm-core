@@ -14,10 +14,7 @@ pub type BindingScope<'a> = BTreeMap<&'a str, &'a Value>;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum InterpolateError {
     #[error("unresolved template reference `${path}` (in-scope bindings: {available})")]
-    UnresolvedReference {
-        path: String,
-        available: String,
-    },
+    UnresolvedReference { path: String, available: String },
     #[error("interpolated string exceeds maximum length ({max} bytes)")]
     MaxLengthExceeded { max: usize },
 }
@@ -206,9 +203,6 @@ mod tests {
         let binding = Value::String("x".into());
         let scope = BindingScope::from([("a", &binding)]);
         let err = interpolate_string("${missing}", &scope).unwrap_err();
-        assert!(matches!(
-            err,
-            InterpolateError::UnresolvedReference { .. }
-        ));
+        assert!(matches!(err, InterpolateError::UnresolvedReference { .. }));
     }
 }

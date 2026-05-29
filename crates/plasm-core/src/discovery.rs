@@ -897,7 +897,10 @@ fn seed_entity_surface_always_includes(
     }
     if matches!(
         cap.kind,
-        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get | CapabilityKind::Create
+        CapabilityKind::Query
+            | CapabilityKind::Search
+            | CapabilityKind::Get
+            | CapabilityKind::Create
     ) {
         return true;
     }
@@ -1527,9 +1530,11 @@ mod tests {
         domain: &str,
         capability: &str,
     ) -> bool {
-        delta.required.capabilities.iter().any(|c| {
-            c.domain.as_str() == domain && c.capability.as_str() == capability
-        })
+        delta
+            .required
+            .capabilities
+            .iter()
+            .any(|c| c.domain.as_str() == domain && c.capability.as_str() == capability)
     }
 
     #[test]

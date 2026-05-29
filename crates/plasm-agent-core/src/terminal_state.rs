@@ -70,17 +70,15 @@ pub fn language_frontmatter_markdown_path() -> PathBuf {
 }
 
 pub fn plasm_cli_agent_skill_path() -> PathBuf {
-    plasm_root_dir().join("skills").join("plasm-cli").join("SKILL.md")
+    plasm_root_dir()
+        .join("skills")
+        .join("plasm-cli")
+        .join("SKILL.md")
 }
 
 pub fn host_slug(server: &str) -> String {
     let h = Sha256::digest(server.as_bytes());
     hex::encode(h)[..8].to_string()
-}
-
-/// Truncated SHA256 of server origin (8 hex chars).
-pub fn server_slug(server: &str) -> String {
-    host_slug(server)
 }
 
 pub fn host_mirror_dir(server: &str) -> PathBuf {
@@ -125,10 +123,6 @@ pub fn domain_tsv_path(_server: &str, client_session_id: &str) -> PathBuf {
 
 pub fn session_out_dir(client_session_id: &str) -> PathBuf {
     session_dir(client_session_id).join("out")
-}
-
-pub fn latest_op_pointer_path(client_session_id: &str) -> PathBuf {
-    session_dir(client_session_id).join("latest")
 }
 
 pub fn catalog_cache_path(_server: &str, client_session_id: &str, api: &str) -> PathBuf {
@@ -444,9 +438,9 @@ pub fn merge_capabilities(
 }
 
 fn push_qualified_seed(seeds: &mut Vec<CapabilitySeed>, name: &str) -> Result<()> {
-    let (api, entity) = name.split_once(':').ok_or_else(|| {
-        anyhow!("context: expected catalog:entity seed, got `{name}`")
-    })?;
+    let (api, entity) = name
+        .split_once(':')
+        .ok_or_else(|| anyhow!("context: expected catalog:entity seed, got `{name}`"))?;
     let api = api.trim();
     let entity = entity.trim();
     if api.is_empty() || entity.is_empty() {
@@ -632,19 +626,6 @@ pub fn append_domain_tsv_wave(path: &Path, tsv_fragment: &str, first_write: bool
         writeln!(file, "{line}")?;
     }
     Ok(row_count)
-}
-
-pub fn write_session_file(
-    server: &str,
-    client_session_id: &str,
-    label: &str,
-    bytes: &[u8],
-) -> Result<PathBuf> {
-    let dir = client_session_dir(server, client_session_id);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(label);
-    std::fs::write(&path, bytes)?;
-    Ok(path)
 }
 
 pub fn format_language_frontmatter_markdown(frontmatter: &str) -> String {
@@ -848,8 +829,7 @@ mod tests {
                 description: String::new(),
             }],
         };
-        let seeds =
-            resolve_capability_seeds(&["Pokemon".into()], Some(&disc), false).expect("ok");
+        let seeds = resolve_capability_seeds(&["Pokemon".into()], Some(&disc), false).expect("ok");
         assert_eq!(seeds[0].entry_id, "pokeapi");
     }
 
@@ -900,10 +880,7 @@ mod tests {
         std::fs::create_dir_all(&want).expect("mkdir");
         std::env::set_var("PLASM_WORKSPACE", &want);
         let path = plasm_cli_agent_skill_path();
-        assert_eq!(
-            path,
-            want.join(".plasm/skills/plasm-cli/SKILL.md")
-        );
+        assert_eq!(path, want.join(".plasm/skills/plasm-cli/SKILL.md"));
         std::env::remove_var("PLASM_WORKSPACE");
     }
 

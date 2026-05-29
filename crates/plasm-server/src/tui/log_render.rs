@@ -185,10 +185,7 @@ pub(crate) fn format_detail_lines(entry: &ApplianceLogEntry) -> Vec<Line<'static
             Span::raw(entry.target.clone()),
         ]),
         Line::from(""),
-        Line::from(Span::styled(
-            entry.message.clone(),
-            Style::default(),
-        )),
+        Line::from(Span::styled(entry.message.clone(), Style::default())),
     ]
 }
 

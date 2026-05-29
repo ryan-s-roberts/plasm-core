@@ -373,15 +373,10 @@ pub fn run_appliance_shell(
                             if model.fatal.is_some() {
                                 return Ok(());
                             }
-                        } else {
-                            match key.code {
-                                KeyCode::Char('q') => {
-                                    boot_cancel.store(true, Ordering::SeqCst);
-                                    if model.fatal.is_some() {
-                                        return Ok(());
-                                    }
-                                }
-                                _ => {}
+                        } else if let KeyCode::Char('q') = key.code {
+                            boot_cancel.store(true, Ordering::SeqCst);
+                            if model.fatal.is_some() {
+                                return Ok(());
                             }
                         }
                     }

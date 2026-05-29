@@ -162,8 +162,7 @@ fn init_console_only_with_writer<W>(
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
-    let fmt_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let fmt = tracing_subscriber::fmt::layer()
         .with_writer(make_writer)
         .with_filter(fmt_filter.clone());
@@ -351,8 +350,11 @@ where
         return init_console_only_with_writer(make_writer, tui_capture);
     }
 
-    match try_init_otlp_with_writer(default_service_name, make_writer.clone(), tui_capture.clone())
-    {
+    match try_init_otlp_with_writer(
+        default_service_name,
+        make_writer.clone(),
+        tui_capture.clone(),
+    ) {
         Ok(()) => Ok(()),
         Err(e) => {
             eprintln!("OpenTelemetry init failed ({e}); falling back to console logging only");

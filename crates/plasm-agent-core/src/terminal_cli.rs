@@ -139,7 +139,12 @@ pub fn validate_context_args(args: &ContextArgs) -> Result<()> {
     about = "Remote Plasm terminal — search, context, run (HTTP). Run `plasm init` once, then `doctor` if needed.",
 )]
 pub struct Cli {
-    #[arg(long, global = true, default_value = "default", help = "Profile name under .plasm/profiles/ in the workspace (cwd)")]
+    #[arg(
+        long,
+        global = true,
+        default_value = "default",
+        help = "Profile name under .plasm/profiles/ in the workspace (cwd)"
+    )]
     pub profile: String,
     #[command(subcommand)]
     pub cmd: Cmd,
@@ -149,7 +154,11 @@ pub struct Cli {
 pub enum Cmd {
     #[command(about = "Configure local profile and optional platform sign-in")]
     Init {
-        #[arg(long, value_name = "URL", help = "HTTP API origin (e.g. http://127.0.0.1:3000)")]
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "HTTP API origin (e.g. http://127.0.0.1:3000)"
+        )]
         server: Option<String>,
         #[arg(long, help = "API key for local/appliance hosts")]
         api_key: Option<String>,
@@ -165,7 +174,10 @@ pub enum Cmd {
     Doctor,
     #[command(about = "Discover capabilities; merge into hosts/<slug>/discovery.tsv")]
     Search {
-        #[arg(value_name = "INTENT", help = "Natural-language goal for capability discovery")]
+        #[arg(
+            value_name = "INTENT",
+            help = "Natural-language goal for capability discovery"
+        )]
         intent: String,
         #[arg(long, help = "Maximum ranked candidates to return")]
         limit: Option<usize>,

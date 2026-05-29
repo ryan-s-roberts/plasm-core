@@ -1,0 +1,13 @@
+# Install: pre-commit install  (from plasm-oss workspace root)
+# Requires: pre-commit (pip/brew), rustup stable, cargo fmt + clippy
+minimum_pre_commit_version: "3.0.0"
+
+repos:
+  - repo: local
+    hooks:
+      - id: rust-quality
+        name: rust fmt + clippy (OSS workspace)
+        entry: bash -c 'PLASM_RUST_FMT_MODE=fix bash scripts/ci/rust-quality.sh'
+        language: system
+        pass_filenames: false
+        files: \.(rs|toml)$

@@ -178,7 +178,10 @@ fn build_clients_panel_lines(
         Ok(json) => push_json_block_lines(&mut lines, &json),
         Err(e) => lines.push(Line::from(vec![
             Span::styled("! ", err_emphasis_style()),
-            Span::styled(format!("Could not build MCP JSON: {e}"), err_emphasis_style()),
+            Span::styled(
+                format!("Could not build MCP JSON: {e}"),
+                err_emphasis_style(),
+            ),
         ])),
     }
     lines.push(Line::from(""));
@@ -192,7 +195,10 @@ fn build_clients_panel_lines(
         Ok(json) => push_json_block_lines(&mut lines, &json),
         Err(e) => lines.push(Line::from(vec![
             Span::styled("! ", err_emphasis_style()),
-            Span::styled(format!("Could not build CLI profile JSON: {e}"), err_emphasis_style()),
+            Span::styled(
+                format!("Could not build CLI profile JSON: {e}"),
+                err_emphasis_style(),
+            ),
         ])),
     }
     lines
@@ -635,9 +641,10 @@ fn format_api_catalogue_row(
     } else {
         api_toggle_off_style()
     };
-    Line::from(vec![
-        Span::styled(clipped, if selected { mark_style } else { row_style }),
-    ])
+    Line::from(vec![Span::styled(
+        clipped,
+        if selected { mark_style } else { row_style },
+    )])
 }
 
 /// Clip a list row built from parts (OAuth providers, keys, etc.).
@@ -1515,28 +1522,27 @@ fn apply_admin_completion(
                             copy_text_to_clipboard(&raw),
                         ),
                     ),
-                    (AdminTaskKind::CopyingMcpJson, Ok(raw)) => match mcp_client_json_config(
-                        listen_port,
-                        Some(&raw),
-                    ) {
-                        Ok(json) => set_notice(
-                            state,
-                            copy_notice(
-                                "MCP client config copied",
-                                "MCP client config copy failed",
-                                copy_text_to_clipboard(&json),
+                    (AdminTaskKind::CopyingMcpJson, Ok(raw)) => {
+                        match mcp_client_json_config(listen_port, Some(&raw)) {
+                            Ok(json) => set_notice(
+                                state,
+                                copy_notice(
+                                    "MCP client config copied",
+                                    "MCP client config copy failed",
+                                    copy_text_to_clipboard(&json),
+                                ),
                             ),
-                        ),
-                        Err(e) => set_notice(
-                            state,
-                            RunNotice::new(
-                                NoticeSeverity::Error,
-                                "MCP client config build failed",
-                                "Could not build MCP JSON for clipboard.",
-                            )
-                            .with_details(vec![e]),
-                        ),
-                    },
+                            Err(e) => set_notice(
+                                state,
+                                RunNotice::new(
+                                    NoticeSeverity::Error,
+                                    "MCP client config build failed",
+                                    "Could not build MCP JSON for clipboard.",
+                                )
+                                .with_details(vec![e]),
+                            ),
+                        }
+                    }
                     (AdminTaskKind::CopyingPlasmCliProfile, Ok(raw)) => {
                         match plasm_cli_profile_json_config(listen_port, Some(&raw)) {
                             Ok(json) => set_notice(
@@ -2612,18 +2618,16 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
             }
             false
         }
-        UiMsg::Key(key) => {
-            match state.mode {
-                InputMode::ApiFilter
-                | InputMode::ApiSecretEdit { .. }
-                | InputMode::AddKeyLabel { .. }
-                | InputMode::OAuthWizard(_)
-                | InputMode::OAuthDeviceScopePick(_) => update_modal_key(state, key, deps),
-                InputMode::Normal
-                | InputMode::ConfirmOAuthDisable { .. }
-                | InputMode::ConfirmKeyRevoke { .. } => update_normal_key(state, key, deps),
-            }
-        }
+        UiMsg::Key(key) => match state.mode {
+            InputMode::ApiFilter
+            | InputMode::ApiSecretEdit { .. }
+            | InputMode::AddKeyLabel { .. }
+            | InputMode::OAuthWizard(_)
+            | InputMode::OAuthDeviceScopePick(_) => update_modal_key(state, key, deps),
+            InputMode::Normal
+            | InputMode::ConfirmOAuthDisable { .. }
+            | InputMode::ConfirmKeyRevoke { .. } => update_normal_key(state, key, deps),
+        },
     }
 }
 
@@ -2778,12 +2782,7 @@ fn render_running_frame(
     let snap = &model.resources.snapshot;
     let tab_titles: Vec<&str> = RunScreen::ALL.iter().map(|s| s.title()).collect();
     let rail_max = layout.tab_rail.width.max(1);
-    let rail = chrome::tab_rail_line(
-        model.screen.index(),
-        &tab_titles,
-        listen_port,
-        rail_max,
-    );
+    let rail = chrome::tab_rail_line(model.screen.index(), &tab_titles, listen_port, rail_max);
     chrome::render_tab_rail(frame, layout.tab_rail, rail);
 
     let shared_notice = model.notice.as_ref();
@@ -2801,10 +2800,7 @@ fn render_running_frame(
         RunScreen::Clients => {
             let (content_area, notice_area) =
                 split_main_notice_area(layout.body, shared_notice.is_some());
-            let lines = build_clients_panel_lines(
-                listen_port,
-                snap.keys.get(model.keys.selected),
-            );
+            let lines = build_clients_panel_lines(listen_port, snap.keys.get(model.keys.selected));
             render_scrollable_panel(
                 frame,
                 content_area,
@@ -4016,7 +4012,10 @@ mod tests {
             .get("mcpServers")
             .and_then(|m| m.get("plasm"))
             .expect("plasm entry");
-        assert_eq!(plasm.get("type").and_then(|t| t.as_str()), Some("streamableHttp"));
+        assert_eq!(
+            plasm.get("type").and_then(|t| t.as_str()),
+            Some("streamableHttp")
+        );
         assert_eq!(
             plasm.get("url").and_then(|u| u.as_str()),
             Some("http://127.0.0.1:4100/mcp")
@@ -4046,7 +4045,9 @@ mod tests {
         state.screen = RunScreen::Clients;
         let items = screen_footer_items(&state);
         assert!(items.iter().any(|i| i.key == "c" && i.desc.contains("MCP")));
-        assert!(items.iter().any(|i| i.key == "p" && i.desc.contains("plasm CLI")));
+        assert!(items
+            .iter()
+            .any(|i| i.key == "p" && i.desc.contains("plasm CLI")));
     }
 
     #[test]

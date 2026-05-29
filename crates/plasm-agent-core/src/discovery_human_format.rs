@@ -121,10 +121,7 @@ pub fn discovery_capability_tsv_for_candidates(
     candidates: &[RankedCandidate],
     entity_summaries: &[EntitySummary],
 ) -> String {
-    discovery_capability_tsv_for_rows(
-        &ranked_deduped_entity_rows(candidates),
-        entity_summaries,
-    )
+    discovery_capability_tsv_for_rows(&ranked_deduped_entity_rows(candidates), entity_summaries)
 }
 
 fn discovery_capability_tsv_for_rows(
@@ -180,7 +177,11 @@ pub fn discovery_ambiguity_markdown(result: &DiscoveryResult) -> String {
     s
 }
 
-fn discovery_markdown_body(tsv: &str, result: &DiscoveryResult, omission: &DiscoveryOmissionMeta) -> String {
+fn discovery_markdown_body(
+    tsv: &str,
+    result: &DiscoveryResult,
+    omission: &DiscoveryOmissionMeta,
+) -> String {
     let mut s = String::new();
     if tsv.lines().count() <= 1 {
         s.push_str("_No matching entities._\n\n");
@@ -201,10 +202,13 @@ fn discovery_markdown_body(tsv: &str, result: &DiscoveryResult, omission: &Disco
 
 /// MCP `discover_capabilities` (non-typed) and `POST /v1/terminal/discover`: fenced TSV + ambiguity notes.
 pub fn format_discovery_markdown(result: &DiscoveryResult) -> String {
-    format_discovery_markdown_for_mcp(result, &DiscoveryTablePolicy {
-        max_rows: usize::MAX,
-        max_per_entry: None,
-    })
+    format_discovery_markdown_for_mcp(
+        result,
+        &DiscoveryTablePolicy {
+            max_rows: usize::MAX,
+            max_per_entry: None,
+        },
+    )
     .markdown
 }
 
@@ -314,16 +318,18 @@ mod tests {
 
     #[test]
     fn mcp_discovery_row_cap_omits_tail() {
-        let r = sample_result((0..20)
-            .map(|i| RankedCandidate {
-                entry_id: format!("api{i}"),
-                entity: format!("Entity{i}"),
-                capability_name: "list".into(),
-                score: 100 - i,
-                reason_codes: vec![],
-                capability_description: String::new(),
-            })
-            .collect());
+        let r = sample_result(
+            (0..20)
+                .map(|i| RankedCandidate {
+                    entry_id: format!("api{i}"),
+                    entity: format!("Entity{i}"),
+                    capability_name: "list".into(),
+                    score: 100 - i,
+                    reason_codes: vec![],
+                    capability_description: String::new(),
+                })
+                .collect(),
+        );
         let formatted = format_discovery_markdown_for_mcp(
             &r,
             &DiscoveryTablePolicy {

@@ -152,11 +152,11 @@ pub use entity_ref_value::{
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
 };
 pub use error::{NormalizationError, SchemaError, TypeError};
-pub use expr_sugar::rewrite_id_field_brace_query_to_get;
 pub use expr::{
     lift_invoke_payloads_in_expr, ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr,
     GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, PAGE_EXPR_PRIMARY_ENTITY,
 };
+pub use expr_sugar::rewrite_id_field_brace_query_to_get;
 pub use identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityId, EntityName, PathMethodSegment,
     RegistryEntryId, RelationName,
@@ -184,15 +184,11 @@ pub use prompt_render::DomainPromptSettings;
 pub use prompt_render::DomainPromptSource;
 pub use prompt_render::PromptRenderMode;
 pub use prompt_render::TSV_DOMAIN_TABLE_HEADER;
-pub use resolved_identity::ResolvedIdentity;
-pub use template_interpolate::{
-    contains_dollar_interpolation, dollar_interpolation_roots, interpolate_string,
-    interpolate_string_map, interpolate_string_with_max, BindingScope, InterpolateError,
-};
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,
 };
+pub use resolved_identity::ResolvedIdentity;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names,
@@ -211,10 +207,9 @@ pub use schema::{
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
-    build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix,
-    overlay_collect_rows, overlay_entity_for_scope, overlay_merge_step_response,
-    overlay_pipeline_cache_suffix, resolve_overlay_row_bind, walk_json_path, SchemaOverlay,
-    SchemaOverlaySpec,
+    build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
+    overlay_entity_for_scope, overlay_merge_step_response, overlay_pipeline_cache_suffix,
+    resolve_overlay_row_bind, walk_json_path, SchemaOverlay, SchemaOverlaySpec,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;
@@ -229,6 +224,10 @@ pub use symbol_tuning::{
     symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_for_prompt,
     DomainExposureSession, ExposedEntitySymbolRow, FocusSpec, SymbolMap, SymbolMapCacheKey,
     SymbolMapCrossRequestCache,
+};
+pub use template_interpolate::{
+    contains_dollar_interpolation, dollar_interpolation_roots, interpolate_string,
+    interpolate_string_map, interpolate_string_with_max, BindingScope, InterpolateError,
 };
 pub use temporal::{normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value};
 pub use type_checker::{

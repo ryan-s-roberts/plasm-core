@@ -242,7 +242,10 @@ fn assert_view_planning_ir(
         "views_triage_context_node_field" => {
             let q = first_query(&surfaces)?;
             if q.entity != "LangTriageContext" {
-                return Err(format!("expected LangTriageContext query, got {:?}", q.entity));
+                return Err(format!(
+                    "expected LangTriageContext query, got {:?}",
+                    q.entity
+                ));
             }
         }
         "views_owner_filter_computed_bind" => {

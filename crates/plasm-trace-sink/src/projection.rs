@@ -320,7 +320,9 @@ impl ProjectionStore {
         if !self.trace_head_within_segment_ttl(&head) {
             return Ok(None);
         }
-        let records = self.load_trace_segment_records(trace_id, tenant_partition).await?;
+        let records = self
+            .load_trace_segment_records(trace_id, tenant_partition)
+            .await?;
         if records.is_empty() {
             return Ok(None);
         }
@@ -402,14 +404,8 @@ impl ProjectionStore {
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(chrono::Utc::now);
-            let call_index = rec
-                .record
-                .get("call_index")
-                .and_then(|v| v.as_i64());
-            let line_index = rec
-                .record
-                .get("line_index")
-                .and_then(|v| v.as_i64());
+            let call_index = rec.record.get("call_index").and_then(|v| v.as_i64());
+            let line_index = rec.record.get("line_index").and_then(|v| v.as_i64());
             let record_json = serde_json::to_string(&rec.record)?;
             sqlx::query(
                 r#"INSERT INTO plasm_trace_sink.trace_segments (

@@ -152,7 +152,9 @@ impl AppState {
         tenant: &TenantId,
         trace_id: Uuid,
     ) -> anyhow::Result<Vec<AuditEvent>> {
-        self.store.load_trace_events_for_tenant(tenant, trace_id).await
+        self.store
+            .load_trace_events_for_tenant(tenant, trace_id)
+            .await
     }
 
     pub async fn billing_usage(

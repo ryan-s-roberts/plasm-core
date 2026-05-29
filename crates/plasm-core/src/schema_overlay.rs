@@ -8,7 +8,7 @@ use crate::error::SchemaError;
 use crate::identity::{EntityFieldName, EntityName};
 use crate::schema::{
     CapabilityKind, CapabilitySchema, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind,
-    InputType, ValueDomainKey, CGS, NamedValueSchema,
+    InputType, NamedValueSchema, ValueDomainKey, CGS,
 };
 use indexmap::IndexMap;
 use minijinja::{Environment, UndefinedBehavior, Value as MjValue};
@@ -156,7 +156,9 @@ pub struct FieldSkipSpec {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FieldExtractSpec {
     TopLevelKey,
-    PathSegments { segments: Vec<String> },
+    PathSegments {
+        segments: Vec<String>,
+    },
     NameValueArray {
         array_path: Vec<String>,
         match_key_field: String,
@@ -248,7 +250,10 @@ pub fn resolve_overlay_row_bind(
 }
 
 /// Extract row objects from a fetch response for a collect step.
-pub fn overlay_collect_rows(response: &JsonValue, items_path: &[String]) -> Result<Vec<JsonValue>, String> {
+pub fn overlay_collect_rows(
+    response: &JsonValue,
+    items_path: &[String],
+) -> Result<Vec<JsonValue>, String> {
     let items = walk_json_path(response, items_path)?;
     let arr = items
         .as_array()
@@ -306,7 +311,10 @@ pub fn overlay_bind_cache_suffix(bind: &IndexMap<String, String>) -> String {
     }
     let mut keys: Vec<_> = bind.keys().cloned().collect();
     keys.sort();
-    let canonical = serde_json::json!(keys.iter().map(|k| (k, bind.get(k).map(String::as_str))).collect::<Vec<_>>());
+    let canonical = serde_json::json!(keys
+        .iter()
+        .map(|k| (k, bind.get(k).map(String::as_str)))
+        .collect::<Vec<_>>());
     let bytes = serde_json::to_vec(&canonical).unwrap_or_default();
     format!(":bind:{}", hex::encode(Sha256::digest(bytes)))
 }
@@ -350,10 +358,7 @@ fn collect_overlay_generator_rows<'a>(
     } else {
         Ok(top_rows
             .iter()
-            .map(|row| OverlayGeneratorRow {
-                row,
-                parent: None,
-            })
+            .map(|row| OverlayGeneratorRow { row, parent: None })
             .collect())
     }
 }
@@ -398,13 +403,7 @@ fn walk_json_path_string(value: &JsonValue, path: &[String]) -> Result<String, S
 fn sanitize_identifier_segment(segment: &str) -> String {
     segment
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect::<String>()
         .trim_matches('_')
         .to_string()
@@ -427,18 +426,16 @@ fn overlay_template_environment() -> Environment<'static> {
     env.set_undefined_behavior(UndefinedBehavior::Strict);
     env.add_filter(
         "join_sanitize",
-        |value: MjValue, args: minijinja::value::Rest<MjValue>| -> Result<String, minijinja::Error> {
+        |value: MjValue,
+         args: minijinja::value::Rest<MjValue>|
+         -> Result<String, minijinja::Error> {
             let name = value.as_str().ok_or_else(|| {
                 minijinja::Error::new(
                     minijinja::ErrorKind::InvalidOperation,
                     "join_sanitize: expected string",
                 )
             })?;
-            let sep = args
-                .0
-                .first()
-                .and_then(|v| v.as_str())
-                .unwrap_or("__");
+            let sep = args.0.first().and_then(|v| v.as_str()).unwrap_or("__");
             let split_on = args.0.get(1).and_then(|v| v.as_str()).unwrap_or("/");
             Ok(name
                 .split(split_on)
@@ -516,9 +513,7 @@ fn field_from_value_ref(
     }
     Ok(FieldSchema {
         name: EntityFieldName::from(field_name),
-        kind: FieldValueKind::Registry(
-            ValueDomainKey::new(value_ref).map_err(|e| e.to_string())?,
-        ),
+        kind: FieldValueKind::Registry(ValueDomainKey::new(value_ref).map_err(|e| e.to_string())?),
         description: description.to_string(),
         required: false,
         agent_presentation: None,
@@ -555,11 +550,7 @@ fn wire_name_from_field(
     }
 }
 
-fn should_skip_field(
-    field_row: &JsonValue,
-    field_key: Option<&str>,
-    skip: &FieldSkipSpec,
-) -> bool {
+fn should_skip_field(field_row: &JsonValue, field_key: Option<&str>, skip: &FieldSkipSpec) -> bool {
     if skip.values_in.is_empty() {
         return false;
     }
@@ -675,7 +666,10 @@ fn project_dynamic_fields(
         if plasm_fname.is_empty() {
             continue;
         }
-        if ent.fields.contains_key(&EntityFieldName::from(plasm_fname.as_str())) {
+        if ent
+            .fields
+            .contains_key(&EntityFieldName::from(plasm_fname.as_str()))
+        {
             continue;
         }
         let value_ref = resolve_type_map_key(&df.type_map, df.default.as_ref(), &wire_type)?;
@@ -707,7 +701,12 @@ pub fn build_schema_overlay(
 
     let template = base_cgs
         .get_entity(&spec.entity.from_template)
-        .ok_or_else(|| format!("from_template entity '{}' not found", spec.entity.from_template))?;
+        .ok_or_else(|| {
+            format!(
+                "from_template entity '{}' not found",
+                spec.entity.from_template
+            )
+        })?;
 
     let generator_rows = collect_overlay_generator_rows(source_response, &spec.projection)?;
 
@@ -720,13 +719,16 @@ pub fn build_schema_overlay(
         OverlayProjectionMode::PerScopeEntity => {
             for gen in &generator_rows {
                 let row_ctx = overlay_row_context(gen.row, gen.parent);
-                let entity_name = render_overlay_template(&env, &spec.entity.name.template, &row_ctx)?;
+                let entity_name =
+                    render_overlay_template(&env, &spec.entity.name.template, &row_ctx)?;
                 if !is_valid_plasm_entity_name(&entity_name) {
                     return Err(format!(
                         "overlay entity name '{entity_name}' is not a valid Plasm identifier"
                     ));
                 }
-                if base_cgs.entities.contains_key(&EntityName::from(entity_name.as_str()))
+                if base_cgs
+                    .entities
+                    .contains_key(&EntityName::from(entity_name.as_str()))
                     || entities.contains_key(&EntityName::from(entity_name.as_str()))
                 {
                     return Err(format!(
@@ -736,7 +738,11 @@ pub fn build_schema_overlay(
 
                 let mut aliases = Vec::new();
                 for alias_spec in &spec.entity.expression_aliases {
-                    aliases.push(render_overlay_template(&env, &alias_spec.template, &row_ctx)?);
+                    aliases.push(render_overlay_template(
+                        &env,
+                        &alias_spec.template,
+                        &row_ctx,
+                    )?);
                 }
 
                 let scope_key =
@@ -763,7 +769,8 @@ pub fn build_schema_overlay(
                         None,
                         &format!("Static overlay field {fname}"),
                     )?;
-                    ent.fields.insert(EntityFieldName::from(fname.as_str()), field);
+                    ent.fields
+                        .insert(EntityFieldName::from(fname.as_str()), field);
                 }
 
                 if let Some(df) = &spec.entity.dynamic_fields {
@@ -796,7 +803,10 @@ pub fn build_schema_overlay(
                     .or_insert_with(|| EntityName::from(entity_name.as_str()));
 
                 for (fname, sf) in &spec.entity.static_fields {
-                    if !ent.fields.contains_key(&EntityFieldName::from(fname.as_str())) {
+                    if !ent
+                        .fields
+                        .contains_key(&EntityFieldName::from(fname.as_str()))
+                    {
                         let field = field_from_value_ref(
                             base_cgs,
                             fname,
@@ -805,7 +815,8 @@ pub fn build_schema_overlay(
                             None,
                             &format!("Static overlay field {fname}"),
                         )?;
-                        ent.fields.insert(EntityFieldName::from(fname.as_str()), field);
+                        ent.fields
+                            .insert(EntityFieldName::from(fname.as_str()), field);
                     }
                 }
 
@@ -852,12 +863,10 @@ impl CGS {
 
     /// Merge a runtime overlay into a clone of this CGS and validate.
     pub fn with_overlay(&self, overlay: SchemaOverlay) -> Result<CGS, SchemaError> {
-        let augment_base = self.schema_overlay.as_ref().is_some_and(|spec| {
-            matches!(
-                spec.projection.mode,
-                OverlayProjectionMode::AugmentBase
-            )
-        });
+        let augment_base = self
+            .schema_overlay
+            .as_ref()
+            .is_some_and(|spec| matches!(spec.projection.mode, OverlayProjectionMode::AugmentBase));
         let mut merged = self.clone();
         for (k, v) in overlay.values {
             if merged.values.contains_key(&k) {
@@ -927,7 +936,9 @@ impl CGS {
         } else {
             if !spec.source.capability.is_empty() || !spec.source.bind.is_empty() {
                 return Err(SchemaError::SchemaOverlayInvalid {
-                    detail: "source.capability and source.bind must be omitted when source.steps is set".into(),
+                    detail:
+                        "source.capability and source.bind must be omitted when source.steps is set"
+                            .into(),
                 });
             }
             let mut seen_collects = IndexMap::<String, ()>::new();
@@ -1005,11 +1016,12 @@ impl CGS {
             });
         }
 
-        if spec.decode.scope.params.is_empty()
-            && spec.decode.scope.key.template.contains("ambient")
+        if spec.decode.scope.params.is_empty() && spec.decode.scope.key.template.contains("ambient")
         {
             return Err(SchemaError::SchemaOverlayInvalid {
-                detail: "decode.scope.params must be non-empty when decode.scope.key references ambient".into(),
+                detail:
+                    "decode.scope.params must be non-empty when decode.scope.key references ambient"
+                        .into(),
             });
         }
 
@@ -1044,20 +1056,25 @@ impl CGS {
             .chain(std::iter::once(&spec.entity.scope_key.template))
             .chain(std::iter::once(&spec.decode.scope.key.template))
         {
-            env.template_from_str(tmpl).map_err(|e| SchemaError::SchemaOverlayInvalid {
-                detail: format!("invalid Minijinja template '{tmpl}': {e}"),
-            })?;
+            env.template_from_str(tmpl)
+                .map_err(|e| SchemaError::SchemaOverlayInvalid {
+                    detail: format!("invalid Minijinja template '{tmpl}': {e}"),
+                })?;
         }
         if let Some(df) = &spec.entity.dynamic_fields {
-            env.template_from_str(&df.name.template)
-                .map_err(|e| SchemaError::SchemaOverlayInvalid {
+            env.template_from_str(&df.name.template).map_err(|e| {
+                SchemaError::SchemaOverlayInvalid {
                     detail: format!("invalid dynamic_fields.name template: {e}"),
-                })?;
+                }
+            })?;
             if let FieldExtractSpec::NameValueArray { match_equals, .. } = &df.extract {
-                env.template_from_str(&match_equals.template)
-                    .map_err(|e| SchemaError::SchemaOverlayInvalid {
-                        detail: format!("invalid dynamic_fields.extract.match_equals template: {e}"),
-                    })?;
+                env.template_from_str(&match_equals.template).map_err(|e| {
+                    SchemaError::SchemaOverlayInvalid {
+                        detail: format!(
+                            "invalid dynamic_fields.extract.match_equals template: {e}"
+                        ),
+                    }
+                })?;
             }
         }
 
@@ -1065,11 +1082,12 @@ impl CGS {
     }
 
     fn validate_overlay_source_capability(&self, capability: &str) -> Result<(), SchemaError> {
-        let cap = self.capabilities.get(capability).ok_or_else(|| {
-            SchemaError::SchemaOverlayInvalid {
-                detail: format!("source capability '{capability}' not found"),
-            }
-        })?;
+        let cap =
+            self.capabilities
+                .get(capability)
+                .ok_or_else(|| SchemaError::SchemaOverlayInvalid {
+                    detail: format!("source capability '{capability}' not found"),
+                })?;
         if !matches!(
             cap.kind,
             CapabilityKind::Query | CapabilityKind::Get | CapabilityKind::Search
@@ -1090,11 +1108,12 @@ impl CGS {
         param: &str,
         template: &str,
     ) -> Result<(), SchemaError> {
-        let cap = self.capabilities.get(capability).ok_or_else(|| {
-            SchemaError::SchemaOverlayInvalid {
-                detail: format!("source capability '{capability}' not found"),
-            }
-        })?;
+        let cap =
+            self.capabilities
+                .get(capability)
+                .ok_or_else(|| SchemaError::SchemaOverlayInvalid {
+                    detail: format!("source capability '{capability}' not found"),
+                })?;
         overlay_template_environment()
             .template_from_str(template)
             .map_err(|e| SchemaError::SchemaOverlayInvalid {
@@ -1116,8 +1135,8 @@ impl CGS {
 mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
-    use std::path::Path;
     use std::env;
+    use std::path::Path;
 
     #[test]
     fn build_schema_overlay_from_fixture() {
@@ -1265,18 +1284,19 @@ mod tests {
             path: vec!["fields".into()],
         };
         for row in &team_rows {
-            let bind = resolve_overlay_row_bind(
-                &spec.source.steps[1].bind,
-                row,
-                None,
-            )
-            .expect("bind");
-            assert_eq!(bind.get("team_id").map(String::as_str), Some(row["id"].as_str().unwrap()));
+            let bind =
+                resolve_overlay_row_bind(&spec.source.steps[1].bind, row, None).expect("bind");
+            assert_eq!(
+                bind.get("team_id").map(String::as_str),
+                Some(row["id"].as_str().unwrap())
+            );
             overlay_merge_step_response(&mut merged, &merge, &fields_a).expect("merge");
         }
         let overlay = build_schema_overlay(spec, &base, &merged).expect("build overlay");
         let task = overlay.entities.get(&EntityName::from("Task")).unwrap();
-        assert!(task.fields.contains_key(&EntityFieldName::from("Priority_Level")));
+        assert!(task
+            .fields
+            .contains_key(&EntityFieldName::from("Priority_Level")));
     }
 
     #[test]
@@ -1291,8 +1311,12 @@ mod tests {
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
         let task = overlay.entities.get(&EntityName::from("Task")).unwrap();
-        assert!(task.fields.contains_key(&EntityFieldName::from("Priority_Level")));
-        assert!(task.fields.contains_key(&EntityFieldName::from("Story_Points")));
+        assert!(task
+            .fields
+            .contains_key(&EntityFieldName::from("Priority_Level")));
+        assert!(task
+            .fields
+            .contains_key(&EntityFieldName::from("Story_Points")));
         assert!(task.fields.contains_key(&EntityFieldName::from("Blocked")));
     }
 
@@ -1322,7 +1346,10 @@ mod tests {
         bind.insert("team_id".into(), "{{ row.id }}".into());
         let row = serde_json::json!({ "id": "777666555", "name": "Acme" });
         let resolved = resolve_overlay_row_bind(&bind, &row, None).expect("bind");
-        assert_eq!(resolved.get("team_id").map(String::as_str), Some("777666555"));
+        assert_eq!(
+            resolved.get("team_id").map(String::as_str),
+            Some("777666555")
+        );
     }
 
     #[test]
@@ -1343,7 +1370,10 @@ mod tests {
             &serde_json::json!({ "fields": [{ "name": "B", "type": "number" }] }),
         )
         .expect("merge");
-        let fields = acc.get("fields").and_then(|v| v.as_array()).expect("fields");
+        let fields = acc
+            .get("fields")
+            .and_then(|v| v.as_array())
+            .expect("fields");
         assert_eq!(fields.len(), 2);
     }
 
