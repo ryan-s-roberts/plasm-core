@@ -111,6 +111,12 @@ paths:
                 title: "Alpha"
                 score: 10
                 owner: "alice"
+                summary:
+                  id: "sum-i1"
+                  headline: "Alpha summary"
+                  detail:
+                    id: "det-i1"
+                    body: "nested detail"
                 lines:
                   - id: "l1"
                     item_id: "i1"
@@ -302,10 +308,30 @@ components:
         - $ref: "#/components/schemas/LangItem"
         - type: object
           properties:
+            summary:
+              $ref: "#/components/schemas/LangSummary"
             lines:
               type: array
               items:
                 $ref: "#/components/schemas/LangLine"
+    LangSummary:
+      type: object
+      required: [id, headline]
+      properties:
+        id:
+          type: string
+        headline:
+          type: string
+        detail:
+          $ref: "#/components/schemas/LangDetail"
+    LangDetail:
+      type: object
+      required: [id, body]
+      properties:
+        id:
+          type: string
+        body:
+          type: string
     LangTag:
       type: object
       required: [id, item_id, label]

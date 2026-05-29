@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.51] - 2026-05-29
+
+### Fixed
+
+- **Plasm programs:** unified `ProgramBindingContract` for binding continuation — one-cardinality relation hops from singleton parents (e.g. `species = item.<one_rel>; next = species.<one_rel>`) now emit `source_cardinality: single` instead of incorrectly treating all relation bindings as plural. Completes the partial relation-binding work shipped in 0.1.50.
+
+### Added
+
+- **Language matrix:** binding continuation rows for `limit(1)` chains, projection→relation, and two-hop one-cardinality `summary.detail` hops.
+
 ## [0.1.50] - 2026-05-29
 
 ### Added
@@ -18,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP prompts:** federation invariant (one goal → one `intent` → one `plasm_context`); `discover_capabilities` documents single `intent` (not `query`); initialize instructions no longer duplicate the full syntax guide.
 - **MCP execution:** federated CGS resolution for in-band summaries; strings >256 chars and markdown fields emit `(in artifact)` instead of inline blobs; preview threshold lowered to 4k chars.
-- **Plasm programs:** relation continuation through bindings (`species.p2`) preserves row entity type from `RelationTraversal` anchors.
+- **Plasm programs:** relation continuation through bindings — partial (`RelationTraversal` entity routing only); one-cardinality source proofs completed in 0.1.51.
 
 
 ### Fixed

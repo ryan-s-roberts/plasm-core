@@ -3,6 +3,36 @@ auth:
   scheme: none
 http_backend: http://127.0.0.1:9
 entities:
+  LangDetail:
+    id_field: id
+    description: Nested detail under LangSummary (one-cardinality chain target).
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_detail_id
+      body:
+        required: true
+        value_ref: nv_lang_detail_body
+    relations: {}
+  LangSummary:
+    id_field: id
+    description: Nested summary on LangItem GET (one-cardinality hop).
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_summary_id
+      headline:
+        required: true
+        value_ref: nv_lang_summary_headline
+    relations:
+      detail:
+        description: Detail embedded on summary objects in LangItem GET
+        target: LangDetail
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: detail
   LangTag:
     id_field: id
     description: Tags scoped to a LangItem (query_scoped relation target).
@@ -48,6 +78,14 @@ entities:
         required: false
         value_ref: nv_lang_item_owner
     relations:
+      summary:
+        description: Summary object embedded on LangItem GET responses
+        target: LangSummary
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: summary
       lines:
         description: Lines embedded on LangItem GET responses
         target: LangLine
@@ -182,6 +220,20 @@ capabilities:
     - id
     - item_id
     - note
+  langsummary_get:
+    description: Get LangSummary by id (matrix one-cardinality hop)
+    kind: get
+    entity: LangSummary
+    provides:
+    - id
+    - headline
+  langdetail_get:
+    description: Get LangDetail by id (matrix one-cardinality hop)
+    kind: get
+    entity: LangDetail
+    provides:
+    - id
+    - body
   langline_query:
     description: List lines scoped to one LangItem (optional list path; also on item GET)
     kind: query
@@ -196,6 +248,18 @@ capabilities:
     - item_id
     - note
 values:
+  nv_lang_detail_id:
+    type: string
+    string_semantics: short
+  nv_lang_detail_body:
+    type: string
+    string_semantics: short
+  nv_lang_summary_id:
+    type: string
+    string_semantics: short
+  nv_lang_summary_headline:
+    type: string
+    string_semantics: short
   nv_lang_tag_id:
     type: string
     string_semantics: short

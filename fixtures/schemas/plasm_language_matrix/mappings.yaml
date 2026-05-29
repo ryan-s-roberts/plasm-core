@@ -149,3 +149,27 @@ langline_get:
     value: lines
   - type: var
     name: id
+
+langsummary_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: summaries
+  - type: var
+    name: id
+
+langdetail_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: details
+  - type: var
+    name: id

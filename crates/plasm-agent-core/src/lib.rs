@@ -64,6 +64,7 @@ pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
 pub mod plasm_dag;
+mod program_binding;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;

@@ -72,6 +72,9 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "bindings_assignment",
     "bind_first_postfix_limit",
     "binding_continuation",
+    "bind_limit1_continuation",
+    "bind_projection_then_relation",
+    "bind_relation_hop_one_one",
     "parallel_final_roots",
     "bracket_render",
     "bracket_render_content_ref",
@@ -152,13 +155,21 @@ fn json_contains_selector_field(v: &serde_json::Value, want: &str) -> bool {
 }
 
 fn plan_has_relation_named(plan: &serde_json::Value, relation: &str) -> bool {
-    let Some(nodes) = plan.get("nodes").and_then(|n| n.as_array()) else {
-        return false;
-    };
-    nodes.iter().any(|n| {
-        n.get("kind").and_then(|k| k.as_str()) == Some("relation")
-            && n.pointer("/relation/relation").and_then(|x| x.as_str()) == Some(relation)
-    })
+    plan_relation_named(plan, relation).is_some()
+}
+
+fn plan_relation_named<'a>(
+    plan: &'a serde_json::Value,
+    relation: &str,
+) -> Option<&'a serde_json::Value> {
+    let nodes = plan.get("nodes")?.as_array()?;
+    nodes
+        .iter()
+        .find(|n| {
+            n.get("kind").and_then(|k| k.as_str()) == Some("relation")
+                && n.pointer("/relation/relation").and_then(|x| x.as_str()) == Some(relation)
+        })
+        .and_then(|n| n.get("relation"))
 }
 
 fn plan_ir_contains_selector(plan: &serde_json::Value, want: &str) -> bool {
@@ -643,6 +654,32 @@ fn assert_planning_ir(
                 ));
             }
         }
+        "lang_bind_limit1_continuation" => {
+            if !plan_has_relation_named(plan, "tags") {
+                return Err("expected relation node for `.tags` after limit(1)".to_string());
+            }
+        }
+        "lang_bind_projection_then_relation" => {
+            let rel = plan_relation_named(plan, "tags").ok_or_else(|| {
+                "expected `.tags` relation after projection anchor".to_string()
+            })?;
+            if rel["source"].as_str() != Some("trimmed") {
+                return Err(format!("expected source trimmed, got {rel:?}"));
+            }
+        }
+        "lang_bind_relation_hop_one_one" => {
+            let detail = plan_relation_named(plan, "detail").ok_or_else(|| {
+                "expected second one-cardinality `.detail` hop".to_string()
+            })?;
+            if detail["source_cardinality"].as_str() != Some("single") {
+                return Err(format!(
+                    "second hop requires single source_cardinality, got {detail:?}"
+                ));
+            }
+            if detail["cardinality"].as_str() != Some("one") {
+                return Err(format!("expected one-cardinality detail rel, got {detail:?}"));
+            }
+        }
         "lang_effect_create_literal" => {
             let Some(Expr::Create(c)) = surfaces.iter().find(|e| matches!(e, Expr::Create(_)))
             else {
@@ -998,6 +1035,39 @@ tags"#,
         features: &["binding_continuation"],
         min_node_results: 2,
         expect_markdown_substrings: &["tags", "LangTag"],
+    },
+    MatrixRow {
+        id: "lang_bind_limit1_continuation",
+        program: r#"root = LangItem{owner="alice"}
+one = root.limit(1)
+tags = one.tags
+tags"#,
+        surface_line: false,
+        features: &["bind_limit1_continuation", "postfix_limit"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["tags", "LangTag"],
+    },
+    MatrixRow {
+        id: "lang_bind_projection_then_relation",
+        program: r#"root = LangItem("i1")
+trimmed = root[id,title]
+tags = trimmed.tags
+tags"#,
+        surface_line: false,
+        features: &["bind_projection_then_relation", "postfix_projection"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["tags", "LangTag"],
+    },
+    MatrixRow {
+        id: "lang_bind_relation_hop_one_one",
+        program: r#"item = LangItem("i1")
+summary = item.summary
+detail = summary.detail
+detail"#,
+        surface_line: false,
+        features: &["bind_relation_hop_one_one", "relation_from_parent_get"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["detail", "LangDetail"],
     },
     MatrixRow {
         id: "lang_effect_create_literal",
