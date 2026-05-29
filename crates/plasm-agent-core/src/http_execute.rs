@@ -167,6 +167,20 @@ fn artifact_archive_fallback_parsed_expr() -> ParsedExpr {
     }
 }
 
+fn session_cgs_for_result<'a>(
+    sess: &'a crate::execute_session::ExecuteSession,
+    result: &ExecutionResult,
+) -> Option<&'a plasm_core::CGS> {
+    let first = result.entities.first()?;
+    let entity_type = first.reference.entity_type.as_str();
+    for ctx in sess.contexts_by_entry.values() {
+        if ctx.cgs.entities.contains_key(entity_type) {
+            return Some(ctx.cgs.as_ref());
+        }
+    }
+    Some(sess.cgs.as_ref())
+}
+
 fn mint_run_artifact_id(
     sess: &ExecuteSession,
     entry_id: &str,
@@ -1961,7 +1975,7 @@ pub async fn execute_session_run_markdown(
                 }
                 out.push('\n');
                 out.push_str("## Result\n\n");
-                let cgs = Some(sess.cgs.as_ref());
+                let cgs = session_cgs_for_result(&sess, &result);
                 let formatted = mcp_format_execute_result_table_or_tsv(&result, cgs);
                 out.push_str(&formatted.block.into_mcp_result_markdown());
                 let handles: Vec<RunArtifactHandle> = artifact.into_iter().collect();
@@ -2069,7 +2083,7 @@ pub async fn execute_session_run_markdown(
         let mut paging_hints: Vec<String> = Vec::new();
         let mut total_entity_rows: usize = 0;
         let mut omitted_union: BTreeSet<String> = BTreeSet::new();
-        let cgs = Some(sess.cgs.as_ref());
+        let cgs_default = Some(sess.cgs.as_ref());
         for (index, line) in expressions.iter().enumerate() {
             let (parsed, result, artifact) = &steps[index];
             if let Some(pm) = paging_step_meta(index + 1, parsed, result) {
@@ -2090,6 +2104,7 @@ pub async fn execute_session_run_markdown(
                 crate::expr_display::expr_display(&parsed.expr),
                 result.count,
             ));
+            let cgs = session_cgs_for_result(&sess, result).or(cgs_default);
             let formatted = mcp_format_execute_result_table_or_tsv(result, cgs);
             omitted_union.extend(formatted.reference_only_omitted.as_ref().iter().cloned());
             per_step_omitted.push(formatted.reference_only_omitted);

@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.49] - 2026-05-28
+## [0.1.50] - 2026-05-29
+
+### Added
+
+- **MCP discovery:** score-ranked row caps (default 12 rows, 8 per API) with `_meta.plasm.discovery` omission hints when truncated.
+- **MCP dry-run:** `DryPlanGuidanceMode` — boilerplate `next:` guidance shown once per logical session.
+
+### Fixed
+
+- **MCP prompts:** federation invariant (one goal → one `intent` → one `plasm_context`); `discover_capabilities` documents single `intent` (not `query`); initialize instructions no longer duplicate the full syntax guide.
+- **MCP execution:** federated CGS resolution for in-band summaries; strings >256 chars and markdown fields emit `(in artifact)` instead of inline blobs; preview threshold lowered to 4k chars.
+- **Plasm programs:** relation continuation through bindings (`species.p2`) preserves row entity type from `RelationTraversal` anchors.
+
 
 ### Fixed
 

@@ -756,10 +756,24 @@ fn render_return_shape_hint(plan: &Plan<ValidatedPlanState>, ret: &ValidatedPlan
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DryPlanGuidanceMode {
+    Full,
+    ActionableOnly,
+}
+
 /// Render the canonical human-facing dry-run form: verdict, shape, confidence/risks, DAG, returns, next.
 pub fn render_plasm_plan_dry_text(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
+) -> String {
+    render_plasm_plan_dry_text_with_guidance(dry, archive, DryPlanGuidanceMode::Full)
+}
+
+pub fn render_plasm_plan_dry_text_with_guidance(
+    dry: &DryPlasmPlanEvaluation,
+    archive: Option<PlasmPlanDryRunTextMeta<'_>>,
+    guidance_mode: DryPlanGuidanceMode,
 ) -> String {
     let mut out = String::new();
     let plan = dry.validated_plan();
@@ -853,7 +867,7 @@ pub fn render_plasm_plan_dry_text(
     for line in render_return_lines_mapped(&plan.return_value, &display_map) {
         let _ = writeln!(out, "- {line}");
     }
-    let guidance = plasm_plan_review_guidance_lines(dry);
+    let guidance = plasm_plan_review_guidance_lines_with_mode(dry, guidance_mode);
     if !guidance.is_empty() {
         let _ = writeln!(out);
         let _ = writeln!(out, "next:");
@@ -892,6 +906,23 @@ fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) 
 /// Keeps to at most two lines: one targeted coaching line when useful, plus an execute-intent
 /// reminder. Pair with the dry-run `risks:` / `confidence:` sections for full context.
 pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<String> {
+    plasm_plan_review_guidance_lines_with_mode(dry, DryPlanGuidanceMode::Full)
+}
+
+/// [`DryPlanGuidanceMode::ActionableOnly`] drops session-level boilerplate (execute reminder, generic relation note).
+pub fn plasm_plan_review_guidance_lines_with_mode(
+    dry: &DryPlasmPlanEvaluation,
+    mode: DryPlanGuidanceMode,
+) -> Vec<String> {
+    let mut out = plasm_plan_review_actionable_guidance_lines(dry);
+    if matches!(mode, DryPlanGuidanceMode::Full) {
+        append_dry_plan_boilerplate_guidance(&mut out, dry);
+    }
+    out.truncate(4);
+    out
+}
+
+fn plasm_plan_review_actionable_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<String> {
     let mut out = Vec::new();
     let plan = dry.validated_plan();
     let return_unbounded = return_roots_include_unbounded_list_surface(plan);
@@ -912,10 +943,6 @@ pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<Str
         .and_then(|v| v.get("has_unprojected_multi_row_read"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let has_relation = plan
-        .nodes
-        .iter()
-        .any(|n| matches!(n, ValidatedPlanNode::RelationTraversal(_)));
 
     if has_unprojected_multi_row {
         out.push(
@@ -951,16 +978,22 @@ pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<Str
             }
         }
     }
+    out
+}
+
+fn append_dry_plan_boilerplate_guidance(out: &mut Vec<String>, dry: &DryPlasmPlanEvaluation) {
+    let plan = dry.validated_plan();
+    let has_relation = plan
+        .nodes
+        .iter()
+        .any(|n| matches!(n, ValidatedPlanNode::RelationTraversal(_)));
     if has_relation {
         out.push(
             "`label.<relation>` follows surface/relation rows or row-preserving projections; use constructors when row identity has been aggregated, rendered, or derived away."
                 .to_string(),
         );
     }
-
     out.push("Execute only after topology and result shape match intent.".to_string());
-    out.truncate(4);
-    out
 }
 
 /// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
@@ -4490,6 +4523,40 @@ next:
             g.iter()
                 .any(|l| l.contains("[field") || l.contains("projection")),
             "expected projection-first guidance, got {g:?}"
+        );
+    }
+
+    #[test]
+    fn dry_run_actionable_only_guidance_omits_execute_boilerplate() {
+        let s = test_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "unbounded-products",
+            "nodes": [
+                {
+                    "id": "products",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
+                    "effect_class": "read",
+                    "result_shape": "list"
+                }
+            ],
+            "return": { "kind": "node", "node": "products" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let full = plasm_plan_review_guidance_lines_with_mode(&dry, DryPlanGuidanceMode::Full);
+        let short =
+            plasm_plan_review_guidance_lines_with_mode(&dry, DryPlanGuidanceMode::ActionableOnly);
+        assert!(
+            full.iter().any(|l| l.contains("Execute only after")),
+            "{full:?}"
+        );
+        assert!(
+            !short.iter().any(|l| l.contains("Execute only after")),
+            "{short:?}"
         );
     }
 

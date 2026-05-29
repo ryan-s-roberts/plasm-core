@@ -17,7 +17,7 @@ use plasm_runtime::ExecutionResult;
 use std::collections::BTreeSet;
 
 /// When MCP uses session meta compaction + adaptive preview; above this Unicode scalar count, markdown omits full tables.
-pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 12_000;
+pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
 
 /// Reserved after `## Result (preview)`; snapshot lines in the body carry the `resources/read` hint.
 pub(crate) const MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE: &str = "";

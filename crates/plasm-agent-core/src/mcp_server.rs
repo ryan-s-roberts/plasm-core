@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::discovery_human_format::format_discovery_markdown;
+use crate::discovery_human_format::{format_discovery_markdown_for_mcp, DiscoveryTablePolicy};
 use crate::trace_hub::{CodePlanTrace, McpPlasmTraceSink, PlasmContextTrace};
 use std::time::Duration;
 use tracing::Instrument;
@@ -80,8 +80,9 @@ use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::plasm_dag::{compile_plasm_expression_to_plan, split_bare_plasm_roots};
 use crate::plasm_plan::parse_and_validate_plan_json;
 use crate::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines,
-    render_plasm_plan_dry_text, run_plasm_plan, PlasmPlanRunHooks, PlasmPlanRunResult,
+    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, plasm_plan_review_guidance_lines_with_mode,
+    render_plasm_plan_dry_text_with_guidance, run_plasm_plan, DryPlanGuidanceMode, PlasmPlanRunHooks,
+    PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
@@ -122,9 +123,8 @@ pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
 
 fn mcp_server_initialize_instructions() -> String {
     format!(
-        "{workflow}\n\nPlasm syntax guide:\n\n{frontmatter}",
+        "{workflow}\n\nPlasm syntax guide: teaching TSV from `plasm_context` plus `plasm` / `plasm_run` tool descriptions (newline + heredoc rules). Full grammar is not repeated here.",
         workflow = MCP_SERVER_INITIALIZE_WORKFLOW,
-        frontmatter = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter(),
     )
 }
 
@@ -435,6 +435,8 @@ struct McpLogicalSessionState {
     binding: Option<PlasmExecBinding>,
     stats: McpSessionPlasmStats,
     meta_index: PlasmMetaIndex,
+    /// Generic dry-run `next:` bullets already shown once for this logical session.
+    dry_plan_boilerplate_shown: bool,
 }
 
 #[derive(Default)]
@@ -1421,8 +1423,29 @@ impl PlasmMcpHandler {
                                 match evaluate_validated_plasm_plan_dry(&es, &validated) {
                                     Err(e) => Err(e),
                                     Ok(dry) => {
-                                        let dry_text = render_plasm_plan_dry_text(&dry, None);
-                                        let guidance = plasm_plan_review_guidance_lines(&dry);
+                                        let guidance_mode = {
+                                            let g = state.lock().await;
+                                            if g.dry_plan_boilerplate_shown {
+                                                DryPlanGuidanceMode::ActionableOnly
+                                            } else {
+                                                DryPlanGuidanceMode::Full
+                                            }
+                                        };
+                                        let dry_text =
+                                            render_plasm_plan_dry_text_with_guidance(
+                                                &dry,
+                                                None,
+                                                guidance_mode,
+                                            );
+                                        let guidance =
+                                            plasm_plan_review_guidance_lines_with_mode(
+                                                &dry,
+                                                guidance_mode,
+                                            );
+                                        {
+                                            let mut g = state.lock().await;
+                                            g.dry_plan_boilerplate_shown = true;
+                                        }
                                         let markdown = format!("```text\n{dry_text}\n```");
                                         let plan_json = plasm_plan_dag_json(&dry);
                                         trace_archive_and_emit_code_plan_evaluate(
@@ -1912,10 +1935,34 @@ impl PlasmMcpHandler {
         if let Some(cfg) = tcfg {
             r = mcp_policy::filter_discovery_result(r, cfg.as_ref());
         }
-        let text = format_discovery_markdown(&r);
-        Ok(CallToolResult::text_content(vec![TextContent::new(
-            text, None, None,
-        )]))
+        let formatted = format_discovery_markdown_for_mcp(&r, &DiscoveryTablePolicy::default());
+        let mut res = CallToolResult::text_content(vec![TextContent::new(
+            formatted.markdown,
+            None,
+            None,
+        )]);
+        if formatted.omission.truncated {
+            let mut meta = serde_json::Map::new();
+            let mut discovery = serde_json::Map::new();
+            discovery.insert("truncated".into(), serde_json::json!(true));
+            discovery.insert("shown".into(), serde_json::json!(formatted.omission.shown));
+            discovery.insert(
+                "omitted".into(),
+                serde_json::json!(formatted.omission.omitted),
+            );
+            let top: Vec<serde_json::Value> = formatted
+                .omission
+                .top_omitted
+                .iter()
+                .map(|(api, entity)| serde_json::json!({ "api": api, "entity": entity }))
+                .collect();
+            discovery.insert("top_omitted".into(), serde_json::Value::Array(top));
+            let mut plasm = serde_json::Map::new();
+            plasm.insert("discovery".into(), serde_json::Value::Object(discovery));
+            meta.insert("plasm".into(), serde_json::Value::Object(plasm));
+            res = res.with_meta(Some(meta));
+        }
+        Ok(res)
     }
 }
 
@@ -2683,6 +2730,16 @@ mod tests {
                 super::mcp_server_initialize_instructions()
             );
         });
+    }
+
+    #[test]
+    fn mcp_server_initialize_workflow_uses_intent_not_query() {
+        let text = super::MCP_SERVER_INITIALIZE_WORKFLOW;
+        assert!(text.contains("**`intent`**"));
+        assert!(text.contains("One user goal"));
+        assert!(!text.contains("pass **`query`**"));
+        assert!(text.contains("pokeapi"));
+        assert!(text.contains("linear"));
     }
 
     #[test]

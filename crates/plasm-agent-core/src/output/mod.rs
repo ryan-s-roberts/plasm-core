@@ -402,6 +402,21 @@ fn format_value_for_summary_cell_impl(
             ..Default::default()
         }),
         Some(AgentPresentation::Default) | None => {
+            if let Value::String(s) = v {
+                if s.chars().count() > 256 {
+                    omitted.insert(field_name.to_string());
+                    if let Some(rep) = report {
+                        in_band_fidelity::record_value_cell_fidelity(
+                            v,
+                            presentation,
+                            field_name,
+                            REFERENCE_ONLY_PLACEHOLDER,
+                            rep,
+                        );
+                    }
+                    return REFERENCE_ONLY_PLACEHOLDER.into();
+                }
+            }
             v.format_for_table_cell(&ValueTableCellBudget::default())
         }
     };
@@ -1078,15 +1093,46 @@ mod tests {
             request_fingerprints: vec![],
         };
         let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None);
-        assert!(omitted.is_empty(), "{omitted:?}");
+        assert!(omitted.iter().any(|c| c == "desc"), "{omitted:?}");
+        assert!(tsv.contains("(in artifact)"), "{tsv}");
         assert!(
-            report.any_loss(),
-            "default ValueTableCellBudget should clamp long desc: {report:?}\n{tsv}"
+            report.loss_for("desc").is_some(),
+            "expected fidelity loss for long desc: {report:?}"
         );
-        assert_eq!(
-            report.loss_for("desc"),
-            Some(SummaryFidelityLoss::DefaultTableBudgetClamp)
+    }
+
+    #[test]
+    fn table_long_string_without_cgs_uses_in_artifact_placeholder() {
+        let r = Ref {
+            entity_type: "Note".into(),
+            key: plasm_core::EntityKey::Simple("1".into()),
+        };
+        let mut fields = IndexMap::new();
+        fields.insert("body".into(), Value::String("x".repeat(300)));
+        let entity = CachedEntity::from_decoded(
+            r,
+            fields,
+            IndexMap::<String, DecodedRelation>::new(),
+            0,
+            plasm_runtime::EntityCompleteness::Complete,
         );
-        assert!(tsv.lines().nth(1).unwrap_or("").contains('…'), "{tsv}");
+        let result = ExecutionResult {
+            entities: vec![entity],
+            count: 1,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: ExecutionSource::Live,
+            stats: ExecutionStats {
+                duration_ms: 0,
+                network_requests: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+            },
+            request_fingerprints: vec![],
+        };
+        let (table, omitted, _) = format_result_with_cgs(&result, OutputFormat::Table, None);
+        assert!(omitted.iter().any(|c| c == "body"), "{omitted:?}");
+        assert!(table.contains("(in artifact)"), "{table}");
     }
 }

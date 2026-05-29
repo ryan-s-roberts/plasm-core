@@ -17,12 +17,16 @@ use plasm_core::expr_parser::{
     try_parse_render_tail, validate_program_label, PlasmPostfixOp, RenderTailParse,
 };
 use plasm_core::schema::EntityDef;
+use plasm_core::ChainExpr;
 use plasm_core::ChainStep;
 use plasm_core::Expr;
+use plasm_core::GetExpr;
 use plasm_core::PlasmInputRef;
 use plasm_core::Predicate;
 use plasm_core::PromptPipelineConfig;
+use plasm_core::Ref;
 use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::{EntityKey, EntityName};
 use plasm_core::Value;
 use plasm_core::CGS;
 use serde_json::json;
@@ -1219,6 +1223,137 @@ fn longest_matching_bound_prefix(expr: &str, state: &CompileState<'_>) -> Option
     best.map(|(_, l, t)| (l, t))
 }
 
+/// Row entity type carried by a binding that may receive `.relation` continuation.
+fn relation_continuation_source_entity(
+    state: &CompileState<'_>,
+    label: &str,
+) -> Option<QualifiedEntityKey> {
+    let node = state.get(label)?;
+    match &node.source {
+        DagNodeSource::RelationTraversal { qualified_entity, .. } => Some(qualified_entity.clone()),
+        DagNodeSource::Compute {
+            source,
+            op: ComputeOp::Project { .. },
+            ..
+        } => relation_continuation_source_entity(state, source),
+        DagNodeSource::Surface { .. } => None,
+        DagNodeSource::Data(_)
+        | DagNodeSource::Compute { .. }
+        | DagNodeSource::Derive { .. }
+        | DagNodeSource::ForEach { .. } => None,
+    }
+}
+
+fn resolve_cgs_for_qualified_entity<'a>(
+    session: &'a ExecuteSession,
+    qe: &QualifiedEntityKey,
+) -> Option<&'a plasm_core::CGS> {
+    if let Some(ctx) = session.contexts_by_entry.get(&qe.entry_id) {
+        return Some(ctx.cgs.as_ref());
+    }
+    if session.entry_id == qe.entry_id {
+        return Some(session.cgs.as_ref());
+    }
+    for ctx in session.contexts_by_entry.values() {
+        if ctx.cgs.entities.contains_key(qe.entity.as_str()) {
+            return Some(ctx.cgs.as_ref());
+        }
+    }
+    Some(session.cgs.as_ref())
+}
+
+fn resolve_relation_wire_on_entity(
+    session: &ExecuteSession,
+    cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: &QualifiedEntityKey,
+    segment: &str,
+) -> Option<String> {
+    let cgs = resolve_cgs_for_qualified_entity(session, qe)?;
+    let ent = cgs.get_entity(qe.entity.as_str())?;
+    if ent.relations.contains_key(segment) {
+        return Some(segment.to_string());
+    }
+    let map = symbol_map_for_plasm_surface_parse(session, cross_cache);
+    if let Some(wire) = map.resolve_ident(segment) {
+        if ent.relations.contains_key(wire) {
+            return Some(wire.to_string());
+        }
+    }
+    None
+}
+
+fn try_compile_typed_relation_continuation(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+    source_label: &str,
+    tail: &str,
+    source_qe: &QualifiedEntityKey,
+) -> Result<Option<DagNode>, String> {
+    let segment = tail.split('.').next().unwrap_or(tail).trim();
+    if segment.is_empty() || tail.contains('.') {
+        return Ok(None);
+    }
+    let Some(wire) =
+        resolve_relation_wire_on_entity(session, state.cross_cache, source_qe, segment)
+    else {
+        return Ok(None);
+    };
+    let chain = ChainExpr {
+        source: Box::new(Expr::Get(GetExpr {
+            reference: Ref {
+                entity_type: EntityName::from(source_qe.entity.as_str()),
+                key: EntityKey::Simple("$".into()),
+            },
+            path_vars: None,
+        })),
+        selector: wire.clone(),
+        step: ChainStep::default(),
+    };
+    let (target_qe, rel_cardinality) =
+        lookup_relation_chain_meta(session, state.cross_cache, &chain)?;
+    let source_card = relation_source_cardinality_from_bound_node(state, source_label);
+    let result_shape = match rel_cardinality {
+        RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
+        RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
+    };
+    let expanded = format!("{source_label}.{segment}");
+    let parsed = plasm_core::expr_parser::ParsedExpr {
+        expr: Expr::Chain(chain),
+        projection: None,
+    };
+    let ir = PlanExprIr {
+        expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
+        projection: parsed.projection.clone(),
+        display_expr: Some(expr.to_string()),
+    };
+    let plan_relation = PlanRelationTraversal {
+        source: source_label.to_string(),
+        relation: wire,
+        target: target_qe.clone(),
+        cardinality: rel_cardinality,
+        source_cardinality: source_card,
+        expr: expanded.clone(),
+        ir: ir.clone(),
+    };
+    Ok(Some(DagNode {
+        id: id.to_string(),
+        expr: expr.to_string(),
+        singleton: false,
+        page_size: None,
+        source: DagNodeSource::RelationTraversal {
+            source_label: source_label.to_string(),
+            expanded_plasm: expanded,
+            parsed,
+            plan_relation,
+            qualified_entity: target_qe,
+            effect_class: EffectClass::Read,
+            result_shape,
+        },
+    }))
+}
+
 fn anchor_expanded_plasm(state: &CompileState<'_>, label: &str) -> Option<String> {
     let node = state.get(label)?;
     match &node.source {
@@ -1340,6 +1475,19 @@ fn compile_surface_node(
     expr: &str,
 ) -> Result<DagNode, String> {
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
+        if let Some(source_qe) = relation_continuation_source_entity(state, &label) {
+            if let Some(node) = try_compile_typed_relation_continuation(
+                session,
+                state,
+                id,
+                expr,
+                &label,
+                &tail,
+                &source_qe,
+            )? {
+                return Ok(node);
+            }
+        }
         if let Some(anchor_plasm) = anchor_expanded_plasm(state, &label) {
             let expanded = format!("{anchor_plasm}.{tail}");
             let refs = state.program_node_id_set();
