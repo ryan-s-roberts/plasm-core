@@ -130,7 +130,7 @@ mod utf8_trunc;
 pub use o200k_token_count::o200k_token_count;
 
 pub use cgs_context::{CgsContext, Prefix};
-pub use cgs_federation::{FederationDispatch, QualifiedEntityKey};
+pub use cgs_federation::{FederationDispatch, FederationResolveError, QualifiedEntityKey};
 pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };

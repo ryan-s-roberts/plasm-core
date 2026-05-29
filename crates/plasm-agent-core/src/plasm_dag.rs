@@ -12,8 +12,8 @@ use crate::plasm_plan::{
 };
 use crate::plasm_plan_run::{parse_plasm_surface_line_program, symbol_map_for_plasm_surface_parse};
 use crate::program_binding::{
-    BoundedSingletonKind, ContinuationCapability, ProgramBindingContract, RowCardinalityProof,
-    SegmentPolicy,
+    BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
+    RowCardinalityProof, SegmentPolicy,
 };
 use plasm_core::expr_parser::{
     collect_program_statement_lines, is_valid_program_label, peel_postfix_suffixes,
@@ -160,6 +160,20 @@ impl<'a> CompileState<'a> {
 
     fn program_node_id_set(&self) -> BTreeSet<String> {
         self.labels.keys().cloned().collect()
+    }
+
+    fn with_pushed_node(&self, node: DagNode) -> Self {
+        let mut nodes = self.nodes.clone();
+        let mut labels = self.labels.clone();
+        let idx = nodes.len();
+        labels.insert(node.id.clone(), idx);
+        nodes.push(node);
+        Self {
+            nodes,
+            labels,
+            pipeline: self.pipeline,
+            cross_cache: self.cross_cache,
+        }
     }
 }
 
@@ -909,6 +923,33 @@ fn postfix_op_to_compute(
     }
 }
 
+fn compile_chain_base_nodes(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    binding_id: &str,
+    expr: &str,
+    rel_binding_id: Option<&str>,
+) -> Result<Option<(Vec<DagNode>, String)>, String> {
+    let Some((base_expr, segment)) = try_split_single_hop_surface_chain(session, state, expr) else {
+        return Ok(None);
+    };
+    let base_id = format!("__plasm_{binding_id}_b0");
+    let base = compile_surface_node(session, state, &base_id, &base_expr)?;
+    let scratch = state.with_pushed_node(base.clone());
+    let rel_id = rel_binding_id
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("__plasm_{binding_id}_r0"));
+    let rel = lower_relation_continuation(
+        session,
+        &scratch,
+        &rel_id,
+        &format!("{base_id}.{segment}"),
+        &base_id,
+        &segment,
+    )?;
+    Ok(Some((vec![base, rel], rel_id)))
+}
+
 /// Lower `core` plus postfix ops to one or more [`DagNode`]s (surface base + optional compute chain).
 fn compile_postfix_plan(
     session: &ExecuteSession,
@@ -923,8 +964,6 @@ fn compile_postfix_plan(
 
     if compute_ops.is_empty() {
         if state.contains(primary) && (tail_singleton || tail_page_size.is_some()) {
-            // Equivalent to applying tail flags on `primary` as a surface expression: lower through a
-            // compute node so the bound label stays a row producer with correct entity metadata.
             let staged: &[DagNode] = &[];
             let mut node = if tail_singleton {
                 let schema = synthetic_schema_passthrough_rows(session, state, staged, primary)?;
@@ -958,11 +997,47 @@ fn compile_postfix_plan(
             node.page_size = tail_page_size.or(node.page_size);
             return Ok(vec![node]);
         }
+        if let Some((mut nodes, _source_id)) =
+            compile_chain_base_nodes(session, state, binding_id, primary, None)?
+        {
+            if let Some(last) = nodes.last_mut() {
+                last.singleton |= tail_singleton;
+                last.page_size = tail_page_size.or(last.page_size);
+                last.expr = full_rhs.to_string();
+            }
+            return Ok(nodes);
+        }
         let mut node = compile_surface_node(session, state, binding_id, primary)?;
         node.singleton |= tail_singleton;
         node.page_size = tail_page_size.or(node.page_size);
         node.expr = full_rhs.to_string();
         return Ok(vec![node]);
+    }
+    if let Some((chain_nodes, source_id)) =
+        compile_chain_base_nodes(session, state, binding_id, primary, None)?
+    {
+        let mut out = chain_nodes;
+        let mut cur_source = source_id;
+        for (i, op) in compute_ops.iter().enumerate() {
+            let nid = if i + 1 == compute_ops.len() {
+                binding_id.to_string()
+            } else {
+                format!("__plasm_{binding_id}_s{i}")
+            };
+            let mut node =
+                postfix_op_to_compute(session, state, &out, op, &cur_source, &nid, full_rhs)?;
+            if i + 1 < compute_ops.len() {
+                node.expr = format!("{full_rhs}::__step{i}");
+            }
+            cur_source = nid.clone();
+            out.push(node);
+        }
+        if let Some(last) = out.last_mut() {
+            last.singleton |= tail_singleton;
+            last.page_size = tail_page_size.or(last.page_size);
+            last.expr = full_rhs.to_string();
+        }
+        return Ok(out);
     }
 
     let mut out: Vec<DagNode> = Vec::new();
@@ -1203,6 +1278,10 @@ fn compile_node_expr(
                 }]);
             }
         }
+        if let Some((nodes, _)) =
+            compile_chain_base_nodes(session, state, id, core.as_str(), Some(id))? {
+            return Ok(nodes);
+        }
         return Ok(vec![compile_surface_node(
             session,
             state,
@@ -1288,13 +1367,18 @@ fn binding_contract_inner(
                 } else {
                     ContinuationCapability::Terminal
                 };
+            let anchor = if matches!(&continuation, ContinuationCapability::Terminal) {
+                ContinuationAnchor::None
+            } else {
+                ContinuationAnchor::RootSurface(node.expr.clone())
+            };
             ProgramBindingContract {
                 label: label.to_string(),
                 row_entity: qualified_entity.clone(),
                 result_shape: *result_shape,
                 row_cardinality,
                 continuation,
-                anchor_plasm: Some(node.expr.clone()),
+                anchor,
             }
         }
         DagNodeSource::RelationTraversal {
@@ -1320,7 +1404,7 @@ fn binding_contract_inner(
                 continuation: ContinuationCapability::RelationDot {
                     segments: SegmentPolicy::SingleSegment,
                 },
-                anchor_plasm: Some(expanded_plasm.clone()),
+                anchor: ContinuationAnchor::RelationExpand(expanded_plasm.clone()),
             }
         }
         DagNodeSource::Compute {
@@ -1328,10 +1412,24 @@ fn binding_contract_inner(
             op: ComputeOp::Project { .. },
             schema,
         } => {
-            let mut contract = binding_contract(state, source)
-                .unwrap_or_else(|| synthetic_row_contract(label, schema));
-            contract.label = label.to_string();
-            contract
+            let parent = binding_contract(state, source)
+                .unwrap_or_else(|| synthetic_row_contract(source, schema));
+            let anchor = match state.get(source).map(|n| &n.source) {
+                Some(DagNodeSource::Surface { parsed, .. })
+                    if matches!(parsed.expr, Expr::Get(_)) =>
+                {
+                    ContinuationAnchor::RootSurface(state.get(source).expect("source").expr.clone())
+                }
+                _ => ContinuationAnchor::BindingLabel,
+            };
+            ProgramBindingContract {
+                label: label.to_string(),
+                row_entity: parent.row_entity.clone(),
+                result_shape: parent.result_shape,
+                row_cardinality: parent.row_cardinality,
+                continuation: parent.continuation,
+                anchor,
+            }
         }
         DagNodeSource::Compute {
             source,
@@ -1357,7 +1455,7 @@ fn binding_contract_inner(
                     RowCardinalityProof::StaticPlural
                 },
                 continuation: parent.continuation,
-                anchor_plasm: parent.anchor_plasm,
+                anchor: ContinuationAnchor::BindingLabel,
             }
         }
         DagNodeSource::Compute {
@@ -1372,7 +1470,7 @@ fn binding_contract_inner(
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::StaticSingleton,
             continuation: ContinuationCapability::RenderContentScalar,
-            anchor_plasm: None,
+            anchor: ContinuationAnchor::None,
         },
         DagNodeSource::Compute { schema, .. } => synthetic_terminal_contract(label, schema),
         DagNodeSource::Data(value) => {
@@ -1398,7 +1496,7 @@ fn binding_contract_inner(
                     RowCardinalityProof::StaticPlural
                 },
                 continuation: ContinuationCapability::Terminal,
-                anchor_plasm: None,
+                anchor: ContinuationAnchor::None,
             }
         }
         DagNodeSource::Derive { .. } | DagNodeSource::ForEach { .. } => ProgramBindingContract {
@@ -1410,7 +1508,7 @@ fn binding_contract_inner(
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::RuntimeChecked,
             continuation: ContinuationCapability::Terminal,
-            anchor_plasm: None,
+            anchor: ContinuationAnchor::None,
         },
     }
 }
@@ -1425,7 +1523,7 @@ fn synthetic_row_contract(label: &str, schema: &SyntheticResultSchema) -> Progra
         result_shape: crate::plasm_plan::ResultShape::List,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
         continuation: ContinuationCapability::PostfixOnly,
-        anchor_plasm: None,
+        anchor: ContinuationAnchor::None,
     }
 }
 
@@ -1442,7 +1540,7 @@ fn synthetic_terminal_contract(
         result_shape: crate::plasm_plan::ResultShape::Single,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
         continuation: ContinuationCapability::Terminal,
-        anchor_plasm: None,
+        anchor: ContinuationAnchor::None,
     }
 }
 
@@ -1489,11 +1587,11 @@ fn relation_continuation_expr_from_source_row_hole(
     row_qe: &QualifiedEntityKey,
     relation_wire: &str,
 ) -> Result<Expr, String> {
-    let fed_holder = session.federation_dispatch();
-    let cgs: &CGS = match fed_holder.as_ref() {
-        Some(fed) => fed.resolve_cgs(row_qe.entity.as_str(), session.cgs.as_ref()),
-        None => session.cgs.as_ref(),
-    };
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(
+        session,
+        row_qe.entity.as_str(),
+        resolve_cgs_for_qualified_entity(session, row_qe),
+    )?;
     let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
         format!(
             "unknown entity `{}` for relation continuation",
@@ -1535,84 +1633,131 @@ fn relation_continuation_expr_from_source_row_hole(
     )))
 }
 
-fn try_compile_typed_relation_continuation(
+fn is_row_producing_relation_source(state: &CompileState<'_>, label: &str) -> bool {
+    match state.get(label).map(|n| &n.source) {
+        Some(DagNodeSource::RelationTraversal { .. }) => true,
+        Some(DagNodeSource::Surface { kind, parsed, .. }) => {
+            matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_))
+        }
+        Some(DagNodeSource::Compute {
+            op: ComputeOp::Limit { .. } | ComputeOp::Project { .. },
+            source,
+            ..
+        }) => is_row_producing_relation_source(state, source),
+        _ => false,
+    }
+}
+
+fn relation_sourced_continuation_eligible(state: &CompileState<'_>, label: &str) -> bool {
+    match state.get(label).map(|n| &n.source) {
+        Some(DagNodeSource::RelationTraversal { .. }) => true,
+        Some(DagNodeSource::Compute {
+            op: ComputeOp::Limit { .. } | ComputeOp::Project { .. },
+            source,
+            ..
+        }) => is_row_producing_relation_source(state, source),
+        _ => false,
+    }
+}
+
+fn parse_relation_continuation_expr(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    contract: &ProgramBindingContract,
+    segment: &str,
+) -> Result<plasm_core::expr_parser::ParsedExpr, String> {
+    let refs = state.program_node_id_set();
+    let try_text = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
+        let parsed = parse_plasm_surface_line_program(
+            session,
+            state.cross_cache,
+            state.pipeline,
+            expanded,
+            Some(&refs),
+            false,
+        )
+        .ok()?;
+        if let Expr::Chain(ref chain) = parsed.expr {
+            if chain.source.primary_entity() == contract.row_entity.entity.as_str() {
+                return Some(parsed);
+            }
+        }
+        None
+    };
+    if contract.anchor.allows_text_parse() {
+        if let Some(expanded) = contract.continuation_text_expansion(segment) {
+            if let Some(parsed) = try_text(&expanded) {
+                return Ok(parsed);
+            }
+        }
+    }
+    if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
+        if let Some(expanded) = contract.continuation_text_expansion(segment) {
+            if let Some(parsed) = try_text(&expanded) {
+                if let Expr::Chain(ref chain) = parsed.expr {
+                    if matches!(chain.source.as_ref(), Expr::Get(_)) {
+                        return Ok(parsed);
+                    }
+                }
+            }
+        }
+    }
+    Ok(plasm_core::expr_parser::ParsedExpr {
+        expr: relation_continuation_expr_from_source_row_hole(
+            session,
+            &contract.row_entity,
+            segment,
+        )?,
+        projection: None,
+    })
+}
+
+fn lower_relation_continuation(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     id: &str,
     expr: &str,
     source_label: &str,
     tail: &str,
-    _source_qe: &QualifiedEntityKey,
-) -> Result<Option<DagNode>, String> {
+) -> Result<DagNode, String> {
     let segment = tail.split('.').next().unwrap_or(tail).trim();
     if segment.is_empty() || tail.contains('.') {
-        return Ok(None);
+        return Err(format!(
+            "Plasm program `{id}`: `{source_label}.{tail}` — node-ref continuation supports a single CGS relation segment only"
+        ));
     }
     let contract = binding_contract(state, source_label).ok_or_else(|| {
-        format!("Plasm program `{id}`: unknown binding `{source_label}` for typed relation continuation")
+        format!("Plasm program `{id}`: unknown binding `{source_label}` for relation continuation")
     })?;
-    let anchor_plasm = contract.anchor_plasm.as_ref().ok_or_else(|| {
-        format!(
-            "Plasm program `{id}`: `{source_label}.{segment}` requires a Plasm anchor on `{source_label}` — bind an intermediate row before continuing the relation chain"
-        )
-    })?;
-    let expanded = format!("{anchor_plasm}.{segment}");
-    let refs = state.program_node_id_set();
-    let parsed = match parse_plasm_surface_line_program(
-        session,
-        state.cross_cache,
-        state.pipeline,
-        &expanded,
-        Some(&refs),
-        false,
-    ) {
-        Ok(parsed) => {
-            if let Expr::Chain(ref chain) = parsed.expr {
-                if chain.source.primary_entity() == contract.row_entity.entity.as_str() {
-                    parsed
-                } else {
-                    plasm_core::expr_parser::ParsedExpr {
-                        expr: relation_continuation_expr_from_source_row_hole(
-                            session,
-                            &contract.row_entity,
-                            segment,
-                        )?,
-                        projection: None,
-                    }
-                }
-            } else {
-                plasm_core::expr_parser::ParsedExpr {
-                    expr: relation_continuation_expr_from_source_row_hole(
-                        session,
-                        &contract.row_entity,
-                        segment,
-                    )?,
-                    projection: None,
-                }
-            }
-        }
-        Err(_) => plasm_core::expr_parser::ParsedExpr {
-            expr: relation_continuation_expr_from_source_row_hole(
-                session,
-                &contract.row_entity,
-                segment,
-            )?,
-            projection: None,
-        },
-    };
+    if !contract.anchor.is_present() {
+        return Err(format!(
+            "Plasm program `{id}`: `{source_label}.{segment}` requires a continuation anchor on `{source_label}` — bind an intermediate row before continuing the relation chain"
+        ));
+    }
+    let parsed = parse_relation_continuation_expr(session, state, &contract, segment)?;
     let Expr::Chain(ref chain) = parsed.expr else {
-        return Ok(None);
+        return Err(format!(
+            "Plasm program `{id}`: `{source_label}.{segment}` did not lower to a relation chain"
+        ));
     };
     let Some(wire) =
         resolve_relation_wire_on_entity(session, state.cross_cache, &contract.row_entity, segment)
     else {
-        return Ok(None);
+        return Err(format!(
+            "Plasm program `{id}`: entity `{}` has no relation `{segment}`",
+            contract.row_entity.entity
+        ));
     };
     if chain.selector.as_str() != wire.as_str() {
-        return Ok(None);
+        return Err(format!(
+            "Plasm program `{id}`: relation wire mismatch for `{source_label}.{segment}`"
+        ));
     }
     let (target_qe, rel_cardinality) =
         lookup_relation_chain_meta(session, state.cross_cache, chain)?;
+    let expanded = contract
+        .continuation_text_expansion(segment)
+        .unwrap_or_else(|| format!("{source_label}.{segment}"));
     let source_card = contract.relation_source_cardinality();
     let result_shape = match rel_cardinality {
         RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
@@ -1632,7 +1777,7 @@ fn try_compile_typed_relation_continuation(
         expr: expanded.clone(),
         ir: ir.clone(),
     };
-    Ok(Some(DagNode {
+    Ok(DagNode {
         id: id.to_string(),
         expr: expr.to_string(),
         singleton: false,
@@ -1646,7 +1791,41 @@ fn try_compile_typed_relation_continuation(
             effect_class: EffectClass::Read,
             result_shape,
         },
-    }))
+    })
+}
+
+fn try_split_single_hop_surface_chain(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    expr: &str,
+) -> Option<(String, String)> {
+    let refs = state.program_node_id_set();
+    let parsed = parse_plasm_surface_line_program(
+        session,
+        state.cross_cache,
+        state.pipeline,
+        expr,
+        Some(&refs),
+        false,
+    )
+    .ok()?;
+    let Expr::Chain(chain) = parsed.expr else {
+        return None;
+    };
+    if matches!(chain.source.as_ref(), Expr::Chain(_)) {
+        return None;
+    }
+    let segment = chain.selector.clone();
+    let trimmed = expr.trim();
+    let suffix = format!(".{segment}");
+    if !trimmed.ends_with(&suffix) {
+        return None;
+    }
+    let base_expr = trimmed[..trimmed.len() - suffix.len()].trim().to_string();
+    if base_expr.is_empty() {
+        return None;
+    }
+    Some((base_expr, segment))
 }
 
 fn plan_render_content_scalar_reference_err(id: &str, expr: &str, label: &str) -> String {
@@ -1662,11 +1841,7 @@ fn lookup_relation_chain_meta(
     chain: &plasm_core::ChainExpr,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
     let source_entity = chain.source.primary_entity();
-    let fed_holder = session.federation_dispatch();
-    let cgs: &CGS = match fed_holder.as_ref() {
-        Some(fed) => fed.resolve_cgs(source_entity, session.cgs.as_ref()),
-        None => session.cgs.as_ref(),
-    };
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, source_entity, None)?;
     let ent = cgs.get_entity(source_entity).ok_or_else(|| {
         format!("unknown entity `{source_entity}` (Plasm program relation continuation)")
     })?;
@@ -1723,42 +1898,24 @@ fn compile_surface_node(
             ));
         }
         if contract.supports_relation_dot() {
-            let typed_eligible = match state.get(&label).map(|n| &n.source) {
-                Some(DagNodeSource::Surface { .. }) => false,
-                Some(DagNodeSource::RelationTraversal { .. }) => true,
-                Some(DagNodeSource::Compute {
-                    op: ComputeOp::Limit { count },
-                    source,
-                    ..
-                }) if *count <= 1 => matches!(
-                    state.get(source).map(|n| &n.source),
-                    Some(DagNodeSource::RelationTraversal { .. })
-                ),
-                Some(DagNodeSource::Compute { source, .. })
-                    if state.get(&label).is_some_and(|n| n.singleton) =>
+            let tail_trim = tail.trim();
+            if !tail_trim.contains('.') {
+                if relation_sourced_continuation_eligible(state, &label)
+                    || matches!(contract.anchor, ContinuationAnchor::BindingLabel)
+                    || contract.anchor.allows_text_parse()
                 {
-                    matches!(
-                        state.get(source).map(|n| &n.source),
-                        Some(DagNodeSource::RelationTraversal { .. })
-                    )
+                    return lower_relation_continuation(
+                        session, state, id, expr, &label, tail_trim,
+                    );
                 }
-                _ => false,
-            };
-            if typed_eligible && !tail.contains('.') {
-                if let Some(node) = try_compile_typed_relation_continuation(
-                    session,
-                    state,
-                    id,
-                    expr,
-                    &label,
-                    &tail,
-                    &contract.row_entity,
-                )? {
-                    return Ok(node);
-                }
-            }
-            if let Some(ref anchor_plasm) = contract.anchor_plasm {
-                let expanded = format!("{anchor_plasm}.{tail}");
+            } else if contract.anchor.allows_text_parse() {
+                let expanded = contract
+                    .continuation_text_expansion(tail_trim)
+                    .ok_or_else(|| {
+                        format!(
+                            "Plasm program `{id}`: `{label}` has no continuation anchor for `{tail_trim}`"
+                        )
+                    })?;
                 let refs = state.program_node_id_set();
                 let parsed = parse_plasm_surface_line_program(
                     session,
@@ -2423,13 +2580,10 @@ fn infer_surface_contract(
     ),
     String,
 > {
-    if let Expr::Chain(chain) = expr {
-        let (qe, cardinality) = lookup_relation_chain_meta(session, None, chain)?;
-        let shape = match cardinality {
-            RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
-            RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
-        };
-        return Ok((PlanNodeKind::Query, qe, EffectClass::Read, shape));
+    if let Expr::Chain(_) = expr {
+        return Err(
+            "internal: relation chains must be lowered before infer_surface_contract".to_string(),
+        );
     }
 
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
@@ -2750,6 +2904,7 @@ summary"#;
         );
         let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
         crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
+        evaluate_plasm_plan_dry(&session, &plan).expect("federated relation dry-run");
     }
 
     #[test]
@@ -3600,10 +3755,12 @@ x"#;
         .expect("direct");
         let n1 = p1["nodes"].as_array().expect("nodes");
         let n2 = p2["nodes"].as_array().expect("nodes");
-        assert_eq!(n1.len(), 2, "{p1:#}");
-        assert_eq!(n2.len(), 2, "{p2:#}");
-        let last1 = &n1[1];
-        let last2 = &n2[1];
+        assert_eq!(n1.len(), 3, "{p1:#}");
+        assert_eq!(n2.len(), 3, "{p2:#}");
+        assert_eq!(n1[1]["kind"], "relation");
+        assert_eq!(n2[1]["kind"], "relation");
+        let last1 = &n1[2];
+        let last2 = &n2[2];
         assert_eq!(last1["kind"], "compute");
         assert_eq!(last2["kind"], "compute");
         let op1 = &last1["compute"]["op"];

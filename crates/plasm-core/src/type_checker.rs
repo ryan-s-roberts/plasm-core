@@ -352,7 +352,14 @@ fn type_check_chain_federated(
         cgs_src,
     )?;
 
-    let cgs_tgt = fed.resolve_cgs(&target_entity_name, fallback);
+    let cgs_tgt = if cgs_src.get_entity(&target_entity_name).is_some() {
+        cgs_src
+    } else {
+        fed.resolve_cgs_with_hint(&target_entity_name, Some(cgs_src), fallback)
+            .map_err(|e| TypeError::EntityNotFound {
+                entity: format!("{target_entity_name}: {e}"),
+            })?
+    };
     cgs_tgt
         .get_entity(&target_entity_name)
         .ok_or_else(|| TypeError::EntityNotFound {
@@ -2452,5 +2459,36 @@ mod tests {
             m
         });
         validate_input_type(&wire, &el_ty, "operations[0]", &cgs).expect("wire object");
+    }
+
+    #[test]
+    fn federated_chain_target_resolves_in_source_catalog_not_primary() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs_primary = std::sync::Arc::new(load_schema_dir(&root).expect("matrix primary"));
+        let cgs_secondary = std::sync::Arc::new(load_schema_dir(&root).expect("matrix secondary"));
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "linear".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("linear", cgs_primary.clone())),
+        );
+        by_entry.insert(
+            "pokeapi".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("pokeapi", cgs_secondary.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
+        let mut exp = crate::symbol_tuning::DomainExposureSession::new(
+            cgs_primary.as_ref(),
+            "linear",
+            &["LangLine"],
+        );
+        exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
+        let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
+        let get = Expr::Get(GetExpr::from_ref_with_path_vars(
+            crate::Ref::new("LangItem", "LI1"),
+            None,
+        ));
+        let chain = Expr::Chain(ChainExpr::auto_get(get, "summary".to_string()));
+        type_check_expr_federated(&chain, &fed, cgs_primary.as_ref()).expect("federated chain tc");
     }
 }

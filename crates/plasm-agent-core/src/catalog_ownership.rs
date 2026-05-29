@@ -2,7 +2,15 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::QualifiedEntityKey;
-use plasm_core::CGS;
+use plasm_core::{FederationDispatch, CGS};
+
+fn federation_for_session(session: &ExecuteSession) -> FederationDispatch {
+    if let Some(exp) = session.domain_exposure.as_ref() {
+        FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exp)
+    } else {
+        FederationDispatch::from_contexts_only(session.contexts_by_entry.clone())
+    }
+}
 
 /// Owning registry row + CGS entity name for dispatch and plan `qualified_entity`.
 pub(crate) fn resolve_qualified_entity_key(
@@ -10,50 +18,72 @@ pub(crate) fn resolve_qualified_entity_key(
     entity: &str,
     resolving_cgs: Option<&CGS>,
 ) -> Result<QualifiedEntityKey, String> {
+    if session.contexts_by_entry.len() <= 1 {
+        if session.cgs.entities.contains_key(entity) {
+            return Ok(QualifiedEntityKey {
+                entry_id: session.entry_id.clone(),
+                entity: entity.to_string(),
+            });
+        }
+        return Err(format!(
+            "entity `{entity}` is not defined in any catalog loaded in this session"
+        ));
+    }
+    let fed = federation_for_session(session);
+    fed.resolve_qualified_entity_key(
+        entity,
+        resolving_cgs,
+        session.cgs.as_ref(),
+        session.entry_id.as_str(),
+    )
+    .map(QualifiedEntityKey::from)
+    .map_err(|e| e.to_string())
+}
+
+/// Resolve CGS for schema/type-check with federation doctrine.
+pub(crate) fn resolve_cgs_for_entity<'a>(
+    session: &'a ExecuteSession,
+    entity: &str,
+    owning_cgs: Option<&'a CGS>,
+) -> Result<&'a CGS, String> {
+    if session.contexts_by_entry.len() <= 1 {
+        return Ok(session.cgs.as_ref());
+    }
     if let Some(exp) = session.domain_exposure.as_ref() {
-        if let Some(qe) = exp.qualified_entity_for_exposed_entity(entity) {
-            return Ok(QualifiedEntityKey::from(qe));
-        }
-    }
-    if let Some(fed) = session.federation_dispatch() {
-        if let Some(qe) = fed.qualified_entity_for_exposed_entity(entity) {
-            return Ok(QualifiedEntityKey::from(qe));
-        }
-    }
-    if let Some(cgs) = resolving_cgs {
-        if let Some(entry_id) = entry_id_for_cgs(session, cgs) {
-            if cgs.entities.contains_key(entity) {
-                return Ok(QualifiedEntityKey {
-                    entry_id,
-                    entity: entity.to_string(),
-                });
+        for (i, ent) in exp.entities.iter().enumerate() {
+            if ent == entity {
+                if let Some(eid) = exp.entity_catalog_entry_ids.get(i) {
+                    if let Some(ctx) = session.contexts_by_entry.get(eid) {
+                        return Ok(ctx.cgs.as_ref());
+                    }
+                }
             }
         }
     }
-    let owners: Vec<String> = session
-        .contexts_by_entry
-        .iter()
-        .filter(|(_, ctx)| ctx.cgs.entities.contains_key(entity))
-        .map(|(entry_id, _)| entry_id.clone())
-        .collect();
-    match owners.len() {
-        0 => {
+    if let Some(owning) = owning_cgs {
+        if owning.entities.contains_key(entity) {
+            return Ok(owning);
+        }
+    }
+    let mut matches = Vec::new();
+    for ctx in session.contexts_by_entry.values() {
+        if ctx.cgs.entities.contains_key(entity) {
+            matches.push(ctx.cgs.as_ref());
+        }
+    }
+    match matches.as_slice() {
+        [] => {
             if session.cgs.entities.contains_key(entity) {
-                return Ok(QualifiedEntityKey {
-                    entry_id: session.entry_id.clone(),
-                    entity: entity.to_string(),
-                });
+                Ok(session.cgs.as_ref())
+            } else {
+                Err(format!(
+                    "entity `{entity}` is not defined in any catalog loaded in this session"
+                ))
             }
-            Err(format!(
-                "entity `{entity}` is not defined in any catalog loaded in this session"
-            ))
         }
-        1 => Ok(QualifiedEntityKey {
-            entry_id: owners[0].clone(),
-            entity: entity.to_string(),
-        }),
+        [one] => Ok(one),
         _ => Err(format!(
-            "entity `{entity}` is ambiguous across federated catalogs: {owners:?}"
+            "entity `{entity}` is ambiguous across federated catalogs"
         )),
     }
 }
@@ -63,14 +93,6 @@ pub(crate) fn entry_id_for_entity_trace(session: &ExecuteSession, entity: &str) 
     resolve_qualified_entity_key(session, entity, None)
         .map(|qe| qe.entry_id)
         .unwrap_or_else(|_| session.entry_id.clone())
-}
-
-fn entry_id_for_cgs(session: &ExecuteSession, cgs: &CGS) -> Option<String> {
-    session
-        .contexts_by_entry
-        .iter()
-        .find(|(_, ctx)| std::ptr::eq(ctx.cgs.as_ref(), cgs))
-        .map(|(entry_id, _)| entry_id.clone())
 }
 
 #[cfg(test)]

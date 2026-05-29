@@ -2080,15 +2080,21 @@ impl ExecutionEngine {
             narrow_http_graphql_response_for_entity_decode(capability_template, response)?;
         let rid = cgs
             .get_entity(&get.reference.entity_type)
-            .filter(|e| e.implicit_request_identity)
-            .and_then(|_| get.reference.simple_id().map(|id| id.as_str()));
+            .and_then(|ent| {
+                if ent.implicit_request_identity || ent.id_field == "url" {
+                    get.reference.simple_id().map(|id| id.as_str())
+                } else {
+                    None
+                }
+            });
+        let identity_ambient = decode_identity_ambient_for_ref(&get.reference, &env);
         let decoder = create_entity_decoder_for_capability(
             &get.reference.entity_type,
             cgs,
             Some(capability.name.as_str()),
             None,
             rid,
-            Some(&ref_to_identity_ambient(&get.reference)),
+            Some(&identity_ambient),
         );
         let decoded_entities = decode_entities(&decoder, &response)?;
 
@@ -2555,12 +2561,13 @@ impl ExecutionEngine {
                 // the cache's additive merge preserves existing fields from other
                 // projections (e.g. url, timestamps from page_get).
                 let rid = invoke.target.simple_id().map(|s| s.as_str());
+                let identity_ambient = decode_identity_ambient_for_ref(&invoke.target, &env);
                 let decoder = create_entity_decoder(
                     &invoke.target.entity_type,
                     cgs,
                     None,
                     rid,
-                    Some(&ref_to_identity_ambient(&invoke.target)),
+                    Some(&identity_ambient),
                 );
                 let decoded = decode_entities(&decoder, &response).unwrap_or_default();
 
@@ -2836,18 +2843,7 @@ impl ExecutionEngine {
         let ref_ids: Vec<Option<String>> = source_result
             .entities
             .iter()
-            .map(|e| {
-                let extracted = extract_ref_id(e, &chain.selector);
-                if extracted.is_some() {
-                    return extracted;
-                }
-                if let Some(rel) = source_entity.relations.get(chain.selector.as_str()) {
-                    if rel.cardinality == plasm_core::Cardinality::One {
-                        return Some(e.reference.primary_slot_str());
-                    }
-                }
-                None
-            })
+            .map(|e| extract_ref_id(e, &chain.selector))
             .collect();
 
         // ── Explicit continuation: no batching, dispatch per-entity ──────
@@ -4645,6 +4641,11 @@ fn capability_param_names(capability: &plasm_core::CapabilitySchema) -> HashSet<
 
 /// Extract an EntityRef field value as a string ID from a cached entity.
 fn extract_ref_id(entity: &CachedEntity, selector: &str) -> Option<String> {
+    if let Some(refs) = entity.relations.get(selector) {
+        if let Some(first) = refs.first() {
+            return Some(first.primary_slot_str());
+        }
+    }
     let v = entity.get_field(selector).map(|tf| tf.to_value())?;
     match v {
         Value::String(s) if !s.is_empty() => Some(s),
@@ -5192,6 +5193,14 @@ fn ref_to_identity_ambient(reference: &Ref) -> IndexMap<String, String> {
         EntityKey::Simple(_) => IndexMap::new(),
         EntityKey::Compound(parts) => parts.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
     }
+}
+
+fn decode_identity_ambient_for_ref(reference: &Ref, env: &CmlEnv) -> IndexMap<String, String> {
+    let mut m = ref_to_identity_ambient(reference);
+    for (k, v) in cml_env_to_identity_strings(env) {
+        m.entry(k).or_insert(v);
+    }
+    m
 }
 
 /// Create a decoder for an entity type, driven by the CGS schema.

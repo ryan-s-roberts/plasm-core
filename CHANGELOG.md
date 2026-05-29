@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.54] - 2026-05-29
+
+### Fixed
+
+- **Composition identity:** align federated type-check, binding continuation, and runtime decode so entity + row identity resolve the same way across compile, dry-run, and live execution.
+- **Federation:** `resolve_cgs_with_hint` + source-catalog-first chain targets in `type_check_chain_federated`; `catalog_ownership` / `typecheck_parsed_for_session` use shared federation doctrine.
+- **Plasm programs:** `ContinuationAnchor` (`RootSurface`, `RelationExpand`, `BindingLabel`) with unified `lower_relation_continuation`; bare surface relation chains lower to `RelationTraversal` (not `Query`); `limit`/`project` bindings continue via label or surface anchors.
+- **Runtime:** GET/invoke decode merges CML env into identity ambient; `extract_ref_id` prefers embedded relation refs (no parent-id fallback); URL `id_field` GET decode uses request identity override.
+
+### Changed
+
+- **Language matrix:** `lang_query_all` expects explicit `langitem_query` capability; relation-chain IR assertions updated for lowered chains.
+
 ## [0.1.53] - 2026-05-29
 
 ### Changed

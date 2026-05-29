@@ -240,11 +240,11 @@ pub fn typecheck_parsed_for_session(
     if session.contexts_by_entry.len() <= 1 {
         return type_check_expr(&pe.expr, session.cgs.as_ref());
     }
-    let Some(exposure) = session.domain_exposure.as_ref() else {
-        return type_check_expr(&pe.expr, session.cgs.as_ref());
+    let fed = if let Some(exposure) = session.domain_exposure.as_ref() {
+        FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exposure)
+    } else {
+        FederationDispatch::from_contexts_only(session.contexts_by_entry.clone())
     };
-    let fed =
-        FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exposure);
     type_check_expr_federated(&pe.expr, &fed, session.cgs.as_ref())
 }
 

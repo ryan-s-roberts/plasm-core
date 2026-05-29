@@ -8,14 +8,38 @@ use crate::plasm_plan::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ContinuationAnchor {
+    None,
+    /// Get/Query roots — safe to re-parse `prefix.<segment>` when prefix entity matches row.
+    RootSurface(String),
+    /// First relation hop display (`repo.commits`).
+    RelationExpand(String),
+    /// Compute row binding — expand as `{label}.<segment>` with program node refs.
+    BindingLabel,
+}
+
+impl ContinuationAnchor {
+    pub(crate) fn root_surface(expr: impl Into<String>) -> Self {
+        Self::RootSurface(expr.into())
+    }
+
+    pub(crate) fn is_present(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub(crate) fn allows_text_parse(&self) -> bool {
+        matches!(self, Self::RootSurface(_) | Self::RelationExpand(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProgramBindingContract {
     pub label: String,
     pub row_entity: QualifiedEntityKey,
     pub result_shape: ResultShape,
     pub row_cardinality: RowCardinalityProof,
     pub continuation: ContinuationCapability,
-    /// Surface or relation-expanded Plasm for anchor re-parse (`label.<tail>` text substitution).
-    pub anchor_plasm: Option<String>,
+    pub anchor: ContinuationAnchor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +150,17 @@ impl ProgramBindingContract {
 
     pub(crate) fn relation_source_cardinality(&self) -> RelationSourceCardinality {
         self.row_cardinality.to_relation_source_cardinality()
+    }
+
+    /// Text expansion for anchor re-parse; `BindingLabel` uses the bound label name.
+    pub(crate) fn continuation_text_expansion(&self, segment: &str) -> Option<String> {
+        match &self.anchor {
+            ContinuationAnchor::None => None,
+            ContinuationAnchor::RootSurface(prefix) | ContinuationAnchor::RelationExpand(prefix) => {
+                Some(format!("{prefix}.{segment}"))
+            }
+            ContinuationAnchor::BindingLabel => Some(format!("{}.{segment}", self.label)),
+        }
     }
 }
 
