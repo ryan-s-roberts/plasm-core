@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.56] - 2026-05-29
+
+### Added
+
+- **GET shadow sugar:** `Entity(id_field=value)` on simple-id entities (e.g. `Pokemon(name="pikachu")`, `EvolutionChain(url="https://…")`) parses as unary GET — not DOMAIN-taught; canonical surface remains `Entity(value)`.
+
+### Fixed
+
+- **`p#` projection:** teaching-table field symbols resolve to wire names in DAG compile, preflight, and live projection hydration (`pikachu[p35,…]`).
+- **Relation chains:** relation-sourced bindings continue via row-hole IR instead of anchor re-parse (fixes federated multi-hop type-check and evolution-chain URL GET).
+- **Relation target IDs:** `resolve_relation_target_id` no longer falls back to the source row’s primary ref; decoded relation URL fields populate row-identity ambient for plan holes and live `extract_ref_id`.
+
 ## [0.1.55] - 2026-05-29
 
 ### Added

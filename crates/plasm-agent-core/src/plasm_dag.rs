@@ -644,7 +644,16 @@ fn validate_compute_paths_for_entity(
     })?;
     let allowed = logical_row_field_paths_for_entity(ent);
     for path in paths {
-        let segs: Vec<String> = path.segments().to_vec();
+        let mut segs: Vec<String> = path.segments().to_vec();
+        if segs.len() == 1 {
+            let wire = crate::plasm_plan_run::resolve_wire_field_token(
+                session,
+                symbol_map_cross_cache,
+                Some(qe),
+                segs[0].as_str(),
+            );
+            segs[0] = wire;
+        }
         if allowed.contains(&segs) {
             continue;
         }
@@ -858,16 +867,16 @@ fn postfix_op_to_compute(
             ))
         }
         PlasmPostfixOp::Projection { fields } => {
+            let qe =
+                resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             let mut map = BTreeMap::new();
-            for field in parse_field_list(fields)? {
+            for field in parse_field_list(session, state.cross_cache, qe.as_ref(), fields)? {
                 map.insert(
                     OutputName::new(field.clone())?,
                     FieldPath::from_dotted(&field)?,
                 );
             }
-            if let Some(qe) =
-                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
-            {
+            if let Some(qe) = qe {
                 let paths: Vec<FieldPath> = map.values().cloned().collect();
                 validate_compute_paths_for_entity(
                     session,
@@ -1117,10 +1126,21 @@ fn compile_render_from_tail(
             fields,
             template,
         } => {
-            let columns = parse_field_list(fields.trim())?
-                .into_iter()
-                .map(OutputName::new)
-                .collect::<Result<Vec<_>, _>>()?;
+            let scratch = compile_state_with_nodes(state, &[]);
+            let qe = resolve_qualified_entity_for_dag_source(
+                &scratch,
+                &[],
+                source.trim().to_string(),
+            );
+            let columns = parse_field_list(
+                session,
+                state.cross_cache,
+                qe.as_ref(),
+                fields.trim(),
+            )?
+            .into_iter()
+            .map(OutputName::new)
+            .collect::<Result<Vec<_>, _>>()?;
             compile_render_chain(
                 session,
                 state,
@@ -1728,14 +1748,19 @@ fn prefer_row_hole_relation_continuation(
     segment: &str,
     session: &ExecuteSession,
 ) -> bool {
-    if contract.anchor.allows_text_parse() {
-        return false;
-    }
     if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
         return true;
     }
-    relation_sourced_continuation_eligible(state, &contract.label)
-        && relation_uses_from_parent_get(session, &contract.row_entity, segment)
+    // Relation-sourced rows (`species = pikachu.species`) must continue via materialized
+    // parent inputs, not anchor re-parse (`pikachu.species.evolution_chain`) which loses
+    // catalog context and may target the wrong entity in federated sessions.
+    if relation_sourced_continuation_eligible(state, &contract.label) {
+        return true;
+    }
+    if contract.anchor.allows_text_parse() {
+        return false;
+    }
+    relation_uses_from_parent_get(session, &contract.row_entity, segment)
 }
 
 fn parse_relation_continuation_expr(
@@ -2394,7 +2419,12 @@ fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
     }
 }
 
-fn parse_field_list(fields: &str) -> Result<Vec<String>, String> {
+fn parse_field_list(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
+    fields: &str,
+) -> Result<Vec<String>, String> {
     let out = split_top_level(fields, ',')?
         .into_iter()
         .map(|s| {
@@ -2403,6 +2433,14 @@ fn parse_field_list(fields: &str) -> Result<Vec<String>, String> {
         })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
+        .map(|s| {
+            crate::plasm_plan_run::resolve_wire_field_token(
+                session,
+                symbol_map_cross_cache,
+                qe,
+                s.as_str(),
+            )
+        })
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>();
     if out.is_empty() {
@@ -4156,8 +4194,8 @@ detail"#;
         assert_eq!(detail["kind"], "relation");
         let ir = detail["relation"]["ir"]["expr"].to_string();
         assert!(
-            ir.contains("detail") && ir.contains("summary") && ir.contains("LangItem"),
-            "expected nested surface chain IR, got {ir}"
+            ir.contains("__plasm_hole") && ir.contains("node_input") && ir.contains("LangSummary"),
+            "expected row-hole relation IR from relation-sourced binding, got {ir}"
         );
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 3, "{dry:?}");

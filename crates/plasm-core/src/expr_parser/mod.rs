@@ -5,6 +5,7 @@
 //! ```text
 //! expr       = source pipeline* projection?
 //! source     = Entity "(" id ")"               — GetExpr
+//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow sugar; not DOMAIN-taught)
 //!            | Entity "{" pred ("," pred)* "}"  — QueryExpr with filters
 //!            | Entity "~" quoted_or_bare         — Search QueryExpr
 //!            | Entity                            — QueryExpr::all
@@ -748,6 +749,104 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
+    /// Shadow sugar (not DOMAIN-taught): `Entity(id_field=value)` on simple-id entities ≡ `Entity(value)`.
+    ///
+    /// Rejects wrong keys and multi-key maps (compound entities use [`Self::parse_strict_compound_key_value_map`]).
+    fn try_parse_simple_id_field_get_sugar(
+        &mut self,
+        entity: &str,
+        ent: &EntityDef,
+    ) -> Result<Option<Expr>, ParseError> {
+        if !ent.key_vars.is_empty() {
+            return Ok(None);
+        }
+        let save = self.pos;
+        if !self.peek_compound_key_value_form() {
+            return Ok(None);
+        }
+        let (key, _, _) = self.parse_ident_with_span()?;
+        self.skip_ws();
+        if self.peek_char() != Some('=') {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.pos += 1;
+        let id_val = if self.program_nodes.is_some() {
+            self.parse_dotted_call_arg_value_rhs()?
+        } else {
+            self.parse_compound_key_value_rhs()?
+        };
+        self.skip_ws();
+        if self.peek_char() == Some(',') {
+            self.pos = save;
+            return Ok(None);
+        }
+        if self.peek_char() != Some(')') {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.expect_char(')')?;
+        if key != ent.id_field.as_str() {
+            return Err(self.err(ParseErrorKind::Other {
+                message: format!(
+                    "entity `{entity}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{}` — otherwise use `{entity}(value)`",
+                    ent.id_field
+                ),
+            }));
+        }
+        if matches!(id_val, Value::PlasmInputRef(_)) {
+            let path_key = format!("{}_id", entity.to_lowercase());
+            return Ok(Some(Expr::Get(GetExpr::from_ref_with_path_vars(
+                Ref::new(entity, ""),
+                Some(IndexMap::from([(path_key, id_val)])),
+            ))));
+        }
+        let id_str = self.compound_get_slot_string_from_value(&id_val)?;
+        Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
+    }
+
+    /// Like [`Self::try_parse_simple_id_field_get_sugar`] but returns the inner id [`Value`] for nested constructors.
+    fn try_parse_simple_id_field_constructor_sugar(
+        &mut self,
+        entity_canon: &str,
+        ent: &EntityDef,
+    ) -> Result<Option<Value>, ParseError> {
+        if !ent.key_vars.is_empty() {
+            return Ok(None);
+        }
+        let save = self.pos;
+        if !self.peek_compound_key_value_form() {
+            return Ok(None);
+        }
+        let (key, _, _) = self.parse_ident_with_span()?;
+        self.skip_ws();
+        if self.peek_char() != Some('=') {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.pos += 1;
+        let id_val = self.parse_compound_key_value_rhs()?;
+        self.skip_ws();
+        if self.peek_char() == Some(',') {
+            self.pos = save;
+            return Ok(None);
+        }
+        if self.peek_char() != Some(')') {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.expect_char(')')?;
+        if key != ent.id_field.as_str() {
+            return Err(self.err(ParseErrorKind::Other {
+                message: format!(
+                    "entity `{entity_canon}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{}` — otherwise use `{entity_canon}(value)`",
+                    ent.id_field
+                ),
+            }));
+        }
+        Ok(Some(id_val))
+    }
+
     /// Serialize one compound-get path slot for [`EntityKey::Compound`] (string map); nested
     /// [`Value::Object`] constructors become deterministic JSON text.
     fn compound_get_slot_string_from_value(&self, v: &Value) -> Result<String, ParseError> {
@@ -807,6 +906,10 @@ impl<'a> Parser<'a> {
             return Ok(Value::Object(obj));
         }
         if looks_kv && ent.key_vars.is_empty() {
+            if let Some(id_val) = self.try_parse_simple_id_field_constructor_sugar(entity_canon, &ent)?
+            {
+                return Ok(id_val);
+            }
             return Err(self.err(ParseErrorKind::Other {
                 message: format!(
                     "entity `{}` uses a simple id; use `{}(id)` not key=value form",
@@ -1951,6 +2054,9 @@ impl<'a> Parser<'a> {
                     Ok(Expr::Get(get))
                 } else {
                     if looks_kv && ent.key_vars.is_empty() {
+                        if let Some(get) = self.try_parse_simple_id_field_get_sugar(&entity, &ent)? {
+                            return Ok(get);
+                        }
                         return Err(self.err(ParseErrorKind::Other {
                             message: format!(
                                 "entity `{}` uses a simple id; use `{}(id)` not key=value form",
@@ -2474,6 +2580,43 @@ mod tests {
             assert_eq!(g.reference.entity_type, "Pet");
             assert_eq!(g.reference.simple_id().map(|s| s.as_str()), Some("10"));
         }
+    }
+
+    /// Shadow sugar: `Entity(id_field=value)` ≡ `Entity(value)` when `id_field` is the sole identity slot.
+    #[test]
+    fn parse_get_simple_id_field_named_sugar() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse(r#"LangItem(id="i1")"#, &cgs).unwrap();
+        let Expr::Get(g) = &r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        assert_eq!(g.reference.entity_type, "LangItem");
+        assert_eq!(g.reference.simple_id().map(|s| s.as_str()), Some("i1"));
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+        let r2 = parse(r#"LangItem("i1")"#, &cgs).unwrap();
+        assert_eq!(
+            serde_json::to_value(&r.expr).unwrap(),
+            serde_json::to_value(&r2.expr).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_get_simple_id_field_named_sugar_rejects_non_identity_key() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let err = parse(r#"LangItem(headline="x")"#, &cgs).unwrap_err();
+        assert!(
+            err.message().contains("identity field"),
+            "unexpected: {}",
+            err.message()
+        );
     }
 
     #[test]

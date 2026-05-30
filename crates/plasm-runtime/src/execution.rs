@@ -4631,7 +4631,7 @@ fn extract_ref_id(entity: &CachedEntity, selector: &str, cgs: &CGS) -> Option<St
                     .iter()
                     .map(|k| k.as_str().to_string())
                     .collect::<Vec<_>>();
-                let identity = plasm_core::row_identity_from_parts(
+                let mut identity = plasm_core::row_identity_from_parts(
                     plasm_core::QualifiedEntityKey::new(
                         String::new(),
                         entity.reference.entity_type.to_string(),
@@ -4641,6 +4641,18 @@ fn extract_ref_id(entity: &CachedEntity, selector: &str, cgs: &CGS) -> Option<St
                     source_ent.id_field.as_str(),
                     &key_vars,
                 );
+                for rel_name in source_ent.relations.keys() {
+                    if identity.ambient.contains_key(rel_name.as_str()) {
+                        continue;
+                    }
+                    if let Some(tf) = entity.get_field(rel_name.as_str()) {
+                        if let Value::String(s) = tf.to_value() {
+                            if !s.is_empty() {
+                                identity.ambient.insert(rel_name.as_str().to_string(), s);
+                            }
+                        }
+                    }
+                }
                 if let Ok(target_ref) =
                     plasm_core::resolve_relation_target_id(&identity, selector, target_ent)
                 {

@@ -70,18 +70,19 @@ impl PlasmPreflight {
         if fields.is_empty() {
             return Ok(PreflightToken::VERIFIED);
         }
-        let entity = parsed.expr.primary_entity();
-        let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)?;
-        let Some(ent) = cgs.get_entity(entity) else {
-            return Err(format!(
-                "entity `{entity}` is not defined in the resolved catalog"
-            ));
-        };
         for field in fields {
-            let name = field.as_str();
-            if !ent.fields.contains_key(name) && !ent.relations.contains_key(name) {
+            let name = crate::plasm_plan_run::resolve_wire_field_token(session, None, None, field);
+            let entity = parsed.expr.primary_entity();
+            let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)?;
+            let Some(ent) = cgs.get_entity(entity) else {
                 return Err(format!(
-                    "projection field `{name}` is not declared on entity `{entity}`"
+                    "entity `{entity}` is not defined in the resolved catalog"
+                ));
+            };
+            if !ent.fields.contains_key(name.as_str()) && !ent.relations.contains_key(name.as_str())
+            {
+                return Err(format!(
+                    "projection field `{field}` (wire `{name}`) is not declared on entity `{entity}`"
                 ));
             }
         }

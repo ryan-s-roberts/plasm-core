@@ -3318,12 +3318,24 @@ pub(crate) async fn run_parsed_plasm_line(
             let proj_cgs =
                 crate::catalog_ownership::resolve_cgs_for_entity(sess, entity_type.as_str(), None)
                     .map_err(RunLineError::Parse)?;
+            let qe = crate::catalog_ownership::resolve_qualified_entity_key(
+                sess,
+                entity_type.as_str(),
+                None,
+            )
+            .ok();
+            let wire_fields = crate::plasm_plan_run::resolve_wire_field_list(
+                sess,
+                Some(st.sessions.symbol_map_cross_cache()),
+                qe.as_ref(),
+                fields,
+            );
             match st
                 .engine
                 .auto_resolve_projection(
                     result.entities.clone(),
                     &entity_type,
-                    fields,
+                    &wire_fields,
                     proj_cgs,
                     cache,
                     st.mode,

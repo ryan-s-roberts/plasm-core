@@ -185,7 +185,10 @@ pub fn resolve_relation_target_id(
             return Ok(Ref::new(target_ent.name.clone(), v.clone()));
         }
     }
-    Ok(source.reference.clone())
+    Err(format!(
+        "relation `{relation_wire}` has no target id on row for entity `{}`",
+        source.qualified_entity.entity
+    ))
 }
 
 /// Documented suffix-stream peel for postfix transforms only (relation hops require CGS-aware decompose in agent-core).
@@ -248,6 +251,34 @@ mod tests {
             target_ref.primary_slot_str(),
             "https://pokeapi.co/api/v2/evolution-chain/10/"
         );
+    }
+
+    #[test]
+    fn resolve_relation_target_id_errors_without_ambient_slot() {
+        let identity = row_identity_from_parts(
+            QualifiedEntityKey::new("pokeapi".to_string(), "PokemonSpecies".to_string()),
+            Ref::new("PokemonSpecies", "pikachu"),
+            &IndexMap::new(),
+            "name",
+            &[],
+        );
+        let target = EntityDef {
+            name: "EvolutionChain".into(),
+            description: String::new(),
+            id_field: "url".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: Vec::new(),
+            implicit_request_identity: false,
+            key_vars: Vec::new(),
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: None,
+        };
+        assert!(resolve_relation_target_id(&identity, "evolution_chain", &target).is_err());
     }
 
     #[test]

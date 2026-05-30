@@ -65,6 +65,54 @@ pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
     }
 }
 
+/// Resolve a DOMAIN `p#` teaching symbol (or pass through an already-canonical wire name).
+pub fn resolve_wire_field_token(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
+    token: &str,
+) -> String {
+    let t = token.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
+    if let Some(wire) = map.resolve_ident(t) {
+        return wire.to_string();
+    }
+    if let Some(qe) = qe {
+        if let Ok(cgs) =
+            crate::catalog_ownership::resolve_cgs_for_entity(session, qe.entity.as_str(), None)
+        {
+            if let Some(ent) = cgs.get_entity(qe.entity.as_str()) {
+                if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
+                    return t.to_string();
+                }
+                let sym = map.ident_sym_entity_field(qe.entity.as_str(), t);
+                if sym != t {
+                    if let Some(wire) = map.resolve_ident(&sym) {
+                        return wire.to_string();
+                    }
+                }
+            }
+        }
+    }
+    t.to_string()
+}
+
+/// Resolve optional projection / postfix field list tokens to wire names.
+pub fn resolve_wire_field_list(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
+    fields: &[String],
+) -> Vec<String> {
+    fields
+        .iter()
+        .map(|f| resolve_wire_field_token(session, symbol_map_cross_cache, qe, f))
+        .collect()
+}
+
 /// Symbol map aligned with [`PromptPipelineConfig::expand_expr_for_session_with_optional_exposure`]
 /// and HTTP execute (`symbol_map_cross_cache` when available).
 pub fn symbol_map_for_plasm_surface_parse(
@@ -335,13 +383,26 @@ fn row_identities_from_entities(
                 .iter()
                 .map(|k| k.as_str().to_string())
                 .collect::<Vec<_>>();
-            Some(plasm_core::row_identity_from_parts(
+            let mut identity = plasm_core::row_identity_from_parts(
                 core_qe,
                 reference,
                 &e.relations,
                 ent.id_field.as_str(),
                 &key_vars,
-            ))
+            );
+            for rel_name in ent.relations.keys() {
+                if identity.ambient.contains_key(rel_name.as_str()) {
+                    continue;
+                }
+                if let Some(tf) = e.get_field(rel_name.as_str()) {
+                    if let plasm_core::Value::String(s) = tf.to_value() {
+                        if !s.is_empty() {
+                            identity.ambient.insert(rel_name.as_str().to_string(), s);
+                        }
+                    }
+                }
+            }
+            Some(identity)
         })
         .collect()
 }
