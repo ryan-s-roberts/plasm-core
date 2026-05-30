@@ -155,31 +155,25 @@ pub(crate) fn mcp_format_execute_result_table_or_tsv(
     }
 }
 
+/// Return label for slim markdown headers (`name` from plan return, else binding node id).
+pub(crate) fn return_label_for_step(name: Option<&str>, node_id: Option<&str>) -> String {
+    name.map(str::to_string)
+        .or_else(|| node_id.map(str::to_string))
+        .unwrap_or_else(|| "result".to_string())
+}
+
+pub(crate) fn slim_result_section_header(level: &str, label: &str, row_count: usize) -> String {
+    format!("{level}{label} ({row_count} rows)\n\n")
+}
+
 pub(crate) fn mcp_compact_markdown_single(
-    line: &str,
-    parsed_display: &str,
-    projection: Option<&[String]>,
+    label: &str,
     entity_rows: usize,
     omitted: &OmittedReferenceOnlyFields,
     lossy_summary_fields: &LossySummaryFieldNames,
 ) -> String {
-    let mut out = String::from("## Result (preview)\n\n");
+    let mut out = slim_result_section_header("## ", &format!("{label} (preview)"), entity_rows);
     out.push_str(MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE);
-    out.push_str("→ ");
-    out.push_str(parsed_display);
-    out.push('\n');
-    if let Some(p) = projection {
-        out.push_str("  projection: [");
-        out.push_str(&p.join(", "));
-        out.push_str("]\n");
-    }
-    out.push('\n');
-    out.push('`');
-    out.push_str(&execute_expression_preview(line));
-    out.push_str("`\n\n");
-    out.push_str("**Entity rows:** ");
-    out.push_str(&entity_rows.to_string());
-    out.push('\n');
     if !omitted.is_empty() {
         out.push_str("**Omitted from summary (reference-only fields):** ");
         out.push_str(&omitted.join_comma());
@@ -196,28 +190,22 @@ pub(crate) fn mcp_compact_markdown_single(
 pub(crate) fn mcp_compact_markdown_multi_line(
     total_steps: usize,
     total_entity_rows: usize,
-    per_step: &[(String, String, usize)],
+    per_step: &[(String, usize)],
     omitted: &OmittedReferenceOnlyFields,
     lossy_summary_union: &LossySummaryFieldNames,
     truncated_step_uris: &[(usize, &RunArtifactHandle)],
 ) -> String {
-    let mut out = String::from("# Plasm run (preview)\n\n");
+    let mut out = String::from("# Results (preview)\n\n");
     out.push_str(MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE);
-    out.push_str("**Steps:** ");
+    out.push_str("**Returns:** ");
     out.push_str(&total_steps.to_string());
     out.push('\n');
     out.push_str("**Total entity rows (sum):** ");
     out.push_str(&total_entity_rows.to_string());
-    out.push_str("\n\n### Per step\n\n");
-    for (i, (line, disp, nrows)) in per_step.iter().enumerate() {
+    out.push_str("\n\n");
+    for (i, (label, nrows)) in per_step.iter().enumerate() {
         let step_no = i + 1;
-        out.push_str(&format!(
-            "{}. `{}` → {}\n   **Rows:** {}\n",
-            step_no,
-            execute_expression_preview(line),
-            disp,
-            nrows
-        ));
+        out.push_str(&slim_result_section_header("### ", label, *nrows));
         if let Some((_, h)) = truncated_step_uris.iter().find(|(s, _)| *s == step_no) {
             out.push_str(&format!(
                 "   _Snapshot (MCP `resources/read`, not a Plasm expression):_ `{}`\n",
@@ -276,14 +264,12 @@ mod tests {
     fn mcp_compact_markdown_single_preview_has_no_must_read_banner() {
         let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
         let s = mcp_compact_markdown_single(
-            "Issue(x).comments",
-            "Issue(x).comments",
-            None,
+            "sorted",
             2,
             &omitted,
             &LossySummaryFieldNames::default(),
         );
-        assert!(s.starts_with("## Result (preview)"));
+        assert!(s.starts_with("## sorted (preview)"));
         assert!(!s.contains("MUST"), "preview: {s}");
         assert!(!s.contains("Optional full JSON"), "preview: {s}");
         assert!(s.contains("body"), "omitted fields listed: {s}");
@@ -297,14 +283,14 @@ mod tests {
             2,
             5,
             &[
-                ("a".into(), "disp".into(), 3),
-                ("b".into(), "disp2".into(), 2),
+                ("first".into(), 3),
+                ("second".into(), 2),
             ],
             &omitted,
             &LossySummaryFieldNames::default(),
             &[(1, &h)],
         );
-        assert!(s.starts_with("# Plasm run (preview)"));
+        assert!(s.starts_with("# Results (preview)"));
         assert!(!s.contains("MUST"), "multi-line preview: {s}");
         assert!(!s.contains("Optional full JSON"), "multi-line preview: {s}");
         assert!(s.contains("commentBody"), "multi-line preview: {s}");

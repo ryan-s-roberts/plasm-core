@@ -311,31 +311,6 @@ pub fn compile_plasm_expression_to_plan(
     }
 }
 
-pub fn split_bare_plasm_roots(src: &str) -> Option<Vec<String>> {
-    let src = src.trim();
-    if src.is_empty() || src.contains("=>") {
-        return None;
-    }
-    let stmts = collect_program_statement_lines(src).ok()?;
-    if stmts.len() != 1 {
-        return None;
-    }
-    let sole = stmts[0].trim();
-    if split_assignment_at_top_level(sole).is_some() {
-        return None;
-    }
-    let parts = split_top_level(sole, ',').ok()?;
-    if parts.len() <= 1 {
-        return None;
-    }
-    let parts: Vec<String> = parts
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    (parts.len() > 1).then_some(parts)
-}
-
 pub fn compile_plasm_dag_to_plan(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -3075,12 +3050,17 @@ author"#;
 
     /// Matrix analogue: parallel comma roots + search sugar (`lang_derive_map_parallel`, `lang_search`).
     #[test]
-    fn splits_bare_comma_plasm_roots() {
-        let roots = split_bare_plasm_roots(r#"LangItem, LangItem~"Alpha""#).expect("split");
-        assert_eq!(
-            roots,
-            vec!["LangItem".to_string(), r#"LangItem~"Alpha""#.to_string()]
-        );
+    fn bare_comma_plasm_roots_compile_as_parallel_return() {
+        let session = test_session();
+        let plan = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "parallel-roots",
+            r#"LangItem, LangItem~"Alpha""#,
+        )
+        .expect("compile parallel roots");
+        assert_eq!(plan["return"]["kind"], "parallel");
     }
 
     #[test]
@@ -3294,19 +3274,6 @@ author"#;
         assert_eq!(stmts.len(), 1);
         assert!(stmts[0].contains("<<H"), "{:?}", stmts[0]);
         assert!(stmts[0].contains("one"));
-    }
-
-    #[test]
-    fn split_bare_plasm_roots_multiline_heredoc_second_root() {
-        let src = "LangItem, <<TXT\n,\nTXT";
-        let roots = split_bare_plasm_roots(src).expect("roots");
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0].trim(), "LangItem");
-        assert!(
-            roots[1].contains("<<TXT") && roots[1].contains(','),
-            "{:?}",
-            roots[1]
-        );
     }
 
     /// Matrix: heredoc binding + parallel roots (`lang_heredoc_binding`).

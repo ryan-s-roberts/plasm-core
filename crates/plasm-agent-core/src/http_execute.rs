@@ -1,9 +1,9 @@
 //! Execute-session protocol (shared by **Axum** and **MCP**): after [`crate::http_discovery`],
-//! clients open a session with `entry_id` + entity seeds, then run one or more Plasm lines.
+//! clients open a session with `entry_id` + entity seeds, then run one Plasm program.
 //!
 //! HTTP: `POST /execute` → `GET /execute/:prompt_hash/:session` → `POST` that path (default `Accept`:
-//! **text/toon**, entity rows only); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses the same
-//! [`execute_session_create_response`] / [`execute_session_run_markdown`] helpers (Markdown + `_meta` / resource links).
+//! **text/toon**, entity rows only); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses
+//! [`publish_plasm_result_steps`] for live run Markdown + `_meta` / resource links.
 
 use axum::body::Bytes;
 use axum::extract::rejection::PathRejection;
@@ -136,20 +136,18 @@ where
 
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, GraphEpoch, SessionReuseKey, SessionRunSummary};
-use crate::execute_staging::{
-    build_execute_stages, line_may_share_parallel_query_stage, ExecuteStage,
-};
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
     incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
 };
-use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta};
+use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta, StepPlasmMetaFields};
 use crate::mcp_run_markdown::{
     execute_expression_preview, mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
     mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
     mcp_prepend_artifact_followup_markdown, mcp_preview_markdown_needed,
-    merge_snapshot_column_hints, OmittedReferenceOnlyFields,
+    merge_snapshot_column_hints, return_label_for_step, slim_result_section_header,
+    OmittedReferenceOnlyFields,
 };
 use crate::output::{
     apply_projection, format_result_with_cgs, http_execute_results_value,
@@ -202,7 +200,7 @@ fn mint_run_artifact_id(
 /// Re-export: MCP adaptive preview threshold (Unicode scalars).
 pub use crate::mcp_run_markdown::MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS;
 
-/// Result of [`execute_session_run_markdown`] for MCP tool shaping (`_meta` only; snapshot URIs are inline in Markdown).
+/// Result of [`publish_plasm_result_steps`] for MCP tool shaping (`_meta` only; snapshot URIs are inline in Markdown).
 #[derive(Debug)]
 pub struct ExecuteRunToolOutput {
     pub markdown: String,
@@ -229,6 +227,7 @@ fn plasm_meta_object(
     lossy_per_step: Option<&[LossySummaryFieldNames]>,
     run_step_numbers: Option<&[usize]>,
     paging: Option<&[PlasmPagingStepMeta]>,
+    step_meta: Option<&[StepPlasmMetaFields]>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     if !handles.is_empty() {
@@ -259,6 +258,15 @@ fn plasm_meta_object(
                                     serde_json::json!(lossy.as_slice()),
                                 );
                             }
+                        }
+                    }
+                }
+                if let Some(meta) = step_meta {
+                    if let Some(m) = meta.get(i) {
+                        if let Some(obj) = step.as_object_mut() {
+                            obj.insert("return_label".into(), serde_json::json!(m.return_label));
+                            obj.insert("display".into(), serde_json::json!(m.display));
+                            obj.insert("row_count".into(), serde_json::json!(m.row_count));
                         }
                     }
                 }
@@ -354,7 +362,7 @@ fn tool_meta_from_handles(
     handles: &[RunArtifactHandle],
     omitted_from_summary: &[String],
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let plasm = plasm_meta_object(handles, omitted_from_summary, None, None, None);
+    let plasm = plasm_meta_object(handles, omitted_from_summary, None, None, None, None);
     if plasm.is_empty() {
         return None;
     }
@@ -371,6 +379,7 @@ fn build_mcp_tool_meta(
     expr_previews: &[String],
     run_step_numbers: Option<&[usize]>,
     paging: Option<&[PlasmPagingStepMeta]>,
+    step_meta: Option<&[StepPlasmMetaFields]>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     debug_assert!(
         handles.is_empty() || lossy_per_handle.len() == handles.len(),
@@ -390,6 +399,7 @@ fn build_mcp_tool_meta(
                 expr_previews,
                 run_step_numbers,
                 paging,
+                step_meta,
             );
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm));
@@ -402,6 +412,7 @@ fn build_mcp_tool_meta(
                 lossy_arg,
                 run_step_numbers,
                 paging,
+                step_meta,
             );
             if plasm.is_empty() {
                 return None;
@@ -1882,360 +1893,6 @@ async fn trace_emit_plasm_line(
         .await;
 }
 
-/// Run one or more Plasm lines; Markdown for tools plus MCP `_meta` / resource link metadata.
-///
-/// When `meta_index` is [`Some`], `_meta.plasm` uses compact `dict_ref` + `index_delta`, and large
-/// markdown may be replaced by a preview (see [`MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS`]).
-#[allow(clippy::too_many_arguments)]
-pub async fn execute_session_run_markdown(
-    st: &PlasmHostState,
-    principal: Option<&crate::incoming_auth::TenantPrincipal>,
-    prompt_hash: &str,
-    session_id: &str,
-    expressions: Vec<String>,
-    meta_index: Option<&mut PlasmMetaIndex>,
-    trace: Option<PlasmTraceContext>,
-    hub_sink: Option<McpPlasmTraceSink>,
-) -> Result<ExecuteRunToolOutput, String> {
-    let prompt_hash: PromptHashHex = prompt_hash
-        .parse()
-        .map_err(|e: &'static str| e.to_string())?;
-    let session_id: ExecuteSessionId = session_id
-        .parse()
-        .map_err(|e: &'static str| e.to_string())?;
-
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
-        return Err("unknown or expired execute session".into());
-    };
-
-    if !session_allows_principal(&sess, principal) {
-        return Err("forbidden: execute session tenant does not match caller".into());
-    }
-
-    if expressions.is_empty() {
-        return Err(
-            "no lines to run: provide a non-empty line, a JSON array of line strings, or JSON {\"lines\":[\"...\"]}"
-                .into(),
-        );
-    }
-    if expressions.len() > MAX_PLASM_LINES_PER_REQUEST {
-        return Err(format!(
-            "too many lines in one request (max {MAX_PLASM_LINES_PER_REQUEST}, got {})",
-            expressions.len()
-        ));
-    }
-
-    let multiple_lines = expressions.len() > 1;
-
-    if !multiple_lines {
-        let line = expressions[0].as_str();
-        let mut cache = sess.graph_cache.lock().await;
-        match run_single_plasm_line(
-            line,
-            &sess,
-            st,
-            &mut cache,
-            session_id.as_str(),
-            trace.as_ref(),
-            0,
-        )
-        .await
-        {
-            Ok((parsed, result, artifact)) => {
-                if let Some(ref sink) = hub_sink {
-                    let api = Some(trace_api_entry_id_for_parsed_line(&sess, &parsed));
-                    let meta = plasm_line_trace_meta(line, &parsed, &result, api);
-                    sink.hub
-                        .trace_add_plasm_line(
-                            &sink.mcp_key,
-                            sink.call_index,
-                            0,
-                            meta,
-                            &result,
-                            vec![],
-                        )
-                        .await;
-                }
-                let mut out = String::new();
-                out.push_str("→ ");
-                let parsed_disp = crate::expr_display::expr_display(&parsed.expr);
-                out.push_str(&parsed_disp);
-                out.push('\n');
-                let proj = parsed.projection.as_deref();
-                if let Some(ref p) = parsed.projection {
-                    out.push_str("  projection: [");
-                    out.push_str(&p.join(", "));
-                    out.push_str("]\n");
-                }
-                out.push('\n');
-                out.push_str("## Result\n\n");
-                let cgs = session_cgs_for_result(&sess, &result);
-                let formatted = mcp_format_execute_result_table_or_tsv(&result, cgs);
-                out.push_str(&formatted.block.into_mcp_result_markdown());
-                let handles: Vec<RunArtifactHandle> = artifact.into_iter().collect();
-                let preview_needed = mcp_preview_markdown_needed(meta_index.is_some(), &out);
-                let truncated = !handles.is_empty()
-                    && (preview_needed
-                        || !formatted.reference_only_omitted.is_empty()
-                        || !formatted.lossy_summary_fields.is_empty()
-                        || formatted.in_band_report.any_loss());
-                let expr_previews: Vec<String> = if handles.is_empty() {
-                    vec![]
-                } else {
-                    vec![execute_expression_preview(line)]
-                };
-                let mut markdown = out;
-                if preview_needed {
-                    let column_hints = merge_snapshot_column_hints(
-                        &formatted.lossy_summary_fields,
-                        &formatted.in_band_report,
-                    );
-                    markdown = mcp_compact_markdown_single(
-                        line,
-                        &parsed_disp,
-                        proj,
-                        result.count,
-                        &formatted.reference_only_omitted,
-                        &column_hints,
-                    );
-                }
-                if truncated {
-                    markdown.push_str(&mcp_inline_run_snapshot_line(&handles[0]));
-                }
-                let handles_meta: &[RunArtifactHandle] =
-                    if truncated { handles.as_slice() } else { &[] };
-                let markdown = mcp_prepend_artifact_followup_markdown(
-                    markdown,
-                    meta_index.is_some(),
-                    handles_meta,
-                    &formatted.reference_only_omitted,
-                );
-                let markdown = append_paging_hint_markdown(markdown, &parsed, &result);
-                let run_step_one = [1_usize];
-                let lossy_for_meta = if truncated {
-                    vec![merge_snapshot_column_hints(
-                        &formatted.lossy_summary_fields,
-                        &formatted.in_band_report,
-                    )]
-                } else {
-                    vec![]
-                };
-                let paging_slice: Vec<PlasmPagingStepMeta> =
-                    paging_step_meta(1, &parsed, &result).into_iter().collect();
-                let paging_for_meta = (!paging_slice.is_empty()).then_some(paging_slice.as_slice());
-                let tool_meta = build_mcp_tool_meta(
-                    meta_index,
-                    handles_meta,
-                    &formatted.reference_only_omitted,
-                    lossy_for_meta.as_slice(),
-                    &expr_previews,
-                    if truncated {
-                        Some(run_step_one.as_slice())
-                    } else {
-                        None
-                    },
-                    paging_for_meta,
-                );
-                Ok(ExecuteRunToolOutput {
-                    markdown,
-                    tool_meta,
-                })
-            }
-            Err(RunLineError::Parse(d)) | Err(RunLineError::Normalize(d)) => Err(d),
-            Err(RunLineError::Projection(d)) => Err(d),
-            Err(RunLineError::Runtime(e, src)) => Err(format!("{e}\nsource expression: {src}")),
-            Err(RunLineError::ArtifactSerialization(e)) => {
-                Err(format!("artifact serialization failed: {e}"))
-            }
-            Err(RunLineError::ArtifactPersist(d)) => {
-                Err(format!("run artifact persist failed: {d}"))
-            }
-        }
-    } else {
-        let steps = match execute_staged_plasm_lines(
-            &expressions,
-            &sess,
-            st,
-            session_id.as_str(),
-            trace.as_ref(),
-            hub_sink.as_ref(),
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(e) => return Err(mcp_staged_execute_error(e)),
-        };
-        let total = steps.len();
-        let header = "# Plasm run\n\n";
-        let mut per_step_body: Vec<String> = Vec::with_capacity(total);
-        let mut per_step_omitted: Vec<OmittedReferenceOnlyFields> = Vec::with_capacity(total);
-        let mut per_step_lossy: Vec<LossySummaryFieldNames> = Vec::with_capacity(total);
-        let mut per_step_in_band: Vec<InBandSummaryReport> = Vec::with_capacity(total);
-        let mut per_step_artifact: Vec<Option<RunArtifactHandle>> = Vec::with_capacity(total);
-        let mut per_step_compact: Vec<(String, String, usize)> = Vec::with_capacity(total);
-        let mut paging_step_metas: Vec<PlasmPagingStepMeta> = Vec::new();
-        let mut paging_hints: Vec<String> = Vec::new();
-        let mut total_entity_rows: usize = 0;
-        let mut omitted_union: BTreeSet<String> = BTreeSet::new();
-        let cgs_default = Some(sess.cgs.as_ref());
-        for (index, line) in expressions.iter().enumerate() {
-            let (parsed, result, artifact) = &steps[index];
-            if let Some(pm) = paging_step_meta(index + 1, parsed, result) {
-                let h = match &pm {
-                    PlasmPagingStepMeta::Next {
-                        next_page_handle, ..
-                    } => next_page_handle.as_str(),
-                };
-                paging_hints.push(format!(
-                    "- Step {}: more pages available — use `page({h})` for the next page.",
-                    index + 1
-                ));
-                paging_step_metas.push(pm);
-            }
-            total_entity_rows = total_entity_rows.saturating_add(result.count);
-            per_step_compact.push((
-                line.clone(),
-                crate::expr_display::expr_display(&parsed.expr),
-                result.count,
-            ));
-            let cgs = session_cgs_for_result(&sess, result).or(cgs_default);
-            let formatted = mcp_format_execute_result_table_or_tsv(result, cgs);
-            omitted_union.extend(formatted.reference_only_omitted.as_ref().iter().cloned());
-            per_step_omitted.push(formatted.reference_only_omitted);
-            per_step_lossy.push(formatted.lossy_summary_fields);
-            per_step_in_band.push(formatted.in_band_report.clone());
-            per_step_artifact.push(artifact.clone());
-            let mut sec = String::new();
-            sec.push_str(&format!(
-                "## Step {} of {}\n\n`{}`\n\n→ {}\n",
-                index + 1,
-                total,
-                line,
-                crate::expr_display::expr_display(&parsed.expr)
-            ));
-            if let Some(ref proj) = parsed.projection {
-                sec.push_str("  projection: [");
-                sec.push_str(&proj.join(", "));
-                sec.push_str("]\n");
-            }
-            sec.push('\n');
-            sec.push_str(&formatted.block.into_mcp_result_markdown());
-            per_step_body.push(sec);
-        }
-        let omitted_for_steps: OmittedReferenceOnlyFields = omitted_union.into();
-        let mut full_sections = String::from(header);
-        for (i, b) in per_step_body.iter().enumerate() {
-            if i > 0 {
-                full_sections.push_str("\n\n");
-            }
-            full_sections.push_str(b);
-        }
-        let preview = mcp_preview_markdown_needed(meta_index.is_some(), &full_sections);
-        let mut truncated_steps: Vec<(usize, RunArtifactHandle)> = Vec::new();
-        for i in 0..total {
-            let step_no = i + 1;
-            let Some(h) = per_step_artifact[i].as_ref() else {
-                continue;
-            };
-            let truncated = preview
-                || !per_step_omitted[i].is_empty()
-                || !per_step_lossy[i].is_empty()
-                || per_step_in_band[i].any_loss();
-            if truncated {
-                truncated_steps.push((step_no, h.clone()));
-            }
-        }
-        let handles_meta: Vec<RunArtifactHandle> =
-            truncated_steps.iter().map(|(_, h)| h.clone()).collect();
-        let run_step_vec: Vec<usize> = truncated_steps.iter().map(|(s, _)| *s).collect();
-        let expr_previews_filtered: Vec<String> = truncated_steps
-            .iter()
-            .map(|(step_no, _)| execute_expression_preview(&expressions[step_no - 1]))
-            .collect();
-        let lossy_meta_truncated: Vec<LossySummaryFieldNames> = truncated_steps
-            .iter()
-            .map(|(step_no, _)| {
-                let i = *step_no - 1;
-                merge_snapshot_column_hints(&per_step_lossy[i], &per_step_in_band[i])
-            })
-            .collect();
-        let truncated_refs: Vec<(usize, &RunArtifactHandle)> =
-            truncated_steps.iter().map(|(s, h)| (*s, h)).collect();
-
-        let mut lossy_union_set: BTreeSet<String> = BTreeSet::new();
-        if preview {
-            for i in 0..total {
-                if per_step_artifact[i].is_some() {
-                    for name in per_step_lossy[i].as_slice() {
-                        lossy_union_set.insert(name.clone());
-                    }
-                    for name in per_step_in_band[i].field_names() {
-                        lossy_union_set.insert(name.clone());
-                    }
-                }
-            }
-        }
-        let lossy_preview_union =
-            LossySummaryFieldNames::from_vec_sorted_dedup(lossy_union_set.into_iter().collect());
-
-        let markdown = if preview {
-            mcp_compact_markdown_multi_line(
-                total,
-                total_entity_rows,
-                &per_step_compact,
-                &omitted_for_steps,
-                &lossy_preview_union,
-                &truncated_refs,
-            )
-        } else {
-            let mut s = String::from(header);
-            for i in 0..total {
-                if i > 0 {
-                    s.push_str("\n\n");
-                }
-                s.push_str(&per_step_body[i]);
-                if let Some(h) = per_step_artifact[i].as_ref() {
-                    let truncated = !per_step_omitted[i].is_empty()
-                        || !per_step_lossy[i].is_empty()
-                        || per_step_in_band[i].any_loss();
-                    if truncated {
-                        s.push_str(&mcp_inline_run_snapshot_line(h));
-                    }
-                }
-            }
-            s
-        };
-        let mut markdown = mcp_prepend_artifact_followup_markdown(
-            markdown,
-            meta_index.is_some(),
-            &handles_meta,
-            &omitted_for_steps,
-        );
-        if !paging_hints.is_empty() {
-            markdown.push_str("\n\n### Paging\n\n");
-            markdown.push_str(&paging_hints.join("\n"));
-        }
-        let paging_for_meta =
-            (!paging_step_metas.is_empty()).then_some(paging_step_metas.as_slice());
-        let tool_meta = build_mcp_tool_meta(
-            meta_index,
-            &handles_meta,
-            &omitted_for_steps,
-            lossy_meta_truncated.as_slice(),
-            &expr_previews_filtered,
-            if run_step_vec.is_empty() {
-                None
-            } else {
-                Some(run_step_vec.as_slice())
-            },
-            paging_for_meta,
-        );
-        Ok(ExecuteRunToolOutput {
-            markdown,
-            tool_meta,
-        })
-    }
-}
 
 fn run_line_error_string(e: RunLineError) -> String {
     match e {
@@ -2400,67 +2057,43 @@ pub fn publish_plasm_result_steps(
     steps: &[PublishedResultStep],
 ) -> ExecuteRunToolOutput {
     let total = steps.len();
-    let mut markdown = if total <= 1 {
-        String::from("## Result\n\n")
-    } else {
-        String::from("# Plan run\n\n")
-    };
-    let mut handles = Vec::new();
+    let mut per_step_body: Vec<String> = Vec::with_capacity(total);
+    let mut per_step_omitted: Vec<OmittedReferenceOnlyFields> = Vec::with_capacity(total);
+    let mut per_step_lossy: Vec<LossySummaryFieldNames> = Vec::with_capacity(total);
+    let mut per_step_in_band: Vec<InBandSummaryReport> = Vec::with_capacity(total);
+    let mut per_step_artifact: Vec<Option<RunArtifactHandle>> = Vec::with_capacity(total);
+    let mut per_step_compact: Vec<(String, usize)> = Vec::with_capacity(total);
+    let mut paging: Vec<PlasmPagingStepMeta> = Vec::new();
     let mut omitted_union: BTreeSet<String> = BTreeSet::new();
-    let mut lossy = Vec::new();
-    let mut expr_previews = Vec::new();
-    let mut run_step_markers = Vec::new();
-    let mut paging = Vec::new();
+    let mut total_entity_rows: usize = 0;
+
     for (i, step) in steps.iter().enumerate() {
-        if total > 1 {
-            markdown.push_str(&format!("## Step {} of {}\n\n", i + 1, total));
-        }
-        if let Some(name) = &step.name {
-            markdown.push_str("output: ");
-            markdown.push_str(name);
-            if let Some(node_id) = &step.node_id {
-                markdown.push_str(" -> ");
-                markdown.push_str(node_id);
-            }
-            markdown.push('\n');
-        } else if let Some(node_id) = &step.node_id {
-            markdown.push_str("output: ");
-            markdown.push_str(node_id);
-            markdown.push('\n');
-        }
-        if let (Some(entry_id), Some(entity)) = (&step.entry_id, &step.entity) {
-            markdown.push_str("  owner: ");
-            markdown.push_str(entry_id);
-            markdown.push('.');
-            markdown.push_str(entity);
-            markdown.push('\n');
-        }
-        markdown.push_str("→ ");
-        markdown.push_str(&step.display);
-        markdown.push('\n');
-        if let Some(proj) = &step.projection {
-            markdown.push_str("  projection: [");
-            markdown.push_str(&proj.join(", "));
-            markdown.push_str("]\n");
-        }
-        markdown.push('\n');
+        let label = return_label_for_step(step.name.as_deref(), step.node_id.as_deref());
+        total_entity_rows = total_entity_rows.saturating_add(step.result.count);
+        per_step_compact.push((label.clone(), step.result.count));
         let formatted =
             mcp_format_execute_result_table_or_tsv(&step.result, step.cgs.as_deref().or(cgs));
         omitted_union.extend(formatted.reference_only_omitted.as_ref().iter().cloned());
-        markdown.push_str(&formatted.block.into_mcp_result_markdown());
+        per_step_omitted.push(formatted.reference_only_omitted);
+        per_step_lossy.push(formatted.lossy_summary_fields.clone());
+        per_step_in_band.push(formatted.in_band_report.clone());
+        per_step_artifact.push(step.artifact.clone());
+
+        let header = if total <= 1 {
+            slim_result_section_header("## ", &label, step.result.count)
+        } else if i == 0 {
+            format!("# Results\n\n{}", slim_result_section_header("### ", &label, step.result.count))
+        } else {
+            slim_result_section_header("### ", &label, step.result.count)
+        };
+        let mut sec = header;
+        sec.push_str(&formatted.block.into_mcp_result_markdown());
         if let Some(handle) = &step.artifact {
-            handles.push(handle.clone());
-            expr_previews.push(step.display.clone());
-            run_step_markers.push(i + 1);
-            lossy.push(merge_snapshot_column_hints(
-                &formatted.lossy_summary_fields,
-                &formatted.in_band_report,
-            ));
-            if !formatted.reference_only_omitted.is_empty()
-                || !formatted.lossy_summary_fields.is_empty()
-                || formatted.in_band_report.any_loss()
-            {
-                markdown.push_str(&mcp_inline_run_snapshot_line(handle));
+            let truncated = !per_step_omitted[i].is_empty()
+                || !per_step_lossy[i].is_empty()
+                || per_step_in_band[i].any_loss();
+            if truncated {
+                sec.push_str(&mcp_inline_run_snapshot_line(handle));
             }
         }
         if let Some(handle) = &step.result.paging_handle {
@@ -2469,33 +2102,134 @@ pub fn publish_plasm_result_steps(
                 returned_count: step.result.count,
                 next_page_handle: handle.clone(),
             });
-            markdown.push_str(&format!(
+            sec.push_str(&format!(
                 "\n\nmore pages available - use `page({})` for the next page.",
                 handle.as_str()
             ));
         }
-        if i + 1 < total {
-            markdown.push_str("\n\n");
+        per_step_body.push(sec);
+    }
+
+    let omitted_for_steps: OmittedReferenceOnlyFields = omitted_union.into();
+    let mut full_sections = String::new();
+    for (i, b) in per_step_body.iter().enumerate() {
+        if i > 0 {
+            full_sections.push_str("\n\n");
+        }
+        full_sections.push_str(b);
+    }
+    let preview_needed = mcp_preview_markdown_needed(meta_index.is_some(), &full_sections);
+    let mut truncated_steps: Vec<(usize, RunArtifactHandle)> = Vec::new();
+    for i in 0..total {
+        let step_no = i + 1;
+        let Some(h) = per_step_artifact[i].as_ref() else {
+            continue;
+        };
+        let truncated = preview_needed
+            || !per_step_omitted[i].is_empty()
+            || !per_step_lossy[i].is_empty()
+            || per_step_in_band[i].any_loss();
+        if truncated {
+            truncated_steps.push((step_no, h.clone()));
         }
     }
-    let omitted_for_steps: OmittedReferenceOnlyFields = omitted_union.into();
+    let handles_meta: Vec<RunArtifactHandle> =
+        truncated_steps.iter().map(|(_, h)| h.clone()).collect();
+    let run_step_vec: Vec<usize> = truncated_steps.iter().map(|(s, _)| *s).collect();
+    let step_meta_for_handles: Vec<StepPlasmMetaFields> = truncated_steps
+        .iter()
+        .map(|(step_no, _)| {
+            let i = *step_no - 1;
+            let step = &steps[i];
+            StepPlasmMetaFields {
+                return_label: return_label_for_step(
+                    step.name.as_deref(),
+                    step.node_id.as_deref(),
+                ),
+                display: step.display.clone(),
+                row_count: step.result.count,
+            }
+        })
+        .collect();
+    let expr_previews_filtered: Vec<String> = step_meta_for_handles
+        .iter()
+        .map(|m| m.display.clone())
+        .collect();
+    let lossy_meta_truncated: Vec<LossySummaryFieldNames> = truncated_steps
+        .iter()
+        .map(|(step_no, _)| {
+            let i = *step_no - 1;
+            merge_snapshot_column_hints(&per_step_lossy[i], &per_step_in_band[i])
+        })
+        .collect();
+    let truncated_refs: Vec<(usize, &RunArtifactHandle)> =
+        truncated_steps.iter().map(|(s, h)| (*s, h)).collect();
+
+    let mut lossy_union_set: BTreeSet<String> = BTreeSet::new();
+    if preview_needed {
+        for i in 0..total {
+            if per_step_artifact[i].is_some() {
+                for name in per_step_lossy[i].as_slice() {
+                    lossy_union_set.insert(name.clone());
+                }
+                for name in per_step_in_band[i].field_names() {
+                    lossy_union_set.insert(name.clone());
+                }
+            }
+        }
+    }
+    let lossy_preview_union =
+        LossySummaryFieldNames::from_vec_sorted_dedup(lossy_union_set.into_iter().collect());
+
+    let markdown = if preview_needed {
+        if total <= 1 {
+            let (label, rows) = per_step_compact
+                .first()
+                .cloned()
+                .unwrap_or_else(|| ("result".to_string(), 0));
+            let mut md = mcp_compact_markdown_single(
+                &label,
+                rows,
+                &omitted_for_steps,
+                &lossy_preview_union,
+            );
+            if let Some((_, h)) = truncated_refs.first() {
+                md.push_str(&mcp_inline_run_snapshot_line(h));
+            }
+            md
+        } else {
+            mcp_compact_markdown_multi_line(
+                total,
+                total_entity_rows,
+                &per_step_compact,
+                &omitted_for_steps,
+                &lossy_preview_union,
+                &truncated_refs,
+            )
+        }
+    } else {
+        full_sections
+    };
     let markdown = mcp_prepend_artifact_followup_markdown(
         markdown,
         meta_index.is_some(),
-        &handles,
+        &handles_meta,
         &omitted_for_steps,
     );
     let paging_for_meta = (!paging.is_empty()).then_some(paging.as_slice());
     let run_step_numbers_for_meta =
-        (!run_step_markers.is_empty()).then_some(run_step_markers.as_slice());
+        (!run_step_vec.is_empty()).then_some(run_step_vec.as_slice());
+    let step_meta_for_meta = (!step_meta_for_handles.is_empty())
+        .then_some(step_meta_for_handles.as_slice());
     let tool_meta = build_mcp_tool_meta(
         meta_index,
-        &handles,
+        &handles_meta,
         &omitted_for_steps,
-        lossy.as_slice(),
-        &expr_previews,
+        lossy_meta_truncated.as_slice(),
+        &expr_previews_filtered,
         run_step_numbers_for_meta,
         paging_for_meta,
+        step_meta_for_meta,
     );
     ExecuteRunToolOutput {
         markdown,
@@ -2503,15 +2237,7 @@ pub fn publish_plasm_result_steps(
     }
 }
 
-fn split_expression_lines(raw: &str) -> Vec<String> {
-    raw.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(str::to_string)
-        .collect()
-}
-
-fn parse_execute_lines_body(content_type: Option<&str>, raw: &[u8]) -> Result<Vec<String>, String> {
+fn parse_execute_program_body(content_type: Option<&str>, raw: &[u8]) -> Result<String, String> {
     let mime = content_type
         .unwrap_or("")
         .split(';')
@@ -2523,43 +2249,45 @@ fn parse_execute_lines_body(content_type: Option<&str>, raw: &[u8]) -> Result<Ve
     if mime == "application/json" || mime.ends_with("+json") {
         let v: serde_json::Value =
             serde_json::from_slice(raw).map_err(|e| format!("invalid JSON body: {e}"))?;
-        let strings: Vec<String> = if let Some(arr) = v.as_array() {
-            arr.iter()
-                .enumerate()
-                .map(|(i, x)| {
-                    x.as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| format!("lines[{i}] must be a JSON string"))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        } else if let Some(obj) = v.as_object() {
-            let Some(arr) = obj.get("lines").and_then(|x| x.as_array()) else {
-                return Err(
-                    "JSON body must be a JSON array of strings or {\"lines\": [\"...\"]}".into(),
-                );
-            };
-            arr.iter()
-                .enumerate()
-                .map(|(i, x)| {
-                    x.as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| format!("lines[{i}] must be a JSON string"))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
+        if v.is_array() {
             return Err(
-                "JSON body must be a JSON array of strings or {\"lines\": [\"...\"]}".into(),
+                "JSON top-level array of strings is not supported; send one program string or {\"program\": \"...\"}"
+                    .into(),
             );
-        };
-        Ok(strings
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect())
-    } else {
-        let s = std::str::from_utf8(raw).map_err(|e| format!("invalid UTF-8: {e}"))?;
-        Ok(split_expression_lines(s))
+        }
+        if let Some(s) = v.as_str() {
+            let t = s.trim();
+            if t.is_empty() {
+                return Err("program must be a non-empty string".into());
+            }
+            return Ok(t.to_string());
+        }
+        if let Some(obj) = v.as_object() {
+            if obj.contains_key("lines") {
+                return Err(
+                    "JSON {\"lines\": [...]} is not supported; send one program string or {\"program\": \"...\"}"
+                        .into(),
+                );
+            }
+            if let Some(p) = obj.get("program").and_then(|x| x.as_str()) {
+                let t = p.trim();
+                if t.is_empty() {
+                    return Err("program must be a non-empty string".into());
+                }
+                return Ok(t.to_string());
+            }
+        }
+        return Err(
+            "JSON body must be a quoted program string or {\"program\": \"...\"}".into(),
+        );
     }
+
+    let s = std::str::from_utf8(raw).map_err(|e| format!("invalid UTF-8: {e}"))?;
+    let program = s.trim();
+    if program.is_empty() {
+        return Err("program must be non-empty".into());
+    }
+    Ok(program.to_string())
 }
 
 fn plugin_execute_options_from_session(
@@ -2643,126 +2371,7 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
     }
 }
 
-/// Staged multi-line run failure: per-line errors or ordered merge after a parallel query stage.
-enum StagedExecuteError {
-    Step {
-        index: usize,
-        total: usize,
-        line: String,
-        err: RunLineError,
-    },
-    Merge {
-        err: RuntimeError,
-    },
-}
 
-fn mcp_staged_execute_error(e: StagedExecuteError) -> String {
-    match e {
-        StagedExecuteError::Step {
-            index,
-            total,
-            line,
-            err,
-        } => match err {
-            RunLineError::Parse(d) | RunLineError::Normalize(d) => format!(
-                "line {} of {total}: {d}\nexpression: {}",
-                index + 1,
-                execute_expression_preview(&line)
-            ),
-            RunLineError::Projection(d) => format!(
-                "line {} of {total}: projection enrichment failed: {d}\nexpression: {}",
-                index + 1,
-                execute_expression_preview(&line)
-            ),
-            RunLineError::Runtime(e, src) => format!(
-                "line {} of {total}: {e}\nsource expression: {src}",
-                index + 1
-            ),
-            RunLineError::ArtifactSerialization(e) => format!(
-                "line {} of {total}: artifact serialization failed: {e}",
-                index + 1
-            ),
-            RunLineError::ArtifactPersist(d) => format!(
-                "line {} of {total}: run artifact persist failed: {d}",
-                index + 1
-            ),
-        },
-        StagedExecuteError::Merge { err } => {
-            format!("graph merge after parallel stage failed: {err}")
-        }
-    }
-}
-
-fn http_staged_execute_error(
-    e: StagedExecuteError,
-    sess: &ExecuteSession,
-    prompt_hash: &PromptHashHex,
-    session_id: &ExecuteSessionId,
-) -> Response {
-    match e {
-        StagedExecuteError::Step {
-            index,
-            total,
-            line,
-            err,
-        } => match err {
-            RunLineError::Parse(d) | RunLineError::Normalize(d) => {
-                plasm_line_step_bad_request(index, total, &line, d)
-            }
-            RunLineError::Projection(d) => problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_PROJECTION_ENRICHMENT_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(format!(
-                    "line {} of {total}: projection enrichment failed: {d}\nexpression: {}",
-                    index + 1,
-                    execute_expression_preview(&line)
-                )),
-            ),
-            RunLineError::Runtime(e, _src) => execution_failed_response(
-                &e,
-                &line,
-                sess,
-                prompt_hash,
-                session_id,
-                Some(index),
-                total,
-            ),
-            RunLineError::ArtifactSerialization(e) => problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(format!(
-                    "line {} of {total}: artifact serialization failed: {e}",
-                    index + 1
-                )),
-            ),
-            RunLineError::ArtifactPersist(d) => problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(format!(
-                    "line {} of {total}: run artifact persist failed: {d}",
-                    index + 1
-                )),
-            ),
-        },
-        StagedExecuteError::Merge { err } => problem_response(
-            Problem::custom(
-                ProblemStatus::INTERNAL_SERVER_ERROR,
-                Uri::from_static(problem_types::EXECUTE_EXECUTION_FAILED),
-            )
-            .with_title("Internal Server Error")
-            .with_detail(err.to_string()),
-        ),
-    }
-}
 
 fn parse_plasm_line(
     line: &str,
@@ -3553,176 +3162,6 @@ pub(crate) async fn run_parsed_plasm_line(
     Ok((parsed, result, artifact))
 }
 
-async fn run_single_plasm_line(
-    line: &str,
-    sess: &ExecuteSession,
-    st: &PlasmHostState,
-    cache: &mut GraphCache,
-    session_id: &str,
-    trace: Option<&PlasmTraceContext>,
-    line_index: i64,
-) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
-    let wall = Instant::now();
-    let parsed = match parse_plasm_line(line, sess, st) {
-        Ok(p) => p,
-        Err(e) => {
-            let (op, ec) = run_line_error_metric_labels(&e);
-            crate::metrics::record_execute_expression_line(
-                sess.entry_id.as_str(),
-                op,
-                "error",
-                ec,
-                wall.elapsed().as_secs_f64() * 1000.0,
-                0,
-                0,
-            );
-            return Err(e);
-        }
-    };
-    run_parsed_plasm_line(
-        line, sess, st, cache, session_id, parsed, trace, line_index, None,
-    )
-    .await
-}
-
-/// Run multiple program lines with staged scheduling: consecutive parallel-safe root queries may
-/// run in a fork-merge stage; all other lines run sequentially with a fully merged session cache between stages.
-async fn execute_staged_plasm_lines(
-    expressions: &[String],
-    sess: &ExecuteSession,
-    st: &PlasmHostState,
-    session_id: &str,
-    trace: Option<&PlasmTraceContext>,
-    hub_sink: Option<&McpPlasmTraceSink>,
-) -> Result<Vec<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>)>, StagedExecuteError> {
-    let total = expressions.len();
-    let mut parsed_exprs = Vec::with_capacity(total);
-    for (index, line) in expressions.iter().enumerate() {
-        match parse_plasm_line(line, sess, st) {
-            Ok(p) => parsed_exprs.push(p),
-            Err(err) => {
-                return Err(StagedExecuteError::Step {
-                    index,
-                    total,
-                    line: line.clone(),
-                    err,
-                });
-            }
-        }
-    }
-    let flags: Vec<bool> = parsed_exprs
-        .iter()
-        .map(line_may_share_parallel_query_stage)
-        .collect();
-    let stages = build_execute_stages(&flags);
-    let mut combined: Vec<Option<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>)>> =
-        (0..total).map(|_| None).collect();
-
-    for stage in stages {
-        match stage {
-            ExecuteStage::Sequential(idx) => {
-                let mut cache = sess.graph_cache.lock().await;
-                let r = run_parsed_plasm_line(
-                    &expressions[idx],
-                    sess,
-                    st,
-                    &mut cache,
-                    session_id,
-                    parsed_exprs[idx].clone(),
-                    trace,
-                    idx as i64,
-                    None,
-                )
-                .await
-                .map_err(|err| StagedExecuteError::Step {
-                    index: idx,
-                    total,
-                    line: expressions[idx].clone(),
-                    err,
-                })?;
-                if let Some(sink) = hub_sink {
-                    let (ref parsed, ref result, _) = r;
-                    trace_emit_plasm_line(sink, idx, &expressions[idx], parsed, result, sess).await;
-                }
-                combined[idx] = Some(r);
-            }
-            ExecuteStage::Parallel(idxs) => {
-                // `join_all` interleaves concurrent futures on one task; `Span::current()` inside
-                // `run_parsed_plasm_line` can be wrong on first poll without an explicit parent chain.
-                // Attach each branch under the current span (Tower HTTP / MCP handler) so OTLP traces
-                // are not orphaned from the transport request.
-                let parallel_parent = tracing::Span::current();
-                let base = sess.graph_cache.snapshot().await;
-                let sess_c = sess.clone();
-                let st_c = st.clone();
-                let sid = session_id.to_string();
-                let futures = idxs.iter().map(|&idx| {
-                    let line = expressions[idx].clone();
-                    let parsed = parsed_exprs[idx].clone();
-                    let sess = sess_c.clone();
-                    let st = st_c.clone();
-                    let sid = sid.clone();
-                    let mut fork = base.clone();
-                    let line_fork_span = tracing::trace_span!(
-                        parent: parallel_parent.clone(),
-                        "plasm_agent.execute.parallel_plasm_line",
-                        line_index = idx,
-                    );
-                    async move {
-                        run_parsed_plasm_line(
-                            &line, &sess, &st, &mut fork, &sid, parsed, trace, idx as i64, None,
-                        )
-                        .await
-                        .map(|triple| (triple, fork))
-                    }
-                    .instrument(line_fork_span)
-                });
-                let step_results = join_all(futures).await;
-                let mut forks_ordered: Vec<GraphCache> = Vec::with_capacity(idxs.len());
-                for (k, res) in step_results.into_iter().enumerate() {
-                    let idx = idxs[k];
-                    match res {
-                        Ok((triple, fork)) => {
-                            if let Some(sink) = hub_sink {
-                                let (ref parsed, ref result, _) = triple;
-                                trace_emit_plasm_line(
-                                    sink,
-                                    idx,
-                                    &expressions[idx],
-                                    parsed,
-                                    result,
-                                    &sess_c,
-                                )
-                                .await;
-                            }
-                            combined[idx] = Some(triple);
-                            forks_ordered.push(fork);
-                        }
-                        Err(err) => {
-                            return Err(StagedExecuteError::Step {
-                                index: idx,
-                                total,
-                                line: expressions[idx].clone(),
-                                err,
-                            });
-                        }
-                    }
-                }
-                let mut g = sess.graph_cache.lock().await;
-                for fork in forks_ordered {
-                    g.merge_from_graph(&fork)
-                        .map_err(|e| StagedExecuteError::Merge { err: e })?;
-                }
-            }
-        }
-    }
-
-    Ok(combined
-        .into_iter()
-        .map(|o| o.expect("staged line planner: each line index runs exactly once"))
-        .collect())
-}
-
 fn respond_execute_result(
     kind: ExecResponseKind,
     json_value: serde_json::Value,
@@ -4495,6 +3934,72 @@ async fn get_execute_run_artifact(
     (StatusCode::OK, [(CONTENT_TYPE, header)], payload.bytes).into_response()
 }
 
+fn respond_plan_run_live_result(
+    kind: ExecResponseKind,
+    result: &crate::plasm_plan_run::PlasmPlanRunResult,
+    sess: &ExecuteSession,
+) -> Response {
+    let steps = &result.return_steps;
+    if steps.is_empty() {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::INTERNAL_SERVER_ERROR,
+                Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+            )
+            .with_title("Internal Server Error")
+            .with_detail("plan run returned no results"),
+        );
+    }
+    if steps.len() == 1 {
+        let step = &steps[0];
+        let json_value = http_execute_results_value(&step.result);
+        let cgs = step.cgs.as_deref().or(Some(sess.cgs.as_ref()));
+        let omitted = reference_only_omitted_field_names(&step.result, cgs);
+        let handles: Vec<RunArtifactHandle> = step.artifact.clone().into_iter().collect();
+        let response_meta = tool_meta_from_handles(&handles, &omitted);
+        return respond_execute_result(
+            kind,
+            json_value,
+            &step.result,
+            response_meta,
+            cgs,
+            step.artifact.as_ref(),
+        );
+    }
+    let mut step_values = Vec::with_capacity(steps.len());
+    let mut step_tables = if kind == ExecResponseKind::Table {
+        Some(Vec::with_capacity(steps.len()))
+    } else {
+        None
+    };
+    let mut step_artifacts = Vec::new();
+    let mut omitted_union: BTreeSet<String> = BTreeSet::new();
+    for step in steps {
+        if let Some(h) = &step.artifact {
+            step_artifacts.push(h.clone());
+        }
+        let cgs = step.cgs.as_deref().or(Some(sess.cgs.as_ref()));
+        step_values.push(http_execute_results_value(&step.result));
+        if let Some(ref mut tabs) = step_tables {
+            let (table, omitted, _) =
+                format_result_with_cgs(&step.result, OutputFormat::Table, cgs);
+            omitted_union.extend(omitted);
+            tabs.push(table);
+        } else {
+            omitted_union.extend(reference_only_omitted_field_names(&step.result, cgs));
+        }
+    }
+    let omitted_vec: Vec<String> = omitted_union.into_iter().collect();
+    let steps_response_meta = tool_meta_from_handles(&step_artifacts, &omitted_vec);
+    respond_staged_lines_execute_result(
+        kind,
+        step_values,
+        step_tables,
+        steps_response_meta,
+        step_artifacts.last(),
+    )
+}
+
 async fn post_run_execute_session(
     Extension(st): Extension<PlasmHostState>,
     Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
@@ -4551,7 +4056,7 @@ async fn post_run_execute_session(
 
     let content_type = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok());
 
-    let expressions = match parse_execute_lines_body(content_type, &body) {
+    let program = match parse_execute_program_body(content_type, &body) {
         Ok(v) => v,
         Err(msg) => {
             let type_uri = if msg.starts_with("invalid UTF-8:") {
@@ -4567,310 +4072,90 @@ async fn post_run_execute_session(
         }
     };
 
-    if expressions.is_empty() {
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_EMPTY_EXPRESSION),
-            )
-            .with_title("Bad Request")
-            .with_detail(
-                "no lines to run: send a non-empty text/plain body, newline-separated Plasm lines, or JSON {\"lines\":[\"...\"]}",
-            ),
-        );
-    }
-
-    if expressions.len() > MAX_PLASM_LINES_PER_REQUEST {
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_INVALID_REQUEST_BODY),
-            )
-            .with_title("Bad Request")
-            .with_detail(format!(
-                "too many lines in one request (max {MAX_PLASM_LINES_PER_REQUEST}, got {})",
-                expressions.len()
-            )),
-        );
-    }
-
-    let multiple_lines = expressions.len() > 1;
-
-    let http_trace = PlasmTraceContext {
-        trace_id: trace_id_for_http_execute_session(
-            sess.tenant_scope.as_str(),
-            prompt_hash.as_str(),
-            session_id.as_str(),
-        ),
-        call_index: None,
-        mcp_session_id: None,
-        logical_session_id: None,
-        logical_session_ref: None,
+    let plan_only = run_mode_is_plan(&headers, &run_q);
+    let plan_name = "http_execute_program";
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let plan = match crate::plasm_dag::compile_plasm_expression_to_plan(
+        pipeline,
+        Some(cross),
+        &sess,
+        plan_name,
+        &program,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            );
+        }
+    };
+    let validated = match crate::plasm_plan::parse_and_validate_plan_json(&plan) {
+        Ok(v) => v,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            );
+        }
     };
 
-    let plan_only = run_mode_is_plan(&headers, &run_q);
     if plan_only {
-        if multiple_lines {
-            let total = expressions.len();
-            let mut lines_out = Vec::with_capacity(total);
-            for (idx, line) in expressions.iter().enumerate() {
-                let parsed = match parse_plasm_line(line.as_str(), &sess, &st) {
-                    Ok(p) => p,
-                    Err(RunLineError::Parse(d)) => {
-                        return plasm_line_step_bad_request(idx, total, line, d);
-                    }
-                    Err(RunLineError::Normalize(d)) => {
-                        return plasm_line_step_bad_request(idx, total, line, d);
-                    }
-                    Err(RunLineError::Projection(d)) => {
-                        return plasm_line_step_bad_request(idx, total, line, d);
-                    }
-                    Err(RunLineError::Runtime(e, _)) => {
-                        return plasm_line_step_bad_request(idx, total, line, e.to_string());
-                    }
-                    Err(RunLineError::ArtifactSerialization(e)) => {
-                        return plasm_line_step_bad_request(idx, total, line, e.to_string());
-                    }
-                    Err(RunLineError::ArtifactPersist(d)) => {
-                        return plasm_line_step_bad_request(idx, total, line, d);
-                    }
-                };
-                let (intent, il, bindings) =
-                    match crate::execute_pipeline::ExecutePipeline::dry_preview_line(
-                        &sess,
-                        line.as_str(),
-                        &parsed,
-                    ) {
-                        Ok(v) => v,
-                        Err(te) => {
-                            return plasm_line_step_bad_request(idx, total, line, te);
-                        }
-                    };
-                lines_out.push(serde_json::json!({
-                    "index": idx + 1,
-                    "source": line,
-                    "intent": intent,
-                    "il": il,
-                    "bindings": bindings,
-                    "expression": crate::expr_display::expr_display(&parsed.expr),
-                }));
-            }
-            let preview = serde_json::json!({ "plan": true, "lines": lines_out });
-            return respond_plan_payload(kind, preview);
-        }
-        let line = expressions[0].as_str();
-        let parsed = match parse_plasm_line(line, &sess, &st) {
-            Ok(p) => p,
-            Err(RunLineError::Parse(d)) => {
+        let dry = match crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&sess, &validated) {
+            Ok(d) => d,
+            Err(e) => {
                 return problem_response(
                     Problem::custom(
                         ProblemStatus::BAD_REQUEST,
                         Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
                     )
                     .with_title("Bad Request")
-                    .with_detail(d),
-                );
-            }
-            Err(RunLineError::Normalize(d)) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(d),
-                );
-            }
-            Err(RunLineError::Projection(d)) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::INTERNAL_SERVER_ERROR,
-                        Uri::from_static(problem_types::EXECUTE_PROJECTION_ENRICHMENT_FAILED),
-                    )
-                    .with_title("Internal Server Error")
-                    .with_detail(d),
-                );
-            }
-            Err(RunLineError::Runtime(e, _src)) => {
-                return execution_failed_response(
-                    &e,
-                    line,
-                    &sess,
-                    &prompt_hash,
-                    &session_id,
-                    None,
-                    1,
-                );
-            }
-            Err(RunLineError::ArtifactSerialization(e)) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::INTERNAL_SERVER_ERROR,
-                        Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                    )
-                    .with_title("Internal Server Error")
-                    .with_detail(format!("artifact serialization failed: {e}")),
-                );
-            }
-            Err(RunLineError::ArtifactPersist(d)) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::INTERNAL_SERVER_ERROR,
-                        Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                    )
-                    .with_title("Internal Server Error")
-                    .with_detail(format!("run artifact persist failed: {d}")),
+                    .with_detail(e),
                 );
             }
         };
-        let (intent, il, bindings) =
-            match crate::execute_pipeline::ExecutePipeline::dry_preview_line(&sess, line, &parsed) {
-                Ok(v) => v,
-                Err(te) => {
-                    return problem_response(
-                        Problem::custom(
-                            ProblemStatus::BAD_REQUEST,
-                            Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                        )
-                        .with_title("Bad Request")
-                        .with_detail(te),
-                    );
-                }
-            };
         let preview = serde_json::json!({
             "plan": true,
-            "intent": intent,
-            "il": il,
-            "bindings": bindings,
-            "expression": crate::expr_display::expr_display(&parsed.expr),
-            "source": line,
+            "plan_dag": crate::plasm_plan_run::plasm_plan_dag_json(&dry),
+            "node_results": dry.node_results,
+            "graph_summary": dry.graph_summary,
+            "source": program,
         });
         return respond_plan_payload(kind, preview);
     }
 
-    if !multiple_lines {
-        let line = expressions[0].as_str();
-        let mut cache = sess.graph_cache.lock().await;
-        return match run_single_plasm_line(
-            line,
-            &sess,
-            &st,
-            &mut cache,
-            session_id.as_str(),
-            Some(&http_trace),
-            0,
-        )
-        .await
-        {
-            Ok((_parsed, result, artifact)) => {
-                let json_value = http_execute_results_value(&result);
-                let omitted = reference_only_omitted_field_names(&result, Some(sess.cgs.as_ref()));
-                let handles: &[RunArtifactHandle] = match &artifact {
-                    Some(h) => std::slice::from_ref(h),
-                    None => &[],
-                };
-                let response_meta = tool_meta_from_handles(handles, &omitted);
-                respond_execute_result(
-                    kind,
-                    json_value,
-                    &result,
-                    response_meta,
-                    Some(sess.cgs.as_ref()),
-                    artifact.as_ref(),
-                )
-            }
-            Err(RunLineError::Parse(d)) => problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(d),
-            ),
-            Err(RunLineError::Normalize(d)) => problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(d),
-            ),
-            Err(RunLineError::Projection(d)) => problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_PROJECTION_ENRICHMENT_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(d),
-            ),
-            Err(RunLineError::Runtime(e, _src)) => {
-                execution_failed_response(&e, line, &sess, &prompt_hash, &session_id, None, 1)
-            }
-            Err(RunLineError::ArtifactSerialization(e)) => problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(format!("artifact serialization failed: {e}")),
-            ),
-            Err(RunLineError::ArtifactPersist(d)) => problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
-                )
-                .with_title("Internal Server Error")
-                .with_detail(format!("run artifact persist failed: {d}")),
-            ),
-        };
-    }
-
-    let steps = match execute_staged_plasm_lines(
-        &expressions,
+    let ph_str = prompt_hash.to_string();
+    let sid_str = session_id.to_string();
+    match crate::execute_pipeline::ExecutePipeline::run_program(
         &sess,
         &st,
-        session_id.as_str(),
-        Some(&http_trace),
+        ph_str.as_str(),
+        sid_str.as_str(),
+        &validated,
+        crate::execute_pipeline::ExecutionIntent::Live,
         None,
     )
     .await
     {
-        Ok(s) => s,
-        Err(e) => return http_staged_execute_error(e, &sess, &prompt_hash, &session_id),
-    };
-    let total = steps.len();
-    let mut step_values = Vec::with_capacity(total);
-    let mut step_tables = if kind == ExecResponseKind::Table {
-        Some(Vec::with_capacity(total))
-    } else {
-        None
-    };
-    let mut step_artifacts: Vec<RunArtifactHandle> = Vec::new();
-    let mut omitted_union: BTreeSet<String> = BTreeSet::new();
-    let cgs = Some(sess.cgs.as_ref());
-    for (_parsed, result, artifact) in &steps {
-        if let Some(h) = artifact {
-            step_artifacts.push(h.clone());
-        }
-        step_values.push(http_execute_results_value(result));
-        if let Some(ref mut tabs) = step_tables {
-            let (table, omitted, _) = format_result_with_cgs(result, OutputFormat::Table, cgs);
-            omitted_union.extend(omitted);
-            tabs.push(table);
-        } else {
-            omitted_union.extend(reference_only_omitted_field_names(result, cgs));
-        }
+        Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
+        Err(e) => problem_response(
+            Problem::custom(
+                ProblemStatus::BAD_REQUEST,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Bad Request")
+            .with_detail(e),
+        ),
     }
-    let omitted_vec: Vec<String> = omitted_union.into_iter().collect();
-    let steps_response_meta = tool_meta_from_handles(&step_artifacts, &omitted_vec);
-    let last_artifact = step_artifacts.last();
-    respond_staged_lines_execute_result(
-        kind,
-        step_values,
-        step_tables,
-        steps_response_meta,
-        last_artifact,
-    )
 }
 
 #[cfg(test)]
@@ -4969,8 +4254,9 @@ mod tests {
                 artifact: None,
             }],
         );
-        assert!(out.markdown.contains("output: sorted -> p1"));
-        assert!(out.markdown.contains("owner: pokemon.Pokemon"));
+        assert!(out.markdown.contains("## sorted (0 rows)"));
+        assert!(!out.markdown.contains("output:"));
+        assert!(!out.markdown.contains("owner:"));
     }
 
     fn test_state_with_registry() -> PlasmHostState {
@@ -5163,7 +4449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn staged_parse_error_names_step_index() {
+    async fn program_parse_error_is_bad_request() {
         let st = test_state_with_registry();
         let app = test_app_execute(st.clone());
         let create = Request::builder()
@@ -5188,7 +4474,7 @@ mod tests {
             .method("POST")
             .uri(&run_uri)
             .header("accept", "application/json")
-            .body(Body::from("@@@\nProfile{}"))
+            .body(Body::from("@@@not-plasm"))
             .unwrap();
         let res2 = app.oneshot(run).await.unwrap();
         assert_eq!(res2.status(), StatusCode::BAD_REQUEST);
@@ -5198,8 +4484,8 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let detail = doc.get("detail").and_then(|d| d.as_str()).unwrap_or("");
         assert!(
-            detail.contains("line 1 of 2:"),
-            "expected line index in detail: {detail:?}"
+            detail.contains("parse") || detail.contains("Plasm program"),
+            "expected parse detail: {detail:?}"
         );
     }
 
@@ -5464,6 +4750,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_execute_program_body_rejects_lines_array() {
+        let err = parse_execute_program_body(
+            Some("application/json"),
+            br#"{"lines":["a","b"]}"#,
+        )
+        .expect_err("lines");
+        assert!(err.contains("lines"), "{err}");
+    }
+
     #[tokio::test]
     async fn unknown_entity_parse_error_includes_session_bounds() {
         let st = test_state_with_registry();
@@ -5481,25 +4777,27 @@ mod tests {
         )
         .await
         .expect("open");
-        let err = execute_session_run_markdown(
-            &st,
-            None,
-            &created.prompt_hash,
-            &created.session,
-            vec!["e9()".into()],
-            None,
-            None,
-            None,
+        let sess = st
+            .sessions
+            .get(
+                &created.prompt_hash.parse().unwrap(),
+                &created.session.parse().unwrap(),
+            )
+            .await
+            .expect("session");
+        let pipeline = st.engine.prompt_pipeline();
+        let cross = st.sessions.symbol_map_cross_cache();
+        let err = crate::plasm_dag::compile_plasm_expression_to_plan(
+            pipeline,
+            Some(cross),
+            &sess,
+            "t",
+            "e9()",
         )
-        .await
         .expect_err("out-of-range e#");
         assert!(
             err.contains("unknown entity"),
             "expected unknown entity in {err:?}"
-        );
-        assert!(
-            err.contains("e1..e1"),
-            "expected session symbol bound hint in {err:?}"
         );
     }
 

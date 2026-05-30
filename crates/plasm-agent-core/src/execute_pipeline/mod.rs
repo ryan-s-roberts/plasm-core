@@ -56,7 +56,7 @@ impl ExecutePipeline {
         .await
     }
 
-    /// Single parsed Plasm line — shared preflight, then live engine (HTTP/MCP staged lines).
+    /// Single parsed Plasm line — shared preflight, then live engine (paging follow-ups).
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_expression(
         line: &str,

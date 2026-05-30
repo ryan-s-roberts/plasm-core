@@ -46,6 +46,14 @@ pub(crate) fn plasm_paging_json_value(paging: &[PlasmPagingStepMeta]) -> Option<
     }
 }
 
+/// Machine-readable fields for truncated `_meta.plasm.steps` entries.
+#[derive(Debug, Clone)]
+pub(crate) struct StepPlasmMetaFields {
+    pub return_label: String,
+    pub display: String,
+    pub row_count: usize,
+}
+
 /// Per MCP transport session + execute session: intern repeated `_meta.plasm` strings and fingerprint lists.
 #[derive(Debug)]
 pub struct PlasmMetaIndex {
@@ -134,6 +142,7 @@ impl PlasmMetaIndex {
         expr_previews: &[String],
         run_step_numbers: Option<&[usize]>,
         paging: Option<&[PlasmPagingStepMeta]>,
+        step_meta: Option<&[StepPlasmMetaFields]>,
     ) -> (Map<String, Value>, Vec<u32>) {
         self.index_id = self.index_id.saturating_add(1);
         let mut delta = Map::new();
@@ -194,6 +203,13 @@ impl PlasmMetaIndex {
                     if !lossy.is_empty() {
                         step.insert("lossy_summary_fields".into(), json!(lossy.as_slice()));
                     }
+                }
+            }
+            if let Some(meta) = step_meta {
+                if let Some(m) = meta.get(i) {
+                    step.insert("return_label".into(), json!(m.return_label));
+                    step.insert("display".into(), json!(m.display));
+                    step.insert("row_count".into(), json!(m.row_count));
                 }
             }
             steps.push(Value::Object(step));
@@ -265,6 +281,7 @@ mod tests {
             &["".into()],
             None,
             None,
+            None,
         );
         let delta1 = m1
             .get("index_delta")
@@ -272,7 +289,7 @@ mod tests {
             .map(|o| serde_json::to_string(o).unwrap().len())
             .unwrap_or(0);
 
-        let (m2, _) = idx.build_plasm_meta(&[h], &[], None, &["".into()], None, None);
+        let (m2, _) = idx.build_plasm_meta(&[h], &[], None, &["".into()], None, None, None);
         let delta2 = m2
             .get("index_delta")
             .and_then(|v| v.as_object())
@@ -300,6 +317,7 @@ mod tests {
             &["Pet.query()".into()],
             Some(std::slice::from_ref(&1)),
             None,
+            None,
         );
         let steps = plasm
             .get("steps")
@@ -326,6 +344,7 @@ mod tests {
             &[],
             Some(std::slice::from_ref(&lossy)),
             &["".into()],
+            None,
             None,
             None,
         );
@@ -357,6 +376,7 @@ mod tests {
             &["".into()],
             None,
             Some(&paging),
+            None,
         );
         let arr = plasm
             .get("paging")

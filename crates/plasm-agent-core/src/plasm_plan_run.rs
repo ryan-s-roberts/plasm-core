@@ -503,6 +503,8 @@ pub struct PlasmPlanRunResult {
     pub run_markdown: Option<String>,
     /// Optional `CallToolResult` `_meta` map (typically includes `plasm` steps when run snapshots exist).
     pub run_plasm_meta: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Live execution return roots (for HTTP Accept mapping).
+    pub return_steps: Vec<crate::http_execute::PublishedResultStep>,
 }
 
 /// Dry-run a program plan: validate, type-check, and render simulation JSON per node.
@@ -2186,6 +2188,7 @@ pub async fn run_validated_plasm_plan(
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
+            return_steps: Vec::new(),
         });
     }
     run_validated_plan_phased(
@@ -2504,6 +2507,7 @@ async fn run_validated_plan_phased(
             artifact: mat.artifact.clone(),
         });
     }
+    let return_steps = steps.clone();
     let out = publish_plasm_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
     let plan_dag = plasm_plan_dag_json(&dry);
     let mut code_plan_run_artifacts = Vec::new();
@@ -2530,6 +2534,7 @@ async fn run_validated_plan_phased(
         code_plan_run_artifacts,
         run_markdown: Some(out.markdown),
         run_plasm_meta: out.tool_meta,
+        return_steps,
     })
 }
 
@@ -2567,8 +2572,7 @@ fn validated_return_names(ret: &ValidatedPlanReturn) -> Vec<Option<String>> {
         ValidatedPlanReturn::Node(id) => vec![Some(id.as_str().to_string())],
         ValidatedPlanReturn::Parallel { parallel } => parallel
             .iter()
-            .enumerate()
-            .map(|(i, _)| Some(format!("parallel[{i}]")))
+            .map(|id| Some(id.as_str().to_string()))
             .collect(),
     }
 }

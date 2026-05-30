@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.58] - 2026-05-29
+
+### Changed
+
+- **Single DAG execute pipeline:** MCP `plasm` / `plasm_run`, HTTP `POST /execute/:prompt_hash/:session`, and resolved-plan CLI runs all go through `compile_plasm_expression_to_plan` → `ExecutePipeline::run_program` (no comma-root split, staged lines, or `execute_session_run_markdown`).
+- **HTTP execute body:** one program only — `text/plain`, JSON string, or `{"program":"..."}`; JSON `lines` arrays and top-level string arrays return **400**.
+- **Slim run Markdown:** return-label headers (`## sorted (12 rows)` / `# Results` + `### …`) plus table/TSV only — no REPL `output:`, `owner:`, `→`, projection, or raw source in MCP/CLI `run_markdown`.
+- **Parallel return labels:** plan publication uses binding node ids (not `parallel[i]`).
+- **`_meta.plasm.steps`:** truncated snapshot steps include `return_label`, `display`, and `row_count`.
+
 ## [0.1.57] - 2026-05-29
 
 ### Changed
