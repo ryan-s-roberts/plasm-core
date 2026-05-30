@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.59] - 2026-05-30
+
+### Changed
+
+- **Registry aliases:** optional `registry_aliases:` in `domain.yaml` (e.g. `pokemon` → `pokeapi`); `plasm_context` resolves seeds before tenant ACL.
+- **Discover:** entity summaries keyed by `(entry_id, entity)`; MCP table uses round-robin fair-share across catalogs; federated truncation hint improved.
+- **DOMAIN waves:** omit full TSV on reused execute open; intent-gated mutations on seeded entities (reads still always exposed).
+- **Dry-run:** projection highlight line; `_meta.plasm.unused_seeds` / `projection_warning`; resolved `cap=` in DAG for federated queries; GitHub auth-scoped repo list boundedness note.
+
+### Fixed
+
+- **Discover descriptions:** cross-catalog entity name collisions (e.g. `linear/Issue` no longer inherits GitHub Issue text).
+
 ## [0.1.58] - 2026-05-29
 
 ### Changed

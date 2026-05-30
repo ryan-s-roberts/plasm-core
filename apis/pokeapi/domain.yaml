@@ -2,6 +2,9 @@ version: 1
 auth:
   scheme: none
 http_backend: https://pokeapi.co
+registry_aliases:
+- pokemon
+- poke-api
 entities:
   Ability:
     id_field: name

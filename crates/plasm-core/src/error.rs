@@ -66,6 +66,9 @@ pub enum SchemaError {
     #[error("Duplicate entity name: '{name}'")]
     DuplicateEntity { name: String },
 
+    #[error("registry_aliases entry '{alias}': {message}")]
+    RegistryAliasInvalid { alias: String, message: String },
+
     #[error("Capability '{capability}' preflight: {message}")]
     PreflightInvalid { capability: String, message: String },
 

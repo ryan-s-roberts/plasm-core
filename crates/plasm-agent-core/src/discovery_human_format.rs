@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use indexmap::IndexMap;
 use plasm_core::discovery::{Ambiguity, DiscoveryResult, EntitySummary, RankedCandidate};
 
 /// MCP entity `description` column: max chars (Unicode scalars).
@@ -61,11 +62,12 @@ fn mcp_discovery_tsv_field(s: &str, max_chars: usize) -> String {
 
 fn entity_summary_description<'a>(
     entity_summaries: &'a [EntitySummary],
+    entry_id: &str,
     entity: &str,
 ) -> Option<&'a str> {
     entity_summaries
         .iter()
-        .find(|e| e.name == entity)
+        .find(|e| e.entry_id == entry_id && e.name == entity)
         .map(|e| e.description.as_str())
 }
 
@@ -86,24 +88,54 @@ fn apply_discovery_table_policy(
     rows: Vec<(String, String)>,
     policy: &DiscoveryTablePolicy,
 ) -> (Vec<(String, String)>, DiscoveryOmissionMeta) {
+    if rows.is_empty() {
+        return (Vec::new(), DiscoveryOmissionMeta::default());
+    }
+
+    let mut groups: IndexMap<String, Vec<(String, String)>> = IndexMap::new();
+    for row in rows {
+        groups.entry(row.0.clone()).or_default().push(row);
+    }
+    let catalog_ids: Vec<String> = groups.keys().cloned().collect();
+
     let mut per_entry: HashMap<String, usize> = HashMap::new();
     let mut shown = Vec::new();
     let mut omitted = Vec::new();
 
-    for (entry_id, entity) in rows {
+    loop {
         if shown.len() >= policy.max_rows {
-            omitted.push((entry_id, entity));
-            continue;
+            break;
         }
-        if let Some(cap) = policy.max_per_entry {
-            let n = per_entry.entry(entry_id.clone()).or_insert(0);
-            if *n >= cap {
-                omitted.push((entry_id, entity));
+        let mut picked_any = false;
+        for eid in &catalog_ids {
+            if shown.len() >= policy.max_rows {
+                break;
+            }
+            if let Some(cap) = policy.max_per_entry {
+                if per_entry.get(eid).copied().unwrap_or(0) >= cap {
+                    continue;
+                }
+            }
+            let Some(queue) = groups.get_mut(eid) else {
+                continue;
+            };
+            if queue.is_empty() {
                 continue;
             }
-            *n += 1;
+            let row = queue.remove(0);
+            *per_entry.entry(eid.clone()).or_insert(0) += 1;
+            shown.push(row);
+            picked_any = true;
         }
-        shown.push((entry_id, entity));
+        if !picked_any {
+            break;
+        }
+    }
+
+    for queue in groups.values_mut() {
+        for row in queue.drain(..) {
+            omitted.push(row);
+        }
     }
 
     let omission = DiscoveryOmissionMeta {
@@ -130,7 +162,7 @@ fn discovery_capability_tsv_for_rows(
 ) -> String {
     let mut lines = vec!["api\tentity\tdescription".to_string()];
     for (eid, entity) in rows {
-        let description = entity_summary_description(entity_summaries, entity)
+        let description = entity_summary_description(entity_summaries, eid, entity)
             .map(|raw| mcp_discovery_tsv_field(raw, MCP_DISCOVERY_ENTITY_SUMMARY_MAX))
             .unwrap_or_default();
         lines.push(format!(
@@ -191,7 +223,7 @@ fn discovery_markdown_body(
         s.push_str("\n```\n\n");
         if omission.truncated {
             s.push_str(&format!(
-                "_Showing top {} discovery rows ({} omitted). Narrow `intent` or use `typed: true` for disambiguation._\n\n",
+                "_Showing top {} discovery rows ({} omitted). Federated intents may need a second discover with narrower intent per `api`, or `typed: true` for disambiguation._\n\n",
                 omission.shown, omission.omitted
             ));
         }
@@ -239,14 +271,17 @@ mod tests {
             schema_neighborhoods: vec![],
             entity_summaries: vec![
                 EntitySummary {
+                    entry_id: "demo".into(),
                     name: "Widget".into(),
                     description: "Widget summary.".into(),
                 },
                 EntitySummary {
+                    entry_id: "demo".into(),
                     name: "Gadget".into(),
                     description: "Gadget summary.".into(),
                 },
                 EntitySummary {
+                    entry_id: "demo".into(),
                     name: "Gizmo".into(),
                     description: "Gizmo summary.".into(),
                 },
@@ -341,5 +376,59 @@ mod tests {
         assert_eq!(formatted.omission.shown, 3);
         assert_eq!(formatted.omission.omitted, 17);
         assert!(formatted.markdown.contains("17 omitted"));
+    }
+
+    #[test]
+    fn mcp_discovery_federated_fair_share_includes_each_catalog() {
+        let r = sample_result(vec![
+            RankedCandidate {
+                entry_id: "github".into(),
+                entity: "Repository".into(),
+                capability_name: "repo_search".into(),
+                score: 100,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+            RankedCandidate {
+                entry_id: "github".into(),
+                entity: "Issue".into(),
+                capability_name: "issue_search".into(),
+                score: 99,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+            RankedCandidate {
+                entry_id: "linear".into(),
+                entity: "Issue".into(),
+                capability_name: "issue_search".into(),
+                score: 98,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+            RankedCandidate {
+                entry_id: "pokeapi".into(),
+                entity: "Pokemon".into(),
+                capability_name: "pokemon_query".into(),
+                score: 97,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+        ]);
+        let formatted = format_discovery_markdown_for_mcp(
+            &r,
+            &DiscoveryTablePolicy {
+                max_rows: 3,
+                max_per_entry: Some(8),
+            },
+        );
+        let lines: Vec<_> = formatted
+            .markdown
+            .lines()
+            .filter(|l| l.contains('\t') && !l.starts_with("api\t"))
+            .collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().any(|l| l.starts_with("github\t")));
+        assert!(lines.iter().any(|l| l.starts_with("linear\t")));
+        assert!(lines.iter().any(|l| l.starts_with("pokeapi\t")));
     }
 }

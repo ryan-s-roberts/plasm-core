@@ -1411,6 +1411,7 @@ impl PlasmMcpHandler {
                                         let dry_text = render_plasm_plan_dry_text_with_guidance(
                                             &dry,
                                             None,
+                                            Some(&es),
                                             guidance_mode,
                                         );
                                         let guidance = plasm_plan_review_guidance_lines_with_mode(
@@ -1440,6 +1441,30 @@ impl PlasmMcpHandler {
                                         let mut plasm_obj = serde_json::Map::new();
                                         plasm_obj.insert("dry_run".into(), serde_json::json!(true));
                                         plasm_obj.insert("plan".into(), plan_json.clone());
+                                        if dry
+                                            .graph_summary
+                                            .get("dry_review")
+                                            .and_then(|v| v.get("has_unprojected_multi_row_read"))
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false)
+                                        {
+                                            plasm_obj.insert(
+                                                "projection_warning".into(),
+                                                serde_json::json!(true),
+                                            );
+                                        }
+                                        if let Some(unused) = dry
+                                            .graph_summary
+                                            .get("unused_seeds")
+                                            .and_then(|v| v.as_array())
+                                        {
+                                            if !unused.is_empty() {
+                                                plasm_obj.insert(
+                                                    "unused_seeds".into(),
+                                                    serde_json::Value::Array(unused.clone()),
+                                                );
+                                            }
+                                        }
                                         plasm_obj.insert(
                                             "guidance".into(),
                                             serde_json::Value::Array(
@@ -1586,6 +1611,18 @@ impl PlasmMcpHandler {
         let seeds = parse_tool_seeds(tname, v)?;
         let ranked_capabilities = parse_plasm_context_ranked_capabilities(tname, v)?;
         let principal = parse_optional_principal(v);
+        let tcfg = self.tenant_mcp_cfg(runtime).await?;
+        let allowed_ids: Option<Vec<String>> = tcfg.as_ref().map(|cfg| {
+            let mut ids: Vec<String> = cfg.allowed_entry_ids.iter().cloned().collect();
+            ids.sort();
+            ids
+        });
+        let seeds = crate::http_execute::resolve_capability_seeds(
+            seeds,
+            self.plasm.catalog.snapshot().as_ref(),
+            allowed_ids.as_deref(),
+        )
+        .map_err(CallToolError::from_message)?;
         let distinct_entries: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
             let mut out = Vec::new();
@@ -1596,7 +1633,6 @@ impl PlasmMcpHandler {
             }
             out
         };
-        let tcfg = self.tenant_mcp_cfg(runtime).await?;
         if let Some(ref cfg) = tcfg {
             for eid in &distinct_entries {
                 if !cfg.entry_allowed(eid) {
@@ -1671,6 +1707,30 @@ impl PlasmMcpHandler {
             .await;
 
         let mut text = String::new();
+        let total_domain_chars: u64 = out
+            .waves
+            .iter()
+            .map(|w| w.domain_prompt_chars_added)
+            .sum();
+        let exposed_entities: usize = out
+            .waves
+            .iter()
+            .flat_map(|w| w.entities.iter())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        let catalog_count = {
+            let mut ids = std::collections::BTreeSet::new();
+            for w in &out.waves {
+                ids.insert(w.entry_id.as_str());
+            }
+            ids.len()
+        };
+        if exposed_entities > 0 {
+            text.push_str(&format!(
+                "_Exposed {exposed_entities} entit{} across {catalog_count} catalog(s) (~{total_domain_chars} DOMAIN chars this response)._\n\n",
+                if exposed_entities == 1 { "y" } else { "ies" }
+            ));
+        }
         for wave in &out.waves {
             if !wave.markdown_delta.is_empty() {
                 text.push_str(&wave.markdown_delta);
@@ -2911,6 +2971,7 @@ mod tests {
             closure_stats: None,
             schema_neighborhoods: vec![],
             entity_summaries: vec![EntitySummary {
+                entry_id: "demo".into(),
                 name: "Widget".into(),
                 description: " A contrived \t widget \n line ".into(),
             }],

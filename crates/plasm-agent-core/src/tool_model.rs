@@ -1495,6 +1495,7 @@ mod tests {
             label: "Overshow".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            aliases: vec![],
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1522,6 +1523,7 @@ mod tests {
             label: "Gmail".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            aliases: vec![],
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1553,6 +1555,7 @@ mod tests {
             label: "PokeAPI Mini".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            aliases: vec![],
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1589,6 +1592,7 @@ mod tests {
             label: "GitHub".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            aliases: vec![],
         };
         let q = ToolModelQuery {
             focus: "all".into(),
@@ -1626,6 +1630,7 @@ mod tests {
             label: "Notion".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            aliases: vec![],
         };
         let q = ToolModelQuery {
             focus: "all".into(),

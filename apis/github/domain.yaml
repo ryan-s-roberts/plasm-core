@@ -6,7 +6,7 @@ entities:
     key_vars:
     - owner
     - repo
-    description: A GitHub repository
+    description: A GitHub repository (bare list reads use repos visible to the authenticated token, not all of GitHub)
     fields:
       id:
         required: true

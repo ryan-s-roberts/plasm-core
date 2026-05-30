@@ -92,6 +92,8 @@ pub struct CatalogEntryMeta {
     pub label: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     /// Stable digest of the loaded CGS (`CGS::catalog_cgs_hash_hex`); bumps when the graph changes.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub catalog_cgs_hash: String,
@@ -134,6 +136,7 @@ pub struct RankedCandidate {
 /// One entity’s CGS description for choosing `POST /execute` `entities` without mining full CGS JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntitySummary {
+    pub entry_id: String,
     pub name: String,
     pub description: String,
 }
@@ -214,6 +217,7 @@ pub trait CgsDiscovery: Send + Sync {
 struct RegistryRow {
     label: String,
     tags: Vec<String>,
+    aliases: Vec<String>,
     cgs: Arc<CGS>,
     catalog_cgs_hash: String,
 }
@@ -259,28 +263,37 @@ fn build_entity_summaries(
     entries: &IndexMap<String, RegistryRow>,
     neighborhoods: &[DiscoverySchemaNeighborhood],
 ) -> Vec<EntitySummary> {
-    let mut by_name: IndexMap<String, String> = IndexMap::new();
+    let mut by_key: IndexMap<(String, String), String> = IndexMap::new();
     for n in neighborhoods {
         let Some(row) = entries.get(&n.entry_id) else {
             continue;
         };
         let cgs = row.cgs.as_ref();
         for name in &n.focused_entities {
-            if by_name.contains_key(name) {
+            let key = (n.entry_id.clone(), name.clone());
+            if by_key.contains_key(&key) {
                 continue;
             }
             let desc = cgs
                 .get_entity(name.as_str())
                 .map(|e| truncate_discovery_description(&e.description))
                 .unwrap_or_default();
-            by_name.insert(name.clone(), desc);
+            by_key.insert(key, desc);
         }
     }
-    let mut v: Vec<EntitySummary> = by_name
+    let mut v: Vec<EntitySummary> = by_key
         .into_iter()
-        .map(|(name, description)| EntitySummary { name, description })
+        .map(|((entry_id, name), description)| EntitySummary {
+            entry_id,
+            name,
+            description,
+        })
         .collect();
-    v.sort_by(|a, b| a.name.cmp(&b.name));
+    v.sort_by(|a, b| {
+        a.entry_id
+            .cmp(&b.entry_id)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     v
 }
 
@@ -298,17 +311,77 @@ impl InMemoryCgsRegistry {
         let mut map = IndexMap::new();
         for (id, label, tags, cgs) in pairs {
             let catalog_cgs_hash = cgs.catalog_cgs_hash_hex();
+            let aliases = cgs.registry_aliases.clone();
             map.insert(
                 id.clone(),
                 RegistryRow {
                     label,
                     tags,
+                    aliases,
                     cgs,
                     catalog_cgs_hash,
                 },
             );
         }
         Self { entries: map }
+    }
+
+    /// Resolve a raw catalog id (entry_id, alias, label, or tag) to the canonical registry `entry_id`.
+    ///
+    /// When `allowed_entry_ids` is non-empty, only those catalogs are considered (tenant MCP scope).
+    pub fn resolve_entry_id(
+        &self,
+        raw: &str,
+        allowed_entry_ids: Option<&[String]>,
+    ) -> Result<String, DiscoveryError> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err(DiscoveryError::UnknownEntry(String::new()));
+        }
+
+        let allowed: Option<std::collections::HashSet<&str>> = allowed_entry_ids.map(|ids| {
+            ids.iter()
+                .map(|s| s.as_str())
+                .collect::<std::collections::HashSet<_>>()
+        });
+
+        let is_allowed = |id: &str| allowed.as_ref().is_none_or(|a| a.contains(id));
+
+        if self.entries.contains_key(raw) && is_allowed(raw) {
+            return Ok(raw.to_string());
+        }
+
+        let mut matches: Vec<String> = Vec::new();
+        for (id, row) in &self.entries {
+            if !is_allowed(id.as_str()) {
+                continue;
+            }
+            let hit = id.eq_ignore_ascii_case(raw)
+                || row.label.eq_ignore_ascii_case(raw)
+                || row.tags.iter().any(|t| t.eq_ignore_ascii_case(raw))
+                || row.aliases.iter().any(|a| a.eq_ignore_ascii_case(raw));
+            if hit {
+                matches.push(id.clone());
+            }
+        }
+        matches.sort();
+        matches.dedup();
+
+        match matches.len() {
+            1 => Ok(matches[0].clone()),
+            0 => {
+                let hint = suggest_entry_id(raw, self, allowed.as_ref());
+                Err(DiscoveryError::UnknownEntry(if hint.is_empty() {
+                    raw.to_string()
+                } else {
+                    format!("{raw} ({hint})")
+                }))
+            }
+            _ => Err(DiscoveryError::UnknownEntry(format!(
+                "{raw} (ambiguous: {})",
+                matches.join(", ")
+            ))),
+        }
     }
 
     /// First catalog entry's CGS in insertion order (YAML / `from_pairs` order).
@@ -319,6 +392,58 @@ impl InMemoryCgsRegistry {
     }
 }
 
+fn suggest_entry_id(
+    raw: &str,
+    reg: &InMemoryCgsRegistry,
+    allowed: Option<&std::collections::HashSet<&str>>,
+) -> String {
+    let raw_l = raw.to_ascii_lowercase();
+    let mut best: Option<(u32, String)> = None;
+    for (id, row) in &reg.entries {
+        if allowed.is_some_and(|a| !a.contains(id.as_str())) {
+            continue;
+        }
+        let candidates = [id.as_str(), row.label.as_str()]
+            .into_iter()
+            .chain(row.aliases.iter().map(|s| s.as_str()))
+            .chain(row.tags.iter().map(|s| s.as_str()));
+        for cand in candidates {
+            let dist = levenshtein_ascii(&raw_l, &cand.to_ascii_lowercase());
+            if dist <= 3 {
+                if best.as_ref().is_none_or(|(d, _)| dist < *d) {
+                    best = Some((dist, id.clone()));
+                }
+            }
+        }
+    }
+    best.map(|(_, id)| format!("did you mean `{id}`?"))
+        .unwrap_or_default()
+}
+
+fn levenshtein_ascii(a: &str, b: &str) -> u32 {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len() as u32;
+    }
+    if b.is_empty() {
+        return a.len() as u32;
+    }
+    let mut prev: Vec<u32> = (0..=b.len()).map(|i| i as u32).collect();
+    let mut cur = vec![0u32; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = (i + 1) as u32;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1)
+                .min(cur[j] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
 impl CgsCatalog for InMemoryCgsRegistry {
     fn list_entries(&self) -> Vec<CatalogEntryMeta> {
         self.entries
@@ -327,6 +452,7 @@ impl CgsCatalog for InMemoryCgsRegistry {
                 entry_id: id.clone(),
                 label: row.label.clone(),
                 tags: row.tags.clone(),
+                aliases: row.aliases.clone(),
                 catalog_cgs_hash: row.catalog_cgs_hash.clone(),
             })
             .collect()
@@ -337,6 +463,7 @@ impl CgsCatalog for InMemoryCgsRegistry {
             entry_id: entry_id.to_string(),
             label: row.label.clone(),
             tags: row.tags.clone(),
+            aliases: row.aliases.clone(),
             catalog_cgs_hash: row.catalog_cgs_hash.clone(),
         })
     }
@@ -897,10 +1024,7 @@ fn seed_entity_surface_always_includes(
     }
     if matches!(
         cap.kind,
-        CapabilityKind::Query
-            | CapabilityKind::Search
-            | CapabilityKind::Get
-            | CapabilityKind::Create
+        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
     ) {
         return true;
     }
@@ -911,9 +1035,9 @@ fn seed_entity_surface_always_includes(
 
 /// Minimal intent-filtered DOMAIN surface for MCP `plasm_context` / incremental expand waves.
 ///
-/// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` / `create` on that
-///   entity’s domain, plus [`EntityDef::primary_read`] when set. Ranked-capability gate does not drop
-///   these (explicit `{ api, entity }` seed = entity in play).
+/// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` on that
+///   entity’s domain, plus [`EntityDef::primary_read`] when set. Seeded `create` / `update` /
+///   `delete` / `action` require intent lexicon overlap (or ranked-capability gate when enabled).
 /// - **Non-seeded** read capabilities require a non-zero lexicon overlap score against `intent`.
 /// - **Non-seeded** mutating capabilities require a non-zero score; with `ranked_capability_gate`,
 ///   when `ranked_capability_names` is non-empty they must also appear in that list.
@@ -1258,7 +1382,7 @@ mod tests {
     }
 
     #[test]
-    fn intent_surface_seeded_prompt_run_includes_create_without_intent_lexicon_match() {
+    fn intent_surface_seeded_prompt_run_create_requires_intent_overlap() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
@@ -1272,12 +1396,28 @@ mod tests {
             None,
         );
         assert!(
-            delta
+            !delta
                 .required
                 .capabilities
                 .iter()
                 .any(|c| c.capability.as_str() == "prompt_run_create"),
-            "seeded PromptRun must expose prompt_run_create even when intent does not score it"
+            "seeded PromptRun create must require intent overlap"
+        );
+        let delta_create = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "create and execute a new prompt run",
+            &endpoints,
+            &["PromptRun".to_string()],
+            None,
+        );
+        assert!(
+            delta_create
+                .required
+                .capabilities
+                .iter()
+                .any(|c| c.capability.as_str() == "prompt_run_create"),
+            "seeded PromptRun create should appear when intent scores it"
         );
     }
 
@@ -1538,7 +1678,7 @@ mod tests {
     }
 
     #[test]
-    fn intent_surface_seeded_sharelink_create_without_intent_lexicon_match() {
+    fn intent_surface_seeded_sharelink_create_requires_intent_overlap() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
         if !dir.is_dir() {
             return;
@@ -1555,8 +1695,43 @@ mod tests {
             None,
         );
         assert!(
+            !surface_has_capability(&delta, "ShareLink", "share_link_create"),
+            "seeded create must require intent overlap when intent omits share/link/create tokens"
+        );
+        let delta_create = derive_intent_exposure_surface_batch(
+            &cgs,
+            "proof",
+            "create share link for proof dossier",
+            &endpoints,
+            &["ShareLink".to_string()],
+            None,
+        );
+        assert!(
+            surface_has_capability(&delta_create, "ShareLink", "share_link_create"),
+            "seeded create should appear when intent scores the mutation"
+        );
+    }
+
+    #[test]
+    fn intent_surface_seeded_sharelink_create_with_intent_lexicon_match() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs = load_schema_dir(&dir).expect("proof");
+        cgs.entry_id = Some("proof".into());
+        let endpoints = vec!["ShareLink".to_string()];
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "proof",
+            "create share link for proof dossier",
+            &endpoints,
+            &["ShareLink".to_string()],
+            None,
+        );
+        assert!(
             surface_has_capability(&delta, "ShareLink", "share_link_create"),
-            "seeded ShareLink must expose share_link_create even when intent omits share/link/create tokens"
+            "seeded ShareLink must expose share_link_create when intent scores create"
         );
         let session = crate::symbol_tuning::DomainExposureSession::new_with_intent_delta(
             &cgs,
@@ -1600,7 +1775,7 @@ mod tests {
 
     #[cfg(feature = "ranked_capability_gate")]
     #[test]
-    fn intent_surface_ranked_gate_does_not_drop_seeded_sharelink_create() {
+    fn intent_surface_ranked_gate_excludes_seeded_create_when_not_ranked() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
         if !dir.is_dir() {
             return;
@@ -1611,14 +1786,35 @@ mod tests {
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "proof",
-            FEDERATED_FIELD_LAB_INTENT,
+            "create share link for proof dossier",
             &endpoints,
             &["ShareLink".to_string()],
             Some(&ranked),
         );
         assert!(
-            surface_has_capability(&delta, "ShareLink", "share_link_create"),
-            "ranked gate must not drop seeded-entity share_link_create"
+            !surface_has_capability(&delta, "ShareLink", "share_link_create"),
+            "ranked gate excludes seeded-entity mutations not present in ranked_capabilities"
+        );
+    }
+
+    #[test]
+    fn resolve_entry_id_alias_pokemon_to_pokeapi() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs = load_schema_dir(&dir).expect("pokeapi");
+        cgs.entry_id = Some("pokeapi".into());
+        cgs.registry_aliases = vec!["pokemon".into(), "poke-api".into()];
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "pokeapi".into(),
+            "PokeAPI".into(),
+            vec![],
+            Arc::new(cgs),
+        )]);
+        assert_eq!(
+            reg.resolve_entry_id("pokemon", None).expect("resolve"),
+            "pokeapi"
         );
     }
 }

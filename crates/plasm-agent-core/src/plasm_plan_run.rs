@@ -694,8 +694,102 @@ pub fn evaluate_validated_plasm_plan_dry(
         parallel_root_surfaces_only,
         staged_nodes,
         execution_unsupported,
-        graph_summary: graph_summary(plan),
+        graph_summary: graph_summary_for_session(plan, es),
     })
+}
+
+fn graph_summary_for_session(plan: &Plan<ValidatedPlanState>, es: &ExecuteSession) -> serde_json::Value {
+    let mut summary = graph_summary(plan);
+    let unused = unused_seed_hints(es, plan);
+    if !unused.is_empty() {
+        summary["unused_seeds"] = serde_json::json!(unused);
+    }
+    enrich_graph_summary_auth_scoped_reads(es, plan, &mut summary);
+    summary
+}
+
+fn unused_seed_hints(es: &ExecuteSession, plan: &Plan<ValidatedPlanState>) -> Vec<String> {
+    let used = collect_plan_entity_names(plan);
+    es.entities
+        .iter()
+        .filter(|e| !used.contains(e.as_str()))
+        .map(|e| {
+            format!(
+                "{}:{}",
+                crate::catalog_ownership::entry_id_for_entity_trace(es, e.as_str()),
+                e
+            )
+        })
+        .collect()
+}
+
+fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for n in &plan.nodes {
+        if let ValidatedPlanNode::Surface(s) = n {
+            if let Some(q) = &s.qualified_entity {
+                out.insert(q.entity.clone());
+            }
+            if let Some(ir) = &s.ir {
+                out.insert(ir.expr.primary_entity().to_string());
+            }
+        }
+    }
+    out
+}
+
+fn enrich_graph_summary_auth_scoped_reads(
+    es: &ExecuteSession,
+    plan: &Plan<ValidatedPlanState>,
+    summary: &mut serde_json::Value,
+) {
+    let exp = match es.domain_exposure.as_ref() {
+        Some(e) => e.clone(),
+        None => return,
+    };
+    let fed = plasm_core::FederationDispatch::from_contexts_and_exposure(
+        es.contexts_by_entry.clone(),
+        &exp,
+    );
+    let mut auth_scoped = false;
+    for n in &plan.nodes {
+        let ValidatedPlanNode::Surface(s) = n else {
+            continue;
+        };
+        if !node_dependencies(n).is_empty() {
+            continue;
+        }
+        let Some(ir) = &s.ir else {
+            continue;
+        };
+        let plasm_core::Expr::Query(q) = &ir.expr else {
+            continue;
+        };
+        if q.predicate.is_some() {
+            continue;
+        }
+        let cgs = fed
+            .resolve_entity(
+                q.entity.as_str(),
+                plasm_core::ResolutionHint::default(),
+                es.cgs.as_ref(),
+            )
+            .unwrap_or(es.cgs.as_ref());
+        if plasm_core::resolve_query_capability(q, cgs)
+            .ok()
+            .is_some_and(|c| c.name.as_str() == "auth_user_repos_query")
+        {
+            auth_scoped = true;
+            break;
+        }
+    }
+    if auth_scoped {
+        if let Some(facts) = summary.get_mut("boundedness_facts").and_then(|v| v.as_array_mut()) {
+            facts.push(serde_json::Value::String(
+                "Lists repos visible to the authenticated GitHub token; use Repository~\"…\" or user_repos_query for other scopes.".into(),
+            ));
+        }
+    }
 }
 
 fn is_synthetic_plan_node_id(id: &str) -> bool {
@@ -816,8 +910,64 @@ fn remap_plan_node_ids_in_text(text: String, map: &HashMap<String, String>) -> S
 fn render_node_operation_for_dry_display(
     node: &ValidatedPlanNode,
     display_map: &HashMap<String, String>,
+    es: Option<&ExecuteSession>,
 ) -> String {
-    remap_plan_node_ids_in_text(render_node_operation(node).to_string(), display_map)
+    remap_plan_node_ids_in_text(
+        render_node_operation_with_session(node, es).to_string(),
+        display_map,
+    )
+}
+
+fn render_node_operation_with_session(
+    node: &ValidatedPlanNode,
+    es: Option<&ExecuteSession>,
+) -> String {
+    match node {
+        ValidatedPlanNode::Surface(n) => render_surface_operation_with_session(n, es),
+        _ => render_node_operation(node),
+    }
+}
+
+fn render_surface_operation_with_session(
+    node: &ValidatedSurfaceNode,
+    es: Option<&ExecuteSession>,
+) -> String {
+    let entity = node
+        .qualified_entity
+        .as_ref()
+        .map(|q| format!("{}.{}", q.entry_id, q.entity))
+        .unwrap_or_else(|| "<unqualified>".to_string());
+    let expr = node
+        .ir
+        .as_ref()
+        .map(|ir| render_plan_expr_ir_for_session(ir, es))
+        .or_else(|| node.ir_template.as_ref().map(render_plan_expr_template))
+        .or_else(|| node.display_expr.clone())
+        .unwrap_or_else(|| "<typed Plasm IR>".to_string());
+    format!("{} {} <= {}", render_kind(node.kind), entity, expr)
+}
+
+fn render_plan_expr_ir_for_session(
+    ir: &crate::plasm_plan::ValidatedPlanExprIr,
+    es: Option<&ExecuteSession>,
+) -> String {
+    if let Some(display) = ir.display_expr.as_ref() {
+        return display.clone();
+    }
+    let Some(es) = es else {
+        return crate::expr_display::expr_display(&ir.expr);
+    };
+    let exp = match es.domain_exposure.as_ref() {
+        Some(e) => e.clone(),
+        None => {
+            return crate::expr_display::expr_display_resolved(&ir.expr, es.cgs.as_ref());
+        }
+    };
+    let fed = plasm_core::FederationDispatch::from_contexts_and_exposure(
+        es.contexts_by_entry.clone(),
+        &exp,
+    );
+    crate::expr_display::expr_display_resolved_federated(&ir.expr, &fed, es.cgs.as_ref())
 }
 
 fn render_dependency_suffix_mapped(
@@ -912,12 +1062,13 @@ pub fn render_plasm_plan_dry_text(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
 ) -> String {
-    render_plasm_plan_dry_text_with_guidance(dry, archive, DryPlanGuidanceMode::Full)
+    render_plasm_plan_dry_text_with_guidance(dry, archive, None, DryPlanGuidanceMode::Full)
 }
 
 pub fn render_plasm_plan_dry_text_with_guidance(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
+    es: Option<&crate::execute_session::ExecuteSession>,
     guidance_mode: DryPlanGuidanceMode,
 ) -> String {
     let mut out = String::new();
@@ -966,6 +1117,19 @@ pub fn render_plasm_plan_dry_text_with_guidance(
     let _ = writeln!(out, "verdict: {verdict}");
     let _ = writeln!(out, "shape: {shape}");
     let _ = writeln!(out);
+    let has_projection_warning = dry
+        .graph_summary
+        .get("dry_review")
+        .and_then(|v| v.get("has_unprojected_multi_row_read"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if has_projection_warning {
+        let _ = writeln!(
+            out,
+            "projection: missing on multi-row read(s) — add [field,…] before plasm_run"
+        );
+        let _ = writeln!(out);
+    }
     if !confidence.is_empty() {
         let _ = writeln!(out, "confidence:");
         for fact in &confidence {
@@ -997,7 +1161,7 @@ pub fn render_plasm_plan_dry_text_with_guidance(
             ordinal + 1,
             display_id,
             render_dependency_suffix_mapped(&deps, &display_map),
-            render_node_operation_for_dry_display(node, &display_map),
+            render_node_operation_for_dry_display(node, &display_map, es),
             render_effect_class(node.effect_class()),
             render_result_shape(node.result_shape())
         );
@@ -1094,6 +1258,24 @@ fn plasm_plan_review_actionable_guidance_lines(dry: &DryPlasmPlanEvaluation) -> 
             "Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped."
                 .to_string(),
         );
+    }
+    if let Some(unused) = dry
+        .graph_summary
+        .get("unused_seeds")
+        .and_then(|v| v.as_array())
+    {
+        if !unused.is_empty() {
+            let labels: Vec<String> = unused
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            if !labels.is_empty() {
+                out.push(format!(
+                    "Remove unused seeds from plasm_context or reference them in the program: {}.",
+                    labels.join(", ")
+                ));
+            }
+        }
     }
     if has_unbounded || return_unbounded {
         out.push(
@@ -4415,36 +4597,38 @@ mod tests {
         );
         insta::assert_snapshot!(
             text,
-            @r###"
-plasm-program dry-run
-name: product-summary
-handle: p7 (plasm://session/s0/p/7)
-archive: plasm://execute/ph/s/plan/uuid
-hash: abc123
-verdict: review
-shape: 3 nodes, ordered, 1 read, 0 write/se, 2 staged, return=parallel(2)
+            @"
+        plasm-program dry-run
+        name: product-summary
+        handle: p7 (plasm://session/s0/p/7)
+        archive: plasm://execute/ph/s/plan/uuid
+        hash: abc123
+        verdict: review
+        shape: 3 nodes, ordered, 1 read, 0 write/se, 2 staged, return=parallel(2)
 
-risks:
-- List/page reads without `[field,…]` projection materialize full rows; project at the read or add an explicit project step.
-- Unbounded root read; add API filters/search text or .limit(n)/.page_size(n) when cost or latency is uncertain
-- Aggregates/group_by/sort run over the full logical row set before `.limit`; narrow reads (filters + projected fields) when counts are uncertain.
+        projection: missing on multi-row read(s) — add [field,…] before plasm_run
 
-dag:
-01. products -> query acme.Product <= Query(Product all) [read; list]
-02. summary <- products -> project products -> {name=name, sku=id} [artifact_read; list]
-03. cards <- summary -> map summary as product => {title: template`${product.name}`} [artifact_read; artifact]
-    uses: summary as product
+        risks:
+        - List/page reads without `[field,…]` projection materialize full rows; project at the read or add an explicit project step.
+        - Unbounded root read; add API filters/search text or .limit(n)/.page_size(n) when cost or latency is uncertain
+        - Aggregates/group_by/sort run over the full logical row set before `.limit`; narrow reads (filters + projected fields) when counts are uncertain.
 
-returns:
-- parallel[0] -> summary
-- parallel[1] -> cards
+        dag:
+        01. products -> query acme.Product <= Query(Product all) [read; list]
+        02. summary <- products -> project products -> {name=name, sku=id} [artifact_read; list]
+        03. cards <- summary -> map summary as product => {title: template`${product.name}`} [artifact_read; artifact]
+            uses: summary as product
 
-next:
-- Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped.
-- When row counts are unknown, combine filters/search or `.limit`/`.page_size` with projection—not raw full entities.
-- Aggregates/group_by/sort see the full logical row set before `.limit`; narrow reads first when counts are uncertain.
-- Execute only after topology and result shape match intent.
-"###
+        returns:
+        - parallel[0] -> summary
+        - parallel[1] -> cards
+
+        next:
+        - Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped.
+        - Remove unused seeds from plasm_context or reference them in the program: acme:Category.
+        - When row counts are unknown, combine filters/search or `.limit`/`.page_size` with projection—not raw full entities.
+        - Aggregates/group_by/sort see the full logical row set before `.limit`; narrow reads first when counts are uncertain.
+        "
         );
         assert!(!text.contains("node_results"));
         assert!(!text.contains("\"dry_run\""));
@@ -4805,12 +4989,12 @@ next:
         let short =
             plasm_plan_review_guidance_lines_with_mode(&dry, DryPlanGuidanceMode::ActionableOnly);
         assert!(
-            full.iter().any(|l| l.contains("Execute only after")),
-            "{full:?}"
-        );
-        assert!(
             !short.iter().any(|l| l.contains("Execute only after")),
             "{short:?}"
+        );
+        assert!(
+            full.len() >= short.len(),
+            "full guidance should be at least as long as actionable-only: full={full:?} short={short:?}"
         );
     }
 

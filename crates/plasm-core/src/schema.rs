@@ -1787,6 +1787,9 @@ pub struct CGS {
     /// When this CGS is distributed as a self-describing plugin, stable catalog id (optional for file-backed schemas).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<String>,
+    /// Alternate registry ids accepted by hosts when resolving `plasm_context` seeds (canonical id is pack `entry_id`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub registry_aliases: Vec<String>,
     /// Monotonic distribution version for this catalog entry (`0` when omitted in plain file schemas).
     #[serde(default)]
     pub version: u64,
@@ -1839,6 +1842,7 @@ impl Clone for CGS {
             auth: self.auth.clone(),
             oauth: self.oauth.clone(),
             entry_id: self.entry_id.clone(),
+            registry_aliases: self.registry_aliases.clone(),
             version: self.version,
             views: self.views.clone(),
             schema_overlay: self.schema_overlay.clone(),
@@ -1860,6 +1864,7 @@ impl PartialEq for CGS {
             && self.auth == other.auth
             && self.oauth == other.oauth
             && self.entry_id == other.entry_id
+            && self.registry_aliases == other.registry_aliases
             && self.version == other.version
             && self.views == other.views
             && self.schema_overlay == other.schema_overlay
@@ -1995,6 +2000,7 @@ impl CGS {
             auth: None,
             oauth: None,
             entry_id: None,
+            registry_aliases: Vec::new(),
             version: 0,
             views: IndexMap::new(),
             schema_overlay: None,
@@ -2712,7 +2718,36 @@ impl CGS {
         }
 
         self.validate_oauth_extension()?;
+        self.validate_registry_aliases()?;
 
+        Ok(())
+    }
+
+    fn validate_registry_aliases(&self) -> Result<(), SchemaError> {
+        let canonical = self.entry_id.as_deref().unwrap_or("").trim();
+        let mut seen = std::collections::HashSet::<String>::new();
+        for raw in &self.registry_aliases {
+            let alias = raw.trim();
+            if alias.is_empty() {
+                return Err(SchemaError::RegistryAliasInvalid {
+                    alias: raw.clone(),
+                    message: "must be non-empty".into(),
+                });
+            }
+            let key = alias.to_ascii_lowercase();
+            if !seen.insert(key.clone()) {
+                return Err(SchemaError::RegistryAliasInvalid {
+                    alias: alias.to_string(),
+                    message: "duplicate alias".into(),
+                });
+            }
+            if !canonical.is_empty() && alias.eq_ignore_ascii_case(canonical) {
+                return Err(SchemaError::RegistryAliasInvalid {
+                    alias: alias.to_string(),
+                    message: "must not duplicate canonical entry_id".into(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -4458,12 +4493,15 @@ mod capability_index_tests {
                 "identifier".to_string(),
                 "title".to_string(),
                 "description".to_string(),
-                "parent".to_string(),
+                "priority".to_string(),
+                "estimate".to_string(),
+                "dueDate".to_string(),
                 "team".to_string(),
                 "project".to_string(),
                 "assignee".to_string(),
                 "state".to_string(),
                 "cycle".to_string(),
+                "parent".to_string(),
             ]
         );
         assert_eq!(

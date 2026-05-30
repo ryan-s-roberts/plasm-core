@@ -718,6 +718,27 @@ pub fn normalize_capability_seeds(mut seeds: Vec<CapabilitySeed>) -> Vec<Capabil
     out
 }
 
+/// Trim/dedupe seeds, then resolve each `entry_id` against the live registry (aliases, label, tags).
+pub fn resolve_capability_seeds(
+    seeds: Vec<CapabilitySeed>,
+    registry: &plasm_core::discovery::InMemoryCgsRegistry,
+    allowed_entry_ids: Option<&[String]>,
+) -> Result<Vec<CapabilitySeed>, String> {
+    let mut out = normalize_capability_seeds(seeds);
+    for s in &mut out {
+        s.entry_id = registry
+            .resolve_entry_id(s.entry_id.as_str(), allowed_entry_ids)
+            .map_err(|e| {
+                if e.to_string().starts_with("unknown catalog entry:") {
+                    e.to_string()
+                } else {
+                    format!("unknown catalog entry: {e}")
+                }
+            })?;
+    }
+    Ok(out)
+}
+
 fn group_seed_entities_by_entry(seeds: &[CapabilitySeed]) -> IndexMap<String, Vec<String>> {
     let mut groups: IndexMap<String, Vec<String>> = IndexMap::new();
     for seed in seeds {
@@ -1603,6 +1624,7 @@ pub(crate) async fn apply_capability_seeds(
     if seeds.is_empty() {
         return Err("`seeds` must be non-empty".into());
     }
+    let seeds = resolve_capability_seeds(seeds, &st.catalog.snapshot(), None)?;
 
     // MCP `PlasmExecBinding` can outlive the in-memory [`ExecuteSessionStore`] row (idle expiry).
     // Treat a binding as absent so we open a fresh execute session instead of failing federate/expand.
@@ -1689,27 +1711,38 @@ pub(crate) async fn apply_capability_seeds(
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
             }
-            // First attach after binding resolution (`binding == None`): restate the current teaching-table snapshot
-            // from the execute session prompt so the client receives authoritative `e#` / `m#` / `p#` for this open.
-            // (Later expand waves with no new entities omit full teaching-table replay—see `expand_execute_domain_session`.)
+            // First attach: restate teaching-table snapshot only when a **new** execute row opened.
+            // Reused sessions omit full TSV replay (token-saving; see incremental-domain-prompts.md).
             let mode = st.engine.prompt_pipeline().render_mode;
-            if mode.is_tsv() {
-                if let Some(body_tsv) = domain_tsv_table_from_wrapped_prompt(
-                    &created.prompt,
-                    mode.markdown_fence_info_string(),
-                ) {
-                    let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
-                    open_md.push_str("\n\n");
-                    open_md.push_str(&wrapped);
+            if !created.reused {
+                if mode.is_tsv() {
+                    if let Some(body_tsv) = domain_tsv_table_from_wrapped_prompt(
+                        &created.prompt,
+                        mode.markdown_fence_info_string(),
+                    ) {
+                        let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
+                        open_md.push_str("\n\n");
+                        open_md.push_str(&wrapped);
+                    } else {
+                        open_md.push_str("\n\n");
+                        open_md.push_str(&created.prompt);
+                    }
                 } else {
                     open_md.push_str("\n\n");
                     open_md.push_str(&created.prompt);
                 }
             } else {
                 open_md.push_str("\n\n");
-                open_md.push_str(&created.prompt);
+                open_md.push_str(&expand_session_symbol_reminder(
+                    created.entities.len().max(1),
+                    true,
+                ));
             }
-            let domain_prompt_chars_added = open_md.chars().count() as u64;
+            let domain_prompt_chars_added = if created.reused {
+                0
+            } else {
+                open_md.chars().count() as u64
+            };
             waves.push(CapabilityWaveOutcome {
                 mode: "open".to_string(),
                 entry_id: created.entry_id.clone(),
