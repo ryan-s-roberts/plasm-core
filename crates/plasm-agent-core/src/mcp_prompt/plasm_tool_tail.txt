@@ -1,8 +1,6 @@
 
-**Program:** See initialize **Plasm syntax guide** for full grammar. Prefer **one multi-line `program`** with **literal newlines** between bindings when composing; **single-line** only for one taught `plasm_expr`. Bracket-render yields **`binding.content`** for string slots. Postfix (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]`, `[fields] <<TAG…TAG`) chains on the same surface expr when legal.
+Prefer **one multi-line `program`** per call; **single-line** only for one taught `plasm_expr`. Bracket-render yields **`binding.content`** for string slots. Postfix (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]`, `[fields] <<TAG…TAG`) chains when legal.
 
-**Brace `{…}` predicates:** Entity-ref slots expect DOMAIN constructors, scalar ids, or **`anchor.<relation>`** — not opaque rows unless keys match that entity.
+**Brace `{…}` predicates:** entity-ref slots expect teaching-table constructors, scalar ids, or **`anchor.<relation>`**.
 
-**Continuation:** `next = row.<relation>` continues a taught surface/relation row. A label produced by a row-preserving projection such as `trimmed = row[id,name]` may also be continued (`next = trimmed.<relation>`); aggregate/render/derive/data/for_each labels are not row anchors. Use postfix transforms for shaping rows, or an explicit entity constructor when you no longer have row identity.
-
-Reuse **`logical_session_ref`**. Call **`plasm_context`** again only to append picks or when **`_meta.plasm`** shows stale binding—not every turn.
+**Continuation:** `label.<relation>` from surface/relation rows or row-preserving projections; aggregate/render/derive labels are not row anchors.

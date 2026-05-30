@@ -107,7 +107,6 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 /// Model-facing **`plasm`** tool description: **plan-only** program construction (session setup is in initialize instructions).
 pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = concat!(
     include_str!("mcp_prompt/plasm_tool_head.txt"),
-    include_str!("mcp_prompt/shared_program_newlines.txt"),
     include_str!("mcp_prompt/plasm_tool_tail.txt"),
 );
 
@@ -115,18 +114,22 @@ pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = concat!(
 pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str =
     include_str!("mcp_prompt/plasm_run_tool.txt");
 
-/// MCP initialize workflow text. The Plasm syntax guide is appended by [`mcp_server_initialize_instructions`].
+/// Model-facing **`plasm_context`** tool description (teaching TSV + continuity; federation in initialize workflow).
+pub(crate) const MCP_PLASM_CONTEXT_TOOL_DESCRIPTION: &str =
+    include_str!("mcp_prompt/plasm_context_tool.txt");
+
+/// One-line JSON-schema description for the shared **`program`** parameter on **`plasm`** / **`plasm_run`**.
+pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Multi-line Plasm program JSON string. **Program contract** in MCP initialize instructions; executable grammar in `plasm_context` teaching rows.";
+
+/// MCP initialize workflow text (orchestration + program contract).
 pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
     include_str!("mcp_prompt/workflow_head.txt"),
-    include_str!("mcp_prompt/shared_program_newlines.txt"),
+    include_str!("mcp_prompt/program_contract.txt"),
     include_str!("mcp_prompt/workflow_tail.txt"),
 );
 
 fn mcp_server_initialize_instructions() -> String {
-    format!(
-        "{workflow}\n\nPlasm syntax guide: teaching TSV from `plasm_context` plus `plasm` / `plasm_run` tool descriptions (newline + heredoc rules). Full grammar is not repeated here.",
-        workflow = MCP_SERVER_INITIALIZE_WORKFLOW,
-    )
+    MCP_SERVER_INITIALIZE_WORKFLOW.to_string()
 }
 
 fn parse_tool_seeds(
@@ -731,7 +734,7 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "intent".into(),
             json_schema_non_empty_string_type(
-                "Describe what the agent needs to do, in one plain-language intent string. This is the task intent to resolve into catalog coverage, not a list of keywords. Response is a table of matching **capabilities**: **`api`**, **`entity`**, **`description`** per row — turn the rows you need into **`plasm_context`** **`seeds`** (each row is one `{api, entity}` or `{entry_id, entity}`).",
+                "One plain-language task description for the whole user goal. See MCP initialize workflow for discover orchestration.",
             ),
         );
         discover_props.insert(
@@ -769,7 +772,7 @@ impl PlasmMcpHandler {
         context_props.insert(
             "seeds".into(),
             json_schema_non_empty_object_array(
-                "Non-empty **`seeds`** — each object is **one capability pick**: **`api`** (integration id) and **`entity`** (resource type). Include **every** pick this program needs on first open; several **`api`** values belong in the **same** array. Example: [{\"api\":\"github\",\"entity\":\"Issue\"},{\"api\":\"slack\",\"entity\":\"Channel\"}]. Per object you may use **`entry_id`** instead of **`api`**.",
+                "Non-empty array of `{api, entity}` capability picks (or `{entry_id, entity}`). See MCP initialize workflow and `plasm_context` tool description.",
                 vec!["api", "entity"],
             ),
         );
@@ -791,9 +794,7 @@ impl PlasmMcpHandler {
         );
         plasm_program_props.insert(
             "program".into(),
-            json_schema_string_type(
-                "JSON string: one Plasm line, a full multi-line `plasm_program`, or (on **`plasm_run` only`) comma-separated final roots. **Compositional programs:** literal newlines (U+000A) between physical lines — one `ident = …` binding per line, then roots — never multiple bindings separated only by spaces on one line. Good: `repo = e2(...)\\ncommits = …\\ncommits`. Bad: `repo = … commits = …` on one line. Heredocs span multiple physical lines inside this string; use teaching rows from `plasm_context`. **Tagged `<<TAG` heredocs close on the first line whose trimmed text equals `TAG`** — choose an opaque `TAG` that cannot appear as its own line inside the blob (long labels like `PLASM_MAIL_9c2e` for RFC822/MIME bodies; avoid short tags like `RFC` / `END`). To turn queried rows into text, bind a template block such as `report = rows[p#,…] <<TAG ... TAG` (or `report = rows <<TAG ... TAG` when columns can be inferred). The template uses Minijinja with `rows` as the input array, and `report.content` is the generated text. Prefer this for summaries derived from queried rows; static heredocs remain fine for fixed payloads. **`binding.content` is scalar text for string/body slots and `=>` payloads — never a final root or `binding.content.<relation>` continuation**; return `binding` if you want the generated text row. In brace predicates, entity-reference slots: constructor forms from the teaching table, scalar keys, or `binding.<relation>` — full rows only when identity fields match the target entity. `binding.<relation>` works from query/relation rows and row-preserving projections such as `trimmed = row[id,name]`; aggregate/template/derive/data/for_each labels are not relation receivers.",
-            ),
+            json_schema_string_type(MCP_PROGRAM_PARAM_DESCRIPTION),
         );
         plasm_program_props.insert(
             "reasoning".into(),
@@ -804,10 +805,7 @@ impl PlasmMcpHandler {
             Tool {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
-                description: Some(
-                    "**Open or extend** one logical session. Send a stable **`intent`** and a non-empty **`seeds`** array: each object **`{ \"api\", \"entity\" }`** is **one capability pick**. **List every pick on the first open** — several **`api`** values in one array is normal and still **one** session for **`plasm`** / **`plasm_run`**. You may use **`entry_id`** instead of **`api`** per object. Returns **`logical_session_ref`** (`s0`, …) as the first line of the Markdown body. **Adding picks:** call again with **additional** `{api, entity}` rows when you discover more integrations. **Steady state:** reuse **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; do **not** repeat **`plasm_context`** with identical **`seeds`** every turn—no-op expands omit full teaching-table replay (token-saving).\n\n\
-                    **Federation / symbols:** `e#` / `m#` / `p#` are **session-local and append-only**. Additional `plasm_context` picks append new teaching rows; prior `e#` / `m#` / `p#` meanings remain unchanged, so compare the latest response for newly added rows instead of reinterpreting old symbols. **`p#` tokens are scoped by registry `entry_id`, owning CGS entity, and slot identity** — same wire name on **different** entities or catalogs gets **distinct** opaque `p#` values (no structural sharing across unrelated rows). **`e#` order follows exposed entity rows** in the TSV teaching table. Prefer **canonical constructor keys** from the CGS (e.g. `owner=`, `repo=`) when multiple integrations load. **Postfix projections** use the **row entity** of that expression; bracket chains like `author[login]` normalize to dotted paths (`author.login`). **`m#` methods are per `(catalog entry_id, domain entity, kebab)`** — resolve `eN` from the current teaching-table heading before calling `eN.mK()`. Response **`_meta.plasm`** may include **`domain_revision`**, **`domain_wave_count`**, and **`catalog_entry_ids`** so you can verify new teaching text shipped.".into(),
-                ),
+                description: Some(MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
                 input_schema: ToolInputSchema::new(
                     vec!["intent".into(), "seeds".into()],
                     Some(context_props),
@@ -829,7 +827,7 @@ impl PlasmMcpHandler {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
                 description: Some(
-                    "Map what the agent needs to do to concrete catalog **capabilities**. Send exactly one **`intent`** string describing the task; do not send keyword arrays or multiple alternate phrasings. You get a table of candidate capabilities (`**api**`, **`entity**`, **`description`**); use the rows you need to build **`plasm_context`** **`seeds`**. Skip when you already know **`api`**/**`entity`** for every capability you need. With **`typed: true`**, the reply is fenced **`json`** (`DiscoveryDecision`) for stepwise disambiguation instead of the table.".into(),
+                    "Resolve one user goal to catalog capabilities (`api`, `entity`, `description` table). **One `intent` string per goal** — see MCP initialize workflow. Skip when you already know every `api`/`entity`. **`typed: true`** returns fenced **`json`** (`DiscoveryDecision`) instead of the table.".into(),
                 ),
                 input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
@@ -2735,11 +2733,65 @@ mod tests {
     #[test]
     fn mcp_server_initialize_workflow_uses_intent_not_query() {
         let text = super::MCP_SERVER_INITIALIZE_WORKFLOW;
-        assert!(text.contains("**`intent`**"));
+        assert!(text.contains("`intent`"));
         assert!(text.contains("One user goal"));
+        assert!(text.contains("one call per user goal"));
+        assert!(!text.contains("several discovery calls"));
         assert!(!text.contains("pass **`query`**"));
+        assert!(!text.contains("syntax guide in MCP initialize"));
+        assert!(text.contains("plasm_context` teaching TSV"));
         assert!(text.contains("pokeapi"));
         assert!(text.contains("linear"));
+        let discover = super::PlasmMcpHandler::plasm_tools()
+            .into_iter()
+            .find(|t| t.name == "discover_capabilities")
+            .expect("discover_capabilities");
+        let discover_desc = discover.description.as_deref().unwrap_or("");
+        assert!(discover_desc.len() < 400, "discover tool description too long");
+        assert!(!discover_desc.contains("query"));
+    }
+
+    /// Static MCP prompt byte budgets (Unicode scalar count). Targets from MCP prompt dedup plan.
+    #[test]
+    fn mcp_prompt_char_budget() {
+        let init = super::mcp_server_initialize_instructions();
+        assert!(
+            init.len() < 3200,
+            "initialize instructions too long: {} chars",
+            init.len()
+        );
+        assert!(
+            super::MCP_PLASM_TOOL_DESCRIPTION.len() < 1200,
+            "plasm tool description too long: {} chars",
+            super::MCP_PLASM_TOOL_DESCRIPTION.len()
+        );
+        assert!(
+            super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 900,
+            "plasm_context tool description too long: {} chars",
+            super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len()
+        );
+        assert!(
+            super::MCP_PROGRAM_PARAM_DESCRIPTION.len() < 200,
+            "program param description too long: {} chars",
+            super::MCP_PROGRAM_PARAM_DESCRIPTION.len()
+        );
+        let tools = super::PlasmMcpHandler::plasm_tools();
+        let v = serde_json::to_value(
+            tools
+                .iter()
+                .find(|t| t.name == "plasm")
+                .expect("plasm tool")
+                .input_schema
+                .clone(),
+        )
+        .expect("input_schema json");
+        let program_desc = v
+            .get("properties")
+            .and_then(|p| p.get("program"))
+            .and_then(|s| s.get("description"))
+            .and_then(|d| d.as_str())
+            .expect("plasm program param description");
+        assert_eq!(program_desc, super::MCP_PROGRAM_PARAM_DESCRIPTION);
     }
 
     #[test]
@@ -2786,9 +2838,14 @@ mod tests {
             .find(|t| t.name == "plasm_context")
             .and_then(|t| t.description.as_deref())
             .expect("plasm_context description");
+        let workflow = super::MCP_SERVER_INITIALIZE_WORKFLOW;
         assert!(
-            desc.contains("**Adding picks:**") && desc.contains("**Steady state:**"),
-            "expected append vs steady-state distinction in plasm_context description"
+            desc.contains("**Adding picks:**"),
+            "expected append guidance in plasm_context description"
+        );
+        assert!(
+            workflow.contains("Steady state:"),
+            "expected steady-state guidance in initialize workflow"
         );
     }
 

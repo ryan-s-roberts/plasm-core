@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.57] - 2026-05-29
+
+### Changed
+
+- **MCP prompt deduplication:** initialize owns orchestration + program contract (newlines/heredoc); tool descriptions and `program` JSON-schema param are slim pointers (~40% fewer static prompt bytes). Grammar source remains dynamic **`plasm_context`** teaching TSV.
+- **`discover_capabilities` guidance:** one **`intent`** string per user goal — no per-integration discover splits or keyword arrays; retry only when the first table is incomplete.
+
 ## [0.1.56] - 2026-05-29
 
 ### Added

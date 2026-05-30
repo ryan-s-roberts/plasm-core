@@ -1,7 +1,3 @@
----
-source: crates/plasm-agent-core/src/mcp_server.rs
-expression: context
----
 **Open or extend** one logical session. Pass stable **`intent`** and non-empty **`seeds`**: each `{api, entity}` (or `{entry_id, entity}`) is **one capability pick**. Federation rules: see MCP initialize workflow.
 
 Returns **`logical_session_ref`** (`s0`, …) as the first Markdown line, then the **teaching TSV** (`e#` / `m#` / `p#` rows). Symbols are **session-local and append-only**; `p#` is scoped by catalog + entity + slot (same wire name on different entities gets distinct `p#`). Check latest TSV after append waves.
