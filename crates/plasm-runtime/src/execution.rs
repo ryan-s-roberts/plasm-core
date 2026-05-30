@@ -5400,6 +5400,24 @@ fn create_entity_decoder_inner(
                     decoder: child,
                     cardinality: rel.cardinality,
                 });
+            } else if rel.cardinality == plasm_core::Cardinality::One {
+                let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
+                    continue;
+                };
+                let rel_path = PathExpr::new(vec![PathSegment::Key {
+                    name: rel_name.as_str().to_string(),
+                }]);
+                let id_path = PathExpr::new(vec![PathSegment::Key {
+                    name: target_ent.id_field.as_str().to_string(),
+                }]);
+                let child = EntityDecoder::new(rel.target_resource.as_str(), rel_path)
+                    .with_id_field(target_ent.id_field.clone())
+                    .with_id_path(id_path);
+                relation_decoders.push(plasm_compile::RelationDecoder {
+                    relation: rel_name.as_str().to_string(),
+                    decoder: child,
+                    cardinality: rel.cardinality,
+                });
             }
         }
     }

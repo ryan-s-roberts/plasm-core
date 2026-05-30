@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.60] - 2026-05-30
+
+### Changed
+
+- **Federated DOMAIN:** `(entry_id, entity)` qualified keys through exposure, symbol assignment, intent-surface filters, federated render, and parse (`e#` keeps catalog ownership via opaque symbols).
+- **MCP steady state:** identical-seed `plasm_context` returns one-line noop; syntax hints removed from reuse paths.
+
+### Fixed
+
+- **Teaching TSV bleed:** github vs linear `Issue` (and other name collisions) render from the owning catalog, not first-match entity names.
+- **Linear `team_key` search:** federated parse resolves CGS from opaque `e#` / `active_entity_entry_id`.
+- **PokéAPI evolution chain:** card-one URL `id_field` relations decode via nested `RelationDecoder`.
+- **Legacy exposure surface:** session registry `entry_id` aligns with intent-filtered capabilities when YAML omits `entry_id:`.
+
 ## [0.1.59] - 2026-05-30
 
 ### Changed

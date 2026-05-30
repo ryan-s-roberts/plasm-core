@@ -111,6 +111,9 @@ pub struct DomainFile {
     /// Declarative runtime schema overlay (`schema_overlay:` in domain.yaml).
     #[serde(default)]
     pub schema_overlay: Option<crate::schema_overlay::SchemaOverlaySpec>,
+    /// Alternate registry ids accepted by discovery / MCP seed resolution (e.g. `pokemon` → `pokeapi`).
+    #[serde(default)]
+    pub registry_aliases: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -762,6 +765,7 @@ fn assemble_cgs_core(
     cgs.oauth = domain.oauth;
     cgs.version = domain.version;
     cgs.schema_overlay = domain.schema_overlay;
+    cgs.registry_aliases = domain.registry_aliases;
     cgs.values = compile_domain_named_values(&domain.values)?;
 
     for (name, entity) in &domain.entities {

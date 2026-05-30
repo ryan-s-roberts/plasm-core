@@ -1311,6 +1311,49 @@ mod tests {
     }
 
     #[test]
+    fn decode_card_one_relation_url_hyperlink_id() {
+        let json = json!({
+            "name": "pikachu",
+            "evolution_chain": {
+                "url": "https://pokeapi.co/api/v2/evolution-chain/10/"
+            }
+        });
+        let chain_decoder = EntityDecoder::new(
+            "EvolutionChain",
+            PathExpr::from_slice(&["evolution_chain"]),
+        )
+        .with_id_field("url")
+        .with_id_path(PathExpr::from_slice(&["url"]));
+        let parent = EntityDecoder::new("PokemonSpecies", PathExpr::empty())
+            .with_id_field("name")
+            .with_fields(vec![FieldDecoder::new(
+                "name",
+                PathExpr::from_slice(&["name"]),
+            )])
+            .with_relations(vec![RelationDecoder {
+                relation: "evolution_chain".into(),
+                decoder: chain_decoder,
+                cardinality: plasm_core::Cardinality::One,
+            }]);
+        let entities = decode_entities(&parent, &json).unwrap();
+        assert_eq!(entities.len(), 1);
+        let rel = entities[0]
+            .relations
+            .get("evolution_chain")
+            .expect("evolution_chain relation");
+        match rel {
+            DecodedRelation::Specified(refs) => {
+                assert_eq!(refs.len(), 1);
+                assert_eq!(
+                    refs[0].simple_id().unwrap().as_str(),
+                    "https://pokeapi.co/api/v2/evolution-chain/10/"
+                );
+            }
+            DecodedRelation::Unspecified => panic!("expected Specified evolution_chain ref"),
+        }
+    }
+
+    #[test]
     fn test_path_type_mismatch() {
         let json = json!({
             "data": "not_an_object"

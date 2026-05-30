@@ -1715,7 +1715,9 @@ impl PlasmMcpHandler {
         let exposed_entities: usize = out
             .waves
             .iter()
-            .flat_map(|w| w.entities.iter())
+            .flat_map(|w| {
+                w.entities.iter().map(|entity| format!("{}:{entity}", w.entry_id))
+            })
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         let catalog_count = {

@@ -129,6 +129,7 @@ mod tests {
             plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
                 .expect("matrix"),
         );
+        let exp = plasm_core::DomainExposureSession::new(cgs.as_ref(), "default", &["LangItem"]);
         ExecuteSession::new(
             "ph".into(),
             "sess".into(),
@@ -142,7 +143,7 @@ mod tests {
             String::new(),
             None,
             vec!["LangItem".into()],
-            None,
+            Some(exp),
             None,
             None,
             cgs.catalog_cgs_hash_hex(),

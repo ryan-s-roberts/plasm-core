@@ -5,8 +5,8 @@ use indexmap::IndexMap;
 use plasm_core::prompt_render::domain_tsv_table_from_wrapped_prompt;
 use plasm_core::CgsContext;
 use plasm_core::{
-    discovery::derive_intent_exposure_surface_batch, DomainExposureSession, PromptPipelineConfig,
-    SymbolMapCrossRequestCache, CGS,
+    discovery::derive_intent_exposure_surface_batch, relation_endpoint_keys, DomainExposureSession,
+    ExposureEntityKey, PromptPipelineConfig, SymbolMapCrossRequestCache, CGS,
 };
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
@@ -222,7 +222,7 @@ impl ClientSymbolSession {
             entities.dedup();
         }
 
-        let mut all_new_entity_names: Vec<String> = Vec::new();
+        let mut all_new_qualified: Vec<ExposureEntityKey> = Vec::new();
         let intent_s = self.intent.trim();
         let use_intent = !intent_s.is_empty();
 
@@ -246,13 +246,12 @@ impl ClientSymbolSession {
 
             if self.exposure.is_none() && self.catalogs.len() == 1 {
                 if use_intent {
-                    let mut relation_endpoints = entities.clone();
-                    relation_endpoints.sort_unstable();
+                    let relation_keys = relation_endpoint_keys(entry_id.as_str(), entities);
                     let delta = derive_intent_exposure_surface_batch(
                         cgs.as_ref(),
                         entry_id.as_str(),
                         intent_s,
-                        &relation_endpoints,
+                        &relation_keys,
                         entities,
                         None,
                     );
@@ -273,15 +272,13 @@ impl ClientSymbolSession {
                 let layer_refs: Vec<&CGS> = self.catalogs.values().map(|a| a.as_ref()).collect();
                 let exp = self.exposure.as_mut().expect("exposure");
                 if use_intent {
-                    let mut relation_endpoints = exp.entities.clone();
-                    relation_endpoints.extend(entities.iter().cloned());
-                    relation_endpoints.sort_unstable();
-                    relation_endpoints.dedup();
+                    let relation_keys =
+                        exp.relation_endpoint_keys_for_wave(entry_id.as_str(), entities);
                     let delta = derive_intent_exposure_surface_batch(
                         cgs.as_ref(),
                         entry_id.as_str(),
                         intent_s,
-                        &relation_endpoints,
+                        &relation_keys,
                         entities,
                         None,
                     );
@@ -290,13 +287,12 @@ impl ClientSymbolSession {
                     exp.expose_entities(&layer_refs, cgs.clone(), entry_id.as_str(), &refs);
                 }
             } else if use_intent {
-                let mut relation_endpoints = entities.clone();
-                relation_endpoints.sort_unstable();
+                let relation_keys = relation_endpoint_keys(entry_id.as_str(), entities);
                 let delta = derive_intent_exposure_surface_batch(
                     cgs.as_ref(),
                     entry_id.as_str(),
                     intent_s,
-                    &relation_endpoints,
+                    &relation_keys,
                     entities,
                     None,
                 );
@@ -318,15 +314,14 @@ impl ClientSymbolSession {
                 .exposure
                 .as_ref()
                 .ok_or_else(|| anyhow!("exposure missing after expose"))?;
-            let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
-            all_new_entity_names.extend(added.iter().map(|s| (*s).to_string()));
+            let added_qualified = exp.qualified_entities_since(n0);
+            all_new_qualified.extend(added_qualified);
         }
 
-        if all_new_entity_names.is_empty() {
+        if all_new_qualified.is_empty() {
             return Ok(String::new());
         }
 
-        let added_refs: Vec<&str> = all_new_entity_names.iter().map(|s| s.as_str()).collect();
         let exp = self
             .exposure
             .as_ref()
@@ -337,13 +332,17 @@ impl ClientSymbolSession {
                 .iter()
                 .next()
                 .ok_or_else(|| anyhow!("no catalogs loaded"))?;
+            let added_refs: Vec<&str> = all_new_qualified
+                .iter()
+                .map(|k| k.entity.as_str())
+                .collect();
             self.pipeline
                 .render_domain_exposure_delta(cgs, exp, &added_refs, Some(&self.sym_cross))
         } else {
             self.pipeline.render_domain_exposure_delta_federated(
                 &by_entry,
                 exp,
-                &added_refs,
+                &all_new_qualified,
                 Some(&self.sym_cross),
             )
         };

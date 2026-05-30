@@ -11,7 +11,7 @@ use crate::symbol_tuning::{
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -1050,15 +1050,20 @@ fn seed_entity_surface_always_includes(
 /// [`crate::symbol_tuning::legacy_exposure_surface_for_entities`]).
 pub fn derive_intent_exposure_surface_batch(
     cgs: &CGS,
-    _entry_id: &str,
+    entry_id: &str,
     intent: &str,
-    relation_endpoint_names: &[String],
+    relation_endpoint_keys: &[ExposureEntityKey],
     entity_batch: &[String],
     ranked_capability_names: Option<&[String]>,
 ) -> ExposureSurfaceDelta {
     let mut surface = ExposureSurface::default();
-    let cid = cgs.entry_id.clone().unwrap_or_default();
-    let relation_set: HashSet<String> = relation_endpoint_names.iter().cloned().collect();
+    let cid = if entry_id.is_empty() {
+        cgs.entry_id.clone().unwrap_or_default()
+    } else {
+        entry_id.to_string()
+    };
+    let relation_set: BTreeSet<ExposureEntityKey> =
+        relation_endpoint_keys.iter().cloned().collect();
 
     let mut query_tokens = HashSet::new();
     for tok in domain_lexicon::tokens(intent) {
@@ -1164,7 +1169,11 @@ pub fn derive_intent_exposure_surface_batch(
         }
 
         for (rname, rel) in &ent.relations {
-            if relation_set.contains(rel.target_resource.as_str())
+            let target_key = ExposureEntityKey {
+                entry_id: cid.clone(),
+                entity: rel.target_resource.clone(),
+            };
+            if relation_set.contains(&target_key)
                 && score_relation_against_intent(&query_tokens, rel) > 0
             {
                 surface.slots.insert(ExposureSlotKey::Relation {
@@ -1332,12 +1341,22 @@ mod tests {
         assert!(!profile_sum.description.is_empty());
     }
 
+    fn relation_keys(entry_id: &str, names: &[&str]) -> Vec<ExposureEntityKey> {
+        names
+            .iter()
+            .map(|n| ExposureEntityKey {
+                entry_id: entry_id.to_string(),
+                entity: EntityName::from(*n),
+            })
+            .collect()
+    }
+
     #[test]
     fn intent_surface_omits_relation_until_relation_target_in_scope() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = vec!["Profile".to_string()];
+        let endpoints = relation_keys("overshow", &["Profile"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
@@ -1361,8 +1380,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let mut endpoints = vec!["Profile".to_string(), "RecordedContent".to_string()];
-        endpoints.sort_unstable();
+        let endpoints = relation_keys("overshow", &["Profile", "RecordedContent"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
@@ -1386,7 +1404,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = vec!["PromptRun".to_string()];
+        let endpoints = relation_keys("overshow", &["PromptRun"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
@@ -1426,8 +1444,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let mut endpoints = vec!["Meeting".to_string(), "Profile".to_string()];
-        endpoints.sort_unstable();
+        let endpoints = relation_keys("overshow", &["Meeting", "Profile"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
@@ -1458,8 +1475,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let mut endpoints = vec!["PromptRun".to_string(), "Profile".to_string()];
-        endpoints.sort_unstable();
+        let endpoints = relation_keys("overshow", &["PromptRun", "Profile"]);
         let ranked = vec!["prompt_run_create".to_string()];
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
@@ -1644,7 +1660,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = vec!["PromptRun".to_string()];
+        let endpoints = relation_keys("overshow", &["PromptRun"]);
         let ranked = vec!["prompt_run_create".to_string()];
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
@@ -1685,7 +1701,7 @@ mod tests {
         }
         let mut cgs = load_schema_dir(&dir).expect("proof");
         cgs.entry_id = Some("proof".into());
-        let endpoints = vec!["ShareLink".to_string()];
+        let endpoints = relation_keys("proof", &["ShareLink"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "proof",
@@ -1720,7 +1736,7 @@ mod tests {
         }
         let mut cgs = load_schema_dir(&dir).expect("proof");
         cgs.entry_id = Some("proof".into());
-        let endpoints = vec!["ShareLink".to_string()];
+        let endpoints = relation_keys("proof", &["ShareLink"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "proof",
@@ -1754,7 +1770,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).expect("pokeapi");
-        let endpoints = vec!["Pokemon".to_string()];
+        let endpoints = relation_keys("pokeapi", &["Pokemon"]);
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
             "pokeapi",
@@ -1781,7 +1797,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).expect("proof");
-        let endpoints = vec!["ShareLink".to_string()];
+        let endpoints = relation_keys("proof", &["ShareLink"]);
         let ranked = vec!["__not_share_link_create__".to_string()];
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
@@ -1794,6 +1810,25 @@ mod tests {
         assert!(
             !surface_has_capability(&delta, "ShareLink", "share_link_create"),
             "ranked gate excludes seeded-entity mutations not present in ranked_capabilities"
+        );
+    }
+
+    #[test]
+    fn pokeapi_domain_yaml_registry_aliases_load() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("pokeapi");
+        assert!(
+            cgs.registry_aliases.iter().any(|a| a == "pokemon"),
+            "pokeapi CGS must ship registry_aliases pokemon: {:?}",
+            cgs.registry_aliases
+        );
+        assert!(
+            cgs.registry_aliases.iter().any(|a| a == "poke-api"),
+            "pokeapi CGS must ship registry_aliases poke-api: {:?}",
+            cgs.registry_aliases
         );
     }
 

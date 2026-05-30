@@ -523,6 +523,8 @@ pub(super) struct Parser<'a> {
     pub(super) program_nodes: Option<&'a BTreeSet<String>>,
     /// Enables `_.path` row references (for `source => …` templates).
     pub(super) for_each_row_context: bool,
+    /// When the surface entity token was an opaque `e#`, owning catalog for disambiguation.
+    pub(super) active_entity_entry_id: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -541,6 +543,7 @@ impl<'a> Parser<'a> {
             sym_map,
             program_nodes: None,
             for_each_row_context: false,
+            active_entity_entry_id: None,
         };
         p.skip_ws();
         p
@@ -555,10 +558,23 @@ impl<'a> Parser<'a> {
     }
 
     fn cgs_for_entity(&self, entity: &str) -> Option<&CGS> {
-        self.layers_slice()
+        if let Some(ref eid) = self.active_entity_entry_id {
+            if let Some(cgs) = self.layers_slice().iter().copied().find(|c| {
+                c.entry_id.as_deref() == Some(eid.as_str()) && c.get_entity(entity).is_some()
+            }) {
+                return Some(cgs);
+            }
+        }
+        let matches: Vec<_> = self
+            .layers_slice()
             .iter()
             .copied()
-            .find(|c| c.get_entity(entity).is_some())
+            .filter(|c| c.get_entity(entity).is_some())
+            .collect();
+        if matches.len() == 1 {
+            return Some(matches[0]);
+        }
+        None
     }
 
     fn cgs_for_entity_required(&self, entity: &str) -> &CGS {
@@ -1543,13 +1559,18 @@ impl<'a> Parser<'a> {
         } else {
             first
         };
+        let pred_wire = self
+            .sym_map
+            .resolve_ident(pred_field.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| pred_field.clone());
 
         // Validate field exists on entity OR as a query capability input parameter.
         // Scope and filter params (e.g. `team_id`, `space_id`) live in the capability
         // input schema, not on the entity definition itself.
         let ec = self.cgs_for_entity_required(entity_name);
         if let Some(ent) = ec.get_entity(entity_name) {
-            if !ent.fields.contains_key(pred_field.as_str()) {
+            if !ent.fields.contains_key(pred_wire.as_str()) {
                 let is_cap_param = ec
                     .find_capabilities(entity_name, CapabilityKind::Query)
                     .iter()
@@ -1562,7 +1583,7 @@ impl<'a> Parser<'a> {
                             .as_ref()
                             .and_then(|is| {
                                 if let crate::InputType::Object { fields, .. } = &is.input_type {
-                                    Some(fields.iter().any(|f| f.name == pred_field))
+                                    Some(fields.iter().any(|f| f.name == pred_wire))
                                 } else {
                                     None
                                 }
@@ -1585,13 +1606,13 @@ impl<'a> Parser<'a> {
 
         let op = self.parse_op()?;
         let mut val = self.parse_predicate_rhs_after_op()?;
-        if let Some((ft, vf, arr)) = self.lookup_field_typing(entity_name, &pred_field) {
+        if let Some((ft, vf, arr)) = self.lookup_field_typing(entity_name, &pred_wire) {
             if !matches!(val, Value::Null) && !val.is_domain_example_placeholder() {
                 val = coerce_value_for_field_type(&ft, vf, arr.as_ref(), val)
                     .map_err(|m| self.err(ParseErrorKind::InvalidTemporalValue { message: m }))?;
             }
         }
-        Ok(Predicate::comparison(pred_field, op, val))
+        Ok(Predicate::comparison(pred_wire, op, val))
     }
 
     /// Value after a comparison operator in `{…}` — may be omitted (comma or `}` next) for DOMAIN slots.
@@ -1952,6 +1973,7 @@ impl<'a> Parser<'a> {
             });
         }
         let mut entity: Option<String> = self.sym_map.resolve_session_entity_symbol(&raw);
+        let mut entity_from_sym = entity.is_some().then(|| raw.clone());
         if entity.is_none() {
             for c in self.layers_slice() {
                 let e = c.canonical_entity_name(&raw).unwrap_or_else(|| raw.clone());
@@ -1993,6 +2015,9 @@ impl<'a> Parser<'a> {
                 });
             }
         };
+        if let Some(sym) = entity_from_sym.as_deref() {
+            self.active_entity_entry_id = self.sym_map.entry_id_for_entity_symbol(sym);
+        }
         let ent = self
             .cgs_for_entity_required(&entity)
             .get_entity(&entity)
@@ -4475,5 +4500,44 @@ mod tests {
             panic!("expected query");
         };
         assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
+    }
+
+    #[test]
+    fn federated_issue_collision_parse_uses_opaque_entity_catalog() {
+        use crate::symbol_tuning::DomainExposureSession;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let github_dir = root.join("../../apis/github");
+        let linear_dir = root.join("../../apis/linear");
+        if !github_dir.is_dir() || !linear_dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(&github_dir).expect("github");
+        cgs_github.entry_id = Some("github".into());
+        let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
+        cgs_linear.entry_id = Some("linear".into());
+        let layers = [&cgs_github, &cgs_linear];
+        let mut exp =
+            DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["Issue"],
+        );
+        let map = exp.symbol_map_arc();
+        assert_eq!(map.entry_id_for_entity_symbol("e1").as_deref(), Some("github"));
+        assert_eq!(map.entry_id_for_entity_symbol("e2").as_deref(), Some("linear"));
+        let linear_e = "e2";
+        let team_key = map.ident_sym_cap_param("Issue", "issue_search", "team_key");
+        let expr = format!(r#"{linear_e}~"plasm"{{{team_key}="ENG"}}"#);
+        let r = parse_with_cgs_layers(&expr, &layers, map).expect("parse linear Issue search");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected query, got {:?}", r.expr);
+        };
+        assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
+        assert_eq!(q.entity, "Issue");
     }
 }

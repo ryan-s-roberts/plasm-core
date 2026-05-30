@@ -12,8 +12,8 @@ use crate::prompt_render::{
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    expand_expr_for_domain_session, expand_expr_for_parse, DomainExposureSession, FocusSpec,
-    IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+    expand_expr_for_domain_session, expand_expr_for_parse, DomainExposureSession, ExposureEntityKey,
+    FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -49,7 +49,8 @@ impl Default for PromptPipelineConfig {
 type IdentMetadataMap = HashMap<IdentMetaKey, IdentMetadata>;
 
 struct FederatedExposureResolver<'exposure, 'cgs> {
-    by_entity: HashMap<&'exposure str, &'cgs CGS>,
+    by_qualified: HashMap<(String, String), &'cgs CGS>,
+    by_entity_unique: HashMap<&'exposure str, &'cgs CGS>,
 }
 
 impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
@@ -57,26 +58,51 @@ impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
         by_entry: &'cgs IndexMap<String, &'cgs CGS>,
         exposure: &'exposure DomainExposureSession,
     ) -> Self {
-        let by_entity = exposure
+        let mut by_qualified: HashMap<(String, String), &'cgs CGS> = HashMap::new();
+        let mut by_entity_unique: HashMap<&str, &'cgs CGS> = HashMap::new();
+        for (entity, entry_id) in exposure
             .entities
             .iter()
             .zip(exposure.entity_catalog_entry_ids.iter())
-            .map(|(entity, entry_id)| {
-                let cgs = by_entry
-                    .get(entry_id)
-                    .copied()
-                    .expect("CGS for catalog entry id");
-                (entity.as_str(), cgs)
+        {
+            let cgs = by_entry
+                .get(entry_id)
+                .copied()
+                .expect("CGS for catalog entry id");
+            by_qualified.insert((entry_id.clone(), entity.clone()), cgs);
+            match by_entity_unique.entry(entity.as_str()) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(cgs);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    if *e.get() as *const CGS != cgs as *const CGS {
+                        e.remove();
+                    }
+                }
+            }
+        }
+        Self {
+            by_qualified,
+            by_entity_unique,
+        }
+    }
+
+    fn resolve_qualified(&self, entry_id: &str, entity: &str) -> &'cgs CGS {
+        self.by_qualified
+            .get(&(entry_id.to_string(), entity.to_string()))
+            .copied()
+            .unwrap_or_else(|| {
+                panic!("qualified entity ({entry_id}, {entity}) must appear in exposure session")
             })
-            .collect();
-        Self { by_entity }
     }
 
     fn resolve(&self, entity: &str) -> &'cgs CGS {
-        self.by_entity
+        self.by_entity_unique
             .get(entity)
             .copied()
-            .expect("entity must appear in exposure session")
+            .unwrap_or_else(|| {
+                panic!("entity `{entity}` must appear uniquely in exposure session")
+            })
     }
 }
 
@@ -290,7 +316,7 @@ impl PromptPipelineConfig {
         &self,
         by_entry: &'b IndexMap<String, &'b CGS>,
         exposure: &'b DomainExposureSession,
-        new_entity_names: &[&str],
+        new_entities: &[ExposureEntityKey],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
         let cfg = RenderConfig {
@@ -301,17 +327,32 @@ impl PromptPipelineConfig {
             by_entry,
             cfg,
             exposure,
-            Some(new_entity_names),
+            Some(new_entities),
         );
         let resolver = FederatedExposureResolver::new(by_entry, exposure);
-        let ident_meta =
-            self.build_ident_meta_for_entities(new_entity_names, |entity| resolver.resolve(entity));
+        let entity_names: Vec<&str> = new_entities
+            .iter()
+            .map(|k| k.entity.as_str())
+            .collect();
+        let ident_meta = self.build_ident_meta_for_entities(&entity_names, |entity| {
+            let key = new_entities
+                .iter()
+                .find(|k| k.entity.as_str() == entity)
+                .expect("new entity key");
+            resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
+        });
         self.render_domain_bundle_surface(
             &bundle,
-            new_entity_names,
+            &entity_names,
             exposure,
             ident_meta.as_ref(),
-            |entity| resolver.resolve(entity),
+            |entity| {
+                let key = new_entities
+                    .iter()
+                    .find(|k| k.entity.as_str() == entity)
+                    .expect("new entity key");
+                resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
+            },
             DomainWaveSurface::AdditiveWave,
         )
     }

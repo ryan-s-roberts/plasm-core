@@ -634,7 +634,7 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
     by_entry: &'b IndexMap<String, &'b CGS>,
     config: RenderConfig<'_>,
     exposure: &'b crate::symbol_tuning::DomainExposureSession,
-    emit_entity_blocks: Option<&[&str]>,
+    emit_entity_blocks: Option<&[crate::symbol_tuning::ExposureEntityKey]>,
 ) -> DomainPromptBundle {
     let span = crate::spans::prompt_domain_bundle_exposure_federated(
         emit_entity_blocks.is_some(),
@@ -659,37 +659,100 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         None
     };
 
-    let mut entities_buf = Vec::new();
     let mut teaching_blocks = Vec::new();
+    let mut entities_buf = Vec::new();
     let fill_model = config.include_domain_execution_model;
-    let mut entity_to_entry: HashMap<&str, &str> = HashMap::new();
-    for (e, id) in exposure
+    let surface_filter = Some(&exposure.surface);
+
+    let emit_set: Option<std::collections::BTreeSet<(String, String)>> = emit_entity_blocks.map(|keys| {
+        keys.iter()
+            .map(|k| (k.entry_id.clone(), k.entity.to_string()))
+            .collect()
+    });
+
+    let ident_meta = map_opt
+        .as_ref()
+        .map(|_| exposure.ident_metadata_for_exposure_entities(&full_entities));
+
+    let mut gloss_emit_state = FieldGlossEmitState {
+        registry_p_slot_compact_gloss: HashMap::new(),
+        registry_compact_meaning_canonical_p: HashMap::new(),
+        registry_p_sym_alias: HashMap::new(),
+        registry_value_gloss_canonical_v: HashMap::new(),
+        registry_v_sym_alias: HashMap::new(),
+        non_registry_slots: HashMap::new(),
+        defined_value_domains: HashSet::new(),
+    };
+    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, bool> = HashMap::with_capacity(8192);
+
+    for (entity, entry_id) in exposure
         .entities
         .iter()
         .zip(exposure.entity_catalog_entry_ids.iter())
     {
-        entity_to_entry.entry(e.as_str()).or_insert(id.as_str());
-    }
-    let resolve = |ename: &str| -> &CGS {
-        let eid = entity_to_entry
-            .get(ename)
-            .expect("entity must appear in exposure session");
-        by_entry
-            .get(*eid)
+        if let Some(ref set) = emit_set {
+            if !set.contains(&(entry_id.clone(), entity.clone())) {
+                continue;
+            }
+        }
+        let cgs = by_entry
+            .get(entry_id.as_str())
             .copied()
-            .expect("CGS for catalog entry id")
-    };
-    render_domain_table_resolved(
-        resolve,
-        &full_entities,
-        map_opt.as_deref(),
-        Some(exposure),
-        &mut teaching_blocks,
-        &mut entities_buf,
-        fill_model,
-        false,
-        emit_entity_blocks,
-    );
+            .expect("CGS for catalog entry id");
+        let ename = entity.as_str();
+        let collect_meta = fill_model;
+        let mut field_gloss_accum = Vec::new();
+        let mut gloss_emit: Option<GlossScratch<'_>> = match (map_opt.as_deref(), ident_meta.as_ref())
+        {
+            (Some(m), Some(meta)) => Some(GlossScratch {
+                field_gloss: &mut field_gloss_accum,
+                state: &mut gloss_emit_state,
+                map: m,
+                meta,
+                catalog_entry_id: entry_id.as_str(),
+                entity: ename,
+                cgs,
+            }),
+            _ => None,
+        };
+        let block = collect_entity_teaching_block(
+            cgs,
+            ename,
+            map_opt.as_deref(),
+            ident_meta.as_ref(),
+            collect_meta,
+            &mut line_valid_cache,
+            &mut gloss_emit,
+            surface_filter,
+            Some(entry_id.as_str()),
+        );
+        if block.teaching_rows.is_empty() {
+            continue;
+        }
+        let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
+        let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
+        let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
+        for row in block.teaching_rows {
+            if seen_expr.insert(row.dedupe_key.clone()) {
+                if collect_meta {
+                    emitted_metas.push(row.meta.clone());
+                }
+                kept_rows.push(row);
+            }
+        }
+        teaching_blocks.push(EntityTeachingBlock {
+            heading: block.heading,
+            field_gloss_rows: block.field_gloss_rows,
+            teaching_rows: kept_rows,
+        });
+        if fill_model {
+            entities_buf.push(EntityDomainPrompt {
+                entity: ename.to_string(),
+                lines: emitted_metas,
+            });
+        }
+    }
+
     let model = if fill_model {
         DomainPromptModel {
             entities: entities_buf,
@@ -1861,6 +1924,9 @@ fn domain_expression_tool_count_resolved(
     for &ename in &full_entities {
         let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
         let mut gloss_emit_none = None;
+        let session_entry_id = exposure_opt
+            .and_then(|e| e.qualified_entity_for_exposed_entity(ename))
+            .map(|k| k.catalog_entry_id);
         let block = collect_entity_teaching_block(
             cgs,
             ename,
@@ -1870,6 +1936,7 @@ fn domain_expression_tool_count_resolved(
             &mut line_valid_cache,
             &mut gloss_emit_none,
             surface_filter,
+            session_entry_id.as_deref(),
         );
         for row in &block.teaching_rows {
             if seen_expr.insert(row.dedupe_key.clone()) {
@@ -3738,6 +3805,7 @@ fn collect_entity_teaching_block(
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
     gloss_emit: &mut Option<GlossScratch<'_>>,
     surface_filter: Option<&ExposureSurface>,
+    catalog_entry_id_override: Option<&str>,
 ) -> EntityTeachingBlock {
     let mut teaching_rows: Vec<EntityTeachingExprRow> = Vec::new();
 
@@ -3749,7 +3817,9 @@ fn collect_entity_teaching_block(
         };
     };
     let es = ent_sym(map, ename);
-    let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
+    let catalog_entry_id = catalog_entry_id_override
+        .or_else(|| cgs.entry_id.as_deref())
+        .unwrap_or("");
     let ent_desc_short = {
         let d = ent.description.as_str().trim();
         (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
@@ -4281,6 +4351,7 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
         &mut line_valid_cache,
         &mut gloss_emit_none,
         None,
+        None,
     )
     .teaching_rows
     .len()
@@ -4305,6 +4376,7 @@ pub(crate) fn domain_example_lines(
         &mut line_valid_cache,
         &mut gloss_emit_none,
         surface_filter,
+        None,
     )
     .teaching_rows
     .into_iter()
@@ -4332,6 +4404,7 @@ fn domain_heading_projection_bracket(
         &mut line_valid_cache,
         &mut gloss_emit_none,
         surface_filter,
+        None,
     );
     let refs: Vec<&TeachingExprLine> = block
         .teaching_rows
@@ -5095,6 +5168,12 @@ fn render_domain_table_resolved<'b, F>(
 
     for &ename in &block_iter {
         let cgs = resolve(ename);
+        let catalog_entry_id_owned = exposure_for_ident
+            .and_then(|exp| exp.qualified_entity_for_exposed_entity(ename))
+            .map(|k| k.catalog_entry_id.clone())
+            .or_else(|| cgs.entry_id.clone())
+            .unwrap_or_default();
+        let catalog_entry_id = catalog_entry_id_owned.as_str();
         let collect_meta = fill_model;
         let mut field_gloss_accum = Vec::new();
         let mut gloss_emit: Option<GlossScratch<'_>> = match (map, ident_meta.as_ref()) {
@@ -5103,7 +5182,7 @@ fn render_domain_table_resolved<'b, F>(
                 state: &mut gloss_emit_state,
                 map: m,
                 meta,
-                catalog_entry_id: cgs.entry_id.as_deref().unwrap_or(""),
+                catalog_entry_id,
                 entity: ename,
                 cgs,
             }),
@@ -5118,6 +5197,7 @@ fn render_domain_table_resolved<'b, F>(
             &mut line_valid_cache,
             &mut gloss_emit,
             surface_filter,
+            Some(catalog_entry_id),
         );
         if block.teaching_rows.is_empty() {
             debug_assert!(
@@ -6235,6 +6315,7 @@ mod tests {
             &mut line_valid_cache,
             &mut gloss_emit_none,
             None,
+            None,
         );
         let witness_row = block.teaching_rows.iter().find(|r| {
             r.teaching_expr.is_projection_teaching
@@ -6327,7 +6408,7 @@ mod tests {
             &cgs,
             entry.as_str(),
             "rules traffic handling Cloudflare zone firewall WAF",
-            &["Ruleset".to_string()],
+            &crate::relation_endpoint_keys(entry.as_str(), &["Ruleset".to_string()]),
             &["Ruleset".to_string()],
             None,
         );
@@ -6361,6 +6442,7 @@ mod tests {
             &mut line_valid_cache,
             &mut gloss_emit_none,
             Some(&delta.required),
+            Some(entry.as_str()),
         );
         let has_zone_nav = block.teaching_rows.iter().any(|r| {
             let ex = r.teaching_expr.expression.as_str();
@@ -6392,6 +6474,7 @@ mod tests {
             &mut line_valid_cache2,
             &mut gloss_emit_none2,
             Some(&surface_with_zone),
+            Some(entry.as_str()),
         );
         assert!(
             block2.teaching_rows.iter().any(|r| {
@@ -6430,7 +6513,7 @@ mod tests {
             &cgs,
             entry.as_str(),
             "rules traffic handling Cloudflare zone firewall WAF",
-            &["Ruleset".to_string()],
+            &crate::relation_endpoint_keys(entry.as_str(), &["Ruleset".to_string()]),
             &["Ruleset".to_string()],
             None,
         );
@@ -6487,6 +6570,7 @@ mod tests {
             false,
             &mut line_valid_cache,
             &mut gloss_emit_none,
+            None,
             None,
         );
         let witness_row = block.teaching_rows.iter().find(|r| {
@@ -6589,6 +6673,7 @@ mod tests {
             false,
             &mut line_valid_cache,
             &mut gloss_emit_none,
+            None,
             None,
         );
         let witness = block.teaching_rows.iter().find(|r| {

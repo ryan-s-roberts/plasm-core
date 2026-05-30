@@ -643,6 +643,25 @@ fn validate_compute_paths_for_entity(
     Ok(())
 }
 
+fn resolve_compute_field_path(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
+    path: &FieldPath,
+) -> Result<FieldPath, String> {
+    let segs = path.segments();
+    if segs.len() != 1 {
+        return Ok(path.clone());
+    }
+    let wire = crate::plasm_plan_run::resolve_wire_field_token(
+        session,
+        symbol_map_cross_cache,
+        qe,
+        segs[0].as_str(),
+    );
+    FieldPath::from_dotted(&wire)
+}
+
 /// Walk [`DagNodeSource::Compute`] chains to the nearest surface or relation node that carries a
 /// [`QualifiedEntityKey`] (the row entity after decode).
 fn resolve_qualified_entity_for_dag_source(
@@ -766,14 +785,18 @@ fn postfix_op_to_compute(
                 return Err("sort(...) requires a non-empty field".into());
             }
             let descending = parse_sort_direction(&parts)?;
-            let key_fp = FieldPath::from_dotted(key)?;
-            if let Some(qe) =
-                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
-            {
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            let key_fp = resolve_compute_field_path(
+                session,
+                state.cross_cache,
+                qe.as_ref(),
+                &FieldPath::from_dotted(key)?,
+            )?;
+            if let Some(qe) = qe.as_ref() {
                 validate_compute_paths_for_entity(
                     session,
                     state.cross_cache,
-                    &qe,
+                    qe,
                     std::slice::from_ref(&key_fp),
                     "sort(...)",
                 )?;
@@ -788,16 +811,25 @@ fn postfix_op_to_compute(
             ))
         }
         PlasmPostfixOp::Aggregate { args } => {
-            let aggregates = parse_aggregates(args)?;
-            if let Some(qe) =
-                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
-            {
+            let mut aggregates = parse_aggregates(args)?;
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            if let Some(qe) = qe.as_ref() {
+                for agg in &mut aggregates {
+                    if let Some(field) = agg.field.as_ref() {
+                        agg.field = Some(resolve_compute_field_path(
+                            session,
+                            state.cross_cache,
+                            Some(qe),
+                            field,
+                        )?);
+                    }
+                }
                 let paths: Vec<FieldPath> =
                     aggregates.iter().filter_map(|a| a.field.clone()).collect();
                 validate_compute_paths_for_entity(
                     session,
                     state.cross_cache,
-                    &qe,
+                    qe,
                     &paths,
                     "aggregate(...)",
                 )?;
@@ -817,10 +849,25 @@ fn postfix_op_to_compute(
                 parts[1..].join(",")
             };
             let aggregates = parse_aggregates(rest.as_str())?;
-            let key_fp = FieldPath::from_dotted(key)?;
-            if let Some(qe) =
-                resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
-            {
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            let key_fp = resolve_compute_field_path(
+                session,
+                state.cross_cache,
+                qe.as_ref(),
+                &FieldPath::from_dotted(key)?,
+            )?;
+            let mut aggregates = aggregates;
+            if let Some(qe) = qe.as_ref() {
+                for agg in &mut aggregates {
+                    if let Some(field) = agg.field.as_ref() {
+                        agg.field = Some(resolve_compute_field_path(
+                            session,
+                            state.cross_cache,
+                            Some(qe),
+                            field,
+                        )?);
+                    }
+                }
                 let mut paths = vec![key_fp.clone()];
                 paths.extend(aggregates.iter().filter_map(|a| a.field.clone()));
                 validate_compute_paths_for_entity(

@@ -228,10 +228,10 @@ pub use summary_render::{
 };
 pub use symbol_tuning::{
     entity_slices_for_render, expand_expr_for_domain_session, expand_expr_for_parse,
-    expand_path_symbols, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
+    expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
     symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_for_prompt,
-    DomainExposureSession, ExposedEntitySymbolRow, FocusSpec, SymbolMap, SymbolMapCacheKey,
-    SymbolMapCrossRequestCache,
+    DomainExposureSession, ExposedEntitySymbolRow, ExposureEntityKey, FocusSpec, SymbolMap,
+    SymbolMapCacheKey, SymbolMapCrossRequestCache,
 };
 pub use template_interpolate::{
     contains_dollar_interpolation, dollar_interpolation_roots, interpolate_string,

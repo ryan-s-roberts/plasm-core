@@ -739,6 +739,30 @@ pub fn resolve_capability_seeds(
     Ok(out)
 }
 
+fn relation_endpoint_keys_for_wave(
+    exp: &plasm_core::DomainExposureSession,
+    batch_entry_id: &str,
+    batch_names: &[String],
+) -> Vec<plasm_core::ExposureEntityKey> {
+    exp.relation_endpoint_keys_for_wave(batch_entry_id, batch_names)
+}
+
+fn format_session_unchanged_one_liner(entity_count: usize) -> String {
+    if entity_count == 0 {
+        "_Session unchanged — no exposed entities yet._\n".to_string()
+    } else {
+        format!(
+            "_Session unchanged (`e1`…`e{entity_count}`). Use `plasm` / `plasm_run` with this logical_session_ref._\n"
+        )
+    }
+}
+
+fn seeds_fully_exposed(exp: &plasm_core::DomainExposureSession, seeds: &[CapabilitySeed]) -> bool {
+    seeds
+        .iter()
+        .all(|s| exp.contains_qualified_entity(s.entry_id.as_str(), s.entity.as_str()))
+}
+
 fn group_seed_entities_by_entry(seeds: &[CapabilitySeed]) -> IndexMap<String, Vec<String>> {
     let mut groups: IndexMap<String, Vec<String>> = IndexMap::new();
     for seed in seeds {
@@ -1161,14 +1185,12 @@ async fn execute_session_create_response_inner(
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     let domain_exposure = match &domain_filter_intent {
         Some(intent_s) => {
-            let mut relation_endpoints = names.clone();
-            relation_endpoints.sort_unstable();
-            relation_endpoints.dedup();
+            let relation_keys = plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
             let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
                 cgs.as_ref(),
                 body.entry_id.as_str(),
                 intent_s.as_str(),
-                &relation_endpoints,
+                &relation_keys,
                 &names,
                 ranked_for_domain.as_deref(),
             );
@@ -1337,15 +1359,13 @@ pub async fn federate_execute_session(
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     let n0 = exp.entities.len();
     if let Some(ref intent_s) = scope_intent {
-        let mut relation_endpoints = sess.entities.clone();
-        relation_endpoints.extend(names.iter().cloned());
-        relation_endpoints.sort_unstable();
-        relation_endpoints.dedup();
+        let relation_keys =
+            relation_endpoint_keys_for_wave(&exp, new_entry_id.as_str(), &names);
         let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
             ctx_arc.cgs.as_ref(),
             new_entry_id.as_str(),
             intent_s.as_str(),
-            &relation_endpoints,
+            &relation_keys,
             &names,
             ranked_slice,
         );
@@ -1359,9 +1379,9 @@ pub async fn federate_execute_session(
     } else {
         exp.expose_entities(&layers, ctx_arc.cgs.clone(), new_entry_id.as_str(), &refs);
     }
-    let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
+    let added_qualified = exp.qualified_entities_since(n0);
 
-    if added.is_empty() {
+    if added_qualified.is_empty() {
         sess.domain_exposure = Some(exp);
         st.sessions
             .replace_session(&prompt_hash_p, &session_id_p, sess)
@@ -1370,10 +1390,7 @@ pub async fn federate_execute_session(
             mode: "federate".to_string(),
             entry_id: new_entry_id,
             entities: names,
-            markdown_delta: format!(
-                "_No new entities in this federated wave (already exposed)._\n\n{hints}",
-                hints = PLASM_NOOP_EXPRESSION_HINTS
-            ),
+            markdown_delta: String::new(),
             reused_session: true,
             domain_prompt_chars_added: 0,
         });
@@ -1388,7 +1405,12 @@ pub async fn federate_execute_session(
     let delta = st
         .engine
         .prompt_pipeline()
-        .render_domain_exposure_delta_federated(&by_entry, &exp, &added, Some(sym_cross));
+        .render_domain_exposure_delta_federated(
+            &by_entry,
+            &exp,
+            &added_qualified,
+            Some(sym_cross),
+        );
     let mut names_sorted = names.clone();
     names_sorted.sort_unstable();
     let mut wave = String::new();
@@ -1423,21 +1445,9 @@ pub async fn federate_execute_session(
 const PLASM_NOOP_EXPRESSION_HINTS: &str = "\
 **Syntax (unchanged):** Search: `Entity~\"text\"` or `Entity.search(key=value, …)` — brace-only `Entity{…}` works when the entity has Search but no Query (e.g. Linear `Issue`). Views: abstract constructors from DOMAIN (`IssueContext(id)`, `MyWorkSnapshot`). Get + relation: `Issue(id).comments`.\n";
 
-/// Markdown reminder after an expand wave.
-///
-/// - **Delta wave** (`noop_expand == false`): new teaching-table rows are in **this** message—point the model at them.
-/// - **No-op expand** (`noop_expand == true`): we intentionally **do not** replay the full TSV teaching table to save
-///   tokens; remind the model that symbols still apply and steady state is `plasm` with `logical_session_ref`.
 fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
     if noop_expand {
-        if n == 0 {
-            return "_No exposed entities in this session yet._\n".to_string();
-        }
-        return format!(
-            "_Symbols `e1`…`e{n}` are unchanged. Full Plasm teaching-table / TSV text is **not** repeated in this response (token-saving). Keep using your **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; rely on the teaching table from the prior `plasm_context` open or append wave in chat history._\n\n{hints}",
-            n = n,
-            hints = PLASM_NOOP_EXPRESSION_HINTS
-        );
+        return format_session_unchanged_one_liner(n);
     }
     if n == 0 {
         "_Follow the TSV teaching table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n"
@@ -1507,16 +1517,22 @@ pub async fn expand_execute_domain_session(
             .or_default()
             .push(seed.entity.clone());
     }
-    let mut relation_base: Vec<String> = sess.entities.clone();
-    for ents in groups.values() {
+    let mut relation_keys = exp.all_qualified_entities();
+    let mut relation_seen: std::collections::BTreeSet<(String, String)> = relation_keys
+        .iter()
+        .map(|k| (k.entry_id.clone(), k.entity.to_string()))
+        .collect();
+    for (eid, ents) in &groups {
         for e in ents {
-            if !relation_base.contains(e) {
-                relation_base.push(e.clone());
+            let pair = (eid.clone(), e.clone());
+            if relation_seen.insert(pair.clone()) {
+                relation_keys.push(plasm_core::ExposureEntityKey {
+                    entry_id: pair.0,
+                    entity: plasm_core::EntityName::from(pair.1.as_str()),
+                });
             }
         }
     }
-    relation_base.sort_unstable();
-    relation_base.dedup();
 
     let eid_order = process_order_for_expand_group(&groups);
     let add_lines: Vec<String> = eid_order
@@ -1543,7 +1559,7 @@ pub async fn expand_execute_domain_session(
                 ctx.cgs.as_ref(),
                 eid.as_str(),
                 intent_s.as_str(),
-                &relation_base,
+                &relation_keys,
                 &normalized,
                 ranked_slice,
             );
@@ -1552,19 +1568,21 @@ pub async fn expand_execute_domain_session(
             exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
         }
     }
-    let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
+    let added_qualified = exp.qualified_entities_since(n0);
+    let added: Vec<&str> = added_qualified
+        .iter()
+        .map(|k| k.entity.as_str())
+        .collect();
 
     let n_total = exp.entities.len();
 
-    if added.is_empty() {
+    if added_qualified.is_empty() {
         sess.entities = exp.entities.clone();
         sess.domain_exposure = Some(exp);
         st.sessions
             .replace_session(&prompt_hash_p, &session_id_p, sess)
             .await;
-        let mut out = String::from("_No new entities in this wave (already exposed)._\n\n");
-        out.push_str(&expand_session_symbol_reminder(n_total, true));
-        return Ok(out);
+        return Ok(String::new());
     }
 
     let cgs_primary = sess.cgs.as_ref();
@@ -1577,7 +1595,12 @@ pub async fn expand_execute_domain_session(
             .collect();
         st.engine
             .prompt_pipeline()
-            .render_domain_exposure_delta_federated(&by_entry, &exp, &added, Some(sym_cross))
+            .render_domain_exposure_delta_federated(
+                &by_entry,
+                &exp,
+                &added_qualified,
+                Some(sym_cross),
+            )
     } else {
         st.engine.prompt_pipeline().render_domain_exposure_delta(
             cgs_primary,
@@ -1709,12 +1732,13 @@ pub(crate) async fn apply_capability_seeds(
             open_md.push_str("\n\n");
             open_md.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
             if created.reused {
-                open_md.push_str("\n\nSession unchanged.");
-            }
-            // First attach: restate teaching-table snapshot only when a **new** execute row opened.
-            // Reused sessions omit full TSV replay (token-saving; see incremental-domain-prompts.md).
-            let mode = st.engine.prompt_pipeline().render_mode;
-            if !created.reused {
+                open_md.push_str("\n\n");
+                open_md.push_str(&format_session_unchanged_one_liner(
+                    created.entities.len().max(1),
+                ));
+            } else {
+                // First attach: restate teaching-table snapshot only when a **new** execute row opened.
+                let mode = st.engine.prompt_pipeline().render_mode;
                 if mode.is_tsv() {
                     if let Some(body_tsv) = domain_tsv_table_from_wrapped_prompt(
                         &created.prompt,
@@ -1731,12 +1755,6 @@ pub(crate) async fn apply_capability_seeds(
                     open_md.push_str("\n\n");
                     open_md.push_str(&created.prompt);
                 }
-            } else {
-                open_md.push_str("\n\n");
-                open_md.push_str(&expand_session_symbol_reminder(
-                    created.entities.len().max(1),
-                    true,
-                ));
             }
             let domain_prompt_chars_added = if created.reused {
                 0
@@ -1764,6 +1782,38 @@ pub(crate) async fn apply_capability_seeds(
             &ranked_capabilities,
         )
         .await?;
+        if let Some(sess_arc) = st
+            .sessions
+            .get_by_strs(&prompt_hash, &session_id)
+            .await
+        {
+            if let Some(ref exp) = sess_arc.domain_exposure {
+                let catalogs_ready = plan.process_order.iter().all(|eid| {
+                    sess_arc.contexts_by_entry.contains_key(eid)
+                });
+                if catalogs_ready && seeds_fully_exposed(exp, &seeds) {
+                    let n = exp.entities.len().max(1);
+                    return Ok(ApplyCapabilitySeedsOutcome {
+                        prompt_hash,
+                        session_id,
+                        primary_entry_id: primary_entry_id.clone(),
+                        principal,
+                        waves: vec![CapabilityWaveOutcome {
+                            mode: "expand".to_string(),
+                            entry_id: primary_entry_id,
+                            entities: vec![],
+                            markdown_delta: format_session_unchanged_one_liner(n),
+                            reused_session: true,
+                            domain_prompt_chars_added: 0,
+                        }],
+                        binding_updated,
+                        new_symbol_space: false,
+                        stale_execute_binding_recovered,
+                        stale_binding_previous,
+                    });
+                }
+            }
+        }
     }
 
     for eid in &plan.process_order {
@@ -1815,6 +1865,28 @@ pub(crate) async fn apply_capability_seeds(
                 reused_session: false,
             });
         }
+    }
+
+    if waves.len() > 1
+        && waves
+            .iter()
+            .all(|w| w.domain_prompt_chars_added == 0 && w.markdown_delta.trim().is_empty())
+    {
+        let n = st
+            .sessions
+            .get_by_strs(&prompt_hash, &session_id)
+            .await
+            .and_then(|s| s.domain_exposure.as_ref().map(|e| e.entities.len()))
+            .unwrap_or(0)
+            .max(1);
+        waves = vec![CapabilityWaveOutcome {
+            mode: "expand".to_string(),
+            entry_id: primary_entry_id.clone(),
+            entities: vec![],
+            markdown_delta: format_session_unchanged_one_liner(n),
+            reused_session: true,
+            domain_prompt_chars_added: 0,
+        }];
     }
 
     Ok(ApplyCapabilitySeedsOutcome {
@@ -4763,14 +4835,9 @@ mod tests {
         )
         .await
         .expect("expand duplicate");
-        assert!(dup.contains("already exposed"));
         assert!(
-            !dup.contains("```tsv"),
-            "no-op expand must not replay full DOMAIN fence: {dup}"
-        );
-        assert!(
-            dup.contains("**not** repeated") || dup.contains("token-saving"),
-            "expected no-op token-saving hint: {dup}"
+            dup.trim().is_empty(),
+            "no-op expand returns empty markdown: {dup:?}"
         );
         let sess2 = st
             .sessions
@@ -4791,6 +4858,14 @@ mod tests {
         )
         .expect_err("lines");
         assert!(err.contains("lines"), "{err}");
+    }
+
+    #[test]
+    fn format_session_unchanged_one_liner_shape() {
+        let s = format_session_unchanged_one_liner(3);
+        assert!(s.contains("`e1`…`e3`"));
+        assert!(s.contains("plasm_run"));
+        assert!(!s.contains("PLASM_NOOP"));
     }
 
     #[tokio::test]

@@ -283,13 +283,24 @@ fn walk_inline_capability_param_paths(ty: &InputType, prefix: &str, out: &mut BT
 
 /// Full per-entity closure (legacy HTTP execute / REPL paths): every field, relation, capability, and param.
 ///
-/// Declared relation **targets** are also inserted into [`ExposureSurface::entities`] so
 /// [`crate::prompt_render::surface_exposes_relation_nav_target`] admits CGS relation-nav rows toward those
 /// types without requiring a separate DOMAIN block for every hop (e.g. Pokeapi `Type`-only slices).
 /// Entity-ref **fields** do not add their targets — incremental surfaces omit cross-entity navigation until
 /// those entities are explicitly exposed.
 ///
 /// `entry_id` is the caller’s registry row id (HTTP/MCP); exposure keys follow [`CGS::entry_id`] when set.
+
+/// Catalog-local relation endpoint keys for intent-surface derivation (single-catalog open).
+pub fn relation_endpoint_keys(entry_id: &str, names: &[String]) -> Vec<ExposureEntityKey> {
+    names
+        .iter()
+        .map(|n| ExposureEntityKey {
+            entry_id: entry_id.to_string(),
+            entity: EntityName::from(n.as_str()),
+        })
+        .collect()
+}
+
 #[allow(unused_variables)]
 pub fn legacy_exposure_surface_for_entities(
     cgs: &CGS,
@@ -297,9 +308,12 @@ pub fn legacy_exposure_surface_for_entities(
     entities: &[&str],
     out: &mut ExposureSurface,
 ) {
-    // Match [`crate::prompt_render`] / gloss scratch: registry-backed rows key on `CGS::entry_id`,
-    // defaulting to empty when unset (YAML fixtures often omit `entry_id:`).
-    let cid = cgs.entry_id.clone().unwrap_or_default();
+    // Session/registry `entry_id` wins over optional YAML `CGS::entry_id` (fixtures often omit it).
+    let cid = if entry_id.is_empty() {
+        cgs.entry_id.clone().unwrap_or_default()
+    } else {
+        entry_id.to_string()
+    };
     for ename in entities.iter().copied() {
         let Some(ent) = cgs.get_entity(ename) else {
             continue;
@@ -1607,6 +1621,14 @@ impl SymbolMap {
         self.sym_to_entity.get(token).cloned()
     }
 
+    /// Owning registry `entry_id` for an opaque `e#` token in this session.
+    #[inline]
+    pub fn entry_id_for_entity_symbol(&self, sym: &str) -> Option<String> {
+        self.qualified_entity_to_sym
+            .iter()
+            .find_map(|((entry_id, _), s)| (s == sym).then(|| entry_id.clone()))
+    }
+
     /// Build maps for all entities in `full_entities` (slice order defines `e1`, `e2`, …).
     ///
     /// This is a thin wrapper around [`DomainExposureSession::new`] + the session’s shared [`SymbolMap`]:
@@ -2259,7 +2281,20 @@ pub(crate) fn gloss_description_truncated(s: &str) -> String {
 
 /// Expand symbolic path text to canonical identifiers for the parser.
 pub fn expand_path_symbols(input: &str, map: &SymbolMap) -> String {
-    let mut s = replace_sym_tokens(input, map, SymPhase::Entity);
+    expand_path_symbols_with_options(input, map, true)
+}
+
+/// Expand `p#` / `m#` for parse; optionally keep `e#` opaque so federated sessions retain catalog disambiguation.
+pub fn expand_path_symbols_with_options(
+    input: &str,
+    map: &SymbolMap,
+    expand_entity_symbols: bool,
+) -> String {
+    let mut s = if expand_entity_symbols {
+        replace_sym_tokens(input, map, SymPhase::Entity)
+    } else {
+        input.to_string()
+    };
     s = replace_sym_tokens(&s, map, SymPhase::Ident);
     s = expand_method_tokens(&s, map);
     s
@@ -3240,18 +3275,92 @@ impl DomainExposureSession {
         self.symbol_map_arc()
     }
 
+    /// All exposed rows as catalog-qualified keys (order matches `e1`, `e2`, …).
+    pub fn all_qualified_entities(&self) -> Vec<ExposureEntityKey> {
+        self.entities
+            .iter()
+            .zip(self.entity_catalog_entry_ids.iter())
+            .map(|(entity, entry_id)| ExposureEntityKey {
+                entry_id: entry_id.clone(),
+                entity: EntityName::from(entity.as_str()),
+            })
+            .collect()
+    }
+
+    /// Qualified keys appended since `start_index` (wave delta detection).
+    pub fn qualified_entities_since(&self, start_index: usize) -> Vec<ExposureEntityKey> {
+        self.entities
+            .iter()
+            .zip(self.entity_catalog_entry_ids.iter())
+            .skip(start_index)
+            .map(|(entity, entry_id)| ExposureEntityKey {
+                entry_id: entry_id.clone(),
+                entity: EntityName::from(entity.as_str()),
+            })
+            .collect()
+    }
+
+    /// Whether `(entry_id, entity)` is already in this session's symbol space.
+    pub fn contains_qualified_entity(&self, entry_id: &str, entity: &str) -> bool {
+        self.qualified_entity_to_sym
+            .contains_key(&(entry_id.to_string(), entity.to_string()))
+    }
+
+    /// Union of already-exposed qualified keys plus a new wave's `(entry_id, entity)` seeds.
+    pub fn relation_endpoint_keys_for_wave(
+        &self,
+        batch_entry_id: &str,
+        batch_names: &[String],
+    ) -> Vec<ExposureEntityKey> {
+        let mut keys = self.all_qualified_entities();
+        let mut seen: BTreeSet<(String, String)> = keys
+            .iter()
+            .map(|k| (k.entry_id.clone(), k.entity.to_string()))
+            .collect();
+        for name in batch_names {
+            let pair = (batch_entry_id.to_string(), name.clone());
+            if seen.insert(pair.clone()) {
+                keys.push(ExposureEntityKey {
+                    entry_id: pair.0,
+                    entity: EntityName::from(pair.1.as_str()),
+                });
+            }
+        }
+        keys
+    }
+
     /// Owning `(catalog entry id, CGS entity name)` for an exposed **entity name** (aligned with
-    /// `e#` / DOMAIN rows). Prefer this over [`Self::catalog_entry_id_for_entity`] — catalog
-    /// ownership is always a pair, never “catalog derivable from entity string alone.”
+    /// `e#` / DOMAIN rows). Prefer [`Self::qualified_entity_for_exposed_entity_pair`] when the
+    /// catalog is known — bare names are ambiguous under federation.
     pub fn qualified_entity_for_exposed_entity(
         &self,
         entity_name: &str,
     ) -> Option<crate::QualifiedEntityKey> {
-        self.entities
+        let mut matches: Vec<_> = self
+            .entities
             .iter()
             .zip(self.entity_catalog_entry_ids.iter())
-            .find(|(e, _)| e.as_str() == entity_name)
-            .map(|(_, id)| crate::QualifiedEntityKey::new(id.clone(), entity_name.to_string()))
+            .filter(|(e, _)| e.as_str() == entity_name)
+            .collect();
+        if matches.len() != 1 {
+            return None;
+        }
+        let (_, id) = matches.pop().expect("len 1");
+        Some(crate::QualifiedEntityKey::new(
+            id.clone(),
+            entity_name.to_string(),
+        ))
+    }
+
+    /// Owning catalog for one exposed row when both `entry_id` and entity name are known.
+    pub fn qualified_entity_for_exposed_entity_pair(
+        &self,
+        entry_id: &str,
+        entity_name: &str,
+    ) -> Option<crate::QualifiedEntityKey> {
+        self.qualified_entity_to_sym
+            .contains_key(&(entry_id.to_string(), entity_name.to_string()))
+            .then(|| crate::QualifiedEntityKey::new(entry_id.to_string(), entity_name.to_string()))
     }
 
     /// Registry `entry_id` for an exposed **entity name** (aligned with `e#` / DOMAIN table order).
@@ -3425,7 +3534,7 @@ pub fn expand_expr_for_domain_session(
         return input.to_string();
     }
     let map = session.symbol_map_arc();
-    expand_path_symbols(input, map.as_ref())
+    expand_path_symbols_with_options(input, map.as_ref(), false)
 }
 
 /// Strip human-only suffixes from pasted prompt examples (`;;` comment may include `=>` result type,
@@ -4314,8 +4423,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let legacy = DomainExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
-        let mut endpoints = vec!["Profile".to_string(), "Meeting".to_string()];
-        endpoints.sort_unstable();
+        let endpoints = relation_endpoint_keys("overshow", &["Profile".to_string(), "Meeting".to_string()]);
         let delta = crate::discovery::derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
@@ -4362,5 +4470,24 @@ mod tests {
             matches!(meta, IdentMetadata::RegistryBacked { .. }),
             "expected registry-backed blocks array (flat logical surface), got {meta:?}"
         );
+    }
+
+    #[test]
+    fn federated_entity_name_collision_assigns_distinct_entity_symbols() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
+        let layers = [&cgs, &cgs];
+        let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
+        exp.expose_entities(&layers, std::sync::Arc::new(cgs.clone()), "linear", &["LangItem"]);
+        assert_eq!(exp.entities, vec!["LangItem", "LangItem"]);
+        assert_eq!(
+            exp.entity_catalog_entry_ids,
+            vec!["github", "linear"]
+        );
+        let map = exp.symbol_map_arc();
+        assert_eq!(map.entry_id_for_entity_symbol("e1").as_deref(), Some("github"));
+        assert_eq!(map.entry_id_for_entity_symbol("e2").as_deref(), Some("linear"));
+        assert_eq!(map.entity_sym("LangItem"), "e1");
     }
 }
