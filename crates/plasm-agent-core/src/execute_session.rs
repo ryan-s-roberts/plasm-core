@@ -567,10 +567,8 @@ impl ExecuteSession {
         if self.contexts_by_entry.len() <= 1 {
             return None;
         }
-        let exp = self.domain_exposure.as_ref()?;
-        Some(Arc::new(FederationDispatch::from_contexts_and_exposure(
-            self.contexts_by_entry.clone(),
-            exp,
+        Some(Arc::new(crate::catalog_ownership::federation_for_session(
+            self,
         )))
     }
 

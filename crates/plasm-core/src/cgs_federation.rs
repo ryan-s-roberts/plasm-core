@@ -28,7 +28,9 @@ impl QualifiedEntityKey {
 /// Federated catalog resolution failure (fail closed; no blind primary fallback).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FederationResolveError {
-    EntityNotInAnyCatalog { entity: String },
+    EntityNotInAnyCatalog {
+        entity: String,
+    },
     AmbiguousEntity {
         entity: String,
         entry_ids: Vec<String>,
@@ -60,6 +62,9 @@ pub struct FederationDispatch {
     entity_to_entry: HashMap<String, String>,
 }
 
+/// Federated catalog resolution — alias for [`FederationDispatch`] (Wave D CatalogResolver cutover).
+pub type CatalogResolver = FederationDispatch;
+
 impl FederationDispatch {
     /// Build from loaded contexts and a [`DomainExposureSession`] (parallel `entities` /
     /// `entity_catalog_entry_ids`).
@@ -90,25 +95,45 @@ impl FederationDispatch {
         self.by_entry.get(eid).map(|c| c.cgs.http_backend.as_str())
     }
 
+    /// Hint-aware catalog resolution (DOMAIN exposure is prompt-only).
+    pub fn resolve_entity<'a>(
+        &'a self,
+        entity: &str,
+        hint: crate::row_composition::ResolutionHint<'a>,
+        fallback: &'a CGS,
+    ) -> Result<&'a CGS, FederationResolveError> {
+        self.resolve_cgs_with_hint(entity, hint, fallback)
+    }
+
     /// Resolve CGS for `entity`, else `fallback` (primary session graph).
+    #[deprecated(note = "use resolve_entity with ResolutionHint — exposure is prompt-only")]
     pub fn resolve_cgs<'a>(&'a self, entity: &str, fallback: &'a CGS) -> &'a CGS {
         self.cgs_for_entity(entity).unwrap_or(fallback)
     }
 
-    /// Resolve CGS for schema lookup with optional owning-catalog hint (relation targets, etc.).
+    /// Resolve CGS for schema lookup with [`ResolutionHint`] (relation targets, plan QE, owning catalog).
     ///
-    /// Order: exposure map → `owning_cgs` when it defines `entity` → unique context scan →
-    /// `fallback` only when that catalog defines `entity`.
+    /// Order: `plan_qe` when entity matches → exposure map → `owning_cgs` when it defines `entity`
+    /// → unique context scan → `fallback` only when that catalog defines `entity`.
     pub fn resolve_cgs_with_hint<'a>(
         &'a self,
         entity: &str,
-        owning_cgs: Option<&'a CGS>,
+        hint: crate::row_composition::ResolutionHint<'a>,
         fallback: &'a CGS,
     ) -> Result<&'a CGS, FederationResolveError> {
+        if let Some(qe) = hint.plan_qe {
+            if qe.entity == entity {
+                if let Some(ctx) = self.by_entry.get(qe.catalog_entry_id.as_str()) {
+                    if ctx.cgs.entities.contains_key(entity) {
+                        return Ok(ctx.cgs.as_ref());
+                    }
+                }
+            }
+        }
         if let Some(cgs) = self.cgs_for_entity(entity) {
             return Ok(cgs);
         }
-        if let Some(cgs) = owning_cgs {
+        if let Some(cgs) = hint.owning_cgs {
             if cgs.entities.contains_key(entity) && self.entry_id_for_cgs_ptr(cgs).is_some() {
                 return Ok(cgs);
             }
@@ -179,7 +204,15 @@ impl FederationDispatch {
         if let Some(qe) = self.qualified_entity_for_exposed_entity(entity) {
             return Ok(qe);
         }
-        let cgs = self.resolve_cgs_with_hint(entity, owning_cgs, fallback)?;
+        let cgs = self.resolve_cgs_with_hint(
+            entity,
+            crate::row_composition::ResolutionHint {
+                owning_cgs,
+                source_entity: None,
+                plan_qe: None,
+            },
+            fallback,
+        )?;
         Ok(QualifiedEntityKey::new(
             self.entry_id_for_cgs(cgs, primary_entry_id).to_string(),
             entity.to_string(),
@@ -207,5 +240,45 @@ impl FederationDispatch {
     )]
     pub fn catalog_entry_id_for_entity(&self, entity: &str) -> Option<&str> {
         self.entity_to_entry.get(entity).map(|s| s.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CgsContext;
+    use indexmap::IndexMap;
+    use std::sync::Arc;
+
+    fn matrix_cgs() -> Arc<CGS> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        Arc::new(crate::loader::load_schema_dir(&dir).expect("matrix cgs"))
+    }
+
+    #[test]
+    fn resolve_entity_honors_plan_qe_hint() {
+        let primary = matrix_cgs();
+        let secondary = matrix_cgs();
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", primary.clone())),
+        );
+        by_entry.insert(
+            "pokeapi".into(),
+            Arc::new(CgsContext::entry("pokeapi", secondary.clone())),
+        );
+        let fed = FederationDispatch::from_contexts_only(by_entry);
+        let qe = QualifiedEntityKey::new("pokeapi", "LangSummary");
+        let hint = crate::row_composition::ResolutionHint {
+            owning_cgs: None,
+            source_entity: None,
+            plan_qe: Some(&qe),
+        };
+        let cgs = fed
+            .resolve_entity("LangSummary", hint, primary.as_ref())
+            .expect("plan qe routes to pokeapi catalog");
+        assert!(std::ptr::eq(cgs, secondary.as_ref()));
     }
 }

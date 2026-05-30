@@ -1253,22 +1253,6 @@ async fn plasm_language_matrix_live_runs() {
         assert_planning_ir(row, &dry, &plan_json)
             .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
 
-        // Compile/dry/plan validated; live row-identity for limit/projection-sourced hole IR
-        // continuations is tracked separately (see composition identity plan).
-        const LIVE_SKIP_ROWS: &[&str] = &[
-            "lang_bind_limit1_continuation",
-            "lang_bind_relation_hop_one_one",
-            // Federated row: matrix CGS `http_backend` is `127.0.0.1:9`; entry-scoped live
-            // dispatch uses that instead of the Hermit base URL until harness injects it.
-            "lang_federated_relation_target_entry",
-        ];
-        if LIVE_SKIP_ROWS.contains(&row.id) {
-            for t in row.features {
-                tags_seen.insert((*t).to_string());
-            }
-            continue;
-        }
-
         let live = run_validated_plasm_plan(
             row_es,
             row_st,

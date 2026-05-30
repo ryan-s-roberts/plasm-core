@@ -2127,7 +2127,17 @@ impl<'a> Parser<'a> {
                 return self.parse_dotted_call_with_payload(source, field_raw);
             }
 
-            let source_entity = source.primary_entity().to_string();
+            let source_entity = source
+                .relation_navigation_entity(self.cgs_for_entity_required(source.primary_entity()))
+                .ok_or_else(|| ParseError {
+                    kind: ParseErrorKind::NotNavigable {
+                        field: field.clone(),
+                        entity: source.primary_entity().to_string(),
+                        span_start,
+                        span_end,
+                    },
+                    offset: span_start,
+                })?;
             if let Some(expr) =
                 self.expand_team_members_sugar(&source, &field, source_entity.as_str())?
             {
@@ -3089,6 +3099,26 @@ mod tests {
         if let Expr::Chain(c) = &r.expr {
             assert_eq!(c.selector, "category");
         }
+    }
+
+    #[test]
+    fn parse_nested_one_cardinality_relation_chain() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse(r#"LangItem("i1").summary.detail"#, &cgs).unwrap();
+        let Expr::Chain(outer) = &r.expr else {
+            panic!("expected nested Chain");
+        };
+        assert_eq!(outer.selector, "detail");
+        let Expr::Chain(inner) = outer.source.as_ref() else {
+            panic!("expected inner Chain");
+        };
+        assert_eq!(inner.selector, "summary");
+        assert!(matches!(inner.source.as_ref(), Expr::Get(_)));
+        crate::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]

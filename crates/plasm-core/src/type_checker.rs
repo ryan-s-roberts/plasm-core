@@ -242,7 +242,14 @@ pub fn type_check_expr_federated(
     fed: &FederationDispatch,
     fallback: &CGS,
 ) -> Result<(), TypeError> {
-    let cgs_for = |entity: &str| fed.resolve_cgs(entity, fallback);
+    let cgs_for = |entity: &str| {
+        fed.resolve_entity(
+            entity,
+            crate::row_composition::ResolutionHint::default(),
+            fallback,
+        )
+        .unwrap_or(fallback)
+    };
     match expr {
         Expr::Query(query) => type_check_query(query, cgs_for(query.entity.as_str())),
         Expr::Get(get) => type_check_get(get, cgs_for(get.reference.entity_type.as_str())),
@@ -257,6 +264,74 @@ pub fn type_check_expr_federated(
         Expr::Chain(chain) => type_check_chain_federated(chain, fed, fallback),
         Expr::TeachingValue { .. } => Ok(()),
     }
+}
+
+/// DOMAIN prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
+pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeError> {
+    let err = || {
+        TypeError::DomainPlaceholderLiteral {
+            field: "expression".to_string(),
+            expected_type:
+                "concrete ids and parameter values — replace every `$` from DOMAIN examples before execution"
+                    .to_string(),
+            description: None,
+        }
+    };
+    match expr {
+        Expr::Get(g) => {
+            if g.reference.contains_domain_placeholder() {
+                return Err(err());
+            }
+            if let Some(m) = &g.path_vars {
+                if m.values().any(Value::contains_domain_placeholder_deep) {
+                    return Err(err());
+                }
+            }
+        }
+        Expr::Create(c) => {
+            if c.input.to_value().contains_domain_placeholder_deep() {
+                return Err(err());
+            }
+        }
+        Expr::Delete(d) => {
+            if d.target.contains_domain_placeholder() {
+                return Err(err());
+            }
+            if let Some(m) = &d.path_vars {
+                if m.values().any(Value::contains_domain_placeholder_deep) {
+                    return Err(err());
+                }
+            }
+        }
+        Expr::Invoke(i) => {
+            if i.target.contains_domain_placeholder() {
+                return Err(err());
+            }
+            if let Some(inp) = &i.input {
+                if inp.to_value().contains_domain_placeholder_deep() {
+                    return Err(err());
+                }
+            }
+            if let Some(m) = &i.path_vars {
+                if m.values().any(Value::contains_domain_placeholder_deep) {
+                    return Err(err());
+                }
+            }
+        }
+        Expr::Chain(ch) => {
+            reject_domain_placeholder_in_executable(&ch.source)?;
+            if let ChainStep::Explicit { expr: inner } = &ch.step {
+                reject_domain_placeholder_in_executable(inner)?;
+            }
+        }
+        Expr::TeachingValue { value } => {
+            if value.contains_domain_placeholder_deep() {
+                return Err(err());
+            }
+        }
+        Expr::Query(_) | Expr::Page(_) => {}
+    }
+    Ok(())
 }
 
 /// Resolve chain selector against source entity into `(target_entity_name, relation_if_declared)`.
@@ -336,17 +411,28 @@ fn type_check_chain_federated(
 ) -> Result<(), TypeError> {
     type_check_expr_federated(&chain.source, fed, fallback)?;
 
-    let source_entity_name = chain.source.primary_entity();
-    let cgs_src = fed.resolve_cgs(source_entity_name, fallback);
-    let source_entity =
-        cgs_src
-            .get_entity(source_entity_name)
-            .ok_or_else(|| TypeError::EntityNotFound {
-                entity: source_entity_name.to_string(),
-            })?;
+    let source_entity_name = chain
+        .source
+        .relation_navigation_entity(fallback)
+        .ok_or_else(|| TypeError::EntityNotFound {
+            entity: chain.source.primary_entity().to_string(),
+        })?;
+    let hint = crate::row_composition::ResolutionHint {
+        owning_cgs: None,
+        source_entity: Some(source_entity_name.as_str()),
+        plan_qe: None,
+    };
+    let cgs_src = fed
+        .resolve_entity(source_entity_name.as_str(), hint, fallback)
+        .unwrap_or(fallback);
+    let source_entity = cgs_src
+        .get_entity(source_entity_name.as_str())
+        .ok_or_else(|| TypeError::EntityNotFound {
+            entity: source_entity_name.clone(),
+        })?;
 
     let (target_entity_name, relation) = resolve_chain_target(
-        source_entity_name,
+        source_entity_name.as_str(),
         source_entity,
         chain.selector.as_str(),
         cgs_src,
@@ -355,10 +441,18 @@ fn type_check_chain_federated(
     let cgs_tgt = if cgs_src.get_entity(&target_entity_name).is_some() {
         cgs_src
     } else {
-        fed.resolve_cgs_with_hint(&target_entity_name, Some(cgs_src), fallback)
-            .map_err(|e| TypeError::EntityNotFound {
-                entity: format!("{target_entity_name}: {e}"),
-            })?
+        fed.resolve_entity(
+            &target_entity_name,
+            crate::row_composition::ResolutionHint {
+                owning_cgs: Some(cgs_src),
+                source_entity: Some(source_entity_name.as_str()),
+                plan_qe: None,
+            },
+            fallback,
+        )
+        .map_err(|e| TypeError::EntityNotFound {
+            entity: format!("{target_entity_name}: {e}"),
+        })?
     };
     cgs_tgt
         .get_entity(&target_entity_name)
@@ -368,7 +462,7 @@ fn type_check_chain_federated(
 
     match &chain.step {
         ChainStep::AutoGet => ensure_chain_auto_get_admissible(
-            source_entity_name,
+            source_entity_name.as_str(),
             chain.selector.as_str(),
             &target_entity_name,
             relation,
@@ -573,16 +667,21 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
 pub fn type_check_chain(chain: &ChainExpr, cgs: &CGS) -> Result<(), TypeError> {
     type_check_expr(&chain.source, cgs)?;
 
-    let source_entity_name = chain.source.primary_entity();
+    let source_entity_name = chain
+        .source
+        .relation_navigation_entity(cgs)
+        .ok_or_else(|| TypeError::EntityNotFound {
+            entity: chain.source.primary_entity().to_string(),
+        })?;
     let source_entity =
-        cgs.get_entity(source_entity_name)
+        cgs.get_entity(&source_entity_name)
             .ok_or_else(|| TypeError::EntityNotFound {
-                entity: source_entity_name.to_string(),
+                entity: source_entity_name.clone(),
             })?;
 
     // Resolve target via EntityRef field or declared relation.
     let (target_entity_name, relation) = resolve_chain_target(
-        source_entity_name,
+        source_entity_name.as_str(),
         source_entity,
         chain.selector.as_str(),
         cgs,
@@ -595,7 +694,7 @@ pub fn type_check_chain(chain: &ChainExpr, cgs: &CGS) -> Result<(), TypeError> {
 
     match &chain.step {
         ChainStep::AutoGet => ensure_chain_auto_get_admissible(
-            source_entity_name,
+            source_entity_name.as_str(),
             chain.selector.as_str(),
             &target_entity_name,
             relation,

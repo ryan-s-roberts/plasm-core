@@ -16,11 +16,12 @@ use plasm_core::{
         choose_strategy, extract_cross_entity_predicates, strip_cross_entity_comparisons,
         CrossEntityStrategy,
     },
+    reject_domain_placeholder_in_executable as reject_domain_placeholder_core,
     resolve_query_capability as resolve_query_capability_core, type_check_expr,
     type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityDef,
     EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr,
     InvokeInputPayload, ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, QueryPagination,
-    Ref, RelationMaterialization, RelationSchema, TypeError, Value, CGS,
+    Ref, RelationMaterialization, RelationSchema, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -66,79 +67,7 @@ pub const CML_ENV_PLASM_EXECUTE_SESSION_ID: &str = "plasm_execute_session_id";
 
 /// DOMAIN prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
 fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeError> {
-    let err = || {
-        RuntimeError::TypeError {
-        source: TypeError::DomainPlaceholderLiteral {
-            field: "expression".to_string(),
-            expected_type:
-                "concrete ids and parameter values — replace every `$` from DOMAIN examples before execution"
-                    .to_string(),
-            description: None,
-        },
-    }
-    };
-    match expr {
-        Expr::Get(g) => {
-            if g.reference.contains_domain_placeholder() {
-                return Err(err());
-            }
-            if let Some(m) = &g.path_vars {
-                if m.values()
-                    .any(plasm_core::Value::contains_domain_placeholder_deep)
-                {
-                    return Err(err());
-                }
-            }
-        }
-        Expr::Create(c) => {
-            if c.input.to_value().contains_domain_placeholder_deep() {
-                return Err(err());
-            }
-        }
-        Expr::Delete(d) => {
-            if d.target.contains_domain_placeholder() {
-                return Err(err());
-            }
-            if let Some(m) = &d.path_vars {
-                if m.values()
-                    .any(plasm_core::Value::contains_domain_placeholder_deep)
-                {
-                    return Err(err());
-                }
-            }
-        }
-        Expr::Invoke(i) => {
-            if i.target.contains_domain_placeholder() {
-                return Err(err());
-            }
-            if let Some(inp) = &i.input {
-                if inp.to_value().contains_domain_placeholder_deep() {
-                    return Err(err());
-                }
-            }
-            if let Some(m) = &i.path_vars {
-                if m.values()
-                    .any(plasm_core::Value::contains_domain_placeholder_deep)
-                {
-                    return Err(err());
-                }
-            }
-        }
-        Expr::Chain(ch) => {
-            reject_domain_placeholder_in_executable(&ch.source)?;
-            if let ChainStep::Explicit { expr: inner } = &ch.step {
-                reject_domain_placeholder_in_executable(inner)?;
-            }
-        }
-        Expr::TeachingValue { value } => {
-            if value.contains_domain_placeholder_deep() {
-                return Err(err());
-            }
-        }
-        Expr::Query(_) => {}
-        Expr::Page(_) => {}
-    }
-    Ok(())
+    reject_domain_placeholder_core(expr).map_err(|source| RuntimeError::TypeError { source })
 }
 
 /// Drain a [`QueryStream`] into a single [`ExecutionResult`].
@@ -544,6 +473,8 @@ pub struct ExecuteOptions {
     pub plugin_generation_id: Option<u64>,
     /// When set, typecheck and HTTP dispatch use per-entity owning [`plasm_core::CgsContext`].
     pub federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
+    /// When set, agent-core preflight already type-checked and placeholder-gated this expression.
+    pub preflight: Option<plasm_core::PreflightToken>,
     /// When set, CML compilation for outbound HTTP sees reserved `plasm_execute_*` env keys
     /// ([`merge_plasm_execute_session_env`]) plus optional session-bound `share_token`
     /// ([`merge_plasm_execute_session_share_token_env`]) and Proof `proof_base_token` as `base_token`
@@ -567,6 +498,7 @@ impl std::fmt::Debug for ExecuteOptions {
             .field("compile_query_fn", &self.compile_query_fn.is_some())
             .field("plugin_generation_id", &self.plugin_generation_id)
             .field("federation", &self.federation.is_some())
+            .field("preflight", &self.preflight.is_some())
             .field("execute_session", &self.execute_session.is_some())
             .finish()
     }
@@ -961,12 +893,14 @@ impl ExecutionEngine {
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
     ) -> Result<QueryStream<'a>, RuntimeError> {
-        if let Some(ref fed) = opts.federation {
-            type_check_expr_federated(expr, fed.as_ref(), cgs)?;
-        } else {
-            type_check_expr(expr, cgs)?;
+        if opts.preflight.is_none() {
+            if let Some(ref fed) = opts.federation {
+                type_check_expr_federated(expr, fed.as_ref(), cgs)?;
+            } else {
+                type_check_expr(expr, cgs)?;
+            }
+            reject_domain_placeholder_in_executable(expr)?;
         }
-        reject_domain_placeholder_in_executable(expr)?;
         let execution_mode = mode.unwrap_or(self.config.default_mode);
         let chain_consume = consume.clone();
         match expr {
@@ -1627,12 +1561,14 @@ impl ExecutionEngine {
         opts: &ExecuteOptions,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         let qexpr = plasm_core::Expr::Query(resume.query.clone());
-        if let Some(ref fed) = opts.federation {
-            type_check_expr_federated(&qexpr, fed.as_ref(), cgs)?;
-        } else {
-            type_check_expr(&qexpr, cgs)?;
+        if opts.preflight.is_none() {
+            if let Some(ref fed) = opts.federation {
+                type_check_expr_federated(&qexpr, fed.as_ref(), cgs)?;
+            } else {
+                type_check_expr(&qexpr, cgs)?;
+            }
+            reject_domain_placeholder_in_executable(&qexpr)?;
         }
-        reject_domain_placeholder_in_executable(&qexpr)?;
         let execution_mode = mode.unwrap_or(self.config.default_mode);
         let capability = cgs
             .get_capability(resume.capability_name.as_str())
@@ -1798,7 +1734,7 @@ impl ExecutionEngine {
                 for entity in &result.entities {
                     let mut passes = true;
                     for cross in &pull_right_crosses {
-                        let ref_id = extract_ref_id(entity, &cross.ref_field);
+                        let ref_id = extract_ref_id(entity, &cross.ref_field, cgs);
                         let Some(id) = ref_id else {
                             passes = false;
                             break;
@@ -1935,6 +1871,7 @@ impl ExecutionEngine {
                 capability,
                 &capability_template,
                 true,
+                Some(cache),
             )
             .await?;
         cache.insert(cached.clone())?;
@@ -2027,6 +1964,7 @@ impl ExecutionEngine {
     }
 
     /// HTTP(S)/GraphQL GET path only — never dispatches composed [`CapabilityTemplate::View`].
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_http_transport_get_decoded(
         &self,
         get: &GetExpr,
@@ -2035,6 +1973,7 @@ impl ExecutionEngine {
         capability: &CapabilitySchema,
         capability_template: &CapabilityTemplate,
         inject_execute_session_env: bool,
+        cache: Option<&mut GraphCache>,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let mut env = CmlEnv::new();
         if inject_execute_session_env {
@@ -2078,15 +2017,13 @@ impl ExecutionEngine {
             .await?;
         let response =
             narrow_http_graphql_response_for_entity_decode(capability_template, response)?;
-        let rid = cgs
-            .get_entity(&get.reference.entity_type)
-            .and_then(|ent| {
-                if ent.implicit_request_identity || ent.id_field == "url" {
-                    get.reference.simple_id().map(|id| id.as_str())
-                } else {
-                    None
-                }
-            });
+        let rid = cgs.get_entity(&get.reference.entity_type).and_then(|ent| {
+            if ent.implicit_request_identity || ent.id_field == "url" {
+                get.reference.simple_id().map(|id| id.as_str())
+            } else {
+                None
+            }
+        });
         let identity_ambient = decode_identity_ambient_for_ref(&get.reference, &env);
         let decoder = create_entity_decoder_for_capability(
             &get.reference.entity_type,
@@ -2105,13 +2042,22 @@ impl ExecutionEngine {
             })?;
 
         let timestamp = current_timestamp();
-        let cached = CachedEntity::from_decoded(
-            decoded.reference.clone(),
-            decoded.fields.clone(),
-            decoded.relations.clone(),
-            timestamp,
-            EntityCompleteness::Complete,
-        );
+        let cached = if let Some(cache) = cache {
+            cache_decoded_entity_tree(
+                cache,
+                decoded.clone(),
+                timestamp,
+                EntityCompleteness::Complete,
+            )?
+        } else {
+            CachedEntity::from_decoded(
+                decoded.reference.clone(),
+                decoded.fields.clone(),
+                decoded.relations.clone(),
+                timestamp,
+                EntityCompleteness::Complete,
+            )
+        };
         Ok((cached, source))
     }
 
@@ -2194,6 +2140,7 @@ impl ExecutionEngine {
             capability,
             &capability_template,
             inject_execute_session_env,
+            cache,
         )
         .await
     }
@@ -2651,7 +2598,16 @@ impl ExecutionEngine {
             });
         }
 
-        let source_entity_name = chain.source.primary_entity();
+        let source_entity_name_owned: String = if matches!(chain.source.as_ref(), Expr::Chain(_)) {
+            source_result
+                .entities
+                .first()
+                .map(|e| e.reference.entity_type.to_string())
+                .unwrap_or_else(|| chain.source.primary_entity().to_string())
+        } else {
+            chain.source.primary_entity().to_string()
+        };
+        let source_entity_name = source_entity_name_owned.as_str();
         let source_entity =
             cgs.get_entity(source_entity_name)
                 .ok_or_else(|| RuntimeError::ConfigurationError {
@@ -2843,7 +2799,7 @@ impl ExecutionEngine {
         let ref_ids: Vec<Option<String>> = source_result
             .entities
             .iter()
-            .map(|e| extract_ref_id(e, &chain.selector))
+            .map(|e| extract_ref_id(e, &chain.selector, cgs))
             .collect();
 
         // ── Explicit continuation: no batching, dispatch per-entity ──────
@@ -3721,6 +3677,33 @@ impl ExecutionEngine {
     }
 }
 
+fn cache_decoded_entity_tree(
+    cache: &mut GraphCache,
+    decoded: plasm_compile::DecodedEntity,
+    timestamp: u64,
+    completeness: EntityCompleteness,
+) -> Result<CachedEntity, RuntimeError> {
+    for embedded in decoded.embedded_entities {
+        let child = CachedEntity::from_decoded(
+            embedded.reference,
+            embedded.fields,
+            embedded.relations,
+            timestamp,
+            EntityCompleteness::Complete,
+        );
+        cache.insert(child)?;
+    }
+    let cached = CachedEntity::from_decoded(
+        decoded.reference,
+        decoded.fields,
+        decoded.relations,
+        timestamp,
+        completeness,
+    );
+    cache.insert(cached.clone())?;
+    Ok(cached)
+}
+
 fn query_result_merge_cache(
     decoded_entities: Vec<plasm_compile::DecodedEntity>,
     completeness: EntityCompleteness,
@@ -3731,13 +3714,12 @@ fn query_result_merge_cache(
     let timestamp = current_timestamp();
     let mut cached_entities = Vec::new();
     for decoded in decoded_entities {
-        cached_entities.push(CachedEntity::from_decoded(
-            decoded.reference,
-            decoded.fields,
-            decoded.relations,
+        cached_entities.push(cache_decoded_entity_tree(
+            cache,
+            decoded,
             timestamp,
             completeness,
-        ));
+        )?);
     }
     let count = cached_entities.len();
     cache.merge(cached_entities.clone())?;
@@ -4639,11 +4621,35 @@ fn capability_param_names(capability: &plasm_core::CapabilitySchema) -> HashSet<
     fields.iter().map(|f| f.name.clone()).collect()
 }
 
-/// Extract an EntityRef field value as a string ID from a cached entity.
-fn extract_ref_id(entity: &CachedEntity, selector: &str) -> Option<String> {
-    if let Some(refs) = entity.relations.get(selector) {
-        if let Some(first) = refs.first() {
-            return Some(first.primary_slot_str());
+/// Extract an EntityRef field or declared-relation target ID from a cached entity.
+fn extract_ref_id(entity: &CachedEntity, selector: &str, cgs: &CGS) -> Option<String> {
+    if let Some(source_ent) = cgs.get_entity(entity.reference.entity_type.as_str()) {
+        if let Some(rel) = source_ent.relations.get(selector) {
+            if let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) {
+                let key_vars = source_ent
+                    .key_vars
+                    .iter()
+                    .map(|k| k.as_str().to_string())
+                    .collect::<Vec<_>>();
+                let identity = plasm_core::row_identity_from_parts(
+                    plasm_core::QualifiedEntityKey::new(
+                        String::new(),
+                        entity.reference.entity_type.to_string(),
+                    ),
+                    entity.reference.clone(),
+                    &entity.relations,
+                    source_ent.id_field.as_str(),
+                    &key_vars,
+                );
+                if let Ok(target_ref) =
+                    plasm_core::resolve_relation_target_id(&identity, selector, target_ent)
+                {
+                    let slot = target_ref.primary_slot_str();
+                    if !slot.is_empty() {
+                        return Some(slot);
+                    }
+                }
+            }
         }
     }
     let v = entity.get_field(selector).map(|tf| tf.to_value())?;

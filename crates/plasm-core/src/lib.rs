@@ -106,6 +106,7 @@ pub mod prompt_render;
 pub mod query_resolve;
 pub mod resolved_identity;
 pub mod result_gloss;
+pub mod row_composition;
 pub mod schema;
 pub mod schema_overlay;
 pub mod scope_entity_ref_splat;
@@ -130,7 +131,9 @@ mod utf8_trunc;
 pub use o200k_token_count::o200k_token_count;
 
 pub use cgs_context::{CgsContext, Prefix};
-pub use cgs_federation::{FederationDispatch, FederationResolveError, QualifiedEntityKey};
+pub use cgs_federation::{
+    CatalogResolver, FederationDispatch, FederationResolveError, QualifiedEntityKey,
+};
 pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
@@ -189,6 +192,11 @@ pub use query_resolve::{
     required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,
 };
 pub use resolved_identity::ResolvedIdentity;
+pub use row_composition::{
+    parse_row_suffix_stream_tail, resolve_relation_target_id, row_identity_from_parts,
+    row_identity_from_ref, IdEncoding, PreflightToken, ResolutionHint, RowIdentity, RowProvenance,
+    RowState, RowSuffix,
+};
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names,
@@ -231,9 +239,9 @@ pub use template_interpolate::{
 };
 pub use temporal::{normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value};
 pub use type_checker::{
-    type_check_chain, type_check_create, type_check_delete, type_check_expr,
-    type_check_expr_federated, type_check_get, type_check_invoke, type_check_predicate,
-    type_check_query,
+    reject_domain_placeholder_in_executable, type_check_chain, type_check_create,
+    type_check_delete, type_check_expr, type_check_expr_federated, type_check_get,
+    type_check_invoke, type_check_predicate, type_check_query,
 };
 pub use typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 pub use typed_literal::{TypedComparisonValue, TypedLiteral, TypedLiteralError};

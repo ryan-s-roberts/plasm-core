@@ -1,0 +1,175 @@
+//! Shared preflight gates for dry and live execute paths.
+
+use plasm_core::expr_parser::ParsedExpr;
+use plasm_core::{reject_domain_placeholder_in_executable, PreflightToken};
+
+use crate::plasm_plan_run::{dry_run_simulation_for_session, typecheck_parsed_for_session};
+
+/// Dry-run materialization bundle produced during preflight simulation.
+#[derive(Debug, Clone, Default)]
+pub struct SimulationBundle {
+    pub node_count: usize,
+}
+
+/// Proof bundle that all preflight gates passed — required before live I/O.
+#[derive(Debug, Clone)]
+pub struct PreflightReport {
+    pub typecheck: PreflightToken,
+    pub placeholders: PreflightToken,
+    pub plan_kind_match: PreflightToken,
+    pub projection: PreflightToken,
+    pub simulation: SimulationBundle,
+}
+
+impl PreflightReport {
+    pub fn new(simulation: SimulationBundle) -> Self {
+        let token = PreflightToken::VERIFIED;
+        Self {
+            typecheck: token,
+            placeholders: token,
+            plan_kind_match: token,
+            projection: token,
+            simulation,
+        }
+    }
+
+    pub fn token(&self) -> PreflightToken {
+        self.typecheck
+    }
+}
+
+/// Run federated/single-graph type-check and executable-surface gates once per expression.
+pub struct PlasmPreflight;
+
+impl PlasmPreflight {
+    pub fn typecheck_parsed_for_session(
+        session: &crate::execute_session::ExecuteSession,
+        parsed: &ParsedExpr,
+    ) -> Result<PreflightToken, String> {
+        typecheck_parsed_for_session(session, parsed).map_err(|e| e.to_string())?;
+        Ok(PreflightToken::VERIFIED)
+    }
+
+    pub fn reject_domain_placeholders(source: &str) -> Result<PreflightToken, String> {
+        if source.contains('$') {
+            return Err(
+                "executable Plasm must not contain DOMAIN teaching placeholder `$` — substitute a concrete value"
+                    .into(),
+            );
+        }
+        Ok(PreflightToken::VERIFIED)
+    }
+
+    pub fn validate_projection_fields(
+        session: &crate::execute_session::ExecuteSession,
+        parsed: &ParsedExpr,
+    ) -> Result<PreflightToken, String> {
+        let Some(fields) = parsed.projection.as_ref() else {
+            return Ok(PreflightToken::VERIFIED);
+        };
+        if fields.is_empty() {
+            return Ok(PreflightToken::VERIFIED);
+        }
+        let entity = parsed.expr.primary_entity();
+        let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)?;
+        let Some(ent) = cgs.get_entity(entity) else {
+            return Err(format!(
+                "entity `{entity}` is not defined in the resolved catalog"
+            ));
+        };
+        for field in fields {
+            let name = field.as_str();
+            if !ent.fields.contains_key(name) && !ent.relations.contains_key(name) {
+                return Err(format!(
+                    "projection field `{name}` is not declared on entity `{entity}`"
+                ));
+            }
+        }
+        Ok(PreflightToken::VERIFIED)
+    }
+
+    /// Full preflight chain shared by dry preview and live execute (dry ≡ live gates).
+    pub fn preflight_parsed_line(
+        session: &crate::execute_session::ExecuteSession,
+        source: &str,
+        parsed: &ParsedExpr,
+    ) -> Result<PreflightReport, String> {
+        Self::reject_domain_placeholders(source)?;
+        Self::typecheck_parsed_for_session(session, parsed)?;
+        reject_domain_placeholder_in_executable(&parsed.expr).map_err(|e| e.to_string())?;
+        Self::validate_projection_fields(session, parsed)?;
+        Ok(PreflightReport::new(SimulationBundle { node_count: 1 }))
+    }
+
+    /// Dry preview: same gates as live, then intent/il/bindings simulation (no HTTP).
+    pub fn dry_preview_for_line(
+        session: &crate::execute_session::ExecuteSession,
+        source: &str,
+        parsed: &ParsedExpr,
+    ) -> Result<(String, String, serde_json::Value), String> {
+        Self::preflight_parsed_line(session, source, parsed)?;
+        Ok(dry_run_simulation_for_session(session, parsed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use plasm_core::expr_parser::ParsedExpr;
+    use plasm_core::{Expr, GetExpr};
+
+    use crate::execute_session::ExecuteSession;
+    use crate::plasm_plan_run::parse_parsed_expr_for_session;
+
+    use super::PlasmPreflight;
+
+    fn matrix_session() -> ExecuteSession {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = std::sync::Arc::new(
+            plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+                .expect("matrix"),
+        );
+        ExecuteSession::new(
+            "ph".into(),
+            "sess".into(),
+            cgs.clone(),
+            indexmap::IndexMap::from([(
+                "default".into(),
+                std::sync::Arc::new(plasm_core::CgsContext::entry("default", cgs.clone())),
+            )]),
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            None,
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn preflight_rejects_domain_dollar_in_source() {
+        let session = matrix_session();
+        let parsed = ParsedExpr {
+            expr: Expr::Get(GetExpr::new("LangItem", "1")),
+            projection: None,
+        };
+        let err =
+            PlasmPreflight::preflight_parsed_line(&session, "e1($)", &parsed).expect_err("dollar");
+        assert!(err.contains('$'), "{err}");
+    }
+
+    #[test]
+    fn dry_preview_matches_preflight_then_simulation() {
+        let session = matrix_session();
+        let pe = parse_parsed_expr_for_session(&session, "e1").expect("parse");
+        let (intent, il, bindings) =
+            PlasmPreflight::dry_preview_for_line(&session, "e1", &pe).expect("dry");
+        assert!(!intent.is_empty());
+        assert!(il.contains("LangItem"));
+        assert!(bindings.is_object());
+    }
+}

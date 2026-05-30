@@ -340,7 +340,14 @@ pub fn normalize_expr_query_capabilities_federated(
     fed: &crate::cgs_federation::FederationDispatch,
     fallback: &CGS,
 ) -> Result<(), QueryCapabilityResolveError> {
-    let cgs_for = |entity: &str| fed.resolve_cgs(entity, fallback);
+    let cgs_for = |entity: &str| {
+        fed.resolve_entity(
+            entity,
+            crate::row_composition::ResolutionHint::default(),
+            fallback,
+        )
+        .unwrap_or(fallback)
+    };
     match expr {
         crate::Expr::Query(q) => {
             if q.capability_name.is_none() {

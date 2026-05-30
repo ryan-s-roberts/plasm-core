@@ -20,6 +20,7 @@ use plasm_core::expr_parser::{
     split_assignment_at_top_level, split_token_top_level, split_top_level, strip_line_comment,
     try_parse_render_tail, validate_program_label, PlasmPostfixOp, RenderTailParse,
 };
+use plasm_core::row_composition::RowSuffix;
 use plasm_core::schema::EntityDef;
 use plasm_core::ChainExpr;
 use plasm_core::ChainStep;
@@ -32,7 +33,6 @@ use plasm_core::PromptPipelineConfig;
 use plasm_core::Ref;
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::Value;
-use plasm_core::CGS;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
@@ -160,20 +160,6 @@ impl<'a> CompileState<'a> {
 
     fn program_node_id_set(&self) -> BTreeSet<String> {
         self.labels.keys().cloned().collect()
-    }
-
-    fn with_pushed_node(&self, node: DagNode) -> Self {
-        let mut nodes = self.nodes.clone();
-        let mut labels = self.labels.clone();
-        let idx = nodes.len();
-        labels.insert(node.id.clone(), idx);
-        nodes.push(node);
-        Self {
-            nodes,
-            labels,
-            pipeline: self.pipeline,
-            cross_cache: self.cross_cache,
-        }
     }
 }
 
@@ -461,28 +447,6 @@ pub fn compile_plasm_surface_line_to_plan(
         "return": return_value,
         "metadata": { "language": "plasm-dag" }
     }))
-}
-
-/// Trailing `.singleton()` / `.page_size(n)` in postfix peel order become flags on the final node.
-fn split_tail_postfix_flags(
-    mut ops: Vec<PlasmPostfixOp>,
-) -> (Vec<PlasmPostfixOp>, bool, Option<usize>) {
-    let mut singleton = false;
-    let mut page_size = None;
-    while let Some(last) = ops.last() {
-        match last {
-            PlasmPostfixOp::Singleton => {
-                singleton = true;
-                ops.pop();
-            }
-            PlasmPostfixOp::PageSize(n) => {
-                page_size = Some(*n);
-                ops.pop();
-            }
-            _ => break,
-        }
-    }
-    (ops, singleton, page_size)
 }
 
 fn cgs_for_qualified_entity(
@@ -923,147 +887,201 @@ fn postfix_op_to_compute(
     }
 }
 
-fn compile_chain_base_nodes(
-    session: &ExecuteSession,
-    state: &CompileState<'_>,
-    binding_id: &str,
-    expr: &str,
-    rel_binding_id: Option<&str>,
-) -> Result<Option<(Vec<DagNode>, String)>, String> {
-    let Some((base_expr, segment)) = try_split_single_hop_surface_chain(session, state, expr) else {
-        return Ok(None);
-    };
-    let base_id = format!("__plasm_{binding_id}_b0");
-    let base = compile_surface_node(session, state, &base_id, &base_expr)?;
-    let scratch = state.with_pushed_node(base.clone());
-    let rel_id = rel_binding_id
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("__plasm_{binding_id}_r0"));
-    let rel = lower_relation_continuation(
-        session,
-        &scratch,
-        &rel_id,
-        &format!("{base_id}.{segment}"),
-        &base_id,
-        &segment,
-    )?;
-    Ok(Some((vec![base, rel], rel_id)))
-}
-
-/// Lower `core` plus postfix ops to one or more [`DagNode`]s (surface base + optional compute chain).
-fn compile_postfix_plan(
+fn lower_row_expression(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     binding_id: &str,
     full_rhs: &str,
-    core: &str,
-    ops: Vec<PlasmPostfixOp>,
+    final_id: Option<&str>,
 ) -> Result<Vec<DagNode>, String> {
-    let (compute_ops, tail_singleton, tail_page_size) = split_tail_postfix_flags(ops);
-    let primary = core.trim();
+    let (head, suffixes) = decompose_row_suffix_stream(session, state, full_rhs)?;
+    if suffixes.is_empty() {
+        return Ok(vec![compile_surface_node(
+            session, state, binding_id, full_rhs,
+        )?]);
+    }
+    lower_suffix_stream(
+        session, state, binding_id, full_rhs, &head, suffixes, final_id,
+    )
+}
 
-    if compute_ops.is_empty() {
-        if state.contains(primary) && (tail_singleton || tail_page_size.is_some()) {
-            let staged: &[DagNode] = &[];
-            let mut node = if tail_singleton {
-                let schema = synthetic_schema_passthrough_rows(session, state, staged, primary)?;
+/// Classify interleaved relation + transform suffixes after peeling postfix transforms and relation hops from the right.
+fn decompose_row_suffix_stream(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    expr: &str,
+) -> Result<(String, Vec<RowSuffix>), String> {
+    let mut cur = expr.trim().to_string();
+    let mut suffixes_rev: Vec<RowSuffix> = Vec::new();
+
+    loop {
+        let (core, ops) =
+            peel_postfix_suffixes(&cur).map_err(|e| format!("row suffix stream: {e}"))?;
+        for op in ops.iter().rev() {
+            suffixes_rev.push(RowSuffix::from_postfix_op(op)?);
+        }
+        cur = core;
+
+        if let Some((base, segment)) = try_split_single_hop_surface_chain(session, state, &cur) {
+            suffixes_rev.push(RowSuffix::Relation { wire: segment });
+            cur = base;
+            continue;
+        }
+        break;
+    }
+
+    suffixes_rev.reverse();
+    Ok((cur, suffixes_rev))
+}
+
+fn row_suffix_to_postfix(suffix: &RowSuffix) -> Option<PlasmPostfixOp> {
+    match suffix {
+        RowSuffix::Limit { count } => Some(PlasmPostfixOp::Limit(*count as usize)),
+        RowSuffix::Project { fields } => Some(PlasmPostfixOp::Projection {
+            fields: fields.join(","),
+        }),
+        RowSuffix::Sort { args } => Some(PlasmPostfixOp::Sort { args: args.clone() }),
+        RowSuffix::Aggregate { args } => Some(PlasmPostfixOp::Aggregate { args: args.clone() }),
+        RowSuffix::GroupBy { args } => Some(PlasmPostfixOp::GroupBy { args: args.clone() }),
+        RowSuffix::Singleton => Some(PlasmPostfixOp::Singleton),
+        RowSuffix::PageSize { n } => Some(PlasmPostfixOp::PageSize(*n as usize)),
+        RowSuffix::Relation { .. } => None,
+    }
+}
+
+fn compile_state_with_nodes<'a>(
+    state: &'a CompileState<'a>,
+    nodes: &[DagNode],
+) -> CompileState<'a> {
+    let mut scratch = CompileState {
+        nodes: state.nodes.clone(),
+        labels: state.labels.clone(),
+        pipeline: state.pipeline,
+        cross_cache: state.cross_cache,
+    };
+    for node in nodes {
+        let idx = scratch.nodes.len();
+        scratch.labels.insert(node.id.clone(), idx);
+        scratch.nodes.push(node.clone());
+    }
+    scratch
+}
+
+/// Fold an ordered [`RowSuffix`] stream onto a surface or label head.
+fn lower_suffix_stream(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    binding_id: &str,
+    full_rhs: &str,
+    head: &str,
+    suffixes: Vec<RowSuffix>,
+    final_id: Option<&str>,
+) -> Result<Vec<DagNode>, String> {
+    if suffixes.is_empty() {
+        return Err("internal: lower_suffix_stream requires non-empty suffixes".into());
+    }
+
+    let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
+    let tail_page_size = suffixes.iter().find_map(|s| {
+        if let RowSuffix::PageSize { n } = s {
+            Some(*n as usize)
+        } else {
+            None
+        }
+    });
+
+    let mut out: Vec<DagNode> = Vec::new();
+    let head_trim = head.trim();
+
+    let steps: Vec<&RowSuffix> = suffixes
+        .iter()
+        .filter(|s| !matches!(s, RowSuffix::Singleton | RowSuffix::PageSize { .. }))
+        .collect();
+
+    if steps.is_empty() && (tail_singleton || tail_page_size.is_some()) {
+        let out_id = final_id
+            .map(str::to_string)
+            .unwrap_or_else(|| binding_id.to_string());
+        if state.contains(head_trim) {
+            let staged: &[DagNode] = &out;
+            let node = if tail_singleton {
+                let schema = synthetic_schema_passthrough_rows(session, state, staged, head_trim)?;
                 DagNode {
-                    id: binding_id.to_string(),
+                    id: out_id,
                     expr: full_rhs.to_string(),
-                    singleton: tail_singleton,
+                    singleton: true,
                     page_size: tail_page_size,
                     source: DagNodeSource::Compute {
-                        source: primary.to_string(),
+                        source: head_trim.to_string(),
                         op: ComputeOp::Limit { count: 1 },
                         schema,
                     },
                 }
             } else {
                 let (fields, schema) =
-                    passthrough_identity_projection_fields(session, state, staged, primary)?;
+                    passthrough_identity_projection_fields(session, state, staged, head_trim)?;
                 DagNode {
-                    id: binding_id.to_string(),
+                    id: out_id,
                     expr: full_rhs.to_string(),
                     singleton: false,
                     page_size: tail_page_size,
                     source: DagNodeSource::Compute {
-                        source: primary.to_string(),
+                        source: head_trim.to_string(),
                         op: ComputeOp::Project { fields },
                         schema,
                     },
                 }
             };
-            node.singleton |= tail_singleton;
-            node.page_size = tail_page_size.or(node.page_size);
             return Ok(vec![node]);
         }
-        if let Some((mut nodes, _source_id)) =
-            compile_chain_base_nodes(session, state, binding_id, primary, None)?
-        {
-            if let Some(last) = nodes.last_mut() {
-                last.singleton |= tail_singleton;
-                last.page_size = tail_page_size.or(last.page_size);
-                last.expr = full_rhs.to_string();
-            }
-            return Ok(nodes);
-        }
-        let mut node = compile_surface_node(session, state, binding_id, primary)?;
+        let mut node = compile_surface_node(session, state, &out_id, head_trim)?;
         node.singleton |= tail_singleton;
         node.page_size = tail_page_size.or(node.page_size);
         node.expr = full_rhs.to_string();
         return Ok(vec![node]);
     }
-    if let Some((chain_nodes, source_id)) =
-        compile_chain_base_nodes(session, state, binding_id, primary, None)?
-    {
-        let mut out = chain_nodes;
-        let mut cur_source = source_id;
-        for (i, op) in compute_ops.iter().enumerate() {
-            let nid = if i + 1 == compute_ops.len() {
-                binding_id.to_string()
-            } else {
-                format!("__plasm_{binding_id}_s{i}")
-            };
-            let mut node =
-                postfix_op_to_compute(session, state, &out, op, &cur_source, &nid, full_rhs)?;
-            if i + 1 < compute_ops.len() {
-                node.expr = format!("{full_rhs}::__step{i}");
-            }
-            cur_source = nid.clone();
-            out.push(node);
-        }
-        if let Some(last) = out.last_mut() {
-            last.singleton |= tail_singleton;
-            last.page_size = tail_page_size.or(last.page_size);
-            last.expr = full_rhs.to_string();
-        }
-        return Ok(out);
-    }
 
-    let mut out: Vec<DagNode> = Vec::new();
-    let base_source: String = if state.contains(primary) {
-        primary.to_string()
+    let mut cur_id = if state.contains(head_trim) {
+        head_trim.to_string()
     } else {
         let bid = format!("__plasm_{binding_id}_b0");
-        let base = compile_surface_node(session, state, &bid, primary)?;
+        let base = compile_surface_node(session, state, &bid, head_trim)?;
         out.push(base);
         bid
     };
 
-    let mut cur_source = base_source;
-    for (i, op) in compute_ops.iter().enumerate() {
-        let nid = if i + 1 == compute_ops.len() {
-            binding_id.to_string()
+    for (i, suffix) in steps.iter().enumerate() {
+        let is_last = i + 1 == steps.len();
+        let nid = if is_last {
+            final_id
+                .map(str::to_string)
+                .unwrap_or_else(|| binding_id.to_string())
+        } else if matches!(suffix, RowSuffix::Relation { .. }) {
+            format!("__plasm_{binding_id}_r{i}")
         } else {
             format!("__plasm_{binding_id}_s{i}")
         };
-        let mut node =
-            postfix_op_to_compute(session, state, &out, op, &cur_source, &nid, full_rhs)?;
-        if i + 1 < compute_ops.len() {
-            node.expr = format!("{full_rhs}::__step{i}");
+
+        if let RowSuffix::Relation { wire } = *suffix {
+            let scratch = compile_state_with_nodes(state, &out);
+            let rel = lower_relation_continuation(
+                session,
+                &scratch,
+                &nid,
+                &format!("{cur_id}.{wire}"),
+                &cur_id,
+                wire,
+            )?;
+            out.push(rel);
+            cur_id = nid;
+            continue;
         }
-        cur_source = nid.clone();
-        out.push(node);
+
+        if let Some(op) = row_suffix_to_postfix(suffix) {
+            let node = postfix_op_to_compute(session, state, &out, &op, &cur_id, &nid, full_rhs)?;
+            out.push(node);
+            cur_id = nid;
+        }
     }
 
     if let Some(last) = out.last_mut() {
@@ -1071,6 +1089,7 @@ fn compile_postfix_plan(
         last.page_size = tail_page_size.or(last.page_size);
         last.expr = full_rhs.to_string();
     }
+
     Ok(out)
 }
 
@@ -1127,22 +1146,31 @@ fn compile_render_chain(
     explicit_columns: Option<Vec<OutputName>>,
     template: String,
 ) -> Result<Vec<DagNode>, String> {
-    let (core, ops) =
-        peel_postfix_suffixes(head).map_err(|e| format!("Plasm program `{id}`: {e}"))?;
-    let ops_full = ops.clone();
-    let (compute_ops, tail_singleton, tail_page_size) = split_tail_postfix_flags(ops);
+    let (head_core, suffixes) = decompose_row_suffix_stream(session, state, head)?;
+    let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
+    let tail_page_size = suffixes.iter().find_map(|s| {
+        if let RowSuffix::PageSize { n } = s {
+            Some(*n as usize)
+        } else {
+            None
+        }
+    });
 
-    let mut prefix: Vec<DagNode> = Vec::new();
-    let chain_tail_id: String = if compute_ops.is_empty()
-        && state.contains(core.trim())
-        && !tail_singleton
-        && tail_page_size.is_none()
-    {
-        core.trim().to_string()
+    let tmp = format!("__plasm_render_src_{id}");
+    let prefix: Vec<DagNode> = if suffixes.is_empty() {
+        if state.contains(head_core.trim()) {
+            vec![]
+        } else {
+            vec![compile_surface_node(session, state, &tmp, head)?]
+        }
     } else {
-        let tmp = format!("__plasm_render_src_{id}");
-        prefix = compile_postfix_plan(session, state, &tmp, head, core.trim(), ops_full)
-            .map_err(|e| format!("Plasm program `{id}`: {e}"))?;
+        lower_suffix_stream(session, state, &tmp, head, &head_core, suffixes, None)
+            .map_err(|e| format!("Plasm program `{id}`: {e}"))?
+    };
+
+    let chain_tail_id: String = if prefix.is_empty() {
+        head_core.trim().to_string()
+    } else {
         prefix
             .last()
             .map(|n| n.id.clone())
@@ -1264,32 +1292,23 @@ fn compile_node_expr(
         return compile_render_from_tail(session, state, id, rhs_display, tail);
     }
 
-    let (core, ops) =
-        peel_postfix_suffixes(rhs).map_err(|e| format!("Plasm program `{id}`: {e}"))?;
-    if ops.is_empty() {
-        if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
-            if looks_like_data_literal(rhs) {
-                return Ok(vec![DagNode {
-                    id: id.to_string(),
-                    expr: rhs_display.to_string(),
-                    singleton: true,
-                    page_size: None,
-                    source: DagNodeSource::Data(value.0),
-                }]);
-            }
-        }
-        if let Some((nodes, _)) =
-            compile_chain_base_nodes(session, state, id, core.as_str(), Some(id))? {
-            return Ok(nodes);
-        }
-        return Ok(vec![compile_surface_node(
-            session,
-            state,
-            id,
-            core.as_str(),
-        )?]);
+    let (_, suffixes) = decompose_row_suffix_stream(session, state, rhs)?;
+    if !suffixes.is_empty() {
+        return lower_row_expression(session, state, id, rhs_display, Some(id));
     }
-    compile_postfix_plan(session, state, id, rhs_display, core.as_str(), ops)
+
+    if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
+        if looks_like_data_literal(rhs) {
+            return Ok(vec![DagNode {
+                id: id.to_string(),
+                expr: rhs_display.to_string(),
+                singleton: true,
+                page_size: None,
+                source: DagNodeSource::Data(value.0),
+            }]);
+        }
+    }
+    Ok(vec![compile_surface_node(session, state, id, rhs)?])
 }
 
 /// Longest bound label match so `repos.foo` wins over `repo.foo` when both exist.
@@ -1598,11 +1617,30 @@ fn relation_continuation_expr_from_source_row_hole(
             row_qe.entity
         )
     })?;
+    let rel = ent.relations.get(relation_wire).ok_or_else(|| {
+        format!(
+            "entity `{}` has no relation `{relation_wire}` for row-hole continuation",
+            row_qe.entity
+        )
+    })?;
+    let _target_ent = cgs
+        .get_entity(rel.target_resource.as_str())
+        .ok_or_else(|| {
+            format!(
+                "relation `{relation_wire}` on `{}` targets unknown entity `{}`",
+                row_qe.entity, rel.target_resource
+            )
+        })?;
+    let _target_qe = crate::catalog_ownership::resolve_qualified_entity_key(
+        session,
+        rel.target_resource.as_str(),
+        Some(cgs),
+    )?;
     let source_get = if ent.key_vars.is_empty() {
-        let path_key = format!("{}_id", row_qe.entity.to_lowercase());
+        let path_key = ent.id_field.as_str().to_string();
         let hole = Value::PlasmInputRef(PlasmInputRef::NodeInput {
             node: "source".into(),
-            path: vec![ent.id_field.as_str().to_string()],
+            path: vec![path_key.clone()],
         });
         Expr::Get(GetExpr::from_ref_with_path_vars(
             Ref::new(row_qe.entity.as_str(), ""),
@@ -1660,14 +1698,64 @@ fn relation_sourced_continuation_eligible(state: &CompileState<'_>, label: &str)
     }
 }
 
+fn relation_uses_from_parent_get(
+    session: &ExecuteSession,
+    row_qe: &QualifiedEntityKey,
+    segment: &str,
+) -> bool {
+    let Ok(cgs) = crate::catalog_ownership::resolve_cgs_for_entity(
+        session,
+        row_qe.entity.as_str(),
+        resolve_cgs_for_qualified_entity(session, row_qe),
+    ) else {
+        return false;
+    };
+    let Some(ent) = cgs.get_entity(row_qe.entity.as_str()) else {
+        return false;
+    };
+    let Some(wire) = resolve_relation_wire_on_entity(session, None, row_qe, segment) else {
+        return false;
+    };
+    ent.relations
+        .get(wire.as_str())
+        .and_then(|r| r.materialize.as_ref())
+        .is_some_and(|m| matches!(m, plasm_core::RelationMaterialization::FromParentGet { .. }))
+}
+
+fn prefer_row_hole_relation_continuation(
+    state: &CompileState<'_>,
+    contract: &ProgramBindingContract,
+    segment: &str,
+    session: &ExecuteSession,
+) -> bool {
+    if contract.anchor.allows_text_parse() {
+        return false;
+    }
+    if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
+        return true;
+    }
+    relation_sourced_continuation_eligible(state, &contract.label)
+        && relation_uses_from_parent_get(session, &contract.row_entity, segment)
+}
+
 fn parse_relation_continuation_expr(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     contract: &ProgramBindingContract,
     segment: &str,
 ) -> Result<plasm_core::expr_parser::ParsedExpr, String> {
+    if prefer_row_hole_relation_continuation(state, contract, segment, session) {
+        return Ok(plasm_core::expr_parser::ParsedExpr {
+            expr: relation_continuation_expr_from_source_row_hole(
+                session,
+                &contract.row_entity,
+                segment,
+            )?,
+            projection: None,
+        });
+    }
     let refs = state.program_node_id_set();
-    let try_text = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
+    let try_expanded_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
         let parsed = parse_plasm_surface_line_program(
             session,
             state.cross_cache,
@@ -1677,6 +1765,10 @@ fn parse_relation_continuation_expr(
             false,
         )
         .ok()?;
+        matches!(parsed.expr, Expr::Chain(_)).then_some(parsed)
+    };
+    let try_label_row_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
+        let parsed = try_expanded_chain(expanded)?;
         if let Expr::Chain(ref chain) = parsed.expr {
             if chain.source.primary_entity() == contract.row_entity.entity.as_str() {
                 return Some(parsed);
@@ -1686,14 +1778,14 @@ fn parse_relation_continuation_expr(
     };
     if contract.anchor.allows_text_parse() {
         if let Some(expanded) = contract.continuation_text_expansion(segment) {
-            if let Some(parsed) = try_text(&expanded) {
+            if let Some(parsed) = try_expanded_chain(&expanded) {
                 return Ok(parsed);
             }
         }
     }
     if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
         if let Some(expanded) = contract.continuation_text_expansion(segment) {
-            if let Some(parsed) = try_text(&expanded) {
+            if let Some(parsed) = try_label_row_chain(&expanded) {
                 if let Expr::Chain(ref chain) = parsed.expr {
                     if matches!(chain.source.as_ref(), Expr::Get(_)) {
                         return Ok(parsed);
@@ -1840,8 +1932,17 @@ fn lookup_relation_chain_meta(
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     chain: &plasm_core::ChainExpr,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
-    let source_entity = chain.source.primary_entity();
-    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, source_entity, None)?;
+    let root_entity = chain.source.primary_entity();
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, root_entity, None)?;
+    let source_entity = chain
+        .source
+        .relation_navigation_entity(cgs)
+        .ok_or_else(|| {
+            format!(
+                "could not resolve relation navigation entity for chain continuing `{root_entity}`"
+            )
+        })?;
+    let source_entity = source_entity.as_str();
     let ent = cgs.get_entity(source_entity).ok_or_else(|| {
         format!("unknown entity `{source_entity}` (Plasm program relation continuation)")
     })?;
@@ -2587,11 +2688,8 @@ fn infer_surface_contract(
     }
 
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
-    let fed_holder = session.federation_dispatch();
-    let resolving_cgs: &CGS = match fed_holder.as_ref() {
-        Some(fed) => fed.resolve_cgs(entity.as_str(), session.cgs.as_ref()),
-        None => session.cgs.as_ref(),
-    };
+    let resolving_cgs =
+        crate::catalog_ownership::resolve_cgs_for_entity(session, entity.as_str(), None)?;
     if let Expr::Query(q) = expr {
         if let Some(capability_name) = q.capability_name.as_ref() {
             if let Some(cap) = resolving_cgs.capabilities.get(capability_name.as_str()) {
@@ -4002,5 +4100,66 @@ commits"#
                 );
             }
         }
+    }
+
+    #[test]
+    fn matrix_bind_relation_hop_summary_relation_ir() {
+        let session = test_session();
+        let source = r#"item = LangItem("i1")
+summary = item.summary
+summary"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "matrix-bind-hop",
+            source,
+        )
+        .expect("compile");
+        let summary = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "summary")
+            .expect("summary node");
+        assert_eq!(summary["kind"], "relation");
+        let ir = summary["relation"]["ir"]["expr"].to_string();
+        assert!(
+            ir.contains("LangItem") && ir.contains("summary"),
+            "expected surface chain IR, got {ir}"
+        );
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(dry.node_results.len(), 2, "{dry:?}");
+    }
+
+    #[test]
+    fn matrix_bind_relation_hop_detail_relation_ir() {
+        let session = test_session();
+        let source = r#"item = LangItem("i1")
+summary = item.summary
+detail = summary.detail
+detail"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "matrix-bind-hop-detail",
+            source,
+        )
+        .expect("compile");
+        let detail = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "detail")
+            .expect("detail node");
+        assert_eq!(detail["kind"], "relation");
+        let ir = detail["relation"]["ir"]["expr"].to_string();
+        assert!(
+            ir.contains("detail") && ir.contains("summary") && ir.contains("LangItem"),
+            "expected nested surface chain IR, got {ir}"
+        );
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(dry.node_results.len(), 3, "{dry:?}");
     }
 }

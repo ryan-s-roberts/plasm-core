@@ -102,7 +102,13 @@ fn intent_inner_federated(expr: &Expr, fed: &FederationDispatch, fallback: &CGS)
             )
         }
         Expr::Query(q) => {
-            let cgs = fed.resolve_cgs(q.entity.as_str(), fallback);
+            let cgs = fed
+                .resolve_entity(
+                    q.entity.as_str(),
+                    crate::row_composition::ResolutionHint::default(),
+                    fallback,
+                )
+                .unwrap_or(fallback);
             query_intent_line(q, cgs)
         }
         Expr::Chain(c) => {

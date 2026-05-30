@@ -19,10 +19,6 @@ pub(crate) enum ContinuationAnchor {
 }
 
 impl ContinuationAnchor {
-    pub(crate) fn root_surface(expr: impl Into<String>) -> Self {
-        Self::RootSurface(expr.into())
-    }
-
     pub(crate) fn is_present(&self) -> bool {
         !matches!(self, Self::None)
     }
@@ -156,9 +152,8 @@ impl ProgramBindingContract {
     pub(crate) fn continuation_text_expansion(&self, segment: &str) -> Option<String> {
         match &self.anchor {
             ContinuationAnchor::None => None,
-            ContinuationAnchor::RootSurface(prefix) | ContinuationAnchor::RelationExpand(prefix) => {
-                Some(format!("{prefix}.{segment}"))
-            }
+            ContinuationAnchor::RootSurface(prefix)
+            | ContinuationAnchor::RelationExpand(prefix) => Some(format!("{prefix}.{segment}")),
             ContinuationAnchor::BindingLabel => Some(format!("{}.{segment}", self.label)),
         }
     }

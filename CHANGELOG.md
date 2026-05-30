@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.54] - 2026-05-29
+## [0.1.55] - 2026-05-29
+
+### Added
+
+- **Row composition redesign (Waves A–E):** `RowIdentity`, unified `SuffixPipeline` lowering, `CatalogResolver` / `FederationDispatch` hint-aware resolution, and `ExecutePipeline` as the single HTTP/MCP execute ingress.
+- **`PreflightToken`:** agent-core preflight gates (type-check, `$` rejection, projection field validation) run once; live runtime skips duplicate TC when the token is present.
+- **`PlasmPreflight` / `ExecutePipeline::run_expression`:** dry `plan_only` and live lines share the same preflight chain (dry ≡ live).
+
+### Changed
+
+- **Federation:** `catalog_ownership::resolve_cgs_for_entity` and `plan_http_origin` unify type-check, plan, and live HTTP dispatch (engine harness wins over schema placeholder backends).
+- **Relation chains:** nested `.relation` navigation resolves tip entity for type-check and materialization (`relation_navigation_entity`).
+- **Runtime:** `reject_domain_placeholder_in_executable` lives in `plasm-core`; embedded entity cache + row-hole IR for URL evolution-chain GET.
+
+### Fixed
+
+- **Language matrix:** federated relation targets, one-cardinality relation hops, and `limit(1)` continuations run live without skip list; Hermit harness URL overrides `127.0.0.1:9` catalog placeholders.
+
 
 ### Fixed
 

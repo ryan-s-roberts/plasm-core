@@ -501,6 +501,21 @@ impl Expr {
             Expr::TeachingValue { .. } => "__teaching_value__",
         }
     }
+
+    /// Entity that owns the next `.relation` segment after `self` in a surface chain.
+    /// Unlike [`primary_entity`](Self::primary_entity), nested chains resolve from the
+    /// outermost hop's declared relation target (e.g. `LangItem.summary.detail` → `LangSummary`).
+    pub fn relation_navigation_entity(&self, cgs: &CGS) -> Option<String> {
+        match self {
+            Expr::Chain(chain) => {
+                let parent = chain.source.relation_navigation_entity(cgs)?;
+                let ent = cgs.get_entity(&parent)?;
+                let rel = ent.relations.get(chain.selector.as_str())?;
+                Some(rel.target_resource.to_string())
+            }
+            other => Some(other.primary_entity().to_string()),
+        }
+    }
 }
 
 /// Replace raw invoke/create payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.

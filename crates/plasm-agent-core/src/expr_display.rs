@@ -92,7 +92,13 @@ pub fn expr_display_resolved_federated(
             } else {
                 "all"
             };
-            let cgs = fed.resolve_cgs(q.entity.as_str(), fallback);
+            let cgs = fed
+                .resolve_entity(
+                    q.entity.as_str(),
+                    plasm_core::ResolutionHint::default(),
+                    fallback,
+                )
+                .unwrap_or(fallback);
             let cap = cap_suffix_for_query(q, cgs);
             format!("Query({} {}){cap}", q.entity, pred)
         }

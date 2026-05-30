@@ -2,9 +2,10 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::QualifiedEntityKey;
-use plasm_core::{FederationDispatch, CGS};
+use plasm_core::{FederationDispatch, CGS, DEFAULT_HTTP_BACKEND};
 
-fn federation_for_session(session: &ExecuteSession) -> FederationDispatch {
+/// Build the same [`CatalogResolver`] / [`FederationDispatch`] used by type-check and live execute.
+pub(crate) fn federation_for_session(session: &ExecuteSession) -> FederationDispatch {
     if let Some(exp) = session.domain_exposure.as_ref() {
         FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exp)
     } else {
@@ -44,48 +45,48 @@ pub(crate) fn resolve_qualified_entity_key(
 pub(crate) fn resolve_cgs_for_entity<'a>(
     session: &'a ExecuteSession,
     entity: &str,
-    owning_cgs: Option<&'a CGS>,
+    owning_cgs: Option<&CGS>,
 ) -> Result<&'a CGS, String> {
     if session.contexts_by_entry.len() <= 1 {
-        return Ok(session.cgs.as_ref());
-    }
-    if let Some(exp) = session.domain_exposure.as_ref() {
-        for (i, ent) in exp.entities.iter().enumerate() {
-            if ent == entity {
-                if let Some(eid) = exp.entity_catalog_entry_ids.get(i) {
-                    if let Some(ctx) = session.contexts_by_entry.get(eid) {
-                        return Ok(ctx.cgs.as_ref());
-                    }
-                }
-            }
+        if session.cgs.entities.contains_key(entity) {
+            return Ok(session.cgs.as_ref());
         }
+        return Err(format!(
+            "entity `{entity}` is not defined in any catalog loaded in this session"
+        ));
     }
-    if let Some(owning) = owning_cgs {
-        if owning.entities.contains_key(entity) {
-            return Ok(owning);
-        }
+    let qe = resolve_qualified_entity_key(session, entity, owning_cgs)?;
+    session
+        .contexts_by_entry
+        .get(&qe.entry_id)
+        .map(|ctx| ctx.cgs.as_ref())
+        .ok_or_else(|| {
+            format!(
+                "entity `{entity}` resolved to catalog {:?} which is not loaded",
+                qe.entry_id
+            )
+        })
+}
+
+/// HTTP origin for plan/live execute: engine harness wins over schema placeholder catalog backends.
+pub(crate) fn plan_http_origin(
+    engine_base_url: Option<&str>,
+    catalog_backend: Option<&str>,
+) -> Option<String> {
+    let catalog = catalog_backend.map(str::trim).filter(|s| !s.is_empty());
+    let engine = engine_base_url.map(str::trim).filter(|s| !s.is_empty());
+    match (engine, catalog) {
+        (Some(e), Some(c)) if is_schema_placeholder_http_backend(c) => Some(e.to_string()),
+        (_, Some(c)) => Some(c.to_string()),
+        (Some(e), None) => Some(e.to_string()),
+        _ => None,
     }
-    let mut matches = Vec::new();
-    for ctx in session.contexts_by_entry.values() {
-        if ctx.cgs.entities.contains_key(entity) {
-            matches.push(ctx.cgs.as_ref());
-        }
-    }
-    match matches.as_slice() {
-        [] => {
-            if session.cgs.entities.contains_key(entity) {
-                Ok(session.cgs.as_ref())
-            } else {
-                Err(format!(
-                    "entity `{entity}` is not defined in any catalog loaded in this session"
-                ))
-            }
-        }
-        [one] => Ok(one),
-        _ => Err(format!(
-            "entity `{entity}` is ambiguous across federated catalogs"
-        )),
-    }
+}
+
+fn is_schema_placeholder_http_backend(url: &str) -> bool {
+    url == DEFAULT_HTTP_BACKEND
+        || url == "http://127.0.0.1:9"
+        || url.starts_with("http://127.0.0.1:9/")
 }
 
 /// Trace/metadata helper: never panics; falls back to primary `entry_id` only when entity exists there.
@@ -188,6 +189,30 @@ mod tests {
         )
         .expect("qe");
         assert_eq!(qe.entry_id, "linear");
+    }
+
+    #[test]
+    fn resolve_cgs_for_entity_single_catalog() {
+        let cgs = matrix_cgs();
+        let session = session_with_contexts("solo", cgs, vec![], None);
+        let got = resolve_cgs_for_entity(&session, "LangItem", None).expect("ok");
+        assert!(got.entities.contains_key("LangItem"));
+    }
+
+    #[test]
+    fn plan_http_origin_prefers_engine_over_schema_placeholder() {
+        assert_eq!(
+            plan_http_origin(Some("http://127.0.0.1:8765"), Some("http://127.0.0.1:9"),).as_deref(),
+            Some("http://127.0.0.1:8765")
+        );
+        assert_eq!(
+            plan_http_origin(
+                Some("http://127.0.0.1:8765"),
+                Some("https://api.example.com"),
+            )
+            .as_deref(),
+            Some("https://api.example.com")
+        );
     }
 
     #[test]

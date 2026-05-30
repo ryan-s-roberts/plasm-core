@@ -67,6 +67,7 @@ use rust_mcp_sdk::schema::{
 use rust_mcp_sdk::McpServer;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
     apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
@@ -82,7 +83,7 @@ use crate::plasm_plan::parse_and_validate_plan_json;
 use crate::plasm_plan_run::{
     evaluate_validated_plasm_plan_dry, plasm_plan_dag_json,
     plasm_plan_review_guidance_lines_with_mode, render_plasm_plan_dry_text_with_guidance,
-    run_plasm_plan, DryPlanGuidanceMode, PlasmPlanRunHooks, PlasmPlanRunResult,
+    DryPlanGuidanceMode, PlasmPlanRunHooks, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
@@ -1380,41 +1381,45 @@ impl PlasmMcpHandler {
             let run_result = match compile {
                 Ok(plan) => {
                     if run_live {
-                        match run_plasm_plan(
-                            &es,
-                            self.plasm.as_ref(),
-                            principal_incoming.as_ref(),
-                            &b.prompt_hash,
-                            &b.session_id,
-                            &plan,
-                            true,
-                            Some(PlasmPlanRunHooks {
-                                meta_index: &mut idx,
-                                trace: mcp_trace.clone(),
-                                sink: sink.clone(),
-                            }),
-                        )
-                        .await
-                        {
-                            Ok(out) => {
-                                trace_archive_and_emit_code_plan_execute(
-                                    &self.plasm.trace_hub,
-                                    &self.plasm.run_artifacts,
-                                    &ls_key,
-                                    &es,
-                                    b.prompt_hash.as_str(),
-                                    b.session_id.as_str(),
-                                    session_ref.as_str(),
-                                    &plan,
-                                    &program,
-                                    out.plan_dag.clone(),
-                                    call_count,
-                                    &out,
-                                )
-                                .await;
-                                Ok(out)
-                            }
+                        match parse_and_validate_plan_json(&plan) {
                             Err(e) => Err(e),
+                            Ok(validated) => {
+                                match ExecutePipeline::run_program(
+                                    &es,
+                                    self.plasm.as_ref(),
+                                    &b.prompt_hash,
+                                    &b.session_id,
+                                    &validated,
+                                    ExecutionIntent::Live,
+                                    Some(PlasmPlanRunHooks {
+                                        meta_index: &mut idx,
+                                        trace: mcp_trace.clone(),
+                                        sink: sink.clone(),
+                                    }),
+                                )
+                                .await
+                                {
+                                    Ok(out) => {
+                                        trace_archive_and_emit_code_plan_execute(
+                                            &self.plasm.trace_hub,
+                                            &self.plasm.run_artifacts,
+                                            &ls_key,
+                                            &es,
+                                            b.prompt_hash.as_str(),
+                                            b.session_id.as_str(),
+                                            session_ref.as_str(),
+                                            &plan,
+                                            &program,
+                                            out.plan_dag.clone(),
+                                            call_count,
+                                            &out,
+                                        )
+                                        .await;
+                                        Ok(out)
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
                         }
                     } else {
                         match parse_and_validate_plan_json(&plan) {

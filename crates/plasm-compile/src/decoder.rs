@@ -101,6 +101,9 @@ pub struct DecodedEntity {
     pub reference: Ref,
     pub fields: IndexMap<String, Value>,
     pub relations: IndexMap<String, DecodedRelation>,
+    /// Fully decoded `from_parent_get` relation targets (also inserted into graph cache at parent GET).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub embedded_entities: Vec<DecodedEntity>,
 }
 
 impl PathExpr {
@@ -680,6 +683,7 @@ fn decode_single_entity(
 ) -> Result<DecodedEntity, DecodeError> {
     let mut fields = IndexMap::new();
     let mut relations = IndexMap::new();
+    let mut embedded_entities = Vec::new();
 
     // Extract ID field (required for reference)
     let id_value = if let Some(ref rid) = decoder.request_identity_override {
@@ -750,6 +754,10 @@ fn decode_single_entity(
         let rel = if relation_decode_path_specified(source, &relation_decoder.decoder.source) {
             let child_dec = child_decoder_with_parent_ambient(source, &relation_decoder.decoder);
             let related_entities = decode_entities(&child_dec, source)?;
+            for related in &related_entities {
+                embedded_entities.push(related.clone());
+                embedded_entities.extend(related.embedded_entities.iter().cloned());
+            }
             let refs: Vec<Ref> = related_entities
                 .iter()
                 .map(|e| e.reference.clone())
@@ -765,6 +773,7 @@ fn decode_single_entity(
         reference,
         fields,
         relations,
+        embedded_entities,
     })
 }
 
@@ -1552,5 +1561,84 @@ mod tests {
             Some(&Value::String("Hello".to_string()))
         );
         assert_eq!(entities[0].reference.simple_id().unwrap().as_str(), "42");
+    }
+
+    #[test]
+    fn decode_langitem_embedded_summary_detail_from_parent_get() {
+        let json = json!({
+            "id": "i1",
+            "title": "Alpha",
+            "summary": {
+                "id": "sum-i1",
+                "headline": "Alpha summary",
+                "detail": { "id": "det-i1", "body": "nested detail" }
+            }
+        });
+
+        let detail_decoder = EntityDecoder::new("LangDetail", PathExpr::from_slice(&["detail"]))
+            .with_fields(vec![
+                FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
+                FieldDecoder::new("body", PathExpr::from_slice(&["body"])),
+            ])
+            .with_id_field("id");
+
+        let summary_decoder = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
+            .with_fields(vec![
+                FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
+                FieldDecoder::new("headline", PathExpr::from_slice(&["headline"])),
+            ])
+            .with_id_field("id")
+            .with_relations(vec![RelationDecoder {
+                relation: "detail".into(),
+                decoder: detail_decoder,
+                cardinality: plasm_core::Cardinality::One,
+            }]);
+
+        let item_decoder = EntityDecoder::new("LangItem", PathExpr::empty())
+            .with_fields(vec![
+                FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
+                FieldDecoder::new("title", PathExpr::from_slice(&["title"])),
+            ])
+            .with_id_field("id")
+            .with_relations(vec![RelationDecoder {
+                relation: "summary".into(),
+                decoder: summary_decoder,
+                cardinality: plasm_core::Cardinality::One,
+            }]);
+
+        let entities = decode_entities(&item_decoder, &json).unwrap();
+        assert_eq!(entities.len(), 1);
+        let item = &entities[0];
+        let summary_refs = match item.relations.get("summary").expect("summary") {
+            DecodedRelation::Specified(refs) => refs,
+            _ => panic!("expected summary refs"),
+        };
+        assert_eq!(summary_refs[0].simple_id().unwrap().as_str(), "sum-i1");
+        assert_eq!(item.embedded_entities.len(), 2);
+        assert!(
+            item.embedded_entities
+                .iter()
+                .any(|e| e.reference.entity_type == "LangSummary"),
+            "{:?}",
+            item.embedded_entities
+        );
+        assert!(
+            item.embedded_entities
+                .iter()
+                .any(|e| e.reference.entity_type == "LangDetail"),
+            "{:?}",
+            item.embedded_entities
+        );
+        let summary = item
+            .embedded_entities
+            .iter()
+            .find(|e| e.reference.entity_type == "LangSummary")
+            .expect("embedded summary");
+        match summary.relations.get("detail").expect("detail rel") {
+            DecodedRelation::Specified(refs) => {
+                assert_eq!(refs[0].simple_id().unwrap().as_str(), "det-i1");
+            }
+            _ => panic!("expected detail refs on embedded summary"),
+        }
     }
 }

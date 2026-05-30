@@ -29,10 +29,9 @@ use crate::http_execute::{
     archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
     trace_record_plasm_line, PublishedResultStep,
 };
-use crate::incoming_auth::TenantPrincipal;
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plasm_plan::{
-    parse_and_validate_plan_json, AggregateFunction, BindingName, ComputeOp, ComputeTemplate,
+    AggregateFunction, BindingName, ComputeOp, ComputeTemplate,
     EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate, PlanNodeId,
     PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
     ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
@@ -240,15 +239,11 @@ pub fn typecheck_parsed_for_session(
     if session.contexts_by_entry.len() <= 1 {
         return type_check_expr(&pe.expr, session.cgs.as_ref());
     }
-    let fed = if let Some(exposure) = session.domain_exposure.as_ref() {
-        FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exposure)
-    } else {
-        FederationDispatch::from_contexts_only(session.contexts_by_entry.clone())
-    };
+    let fed = crate::catalog_ownership::federation_for_session(session);
     type_check_expr_federated(&pe.expr, &fed, session.cgs.as_ref())
 }
 
-fn entry_scoped_execute_session(
+pub(crate) fn entry_scoped_execute_session(
     session: &ExecuteSession,
     qualified_entity: Option<&QualifiedEntityKey>,
 ) -> Result<ExecuteSession, String> {
@@ -282,6 +277,92 @@ fn entry_scoped_execute_session(
         &focus,
     ));
     Ok(scoped)
+}
+
+fn reference_for_row_identity(entity: &plasm_runtime::CachedEntity, cgs: &CGS) -> Ref {
+    let primary = entity.reference.primary_slot_str();
+    if !primary.is_empty() {
+        return entity.reference.clone();
+    }
+    let id_name = cgs
+        .get_entity(entity.reference.entity_type.as_str())
+        .map(|e| e.id_field.as_str())
+        .unwrap_or("id");
+    if let Some(tf) = entity.get_field(id_name) {
+        let v = tf.to_value();
+        if let Value::String(s) = v {
+            if !s.is_empty() {
+                return Ref::new(entity.reference.entity_type.clone(), s);
+            }
+        }
+    }
+    entity.reference.clone()
+}
+
+fn row_identities_from_entities(
+    es: &ExecuteSession,
+    entity: &str,
+    entities: &[plasm_runtime::CachedEntity],
+) -> Vec<Option<plasm_core::RowIdentity>> {
+    entities
+        .iter()
+        .map(|e| {
+            let plan_qe = crate::catalog_ownership::resolve_qualified_entity_key(
+                es,
+                e.reference.entity_type.as_str(),
+                None,
+            )
+            .or_else(|_| crate::catalog_ownership::resolve_qualified_entity_key(es, entity, None));
+            let core_qe = match plan_qe {
+                Ok(qe) => {
+                    plasm_core::QualifiedEntityKey::new(qe.entry_id.clone(), qe.entity.clone())
+                }
+                Err(_) => plasm_core::QualifiedEntityKey::new(
+                    es.entry_id.clone(),
+                    e.reference.entity_type.to_string(),
+                ),
+            };
+            let cgs = crate::catalog_ownership::resolve_cgs_for_entity(
+                es,
+                e.reference.entity_type.as_str(),
+                None,
+            )
+            .unwrap_or(es.cgs.as_ref());
+            let ent = cgs.get_entity(e.reference.entity_type.as_str())?;
+            let reference = reference_for_row_identity(e, cgs);
+            let key_vars = ent
+                .key_vars
+                .iter()
+                .map(|k| k.as_str().to_string())
+                .collect::<Vec<_>>();
+            Some(plasm_core::row_identity_from_parts(
+                core_qe,
+                reference,
+                &e.relations,
+                ent.id_field.as_str(),
+                &key_vars,
+            ))
+        })
+        .collect()
+}
+
+fn propagate_row_identities(
+    source: &PlanNodeId,
+    op: &ComputeOp,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    out_len: usize,
+) -> Result<Vec<Option<plasm_core::RowIdentity>>, String> {
+    let mat = materialized.get(source).ok_or_else(|| {
+        format!(
+            "compute source node {:?} has not been materialized",
+            source.as_str()
+        )
+    })?;
+    match op {
+        ComputeOp::Limit { count } => Ok(mat.row_identities.iter().take(*count).cloned().collect()),
+        ComputeOp::Project { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
+        _ => Ok(vec![None; out_len]),
+    }
 }
 
 /// Simulated execution step: human **intent**, compact **il** (query `cap=` from schema), and **bindings** JSON, without HTTP or the `plasm` tool.
@@ -345,7 +426,7 @@ pub struct PlasmPlanRunHooks<'a> {
     pub sink: McpPlasmTraceSink,
 }
 
-/// Outcome of [`run_plasm_plan`]: the same `node_results` / optional run payload shape as an MCP
+/// Outcome of [`ExecutePipeline::run_program`]: the same `node_results` / optional run payload shape as an MCP
 /// live `plasm_run` response (fenced JSON), without Markdown framing.
 #[derive(Debug)]
 pub struct PlasmPlanRunResult {
@@ -438,12 +519,13 @@ impl PlasmPlanApprovalPolicy {
     }
 }
 
-/// Parse, validate, and dry-run a typed `Plan` (used from unit tests; see `run_plasm_plan` for production).
+/// Parse, validate, and dry-run a typed `Plan` (used from unit tests; production uses [`ExecutePipeline::run_program`]).
 #[cfg(test)]
 pub(crate) fn evaluate_plasm_plan_dry(
     es: &ExecuteSession,
     plan: &serde_json::Value,
 ) -> Result<DryPlasmPlanEvaluation, String> {
+    use crate::plasm_plan::parse_and_validate_plan_json;
     let validated = parse_and_validate_plan_json(plan)?;
     evaluate_validated_plasm_plan_dry(es, &validated)
 }
@@ -1827,13 +1909,18 @@ fn ensure_relation_expr_matches_plan(
             chain.selector
         ));
     }
-    let source_entity = chain.source.primary_entity();
-    let fed_holder = es.federation_dispatch();
-    let source_cgs: &CGS = match fed_holder.as_ref() {
-        Some(fed) => fed.resolve_cgs(source_entity, es.cgs.as_ref()),
-        None => es.cgs.as_ref(),
-    };
-    let Some(source_def) = source_cgs.get_entity(source_entity) else {
+    let root_entity = chain.source.primary_entity();
+    let source_entity = chain
+        .source
+        .relation_navigation_entity(es.cgs.as_ref())
+        .ok_or_else(|| {
+            format!(
+                "plan.nodes[{index}].relation could not resolve navigation entity for chain root {root_entity:?}"
+            )
+        })?;
+    let source_cgs =
+        crate::catalog_ownership::resolve_cgs_for_entity(es, source_entity.as_str(), None)?;
+    let Some(source_def) = source_cgs.get_entity(source_entity.as_str()) else {
         return Err(format!(
             "plan.nodes[{index}].relation source entity {source_entity:?} is not present"
         ));
@@ -2017,32 +2104,6 @@ fn validated_inputs_json(inputs: &[ValidatedPlanDataInput]) -> Vec<serde_json::V
         .collect()
 }
 
-/// Raw MCP ingress wrapper. Validation happens once, then execution proceeds through the
-/// proof-bearing [`ValidatedPlan`] core.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_plasm_plan(
-    es: &ExecuteSession,
-    st: &PlasmHostState,
-    _principal: Option<&TenantPrincipal>,
-    prompt_hash: &str,
-    session_id: &str,
-    plan: &serde_json::Value,
-    run: bool,
-    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
-) -> Result<PlasmPlanRunResult, String> {
-    let validated = parse_and_validate_plan_json(plan)?;
-    run_validated_plasm_plan(
-        es,
-        st,
-        prompt_hash,
-        session_id,
-        &validated,
-        run,
-        mcp_tool_hooks,
-    )
-    .await
-}
-
 /// Plasm program **plan** execution over a proof-bearing validated artifact.
 pub async fn run_validated_plasm_plan(
     es: &ExecuteSession,
@@ -2086,6 +2147,8 @@ struct MaterializedNode {
     /// Raw row values for downstream language semantics. Synthetic scalar bindings stay scalar here
     /// even though display/publication wraps them as `{ "value": ... }` cached entities.
     rows: Vec<serde_json::Value>,
+    /// Parallel canonical identity handles (one per row when known).
+    row_identities: Vec<Option<plasm_core::RowIdentity>>,
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     display: String,
     projection: Option<Vec<String>>,
@@ -2095,6 +2158,7 @@ struct MaterializedInputRow {
     node: PlanNodeId,
     proof: crate::plasm_plan::InputCardinalityProof,
     row: serde_json::Value,
+    row_identity: Option<plasm_core::RowIdentity>,
 }
 
 async fn run_validated_plan_phased(
@@ -2207,11 +2271,18 @@ async fn run_validated_plan_phased(
                         .iter()
                         .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
                         .collect(),
+                    row_identities: row_identities_from_entities(
+                        &scoped_es,
+                        parsed.expr.primary_entity(),
+                        &result.entities,
+                    ),
                     result,
                     artifact,
                 }
             }
             ValidatedPlanNode::Data(data) => {
+                let rows = plan_value_to_rows(&data.data)?;
+                let empty_identities = vec![None; rows.len()];
                 materialize_synthetic_node(
                     st,
                     es,
@@ -2219,7 +2290,8 @@ async fn run_validated_plan_phased(
                     node,
                     es.entry_id.as_str(),
                     None,
-                    plan_value_to_rows(&data.data)?,
+                    rows,
+                    empty_identities,
                     trace.as_ref(),
                 )
                 .await?
@@ -2241,6 +2313,7 @@ async fn run_validated_plan_phased(
                     let env = PlanEvalEnv { scope, inputs };
                     rows.push(eval_plan_value(&derive.value, &env)?);
                 }
+                let empty_identities = vec![None; rows.len()];
                 materialize_synthetic_node(
                     st,
                     es,
@@ -2249,6 +2322,7 @@ async fn run_validated_plan_phased(
                     owner_entry_id.as_str(),
                     None,
                     rows,
+                    empty_identities,
                     trace.as_ref(),
                 )
                 .await?
@@ -2259,6 +2333,13 @@ async fn run_validated_plan_phased(
                     .and_then(|source| materialized.get(&source).map(|m| m.entry_id.clone()))
                     .unwrap_or_else(|| es.entry_id.clone());
                 let rows = eval_compute(&compute.compute, &materialized)?;
+                let source = PlanNodeId::new(compute.compute.source.clone())?;
+                let row_identities = propagate_row_identities(
+                    &source,
+                    &compute.compute.op,
+                    &materialized,
+                    rows.len(),
+                )?;
                 materialize_synthetic_node(
                     st,
                     es,
@@ -2267,6 +2348,7 @@ async fn run_validated_plan_phased(
                     owner_entry_id.as_str(),
                     compute.compute.schema.entity.as_deref(),
                     rows,
+                    row_identities,
                     trace.as_ref(),
                 )
                 .await?
@@ -2285,9 +2367,10 @@ async fn run_validated_plan_phased(
                     .display_expr
                     .as_deref()
                     .unwrap_or("<ir>");
+                let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
                 let (parsed, result, artifact) = execute_plasm_parsed_expr(
                     st,
-                    es,
+                    &scoped_es,
                     session_id,
                     expr_label,
                     parsed,
@@ -2296,7 +2379,8 @@ async fn run_validated_plan_phased(
                 )
                 .await?;
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, es).await;
+                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
+                        .await;
                 }
                 MaterializedNode {
                     entry_id: relation.relation.target.entry_id.clone(),
@@ -2306,8 +2390,13 @@ async fn run_validated_plan_phased(
                     rows: result
                         .entities
                         .iter()
-                        .map(|e| cached_entity_row_json(e, es.cgs.as_ref()))
+                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
                         .collect(),
+                    row_identities: row_identities_from_entities(
+                        &scoped_es,
+                        relation.relation.target.entity.as_str(),
+                        &result.entities,
+                    ),
                     result,
                     artifact,
                 }
@@ -2432,6 +2521,7 @@ async fn materialize_synthetic_node(
     entry_id: &str,
     entity_override: Option<&str>,
     rows: Vec<serde_json::Value>,
+    row_identities: Vec<Option<plasm_core::RowIdentity>>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
     let entity = entity_override
@@ -2499,6 +2589,7 @@ async fn materialize_synthetic_node(
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
         rows,
+        row_identities,
         result: ExecutionResult {
             count: entities.len(),
             entities,
@@ -2571,7 +2662,11 @@ fn materialized_singleton_inputs(
             MaterializedInputRow {
                 node: input.node.clone(),
                 proof: input.proof,
-                row,
+                row: augment_row_json_with_identity(
+                    &row,
+                    mat.row_identities.first().and_then(|i| i.as_ref()),
+                ),
+                row_identity: mat.row_identities.first().cloned().flatten(),
             },
         );
     }
@@ -2613,7 +2708,11 @@ fn materialized_result_use_inputs(
             MaterializedInputRow {
                 node,
                 proof: crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton,
-                row,
+                row: augment_row_json_with_identity(
+                    &row,
+                    mat.row_identities.first().and_then(|i| i.as_ref()),
+                ),
+                row_identity: mat.row_identities.first().cloned().flatten(),
             },
         );
     }
@@ -2762,6 +2861,67 @@ fn json_row_to_plasm_value(row: &serde_json::Value) -> plasm_core::Value {
     }
 }
 
+fn augment_row_json_with_identity(
+    row: &serde_json::Value,
+    identity: Option<&plasm_core::RowIdentity>,
+) -> serde_json::Value {
+    let Some(identity) = identity else {
+        return row.clone();
+    };
+    let mut obj = match row {
+        serde_json::Value::Object(map) => map.clone(),
+        other => {
+            let mut m = serde_json::Map::new();
+            m.insert("value".to_string(), other.clone());
+            m
+        }
+    };
+    let primary = identity.reference.primary_slot_str();
+    obj.entry("id".to_string())
+        .or_insert_with(|| serde_json::Value::String(primary.clone()));
+    for (k, v) in &identity.ambient {
+        obj.entry(k.clone())
+            .or_insert_with(|| serde_json::Value::String(v.clone()));
+    }
+    if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
+        for (k, v) in parts {
+            obj.entry(k.clone())
+                .or_insert_with(|| serde_json::Value::String(v.clone()));
+        }
+    }
+    serde_json::Value::Object(obj)
+}
+
+fn node_input_hole_from_identity(
+    identity: &Option<plasm_core::RowIdentity>,
+    path: &[String],
+    row: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let identity = identity.as_ref()?;
+    if path.is_empty() {
+        return Some(serde_json::Value::String(
+            identity.reference.primary_slot_str(),
+        ));
+    }
+    if path.len() == 1 {
+        let key = path[0].as_str();
+        if key == "id" {
+            return Some(serde_json::Value::String(
+                identity.reference.primary_slot_str(),
+            ));
+        }
+        if let Some(v) = identity.ambient.get(key) {
+            return Some(serde_json::Value::String(v.clone()));
+        }
+        if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
+            if let Some(v) = parts.get(key) {
+                return Some(serde_json::Value::String(v.clone()));
+            }
+        }
+    }
+    value_at_segments(row, path).cloned()
+}
+
 fn instantiate_ir_hole(
     hole: &serde_json::Map<String, serde_json::Value>,
     env: &PlanEvalEnv<'_>,
@@ -2813,9 +2973,21 @@ fn instantiate_ir_hole(
             let input = env.inputs.rows.get(&alias).ok_or_else(|| {
                 format!("node_input IR hole references unavailable alias {alias:?}")
             })?;
-            Ok(value_at_segments(&input.row, &path)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null))
+            let from_row = value_at_segments(&input.row, &path).cloned();
+            let from_row_usable = from_row
+                .as_ref()
+                .is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()));
+            if from_row_usable {
+                return Ok(from_row.unwrap());
+            }
+            if let Some(value) =
+                node_input_hole_from_identity(&input.row_identity, &path, &input.row)
+            {
+                if value.as_str().is_none_or(|s| !s.is_empty()) {
+                    return Ok(value);
+                }
+            }
+            Ok(from_row.unwrap_or(serde_json::Value::Null))
         }
         other => Err(format!("unknown IR value hole kind {other:?}")),
     }
@@ -2962,6 +3134,11 @@ async fn materialize_for_each_node(
             .iter()
             .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
             .collect(),
+        row_identities: row_identities_from_entities(
+            &scoped_es,
+            for_each.effect_template.qualified_entity.entity.as_str(),
+            &result.entities,
+        ),
         result,
         artifact: Some(artifact),
         display,
@@ -3587,6 +3764,7 @@ mod tests {
                     request_fingerprints: vec![],
                 },
                 rows: vec![row.clone()],
+                row_identities: vec![None],
                 artifact: None,
                 display: "workspace_id".to_string(),
                 projection: None,
@@ -4235,6 +4413,7 @@ next:
                 node: PlanNodeId::new("moveFacts".to_string()).expect("node id"),
                 proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
                 row: serde_json::json!({ "move": "thunderbolt", "power": 90 }),
+                row_identity: None,
             },
         )]);
         let binding = BindingName::new("p".to_string()).expect("binding");
@@ -4319,6 +4498,7 @@ next:
                 node: PlanNodeId::new("doc".to_string()).expect("node id"),
                 proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
                 row: input,
+                row_identity: None,
             },
         )]);
         let scope = EvalScope::Root {

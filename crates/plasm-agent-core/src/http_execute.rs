@@ -2256,7 +2256,7 @@ pub async fn execute_plasm_plasm_line(
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
     let parsed = parse_plasm_line(line, sess, st).map_err(run_line_error_string)?;
     let mut cache = sess.graph_cache.lock().await;
-    run_parsed_plasm_line(
+    crate::execute_pipeline::ExecutePipeline::run_expression(
         line, sess, st, &mut cache, session_id, parsed, trace, line_index,
     )
     .await
@@ -2282,6 +2282,7 @@ pub async fn execute_plasm_parsed_expr(
         parsed,
         trace,
         line_index,
+        Some(plasm_core::PreflightToken::VERIFIED),
     )
     .await
     .map_err(run_line_error_string)
@@ -2619,7 +2620,7 @@ fn execute_session_parse_error_message(
     format!("{err}\n\n{}", step.correction)
 }
 
-enum RunLineError {
+pub(crate) enum RunLineError {
     Parse(String),
     Normalize(String),
     /// [`ExecutionEngine::auto_resolve_projection`] failed; surface to clients instead of silent degradation.
@@ -2764,6 +2765,15 @@ fn http_staged_execute_error(
 }
 
 fn parse_plasm_line(
+    line: &str,
+    sess: &ExecuteSession,
+    st: &PlasmHostState,
+) -> Result<ParsedExpr, RunLineError> {
+    parse_plasm_line_for_session(line, sess, st)
+}
+
+/// Parse one Plasm line for the active session (HTTP/MCP ingress).
+pub(crate) fn parse_plasm_line_for_session(
     line: &str,
     sess: &ExecuteSession,
     st: &PlasmHostState,
@@ -3017,7 +3027,7 @@ async fn try_proof_document_share_bind(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_parsed_plasm_line(
+pub(crate) async fn run_parsed_plasm_line(
     line: &str,
     sess: &ExecuteSession,
     st: &PlasmHostState,
@@ -3026,7 +3036,16 @@ async fn run_parsed_plasm_line(
     parsed: ParsedExpr,
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
+    preflight: Option<plasm_core::PreflightToken>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
+    let preflight_token = match preflight {
+        Some(token) => token,
+        None => {
+            crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
+                .map_err(RunLineError::Parse)?;
+            plasm_core::PreflightToken::VERIFIED
+        }
+    };
     let wall = Instant::now();
     let mut log_expr = format!("→ {}", crate::expr_display::expr_display(&parsed.expr));
     if let Some(ref proj) = parsed.projection {
@@ -3163,15 +3182,15 @@ async fn run_parsed_plasm_line(
     };
     let root_entity = root_entity_owned.as_str();
     let fed_holder = sess.federation_dispatch();
-    let exec_cgs: &plasm_core::CGS = match fed_holder.as_ref() {
-        Some(fed) => fed.resolve_cgs(root_entity, sess.cgs.as_ref()),
-        None => sess.cgs.as_ref(),
-    };
-    let http_backend_for_root = fed_holder
-        .as_ref()
-        .and_then(|fed| fed.context_for_entity(root_entity))
-        .map(|ctx| ctx.cgs.http_backend.clone())
-        .or_else(|| sess.http_backend.clone());
+    let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entity(sess, root_entity, None)
+        .map_err(RunLineError::Parse)?;
+    let http_backend_for_root = crate::catalog_ownership::plan_http_origin(
+        st.engine.config().base_url.as_deref(),
+        fed_holder
+            .as_ref()
+            .and_then(|fed| fed.http_backend_for_entity(root_entity))
+            .or(sess.http_backend.as_deref()),
+    );
     let auth_for_exec = exec_cgs.auth.clone();
     let (compile_operation_fn, compile_query_fn, plugin_generation_id) =
         plugin_execute_options_from_session(sess);
@@ -3195,6 +3214,7 @@ async fn run_parsed_plasm_line(
         compile_query_fn,
         plugin_generation_id,
         federation: fed_holder.clone(),
+        preflight: Some(preflight_token),
         execute_session: Some(Arc::new(ExecuteSessionMaterial {
             prompt_hash: sess.prompt_hash.clone(),
             session_id: session_id.to_string(),
@@ -3295,10 +3315,9 @@ async fn run_parsed_plasm_line(
     if let Some(ref fields) = parsed.projection {
         if !result.entities.is_empty() {
             let entity_type = result.entities[0].reference.entity_type.clone();
-            let proj_cgs: &plasm_core::CGS = match fed_holder.as_ref() {
-                Some(fed) => fed.resolve_cgs(entity_type.as_str(), sess.cgs.as_ref()),
-                None => sess.cgs.as_ref(),
-            };
+            let proj_cgs =
+                crate::catalog_ownership::resolve_cgs_for_entity(sess, entity_type.as_str(), None)
+                    .map_err(RunLineError::Parse)?;
             match st
                 .engine
                 .auto_resolve_projection(
@@ -3548,7 +3567,10 @@ async fn run_single_plasm_line(
             return Err(e);
         }
     };
-    run_parsed_plasm_line(line, sess, st, cache, session_id, parsed, trace, line_index).await
+    run_parsed_plasm_line(
+        line, sess, st, cache, session_id, parsed, trace, line_index, None,
+    )
+    .await
 }
 
 /// Run multiple program lines with staged scheduling: consecutive parallel-safe root queries may
@@ -3597,6 +3619,7 @@ async fn execute_staged_plasm_lines(
                     parsed_exprs[idx].clone(),
                     trace,
                     idx as i64,
+                    None,
                 )
                 .await
                 .map_err(|err| StagedExecuteError::Step {
@@ -3635,7 +3658,7 @@ async fn execute_staged_plasm_lines(
                     );
                     async move {
                         run_parsed_plasm_line(
-                            &line, &sess, &st, &mut fork, &sid, parsed, trace, idx as i64,
+                            &line, &sess, &st, &mut fork, &sid, parsed, trace, idx as i64, None,
                         )
                         .await
                         .map(|triple| (triple, fork))
@@ -4139,13 +4162,17 @@ async fn post_execute_session_plan(
     );
     let ph_str = prompt_hash.to_string();
     let sid_str = session_id.to_string();
-    let outcome = crate::plasm_plan_run::run_validated_plasm_plan(
+    let outcome = crate::execute_pipeline::ExecutePipeline::run_program(
         &sess,
         &st,
         ph_str.as_str(),
         sid_str.as_str(),
         &prepared.validated,
-        run_live,
+        if run_live {
+            crate::execute_pipeline::ExecutionIntent::Live
+        } else {
+            crate::execute_pipeline::ExecutionIntent::PlanOnly
+        },
         None,
     )
     .await;
@@ -4596,17 +4623,17 @@ async fn post_run_execute_session(
                         return plasm_line_step_bad_request(idx, total, line, d);
                     }
                 };
-                if let Err(te) = crate::plasm_plan_run::typecheck_parsed_for_session(&sess, &parsed)
-                {
-                    return plasm_line_step_bad_request(
-                        idx,
-                        total,
-                        line,
-                        format!("type check: {te}"),
-                    );
-                }
                 let (intent, il, bindings) =
-                    crate::plasm_plan_run::dry_run_simulation_for_session(&sess, &parsed);
+                    match crate::execute_pipeline::ExecutePipeline::dry_preview_line(
+                        &sess,
+                        line.as_str(),
+                        &parsed,
+                    ) {
+                        Ok(v) => v,
+                        Err(te) => {
+                            return plasm_line_step_bad_request(idx, total, line, te);
+                        }
+                    };
                 lines_out.push(serde_json::json!({
                     "index": idx + 1,
                     "source": line,
@@ -4684,18 +4711,20 @@ async fn post_run_execute_session(
                 );
             }
         };
-        if let Err(te) = crate::plasm_plan_run::typecheck_parsed_for_session(&sess, &parsed) {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(format!("type check: {te}")),
-            );
-        }
         let (intent, il, bindings) =
-            crate::plasm_plan_run::dry_run_simulation_for_session(&sess, &parsed);
+            match crate::execute_pipeline::ExecutePipeline::dry_preview_line(&sess, line, &parsed) {
+                Ok(v) => v,
+                Err(te) => {
+                    return problem_response(
+                        Problem::custom(
+                            ProblemStatus::BAD_REQUEST,
+                            Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                        )
+                        .with_title("Bad Request")
+                        .with_detail(te),
+                    );
+                }
+            };
         let preview = serde_json::json!({
             "plan": true,
             "intent": intent,
