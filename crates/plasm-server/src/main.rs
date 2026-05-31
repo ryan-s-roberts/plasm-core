@@ -222,6 +222,7 @@ fn redact_postgres_url_for_display(url: &str) -> String {
 }
 
 const LOCAL_AUTH_STORAGE_KEY_RELATIVE_PATH: &str = "bootstrap-secrets/AUTH_STORAGE_ENCRYPTION_KEY";
+const LOCAL_AUTH_JWT_SECRET_RELATIVE_PATH: &str = "bootstrap-secrets/PLASM_AUTH_JWT_SECRET";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LocalAuthStorageKeyBootstrap {
@@ -246,6 +247,66 @@ impl LocalAuthStorageKeyBootstrap {
             Self::ProvidedByEnv | Self::ManagedBySecretsDir | Self::NotRequired => None,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LocalAuthJwtSecretBootstrap {
+    ProvidedByEnv,
+    LoadedFromFile { path: PathBuf },
+    GeneratedFile { path: PathBuf },
+}
+
+impl LocalAuthJwtSecretBootstrap {
+    fn boot_detail(&self) -> Option<String> {
+        match self {
+            Self::LoadedFromFile { path } => Some(format!(
+                "local JWT signing secret loaded from {}",
+                path.display()
+            )),
+            Self::GeneratedFile { path } => Some(format!(
+                "local JWT signing secret generated at {}",
+                path.display()
+            )),
+            Self::ProvidedByEnv => None,
+        }
+    }
+}
+
+fn local_auth_jwt_secret_path() -> Option<PathBuf> {
+    plasm_agent_core::oss_local_state::resolve_local_state_root()
+        .map(|root| root.join(LOCAL_AUTH_JWT_SECRET_RELATIVE_PATH))
+}
+
+fn ensure_local_appliance_jwt_signing_secret() -> Result<LocalAuthJwtSecretBootstrap, String> {
+    if env_str_nonempty("PLASM_AUTH_JWT_SECRET") {
+        return Ok(LocalAuthJwtSecretBootstrap::ProvidedByEnv);
+    }
+    if plasm_agent_core::bootstrap_secrets::running_inside_kubernetes() {
+        return Err(
+            "PLASM_AUTH_JWT_SECRET is required in Kubernetes; set it via your deployment secrets."
+                .to_string(),
+        );
+    }
+    let Some(path) = local_auth_jwt_secret_path() else {
+        return Err(
+            "local appliance JWT bootstrap could not resolve a durable path; set PLASM_LOCAL_STATE_DIR, ensure HOME is set, or provide PLASM_AUTH_JWT_SECRET explicitly."
+                .to_string(),
+        );
+    };
+    let existed = path.exists();
+    let secret = if existed {
+        read_local_auth_storage_key(&path)?
+    } else {
+        let secret = generate_auth_storage_encryption_key();
+        write_local_auth_storage_key(&path, &secret)?;
+        read_local_auth_storage_key(&path)?
+    };
+    std::env::set_var("PLASM_AUTH_JWT_SECRET", &secret);
+    Ok(if existed {
+        LocalAuthJwtSecretBootstrap::LoadedFromFile { path }
+    } else {
+        LocalAuthJwtSecretBootstrap::GeneratedFile { path }
+    })
 }
 
 fn auth_storage_uses_postgres() -> bool {
@@ -720,6 +781,19 @@ async fn bootstrap_appliance_core(
             return Err(BootstrapStopped::Fatal);
         }
     };
+    let local_jwt_bootstrap = match ensure_local_appliance_jwt_signing_secret() {
+        Ok(state) => {
+            if let Some(detail) = state.boot_detail() {
+                send(boot::BootstrapUiMsg::Detail(detail));
+            }
+            state
+        }
+        Err(msg) => {
+            report_fatal(&msg);
+            send(boot::BootstrapUiMsg::Fatal(msg));
+            return Err(BootstrapStopped::Fatal);
+        }
+    };
 
     send(boot::BootstrapUiMsg::PhaseEnter(3));
     phase_line("build engine + host state");
@@ -780,27 +854,30 @@ async fn bootstrap_appliance_core(
     send(boot::BootstrapUiMsg::Detail(
         "OAuth / MCP policy / discovery embeddings (host bootstrap)".into(),
     ));
-    let auth_storage = match plasm_agent_core::auth_framework_host::init_standalone_auth_storage()
-        .await
-    {
-        Ok(storage) => storage,
-        Err(e) => {
-            let mut msg = format!("standalone auth storage init failed: {e}");
-            if let LocalAuthStorageKeyBootstrap::LoadedFromFile { path }
-            | LocalAuthStorageKeyBootstrap::GeneratedFile { path } = &local_key_bootstrap
-            {
-                msg.push_str(&format!(
-                        "\nLocal appliance auth key file: {}\nIf you delete or replace that file, previously encrypted OAuth secrets and MCP API keys will become unreadable.",
-                        path.display()
-                    ));
-            }
-            report_fatal(&msg);
-            send(boot::BootstrapUiMsg::Fatal(msg));
-            return Err(BootstrapStopped::Fatal);
+    if let Err(e) = mcp_host_bootstrap::ensure_auth_framework_on_host(&mut app_state).await {
+        let mut msg = format!("auth-framework init failed: {e}");
+        if let LocalAuthStorageKeyBootstrap::LoadedFromFile { path }
+        | LocalAuthStorageKeyBootstrap::GeneratedFile { path } = &local_key_bootstrap
+        {
+            msg.push_str(&format!(
+                "\nLocal appliance auth key file: {}\nIf you delete or replace that file, previously encrypted OAuth secrets and MCP API keys will become unreadable.",
+                path.display()
+            ));
         }
-    };
+        if let LocalAuthJwtSecretBootstrap::LoadedFromFile { path }
+        | LocalAuthJwtSecretBootstrap::GeneratedFile { path } = &local_jwt_bootstrap
+        {
+            msg.push_str(&format!(
+                "\nLocal appliance JWT signing secret file: {}\nIf you replace it, previously minted incoming-auth tokens become invalid.",
+                path.display()
+            ));
+        }
+        report_fatal(&msg);
+        send(boot::BootstrapUiMsg::Fatal(msg));
+        return Err(BootstrapStopped::Fatal);
+    }
     send(boot::BootstrapUiMsg::Detail(
-        "standalone auth storage attached".into(),
+        "auth-framework + encrypted auth storage attached".into(),
     ));
     let oauth_link_catalog =
         Arc::new(plasm_agent_core::oauth_link_catalog::OauthLinkCatalog::from_env());
@@ -841,13 +918,17 @@ async fn bootstrap_appliance_core(
             }
         }
     }
+    let auth_storage = app_state
+        .oss
+        .auth_storage
+        .clone()
+        .expect("auth storage after ensure_auth_framework_on_host");
     let outbound_secret_provider = Arc::new(
         plasm_agent_core::outbound_secret_provider::AgentOutboundSecretProvider::new(
-            auth_storage.clone(),
+            auth_storage,
             oauth_link_catalog.clone(),
         ),
     );
-    app_state.oss.auth_storage = Some(auth_storage);
     app_state.oss.oauth_link_catalog = Some(oauth_link_catalog);
     app_state.oss.outbound_secret_provider =
         Some(outbound_secret_provider as Arc<dyn plasm_runtime::SecretProvider>);
@@ -1587,6 +1668,29 @@ mod tests {
                 .exists(),
             "explicit env should avoid writing a local key file"
         );
+    }
+
+    #[test]
+    fn local_appliance_jwt_secret_bootstrap_persists_when_unset() {
+        let _guard = env_lock().lock().expect("env lock");
+        let _env = EnvGuard::new(&[
+            "PLASM_AUTH_JWT_SECRET",
+            "PLASM_LOCAL_STATE_DIR",
+            "KUBERNETES_SERVICE_HOST",
+        ]);
+        clear_test_env();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("PLASM_LOCAL_STATE_DIR", temp.path());
+
+        let state = ensure_local_appliance_jwt_signing_secret().expect("jwt bootstrap");
+        assert!(matches!(
+            state,
+            LocalAuthJwtSecretBootstrap::GeneratedFile { .. }
+        ));
+        let path = temp.path().join(LOCAL_AUTH_JWT_SECRET_RELATIVE_PATH);
+        assert!(path.exists(), "jwt secret file should be written");
+        let from_env = std::env::var("PLASM_AUTH_JWT_SECRET").expect("jwt env");
+        assert!(!from_env.trim().is_empty());
     }
 
     #[test]

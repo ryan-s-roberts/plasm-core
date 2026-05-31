@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.61] - 2026-05-31
+
+### Changed
+
+- **Auth-framework bootstrap:** OSS appliance, `plasm-mcp` with `project_mcp_*`, and hosted stacks share `ensure_auth_framework_on_host()` — encrypted auth KV, JWT signing, and MCP API keys on one `AuthStorage` `Arc`.
+- **`GET /v1/auth/status`:** single probe — `200` when `AuthFramework` is initialized (`storage`: `postgres` or `memory`), `503` only when bootstrap failed.
+
+### Fixed
+
+- **Appliance TUI:** `plasm-server` persists local `PLASM_AUTH_JWT_SECRET` and initializes auth-framework in boot phase 4 so `/v1/auth/status` no longer returns `auth_framework_disabled` while execute and secret encryption work.
+
 ## [0.1.60] - 2026-05-30
 
 ### Changed

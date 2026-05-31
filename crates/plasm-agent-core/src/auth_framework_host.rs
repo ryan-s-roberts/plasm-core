@@ -48,6 +48,139 @@ pub async fn init_standalone_auth_storage(
     Ok(storage)
 }
 
+/// JWT signing secret for [`AuthFramework`]: env, else non-k8s local dev key (appliance file bootstrap
+/// sets `PLASM_AUTH_JWT_SECRET` before host init).
+pub fn resolve_jwt_signing_secret() -> Result<String, auth_framework::AuthError> {
+    let in_k8s = std::env::var("KUBERNETES_SERVICE_HOST")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    if let Some(v) = std::env::var("PLASM_AUTH_JWT_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Ok(v);
+    }
+    if !in_k8s {
+        tracing::warn!(
+            "PLASM_AUTH_JWT_SECRET is unset; using an insecure development JWT signing key \
+             (set PLASM_AUTH_JWT_SECRET for production)"
+        );
+        return Ok(DEV_JWT_SECRET.to_string());
+    }
+    Err(auth_framework::AuthError::configuration(
+        "PLASM_AUTH_JWT_SECRET is required in Kubernetes".to_string(),
+    ))
+}
+
+/// `postgres` when `PLASM_AUTH_STORAGE_URL` / `DATABASE_URL` is set; otherwise `memory`.
+pub fn auth_storage_backend_label() -> &'static str {
+    if std::env::var("PLASM_AUTH_STORAGE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("DATABASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .is_some()
+    {
+        "postgres"
+    } else {
+        "memory"
+    }
+}
+
+fn auth_storage_mode_from_env() -> AuthStorageMode {
+    if let Some(url) = std::env::var("PLASM_AUTH_STORAGE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("DATABASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+    {
+        AuthStorageMode::Postgres {
+            connection_string: url,
+        }
+    } else {
+        AuthStorageMode::Memory
+    }
+}
+
+/// [`AuthFramework`] on an existing [`AuthStorage`] `Arc` (JWT from [`resolve_jwt_signing_secret`]).
+pub async fn init_auth_framework_on_storage(
+    storage: Arc<dyn AuthStorage>,
+) -> Result<Arc<tokio::sync::Mutex<AuthFramework>>, auth_framework::AuthError> {
+    let from_env = std::env::var("PLASM_AUTH_JWT_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    let jwt = resolve_jwt_signing_secret()?;
+    init_auth_framework_with_jwt_fallback(storage, auth_storage_mode_from_env(), jwt, from_env).await
+}
+
+async fn init_auth_framework_with_jwt_fallback(
+    storage: Arc<dyn AuthStorage>,
+    storage_mode: AuthStorageMode,
+    jwt_secret: String,
+    from_env: bool,
+) -> Result<Arc<tokio::sync::Mutex<AuthFramework>>, auth_framework::AuthError> {
+    let in_k8s = std::env::var("KUBERNETES_SERVICE_HOST")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    let allow_dev_secret = matches!(
+        std::env::var("ENV").ok().as_deref(),
+        Some("test") | Some("TEST")
+    ) && !in_k8s;
+
+    match build_framework_on_storage(
+        storage.clone(),
+        storage_mode.clone(),
+        jwt_secret,
+    )
+    .await
+    {
+        Ok(fw) => Ok(fw),
+        Err(e) if from_env && jwt_secret_failed_validation(&e) && (allow_dev_secret || !in_k8s) => {
+            tracing::warn!(
+                "PLASM_AUTH_JWT_SECRET failed validation ({e}); using insecure development JWT signing key"
+            );
+            build_framework_on_storage(storage, storage_mode, DEV_JWT_SECRET.to_string()).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Same storage backend as [`init_standalone_auth_storage`], plus [`AuthFramework`] and
+/// [`McpApiKeyRegistry`] on the **same** [`AuthStorage`] `Arc`.
+pub async fn init_standalone_auth_bundle() -> Result<
+    (
+        Arc<dyn AuthStorage>,
+        Arc<tokio::sync::Mutex<AuthFramework>>,
+        Arc<McpApiKeyRegistry>,
+    ),
+    auth_framework::AuthError,
+> {
+    let (storage, storage_mode) = create_auth_storage().await?;
+    let mcp_api_keys = Arc::new(McpApiKeyRegistry::new(storage.clone()));
+    let from_env = std::env::var("PLASM_AUTH_JWT_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    let jwt = resolve_jwt_signing_secret()?;
+    let framework = init_auth_framework_with_jwt_fallback(
+        storage.clone(),
+        storage_mode,
+        jwt,
+        from_env,
+    )
+    .await?;
+    Ok((storage, framework, mcp_api_keys))
+}
+
 async fn create_auth_storage(
 ) -> Result<(Arc<dyn AuthStorage>, AuthStorageMode), auth_framework::AuthError> {
     let in_k8s = std::env::var("KUBERNETES_SERVICE_HOST")
@@ -164,49 +297,14 @@ pub async fn init_plasm_http_auth_bundle() -> Result<
 > {
     let (storage, storage_mode) = create_auth_storage().await?;
     let mcp_api_keys = Arc::new(McpApiKeyRegistry::new(storage.clone()));
-    let in_k8s = std::env::var("KUBERNETES_SERVICE_HOST")
+    let from_env = std::env::var("PLASM_AUTH_JWT_SECRET")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .is_some();
-    let allow_dev_secret = matches!(
-        std::env::var("ENV").ok().as_deref(),
-        Some("test") | Some("TEST")
-    ) && !in_k8s;
-
-    let from_env = std::env::var("PLASM_AUTH_JWT_SECRET").ok();
-    let secret = match from_env.clone() {
-        Some(v) => v,
-        None if allow_dev_secret => {
-            tracing::warn!(
-                "PLASM_AUTH_JWT_SECRET is unset; using an insecure development JWT signing key"
-            );
-            DEV_JWT_SECRET.to_string()
-        }
-        None => {
-            return Err(auth_framework::AuthError::configuration(
-                "PLASM_AUTH_JWT_SECRET is required outside explicit local test mode".to_string(),
-            ));
-        }
-    };
-
-    match build_framework_on_storage(storage.clone(), storage_mode.clone(), secret).await {
-        Ok(fw) => Ok((fw, mcp_api_keys, storage)),
-        Err(e) if from_env.is_some() && jwt_secret_failed_validation(&e) && allow_dev_secret => {
-            tracing::warn!(
-                "PLASM_AUTH_JWT_SECRET failed validation ({}); using insecure development JWT signing key. \
-                 Set a long random `PLASM_AUTH_JWT_SECRET` for production.",
-                e
-            );
-            let fw = build_framework_on_storage(
-                storage.clone(),
-                storage_mode,
-                DEV_JWT_SECRET.to_string(),
-            )
-            .await?;
-            Ok((fw, mcp_api_keys, storage))
-        }
-        Err(e) => Err(e),
-    }
+    let jwt = resolve_jwt_signing_secret()?;
+    let fw =
+        init_auth_framework_with_jwt_fallback(storage.clone(), storage_mode, jwt, from_env).await?;
+    Ok((fw, mcp_api_keys, storage))
 }
 
 /// Non-durable MCP API keys — used when Postgres auth KV cannot be opened but `project_mcp_*` DB is configured.

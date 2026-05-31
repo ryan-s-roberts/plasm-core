@@ -3,7 +3,7 @@
 //! Flow: `POST /v1/discover` → use `entry_id` + `entity` from candidates → `POST /execute` → follow
 //! `Location` with `GET` (session JSON) → `POST` the same path with one Plasm program.
 //!
-//! - `GET /v1/health`, `GET /v1/auth/status` (liveness + capability probe: OSS returns `200` with `open_source: true` when no SaaS extension; hosted builds without `auth_framework` return `503`), `GET /v1/registry`, …, `POST /v1/discover`
+//! - `GET /v1/health`, `GET /v1/auth/status` (liveness + auth-framework probe: `200` when [`AuthFramework`] is initialized, else `503`), `GET /v1/registry`, …, `POST /v1/discover`
 //! - `POST /execute` — JSON `{ entry_id, entities, principal? }` → `303` + `Location` only (no body); ids are in the URL (`principal` required when `PLASM_AUTH_RESOLUTION=delegated`)
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
 //! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON program string (`{"program": "..."}`); `Accept`: json | ndjson | table | toon (**default** when omitted: **toon**, entity rows only; no duration/cache metadata)
