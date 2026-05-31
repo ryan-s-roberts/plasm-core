@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.63] - 2026-05-31
+
+### Fixed
+
+- **OSS install checksums (Linux):** Circle `oss_binaries_linux` no longer skips `SHA256SUMS`; `oss_binaries_macos` rebuilds checksums from all release tarballs so `oss-release.json` includes Linux `sha256` and `install.sh` can verify downloads.
+
 ## [0.1.62] - 2026-05-31
 
 ### Changed
