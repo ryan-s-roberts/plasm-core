@@ -18,7 +18,6 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -29,7 +28,6 @@ use plasm_agent::embedded_postgres::EmbeddedPostgresGuard;
 use plasm_agent_core::mcp_host_bootstrap;
 use plasm_agent_core::mcp_host_bootstrap::CatalogLoadOutcome;
 use plasm_core::discovery::CgsCatalog;
-use tokio::net::TcpListener;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -75,6 +73,9 @@ pub(crate) struct ServeCli {
     /// Packed plugin directory (ABI v4). Defaults to `{appliance}/plugins` when present.
     #[arg(long, value_name = "DIR", group = "catalog")]
     plugin_dir: Option<PathBuf>,
+    /// TCP listen host (default: `127.0.0.1`, or `0.0.0.0` in Kubernetes; see `PLASM_LISTEN_HOST`).
+    #[arg(long, value_name = "HOST")]
+    listen_host: Option<String>,
     /// TCP port for HTTP discovery/execute and MCP Streamable HTTP (`/mcp`) on **one** listener.
     #[arg(long, default_value_t = 3000)]
     port: u16,
@@ -581,10 +582,12 @@ fn synthesize_inner_argv(cli: &ServeCli) -> Vec<OsString> {
         v.push(OsString::from(st));
     }
     v.push(OsString::from("--http"));
-    v.push(OsString::from("--port"));
-    v.push(OsString::from(cli.port.to_string()));
     v.push(OsString::from("--mcp"));
-    v.push(OsString::from("--mcp-port"));
+    if let Some(ref host) = cli.listen_host {
+        v.push(OsString::from("--listen-host"));
+        v.push(OsString::from(host));
+    }
+    v.push(OsString::from("--port"));
     v.push(OsString::from(cli.port.to_string()));
     v
 }
@@ -1070,7 +1073,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let running = Arc::new(AtomicBool::new(true));
-    let listen_port = cli.port;
+    let listen = plasm_agent_core::listen_endpoint::TcpListenEndpoint::from_cli(
+        cli.listen_host.as_deref(),
+        cli.port,
+    )
+    .map_err(|msg| {
+        let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, msg);
+        eprintln_exit_error(&err);
+        Box::new(err) as Box<dyn std::error::Error>
+    })?;
 
     let ui_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if !use_tui {
         let boot_cancel = AtomicBool::new(false);
@@ -1089,11 +1100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let state = bootstrap.state;
                 tracing::info!(target: "plasm_appliance_boot", "phase: bind HTTP+MCP listener");
                 stderr_log::line("[plasm-server] phase: bind HTTP+MCP listener");
-                let addr = SocketAddr::from(([0, 0, 0, 0], listen_port));
-                let listener = match TcpListener::bind(addr).await {
+                let listener = match listen.bind_tcp_listener().await {
                     Ok(l) => l,
                     Err(e) => {
-                        let msg = format!("listen bind failed on port {listen_port}: {e:#}");
+                        let msg =
+                            format!("listen bind failed on {}: {e:#}", listen.display_addr());
                         stderr_log::line(format!("plasm-server: {msg}"));
                         return Err(msg.into());
                     }
@@ -1183,13 +1194,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .clone();
 
         // Boot UI first so the PTY sees immediate Crossterm output; then install tracing/OTLP.
+        let listen_for_boot = listen.clone();
         let ui_handle = std::thread::spawn(move || {
             boot::run_appliance_shell(
                 rx,
                 ui_running,
                 ui_boot_cancel,
                 Some(ui_evt_tx),
-                listen_port,
+                listen_for_boot,
                 Some(log_rx_for_ui),
             )
         });
@@ -1277,15 +1289,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tx.send(boot::BootstrapUiMsg::PhaseEnter(5));
         tracing::info!(target: "plasm_appliance_boot", "phase: bind HTTP+MCP listener");
         let _ = tx.send(boot::BootstrapUiMsg::Detail(format!(
-            "binding HTTP+MCP :{}",
-            listen_port
+            "binding HTTP+MCP {}",
+            listen.display_addr()
         )));
 
-        let bind_addr = SocketAddr::from(([0, 0, 0, 0], listen_port));
-        let listener = match TcpListener::bind(bind_addr).await {
+        let listener = match listen.bind_tcp_listener().await {
             Ok(l) => l,
             Err(e) => {
-                let msg = format!("listen bind failed on port {listen_port}: {e:#}");
+                let msg = format!("listen bind failed on {}: {e:#}", listen.display_addr());
                 let _ = tx.send(boot::BootstrapUiMsg::Fatal(msg.clone()));
                 shutdown_embedded_pg(&mut embedded_pg).await;
                 if let Err(je) = join_ui_thread(ui_handle).await {
@@ -1300,8 +1311,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tx.send(boot::BootstrapUiMsg::PhaseEnter(6));
         tracing::info!(target: "plasm_appliance_boot", "phase: start unified HTTP+MCP listener");
         let _ = tx.send(boot::BootstrapUiMsg::Detail(format!(
-            "routes on :{}  (MCP /mcp)",
-            bound_port
+            "routes on {}  (MCP /mcp)",
+            listen.display_addr()
         )));
 
         let log_tx_unified = appliance_log_tx.clone();
@@ -1548,6 +1559,7 @@ mod tests {
             data_dir: Some(temp.path().to_path_buf()),
             schema: None,
             plugin_dir: None,
+            listen_host: None,
             port: 3000,
             symbol_tuning: None,
             migrate_mcp_config_db: false,

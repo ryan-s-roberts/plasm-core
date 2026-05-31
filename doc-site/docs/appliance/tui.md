@@ -130,8 +130,10 @@ Shows MCP JSON and **`plasm`** profile templates for the **currently selected ke
 2. **Clients** → **`p`** copies a profile snippet, or run manually:
 
 ```bash
-plasm init --server http://127.0.0.1:3000 --api-key "<paste-secret>"
+plasm init --server http://127.0.0.1:<port> --api-key "<paste-secret>"
 ```
+
+Use the **Status** tab bind address (`127.0.0.1:<port>` or the “local clients” line when listening on all interfaces).
 
 See [Remote terminal (`plasm`)](../reference/plasm-cgs-remote-terminal.md).
 

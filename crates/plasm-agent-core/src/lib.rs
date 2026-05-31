@@ -42,6 +42,7 @@ pub mod incoming_auth;
 pub mod incoming_auth_device;
 pub mod input_field_cli;
 pub mod invoke_args;
+pub mod listen_endpoint;
 pub mod local_trace_archive;
 pub mod mcp_api_key_registry;
 pub mod mcp_config_admin;

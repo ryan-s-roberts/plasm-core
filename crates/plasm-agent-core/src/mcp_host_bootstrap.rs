@@ -50,6 +50,13 @@ pub fn preparse_mcp_command() -> Command {
         )
         .arg(Arg::new("http").long("http").action(ArgAction::SetTrue))
         .arg(
+            Arg::new("listen_host")
+                .long("listen-host")
+                .value_name("HOST")
+                .num_args(1)
+                .required(false),
+        )
+        .arg(
             Arg::new("port")
                 .long("port")
                 .value_name("PORT")

@@ -51,7 +51,8 @@ TUI parity: [Control station (TUI)](../appliance/tui.md) — OAuth tab (`n`, `d`
 | `--data-dir PATH` | Override appliance state root (default: `~/.plasm/appliance`) |
 | `--plugin-dir PATH` | Override catalog cdylibs (default: `{data-dir}/plugins` when present) |
 | `--schema PATH` | Single CGS instead of plugins (mutually exclusive with `--plugin-dir`) |
-| `--port N` | HTTP + MCP listener (default: 3000) |
+| `--listen-host HOST` | Bind address (default: `127.0.0.1`, or `0.0.0.0` when `KUBERNETES_SERVICE_HOST` is set; env `PLASM_LISTEN_HOST`) |
+| `--port N` | HTTP + MCP on one TCP port (default: 3000; MCP path `/mcp`) |
 | `--no-tui` / `--tui` | Headless vs control station |
 | `--migrate-mcp-config-db` | Migrate on boot |
 

@@ -106,7 +106,10 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let use_http = matches.get_flag("http");
     let use_mcp = matches.get_flag("mcp");
-    let port = *matches.get_one::<u16>("port").unwrap_or(&3000);
+    let endpoint = plasm_agent_core::listen_endpoint::TcpListenEndpoint::from_clap_matches(
+        &matches,
+    )
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
     if !use_http && !use_mcp {
         eprintln!("plasm-mcp: pass --http and/or --mcp");
@@ -132,24 +135,24 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mcp_port = match matches.get_one::<u16>("mcp_port").copied() {
         Some(p) => p,
-        None => port,
+        None => endpoint.port,
     };
     if use_http && use_mcp {
-        if matches.get_one::<u16>("mcp_port").is_some() && mcp_port != port {
+        if matches.get_one::<u16>("mcp_port").is_some() && mcp_port != endpoint.port {
             eprintln!(
                 "plasm-mcp: with --http and --mcp, discovery/execute and MCP share --port; omit --mcp-port or set it equal to --port."
             );
             std::process::exit(1);
         }
         let state = app_state;
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+        let listen = endpoint.clone();
         tokio::select! {
             _ = shutdown_signal() => {
                 eprintln!("plasm-mcp: shutting down");
             }
             res = async {
-                let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-                    std::io::Error::other(format!("plasm-mcp bind: {e}"))
+                let listener = listen.bind_tcp_listener().await.map_err(|e| {
+                    std::io::Error::other(format!("plasm-mcp bind {}: {e}", listen.display_addr()))
                 })?;
                 plasm_agent_core::http::serve_discovery_execute_and_mcp_unified(
                     listener,
@@ -166,22 +169,24 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if use_http {
+        let listen = endpoint.clone();
         tokio::select! {
             _ = shutdown_signal() => {
                 eprintln!("plasm-mcp: shutting down");
             }
-            r = plasm_agent_core::http::serve_http_listener(app_state, port) => {
-                r?;
+            r = plasm_agent_core::http::serve_http_listener(app_state, listen) => {
+                r.map_err(|e| std::io::Error::other(format!("{e}")))?;
             }
         }
         shutdown_embedded_pg(&mut embedded_pg).await;
         return Ok(());
     }
+    let host = endpoint.host.clone();
     tokio::select! {
         _ = shutdown_signal() => {
             eprintln!("plasm-mcp: shutting down");
         }
-        r = plasm_agent_core::mcp_server::run_mcp_server("0.0.0.0", mcp_port, std::sync::Arc::new(app_state)) => {
+        r = plasm_agent_core::mcp_server::run_mcp_server(&host, mcp_port, std::sync::Arc::new(app_state)) => {
             r.map_err(|e| std::io::Error::other(format!("plasm-mcp MCP server: {e}")))?;
         }
     }

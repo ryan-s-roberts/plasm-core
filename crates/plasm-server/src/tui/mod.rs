@@ -52,14 +52,6 @@ fn raw_tty_wants_process_quit(key: &KeyEvent) -> bool {
             && matches!(key.code, KeyCode::Char('c' | 'C')))
 }
 
-fn plasm_http_origin(port: u16) -> String {
-    format!("http://127.0.0.1:{port}")
-}
-
-fn mcp_streamable_url(mcp_port: u16) -> String {
-    format!("{}/mcp", plasm_http_origin(mcp_port))
-}
-
 const MCP_JSON_PLACEHOLDER_BEARER: &str = "Bearer <api_key>";
 const PLASM_CLI_PLACEHOLDER_API_KEY: &str = "<api_key>";
 
@@ -79,13 +71,16 @@ fn bearer_authorization_value(raw_secret: Option<&str>) -> String {
     }
 }
 
-fn mcp_client_json_config(mcp_port: u16, raw_secret: Option<&str>) -> Result<String, String> {
+fn mcp_client_json_config(
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
+    raw_secret: Option<&str>,
+) -> Result<String, String> {
     let auth = bearer_authorization_value(raw_secret);
     let value = serde_json::json!({
         "mcpServers": {
             "plasm": {
                 "type": "streamableHttp",
-                "url": mcp_streamable_url(mcp_port),
+                "url": listen.client_mcp_streamable_url(),
                 "headers": {
                     "Authorization": auth
                 }
@@ -112,11 +107,11 @@ fn plasm_cli_api_key_value(raw_secret: Option<&str>) -> String {
 }
 
 fn plasm_cli_profile_json_config(
-    listen_port: u16,
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     raw_secret: Option<&str>,
 ) -> Result<String, String> {
     let value = serde_json::json!({
-        "server": plasm_http_origin(listen_port),
+        "server": listen.client_http_origin(),
         "api_key": plasm_cli_api_key_value(raw_secret),
     });
     serde_json::to_string_pretty(&value)
@@ -124,10 +119,13 @@ fn plasm_cli_profile_json_config(
         .map_err(|e| e.to_string())
 }
 
-fn plasm_cli_init_command_line(listen_port: u16, raw_secret: Option<&str>) -> String {
+fn plasm_cli_init_command_line(
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
+    raw_secret: Option<&str>,
+) -> String {
     format!(
         "plasm init --server {} --api-key {}",
-        plasm_http_origin(listen_port),
+        listen.client_http_origin(),
         plasm_cli_api_key_value(raw_secret)
     )
 }
@@ -139,7 +137,7 @@ fn push_json_block_lines(lines: &mut Vec<Line<'static>>, json: &str) {
 }
 
 fn build_clients_panel_lines(
-    listen_port: u16,
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     selected_key: Option<&McpConfigApiKeyRow>,
 ) -> Vec<Line<'static>> {
     let accent = if no_color() {
@@ -174,7 +172,7 @@ fn build_clients_panel_lines(
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("MCP client", section)));
-    match mcp_client_json_config(listen_port, None) {
+    match mcp_client_json_config(listen, None) {
         Ok(json) => push_json_block_lines(&mut lines, &json),
         Err(e) => lines.push(Line::from(vec![
             Span::styled("! ", err_emphasis_style()),
@@ -187,11 +185,11 @@ fn build_clients_panel_lines(
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Plasm CLI (plasm)", section)));
     lines.push(Line::from(Span::styled(
-        plasm_cli_init_command_line(listen_port, None),
+        plasm_cli_init_command_line(listen, None),
         dim_style(),
     )));
     lines.push(Line::from(""));
-    match plasm_cli_profile_json_config(listen_port, None) {
+    match plasm_cli_profile_json_config(listen, None) {
         Ok(json) => push_json_block_lines(&mut lines, &json),
         Err(e) => lines.push(Line::from(vec![
             Span::styled("! ", err_emphasis_style()),
@@ -1256,7 +1254,7 @@ fn apply_refreshed_ui_data(state: &mut RunState, data: RefreshedUiData) {
 fn apply_admin_completion(
     state: &mut RunState,
     bridge: Option<&AdminBridge>,
-    listen_port: u16,
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     comp: AdminCompletion,
 ) {
     match comp {
@@ -1523,7 +1521,7 @@ fn apply_admin_completion(
                         ),
                     ),
                     (AdminTaskKind::CopyingMcpJson, Ok(raw)) => {
-                        match mcp_client_json_config(listen_port, Some(&raw)) {
+                        match mcp_client_json_config(listen, Some(&raw)) {
                             Ok(json) => set_notice(
                                 state,
                                 copy_notice(
@@ -1544,7 +1542,7 @@ fn apply_admin_completion(
                         }
                     }
                     (AdminTaskKind::CopyingPlasmCliProfile, Ok(raw)) => {
-                        match plasm_cli_profile_json_config(listen_port, Some(&raw)) {
+                        match plasm_cli_profile_json_config(listen, Some(&raw)) {
                             Ok(json) => set_notice(
                                 state,
                                 copy_notice(
@@ -1614,7 +1612,7 @@ fn input_mode_label(mode: &InputMode) -> Option<&'static str> {
 struct UpdateDeps<'a> {
     admin_bridge: Option<&'a AdminBridge>,
     host_state: Option<&'a PlasmHostState>,
-    listen_port: u16,
+    listen: &'a plasm_agent_core::listen_endpoint::TcpListenEndpoint,
 }
 
 fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) -> bool {
@@ -1952,7 +1950,7 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
     match key.code {
         KeyCode::Char('q') => return true,
         KeyCode::Char('#') if state.screen == RunScreen::Clients => {
-            let url = mcp_streamable_url(deps.listen_port);
+            let url = deps.listen.client_mcp_streamable_url();
             set_notice(
                 state,
                 copy_notice(
@@ -2599,7 +2597,7 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
             false
         }
         UiMsg::Admin(comp) => {
-            apply_admin_completion(state, deps.admin_bridge, deps.listen_port, *comp);
+            apply_admin_completion(state, deps.admin_bridge, deps.listen, *comp);
             false
         }
         UiMsg::LogLine(line) => {
@@ -2653,17 +2651,22 @@ fn build_overview_lines(
     model: &RunState,
     snap: &UiSnapshot,
     host_state: &PlasmHostState,
-    listen_port: u16,
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
 ) -> Vec<Line<'static>> {
     let scope = appliance_mcp_scope();
     let mut lines = vec![
         Line::from("Listeners"),
         Line::from(format!(
-            "  HTTP+MCP   http://127.0.0.1:{listen_port}  (MCP: /mcp)"
+            "  HTTP+MCP   {}  (MCP: /mcp)",
+            listen.client_mcp_streamable_url()
         )),
-        Line::from(""),
-        Line::from("Your MCP (singleton)"),
+        Line::from(format!("  bind       {}", listen.display_addr())),
     ];
+    if let Some(hint) = listen.local_client_hint_line() {
+        lines.push(Line::from(hint));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("Your MCP (singleton)"));
     match &snap.config_surface {
         McpConfigSurfaceState::Ready {
             summary_name,
@@ -2775,14 +2778,14 @@ fn render_running_frame(
     frame: &mut ratatui::Frame<'_>,
     model: &mut RunState,
     host_state: &PlasmHostState,
-    listen_port: u16,
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
 ) {
     chrome::clear_frame(frame);
     let layout = chrome::split_running_vertical(frame.area());
     let snap = &model.resources.snapshot;
     let tab_titles: Vec<&str> = RunScreen::ALL.iter().map(|s| s.title()).collect();
     let rail_max = layout.tab_rail.width.max(1);
-    let rail = chrome::tab_rail_line(model.screen.index(), &tab_titles, listen_port, rail_max);
+    let rail = chrome::tab_rail_line(model.screen.index(), &tab_titles, listen, rail_max);
     chrome::render_tab_rail(frame, layout.tab_rail, rail);
 
     let shared_notice = model.notice.as_ref();
@@ -2791,7 +2794,7 @@ fn render_running_frame(
         RunScreen::Status => {
             let (content_area, notice_area) =
                 split_main_notice_area(layout.body, shared_notice.is_some());
-            let lines = build_overview_lines(model, snap, host_state, listen_port);
+            let lines = build_overview_lines(model, snap, host_state, listen);
             render_overview_panel(frame, content_area, &lines, model.overview.scroll);
             if let (Some(area), Some(notice)) = (notice_area, shared_notice) {
                 render_notice_panel(frame, area, notice);
@@ -2800,7 +2803,7 @@ fn render_running_frame(
         RunScreen::Clients => {
             let (content_area, notice_area) =
                 split_main_notice_area(layout.body, shared_notice.is_some());
-            let lines = build_clients_panel_lines(listen_port, snap.keys.get(model.keys.selected));
+            let lines = build_clients_panel_lines(listen, snap.keys.get(model.keys.selected));
             render_scrollable_panel(
                 frame,
                 content_area,
@@ -3477,7 +3480,7 @@ pub(crate) fn run_running_mode(
     host_state: Arc<PlasmHostState>,
     running: Arc<AtomicBool>,
     ui_evt_tx: Option<Sender<UiEvent>>,
-    listen_port: u16,
+    listen: plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     admin_bridge: Option<AdminBridge>,
     policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
     log_rx: Option<crossbeam_channel::Receiver<appliance_log::ApplianceLogEntry>>,
@@ -3506,7 +3509,7 @@ pub(crate) fn run_running_mode(
     let deps = UpdateDeps {
         admin_bridge: admin_bridge.as_ref(),
         host_state: Some(host_state.as_ref()),
-        listen_port,
+        listen: &listen,
     };
 
     while running.load(Ordering::SeqCst) {
@@ -3544,7 +3547,7 @@ pub(crate) fn run_running_mode(
         let _ = update(&mut model, UiMsg::Tick, &deps);
 
         terminal.draw(|frame| {
-            render_running_frame(frame, &mut model, host_state.as_ref(), listen_port)
+            render_running_frame(frame, &mut model, host_state.as_ref(), &listen)
         })?;
 
         for ev in drain_crossterm_events(terminal, Duration::from_millis(120))? {
@@ -3575,7 +3578,7 @@ fn appliance_services_policy_hint(state: &PlasmHostState) -> bool {
 pub fn run_control_station(
     state: Arc<PlasmHostState>,
     running: Arc<AtomicBool>,
-    listen_port: u16,
+    listen: plasm_agent_core::listen_endpoint::TcpListenEndpoint,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     enable_raw_mode()?;
     let mut buffer = stdout();
@@ -3594,7 +3597,7 @@ pub fn run_control_station(
         state,
         running,
         None,
-        listen_port,
+        listen,
         None,
         None,
         None,
@@ -3617,11 +3620,22 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn test_listen() -> plasm_agent_core::listen_endpoint::TcpListenEndpoint {
+        plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 4100)
+    }
+
+    fn listen_on(port: u16) -> plasm_agent_core::listen_endpoint::TcpListenEndpoint {
+        plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", port)
+    }
+
     fn test_deps<'a>(bridge: Option<&'a AdminBridge>) -> UpdateDeps<'a> {
+        static LISTEN: std::sync::OnceLock<plasm_agent_core::listen_endpoint::TcpListenEndpoint> =
+            std::sync::OnceLock::new();
+        let listen = LISTEN.get_or_init(test_listen);
         UpdateDeps {
             admin_bridge: bridge,
             host_state: None,
-            listen_port: 4100,
+            listen,
         }
     }
 
@@ -3910,7 +3924,7 @@ mod tests {
         apply_admin_completion(
             &mut state,
             None,
-            4100,
+            &test_listen(),
             AdminCompletion::OAuthDeviceBindStarted {
                 corr: 42,
                 prompt: crate::appliance_oauth_admin::DeviceBindPrompt {
@@ -4006,7 +4020,7 @@ mod tests {
 
     #[test]
     fn mcp_client_json_config_has_streamable_http_shape() {
-        let json = mcp_client_json_config(4100, None).expect("json");
+        let json = mcp_client_json_config(&test_listen(), None).expect("json");
         let v: serde_json::Value = serde_json::from_str(json.trim()).expect("parse");
         let plasm = v
             .get("mcpServers")
@@ -4032,9 +4046,9 @@ mod tests {
     #[test]
     fn mcp_client_json_display_never_includes_raw_secret() {
         let secret = "plasm_test_secret_abc123xyz";
-        let display = mcp_client_json_config(4100, None).expect("display");
+        let display = mcp_client_json_config(&test_listen(), None).expect("display");
         assert!(!display.contains(secret));
-        let with_secret = mcp_client_json_config(4100, Some(secret)).expect("copy");
+        let with_secret = mcp_client_json_config(&test_listen(), Some(secret)).expect("copy");
         assert!(with_secret.contains(secret));
         assert!(with_secret.contains("Bearer plasm_test_secret"));
     }
@@ -4052,7 +4066,8 @@ mod tests {
 
     #[test]
     fn plasm_cli_profile_json_has_server_and_api_key() {
-        let json = plasm_cli_profile_json_config(3001, None).expect("json");
+        let listen = listen_on(3001);
+        let json = plasm_cli_profile_json_config(&listen, None).expect("json");
         let v: serde_json::Value = serde_json::from_str(json.trim()).expect("parse");
         assert_eq!(
             v.get("server").and_then(|s| s.as_str()),
@@ -4067,9 +4082,10 @@ mod tests {
     #[test]
     fn plasm_cli_profile_display_never_includes_raw_secret() {
         let secret = "plasm_test_secret_abc123xyz";
-        let display = plasm_cli_profile_json_config(3001, None).expect("display");
+        let listen = listen_on(3001);
+        let display = plasm_cli_profile_json_config(&listen, None).expect("display");
         assert!(!display.contains(secret));
-        let with_secret = plasm_cli_profile_json_config(3001, Some(secret)).expect("copy");
+        let with_secret = plasm_cli_profile_json_config(&listen, Some(secret)).expect("copy");
         assert!(with_secret.contains(secret));
     }
 
@@ -4152,7 +4168,7 @@ mod tests {
         model.resources.snapshot.config_surface = McpConfigSurfaceState::PolicyStoreUnavailable {
             reason: PolicyStoreUnavailableReason::NeverAttached,
         };
-        let lines = build_overview_lines(&model, &model.resources.snapshot, &host, 3001);
+        let lines = build_overview_lines(&model, &model.resources.snapshot, &host, &listen_on(3001));
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
         assert!(!rendered.contains("enabledts"));
         assert!(rendered.contains("Trace hub:"));
@@ -4215,13 +4231,18 @@ mod tests {
                 chrome::clear_frame(frame);
                 let layout = chrome::split_running_vertical(frame.area());
                 let titles: Vec<&str> = RunScreen::ALL.iter().map(|s| s.title()).collect();
-                let rail = chrome::tab_rail_line(2, &titles, 8080, layout.tab_rail.width.max(1));
+                let rail = chrome::tab_rail_line(
+                    2,
+                    &titles,
+                    &listen_on(8080),
+                    layout.tab_rail.width.max(1),
+                );
                 chrome::render_tab_rail(frame, layout.tab_rail, rail);
             })
             .expect("draw tab rail");
 
         let rendered = buffer_text(terminal.backend().buffer());
         assert!(rendered.contains("[APIs]"));
-        assert!(rendered.contains("listen:8080"));
+        assert!(rendered.contains("127.0.0.1:8080"));
     }
 }

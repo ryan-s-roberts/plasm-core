@@ -11,6 +11,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use plasm_agent_core::listen_endpoint::TcpListenEndpoint;
 use plasm_agent_core::server_state::PlasmHostState;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -193,7 +194,7 @@ fn startup_lines(model: &BootModel) -> Vec<Line<'static>> {
     lines
 }
 
-fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen_port: u16) {
+fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen: &TcpListenEndpoint) {
     frame.render_widget(Clear, frame.area());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -211,8 +212,9 @@ fn draw_boot_frame(frame: &mut Frame<'_>, model: &BootModel, listen_port: u16) {
         boot_token,
         Span::raw(" PLASM APPLIANCE — startup"),
         Span::raw(format!(
-            "   {}s   listen :{}  (HTTP + MCP /mcp)",
-            elapsed, listen_port
+            "   {}s   listen {}  (HTTP + MCP /mcp)",
+            elapsed,
+            listen.display_addr()
         )),
     ]);
     frame.render_widget(
@@ -300,7 +302,7 @@ pub fn run_appliance_shell(
     running: Arc<AtomicBool>,
     boot_cancel: Arc<AtomicBool>,
     ui_evt_tx: Option<Sender<UiEvent>>,
-    listen_port: u16,
+    listen: TcpListenEndpoint,
     log_rx: Option<crossbeam_channel::Receiver<crate::appliance_log::ApplianceLogEntry>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     enable_raw_mode()?;
@@ -333,7 +335,7 @@ pub fn run_appliance_shell(
                         handoff.state,
                         Arc::clone(&running),
                         ui_evt_tx.clone(),
-                        listen_port,
+                        listen,
                         Some(handoff.admin_bridge),
                         handoff.policy_store_detail,
                         log_rx,
@@ -385,7 +387,7 @@ pub fn run_appliance_shell(
             }
 
             if dirty {
-                terminal.draw(|f| draw_boot_frame(f, &model, listen_port))?;
+                terminal.draw(|f| draw_boot_frame(f, &model, &listen))?;
                 dirty = false;
             }
         }

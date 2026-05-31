@@ -579,6 +579,14 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                         .help("Listen for HTTP (discovery, execute, health)"),
                 )
                 .arg(
+                    Arg::new("listen_host")
+                        .long("listen-host")
+                        .value_name("HOST")
+                        .help(
+                            "TCP listen host/IP (default: 127.0.0.1, or 0.0.0.0 in Kubernetes; override with PLASM_LISTEN_HOST)",
+                        ),
+                )
+                .arg(
                     Arg::new("port")
                         .long("port")
                         .default_value("3000")

@@ -129,7 +129,7 @@ pub fn split_with_notice(area: Rect, show_notice: bool) -> (Rect, Option<Rect>) 
 pub fn tab_rail_line(
     active_index: usize,
     tab_titles: &[&str],
-    listen_port: u16,
+    listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     max_cols: u16,
 ) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![Span::raw("< ")];
@@ -147,7 +147,7 @@ pub fn tab_rail_line(
     }
     spans.push(Span::raw(" >"));
     spans.push(Span::raw("  "));
-    spans.push(Span::styled(format!("listen:{listen_port}"), dim_style()));
+    spans.push(Span::styled(listen.display_addr(), dim_style()));
     if max_cols >= 72 {
         spans.push(Span::raw("  "));
         spans.push(Span::styled("(←/→ or Tab)", dim_style()));
@@ -263,11 +263,13 @@ mod tests {
     #[test]
     fn tab_rail_brackets_active_tab() {
         let titles = ["Status", "Clients", "APIs", "OAuth"];
-        let line = tab_rail_line(2, &titles, 8080, 120);
+        let listen =
+            plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 8080);
+        let line = tab_rail_line(2, &titles, &listen, 120);
         let s = line.to_string();
         assert!(s.contains("< "));
         assert!(s.contains("[APIs]"));
-        assert!(s.contains("listen:8080"));
+        assert!(s.contains("127.0.0.1:8080"));
     }
 
     #[test]
@@ -276,7 +278,9 @@ mod tests {
         let titles = [
             "Status", "Clients", "APIs", "OAuth", "Keys", "Runs", "Storage", "Logs",
         ];
-        let line = tab_rail_line(2, &titles, 8080, 40);
+        let listen =
+            plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 8080);
+        let line = tab_rail_line(2, &titles, &listen, 40);
         assert!(line.to_string().width() <= 40);
     }
 

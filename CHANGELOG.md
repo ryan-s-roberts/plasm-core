@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.62] - 2026-05-31
+
+### Changed
+
+- **Listen binding:** `--listen-host` and `PLASM_LISTEN_HOST` control the TCP bind address on `plasm-server`, OSS `plasm-mcp`, and hosted `plasm-mcp-app` (default `127.0.0.1`; `0.0.0.0` when `KUBERNETES_SERVICE_HOST` is set). HTTP and Streamable MCP share one port on `/mcp`.
+- **Appliance TUI / boot:** Status and client copy show `host:port`; wildcard binds add a loopback hint for `plasm` / MCP JSON snippets.
+
+### Fixed
+
+- **Docs:** removed stale HTTP port N / MCP port N+1 guidance; document unified listener and `--listen-host`.
+
 ## [0.1.61] - 2026-05-31
 
 ### Changed
