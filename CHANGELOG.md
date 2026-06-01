@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.65] - 2026-06-01
+
+### Fixed
+
+- **Templates:** `${}` row-cursor roots skipped in template dependency collection; for_each materialization wires upstream singleton inputs; effect-template interpolation aliases validated; `${}` scanning consolidated in `template_ref`.
+- **Symbol expansion:** method tokens (`.m#`) resolve when entity symbols stay opaque in compact DOMAIN — wire entity name used for anchor-scoped method lookup.
+
 ## [0.1.64] - 2026-06-01
 
 ### Changed
