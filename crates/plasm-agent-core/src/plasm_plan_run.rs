@@ -30,13 +30,14 @@ use crate::http_execute::{
     trace_record_plasm_line, PublishedResultStep,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
+use crate::plan_dry_display;
+pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
-    AggregateFunction, BindingName, ComputeOp, ComputeTemplate,
-    EffectClass, FieldPath, InputAlias, OutputName, Plan, PlanExprTemplate, PlanNodeId,
-    PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, ValidatedDeriveNode,
-    ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
-    ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
-    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
+    OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
+    QualifiedEntityKey, ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan,
+    ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn,
+    ValidatedPlanState, ValidatedSurfaceNode, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
@@ -46,7 +47,7 @@ use plasm_core::{CapabilityKind, EntityKey, EntityName, Expr, Ref, TypedFieldVal
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 #[cfg(test)]
@@ -521,6 +522,7 @@ pub struct DryPlasmPlanEvaluation {
     pub staged_nodes: Vec<String>,
     pub execution_unsupported: Vec<String>,
     pub graph_summary: serde_json::Value,
+    pub review: PlanDryReview,
 }
 
 impl DryPlasmPlanEvaluation {
@@ -681,6 +683,7 @@ pub fn evaluate_validated_plasm_plan_dry(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(i, n));
     }
+    let (graph_summary, review) = graph_summary_for_session(plan, es);
     Ok(DryPlasmPlanEvaluation {
         version,
         name: plan.name.clone(),
@@ -694,18 +697,22 @@ pub fn evaluate_validated_plasm_plan_dry(
         parallel_root_surfaces_only,
         staged_nodes,
         execution_unsupported,
-        graph_summary: graph_summary_for_session(plan, es),
+        graph_summary,
+        review,
     })
 }
 
-fn graph_summary_for_session(plan: &Plan<ValidatedPlanState>, es: &ExecuteSession) -> serde_json::Value {
-    let mut summary = graph_summary(plan);
-    let unused = unused_seed_hints(es, plan);
-    if !unused.is_empty() {
-        summary["unused_seeds"] = serde_json::json!(unused);
+fn graph_summary_for_session(
+    plan: &Plan<ValidatedPlanState>,
+    es: &ExecuteSession,
+) -> (serde_json::Value, PlanDryReview) {
+    let (mut summary, mut review) = graph_summary(plan);
+    review.unused_seeds = unused_seed_hints(es, plan);
+    if !review.unused_seeds.is_empty() {
+        summary["unused_seeds"] = serde_json::json!(review.unused_seeds.clone());
     }
     enrich_graph_summary_auth_scoped_reads(es, plan, &mut summary);
-    summary
+    (summary, review)
 }
 
 fn unused_seed_hints(es: &ExecuteSession, plan: &Plan<ValidatedPlanState>) -> Vec<String> {
@@ -784,7 +791,10 @@ fn enrich_graph_summary_auth_scoped_reads(
         }
     }
     if auth_scoped {
-        if let Some(facts) = summary.get_mut("boundedness_facts").and_then(|v| v.as_array_mut()) {
+        if let Some(facts) = summary
+            .get_mut("boundedness_facts")
+            .and_then(|v| v.as_array_mut())
+        {
             facts.push(serde_json::Value::String(
                 "Lists repos visible to the authenticated GitHub token; use Repository~\"…\" or user_repos_query for other scopes.".into(),
             ));
@@ -792,535 +802,36 @@ fn enrich_graph_summary_auth_scoped_reads(
     }
 }
 
-fn is_synthetic_plan_node_id(id: &str) -> bool {
-    id.starts_with("__plasm_")
-        || id
-            .strip_prefix("return_")
-            .and_then(|rest| rest.parse::<u32>().ok())
-            .is_some()
-}
-
-#[derive(Default)]
-struct SyntheticPlanLabelCounters {
-    r: usize,
-    w: usize,
-    c: usize,
-    d: usize,
-    f: usize,
-    l: usize,
-    x: usize,
-}
-
-fn next_synthetic_plan_label(
-    node: &ValidatedPlanNode,
-    counters: &mut SyntheticPlanLabelCounters,
-) -> String {
-    match node {
-        ValidatedPlanNode::Surface(surface) => match surface.effect_class {
-            EffectClass::Read => {
-                counters.r += 1;
-                format!("r{}", counters.r)
-            }
-            EffectClass::Write | EffectClass::SideEffect => {
-                counters.w += 1;
-                format!("w{}", counters.w)
-            }
-            EffectClass::ArtifactRead => {
-                counters.x += 1;
-                format!("x{}", counters.x)
-            }
-        },
-        ValidatedPlanNode::Compute(_) => {
-            counters.c += 1;
-            format!("c{}", counters.c)
-        }
-        ValidatedPlanNode::Derive(_) => {
-            counters.d += 1;
-            format!("d{}", counters.d)
-        }
-        ValidatedPlanNode::ForEach(_) => {
-            counters.f += 1;
-            format!("f{}", counters.f)
-        }
-        ValidatedPlanNode::RelationTraversal(_) => {
-            counters.l += 1;
-            format!("l{}", counters.l)
-        }
-        ValidatedPlanNode::Data(_) => {
-            counters.x += 1;
-            format!("x{}", counters.x)
-        }
-    }
-}
-
-fn build_plan_node_display_map(
-    plan: &Plan<ValidatedPlanState>,
-    topological_order: &[String],
-) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    let mut counters = SyntheticPlanLabelCounters::default();
-    for id in topological_order {
-        let Some(node) = plan.nodes.iter().find(|n| n.id().as_str() == id) else {
-            continue;
-        };
-        let label = if is_synthetic_plan_node_id(id.as_str()) {
-            next_synthetic_plan_label(node, &mut counters)
-        } else {
-            id.clone()
-        };
-        map.insert(id.clone(), label);
-    }
-    map
-}
-
-fn replace_all_substrings(haystack: &str, needle: &str, replacement: &str) -> String {
-    if needle.is_empty() {
-        return haystack.to_string();
-    }
-    let mut out = String::new();
-    let mut rest = haystack;
-    while let Some(pos) = rest.find(needle) {
-        out.push_str(&rest[..pos]);
-        out.push_str(replacement);
-        rest = &rest[pos + needle.len()..];
-    }
-    out.push_str(rest);
-    out
-}
-
-fn remap_plan_node_ids_in_text(text: String, map: &HashMap<String, String>) -> String {
-    let mut keys: Vec<&String> = map.keys().collect();
-    keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
-    let mut out = text;
-    for k in keys {
-        let Some(v) = map.get(k.as_str()) else {
-            continue;
-        };
-        if k == v {
-            continue;
-        }
-        if !out.contains(k.as_str()) {
-            continue;
-        }
-        out = replace_all_substrings(&out, k.as_str(), v.as_str());
-    }
-    out
-}
-
-fn render_node_operation_for_dry_display(
-    node: &ValidatedPlanNode,
-    display_map: &HashMap<String, String>,
-    es: Option<&ExecuteSession>,
-) -> String {
-    remap_plan_node_ids_in_text(
-        render_node_operation_with_session(node, es).to_string(),
-        display_map,
-    )
-}
-
-fn render_node_operation_with_session(
-    node: &ValidatedPlanNode,
-    es: Option<&ExecuteSession>,
-) -> String {
-    match node {
-        ValidatedPlanNode::Surface(n) => render_surface_operation_with_session(n, es),
-        _ => render_node_operation(node),
-    }
-}
-
-fn render_surface_operation_with_session(
-    node: &ValidatedSurfaceNode,
-    es: Option<&ExecuteSession>,
-) -> String {
-    let entity = node
-        .qualified_entity
-        .as_ref()
-        .map(|q| format!("{}.{}", q.entry_id, q.entity))
-        .unwrap_or_else(|| "<unqualified>".to_string());
-    let expr = node
-        .ir
-        .as_ref()
-        .map(|ir| render_plan_expr_ir_for_session(ir, es))
-        .or_else(|| node.ir_template.as_ref().map(render_plan_expr_template))
-        .or_else(|| node.display_expr.clone())
-        .unwrap_or_else(|| "<typed Plasm IR>".to_string());
-    format!("{} {} <= {}", render_kind(node.kind), entity, expr)
-}
-
-fn render_plan_expr_ir_for_session(
-    ir: &crate::plasm_plan::ValidatedPlanExprIr,
-    es: Option<&ExecuteSession>,
-) -> String {
-    if let Some(display) = ir.display_expr.as_ref() {
-        return display.clone();
-    }
-    let Some(es) = es else {
-        return crate::expr_display::expr_display(&ir.expr);
-    };
-    let exp = match es.domain_exposure.as_ref() {
-        Some(e) => e.clone(),
-        None => {
-            return crate::expr_display::expr_display_resolved(&ir.expr, es.cgs.as_ref());
-        }
-    };
-    let fed = plasm_core::FederationDispatch::from_contexts_and_exposure(
-        es.contexts_by_entry.clone(),
-        &exp,
-    );
-    crate::expr_display::expr_display_resolved_federated(&ir.expr, &fed, es.cgs.as_ref())
-}
-
-fn render_dependency_suffix_mapped(
-    deps: &[String],
-    display_map: &HashMap<String, String>,
-) -> String {
-    if deps.is_empty() {
-        String::new()
-    } else {
-        let mapped: Vec<String> = deps
-            .iter()
-            .map(|d| {
-                display_map
-                    .get(d.as_str())
-                    .cloned()
-                    .unwrap_or_else(|| d.clone())
-            })
-            .collect();
-        format!(" <- {}", mapped.join(", "))
-    }
-}
-
-fn render_uses_result_mapped(
-    node: &ValidatedPlanNode,
-    display_map: &HashMap<String, String>,
-) -> Vec<String> {
-    node.uses_result()
-        .iter()
-        .map(|u| {
-            let node_label = display_map
-                .get(u.node.as_str())
-                .cloned()
-                .unwrap_or_else(|| u.node.clone());
-            format!("{node_label} as {}", u.r#as)
-        })
-        .collect()
-}
-
-fn render_return_lines_mapped(
-    ret: &ValidatedPlanReturn,
-    display_map: &HashMap<String, String>,
-) -> Vec<String> {
-    match ret {
-        ValidatedPlanReturn::Node(id) => {
-            let label = display_map
-                .get(id.as_str())
-                .cloned()
-                .unwrap_or_else(|| id.as_str().to_string());
-            vec![label]
-        }
-        ValidatedPlanReturn::Parallel { parallel } => parallel
-            .iter()
-            .enumerate()
-            .map(|(i, id)| {
-                let label = display_map
-                    .get(id.as_str())
-                    .cloned()
-                    .unwrap_or_else(|| id.as_str().to_string());
-                format!("parallel[{i}] -> {label}")
-            })
-            .collect(),
-    }
-}
-
-fn render_return_shape_hint(plan: &Plan<ValidatedPlanState>, ret: &ValidatedPlanReturn) -> String {
-    match ret {
-        ValidatedPlanReturn::Parallel { parallel } => format!("parallel({})", parallel.len()),
-        ValidatedPlanReturn::Node(id) => {
-            let Some(node) = plan.nodes.iter().find(|n| n.id() == id) else {
-                return "unknown".to_string();
-            };
-            match node.result_shape() {
-                crate::plasm_plan::ResultShape::List => "list".to_string(),
-                crate::plasm_plan::ResultShape::Single => "single".to_string(),
-                crate::plasm_plan::ResultShape::MutationResult => "mutation_result".to_string(),
-                crate::plasm_plan::ResultShape::SideEffectAck => "side_effect_ack".to_string(),
-                crate::plasm_plan::ResultShape::Page => "page".to_string(),
-                crate::plasm_plan::ResultShape::Artifact => "artifact".to_string(),
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DryPlanGuidanceMode {
-    Full,
-    ActionableOnly,
-}
-
-/// Render the canonical human-facing dry-run form: verdict, shape, confidence/risks, DAG, returns, next.
+/// Render the compact agent-facing dry-run plan text.
 pub fn render_plasm_plan_dry_text(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
 ) -> String {
-    render_plasm_plan_dry_text_with_guidance(dry, archive, None, DryPlanGuidanceMode::Full)
+    render_plasm_plan_dry_text_for_session(dry, archive, None)
 }
 
-pub fn render_plasm_plan_dry_text_with_guidance(
+/// Same as [`render_plasm_plan_dry_text`] with optional execute session for DOMAIN-aware surface expr.
+pub fn render_plasm_plan_dry_text_for_session(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
-    es: Option<&crate::execute_session::ExecuteSession>,
-    guidance_mode: DryPlanGuidanceMode,
+    es: Option<&ExecuteSession>,
 ) -> String {
-    let mut out = String::new();
-    let plan = dry.validated_plan();
-    let summary = &dry.graph_summary;
-    let name = archive
-        .as_ref()
-        .and_then(|a| a.plan_name)
-        .or(dry.name.as_deref().or(plan.name.as_deref()))
-        .unwrap_or("<unnamed>");
-    let reads = json_string_array(summary.get("read_nodes")).len();
-    let writes = json_string_array(summary.get("write_or_side_effect_nodes")).len();
-    let risks = json_string_array(summary.get("warnings"));
-    let confidence = json_string_array(summary.get("boundedness_facts"));
-    let staged = dry.staged_nodes.len();
-    let display_map = build_plan_node_display_map(plan, &dry.topological_order);
-    let return_unbounded = return_roots_include_unbounded_list_surface(plan);
-    let verdict = if !risks.is_empty() || return_unbounded {
-        "review"
-    } else {
-        "ok"
-    };
-    let exec = if dry.parallel_root_surfaces_only {
-        "parallel roots"
-    } else {
-        "ordered"
-    };
-    let return_hint = render_return_shape_hint(plan, &plan.return_value);
-    let shape = format!(
-        "{} nodes, {}, {} read, {} write/se, {} staged, return={}",
-        plan.nodes.len(),
-        exec,
-        reads,
-        writes,
-        staged,
-        return_hint
-    );
-
-    let _ = writeln!(out, "plasm-program dry-run");
-    let _ = writeln!(out, "name: {name}");
-    if let Some(a) = archive {
-        let _ = writeln!(out, "handle: {} ({})", a.plan_handle, a.plan_uri);
-        let _ = writeln!(out, "archive: {}", a.canonical_plan_uri);
-        let _ = writeln!(out, "hash: {}", a.plan_hash);
-    }
-    let _ = writeln!(out, "verdict: {verdict}");
-    let _ = writeln!(out, "shape: {shape}");
-    let _ = writeln!(out);
-    let has_projection_warning = dry
-        .graph_summary
-        .get("dry_review")
-        .and_then(|v| v.get("has_unprojected_multi_row_read"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if has_projection_warning {
-        let _ = writeln!(
-            out,
-            "projection: missing on multi-row read(s) — add [field,…] before plasm_run"
-        );
-        let _ = writeln!(out);
-    }
-    if !confidence.is_empty() {
-        let _ = writeln!(out, "confidence:");
-        for fact in &confidence {
-            let _ = writeln!(out, "- {fact}");
-        }
-        let _ = writeln!(out);
-    }
-    if !risks.is_empty() {
-        let _ = writeln!(out, "risks:");
-        for risk in risks.iter().take(4) {
-            let _ = writeln!(out, "- {risk}");
-        }
-        let _ = writeln!(out);
-    }
-    let _ = writeln!(out, "dag:");
-
-    for (ordinal, id) in dry.topological_order.iter().enumerate() {
-        let Some(node) = plan.nodes.iter().find(|n| n.id().as_str() == id) else {
-            continue;
-        };
-        let deps = node_dependencies(node);
-        let display_id = display_map
-            .get(id.as_str())
-            .cloned()
-            .unwrap_or_else(|| id.clone());
-        let _ = writeln!(
-            out,
-            "{:02}. {}{} -> {} [{}; {}]",
-            ordinal + 1,
-            display_id,
-            render_dependency_suffix_mapped(&deps, &display_map),
-            render_node_operation_for_dry_display(node, &display_map, es),
-            render_effect_class(node.effect_class()),
-            render_result_shape(node.result_shape())
-        );
-        let uses = render_uses_result_mapped(node, &display_map);
-        if !uses.is_empty() {
-            let _ = writeln!(out, "    uses: {}", uses.join(", "));
-        }
-    }
-
-    let _ = writeln!(out);
-    let _ = writeln!(out, "returns:");
-    for line in render_return_lines_mapped(&plan.return_value, &display_map) {
-        let _ = writeln!(out, "- {line}");
-    }
-    let guidance = plasm_plan_review_guidance_lines_with_mode(dry, guidance_mode);
-    if !guidance.is_empty() {
-        let _ = writeln!(out);
-        let _ = writeln!(out, "next:");
-        for line in guidance {
-            let _ = writeln!(out, "- {line}");
-        }
-    }
-    out
+    let view = plan_dry_compact_view(dry, es);
+    plan_dry_display::render_plan_dry_compact_text(&view, archive.as_ref().map(|a| a.plan_handle))
 }
 
-fn surface_read_list_root_unbounded(s: &ValidatedSurfaceNode) -> bool {
-    matches!(s.result_shape, crate::plasm_plan::ResultShape::List)
-        && s.effect_class == EffectClass::Read
-        && s.depends_on.is_empty()
-        && s.page_size.is_none()
-        && s.kind != PlanNodeKind::Search
-        && s.predicates.is_empty()
-}
-
-fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) -> bool {
-    for id in plan.return_value.refs() {
-        let Some(node) = plan.nodes.iter().find(|n| n.id() == id) else {
-            continue;
-        };
-        if let ValidatedPlanNode::Surface(s) = node {
-            if surface_read_list_root_unbounded(s) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Short human-facing review bullets for agents (also surfaced under `_meta.plasm.guidance`).
-///
-/// Keeps to at most two lines: one targeted coaching line when useful, plus an execute-intent
-/// reminder. Pair with the dry-run `risks:` / `confidence:` sections for full context.
-pub fn plasm_plan_review_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<String> {
-    plasm_plan_review_guidance_lines_with_mode(dry, DryPlanGuidanceMode::Full)
-}
-
-/// [`DryPlanGuidanceMode::ActionableOnly`] drops session-level boilerplate (execute reminder, generic relation note).
-pub fn plasm_plan_review_guidance_lines_with_mode(
+/// Typed compact view for tests and UI.
+pub fn plan_dry_compact_view(
     dry: &DryPlasmPlanEvaluation,
-    mode: DryPlanGuidanceMode,
-) -> Vec<String> {
-    let mut out = plasm_plan_review_actionable_guidance_lines(dry);
-    if matches!(mode, DryPlanGuidanceMode::Full) {
-        append_dry_plan_boilerplate_guidance(&mut out, dry);
-    }
-    out.truncate(4);
-    out
-}
-
-fn plasm_plan_review_actionable_guidance_lines(dry: &DryPlasmPlanEvaluation) -> Vec<String> {
-    let mut out = Vec::new();
-    let plan = dry.validated_plan();
-    let return_unbounded = return_roots_include_unbounded_list_surface(plan);
-    let dr = dry.graph_summary.get("dry_review");
-    let has_unbounded = dr
-        .and_then(|v| v.get("has_unbounded_read_root"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_full_compute = dr
-        .and_then(|v| v.get("has_full_collection_compute"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_foreach_fanout = dr
-        .and_then(|v| v.get("has_foreach_fanout_risk"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_unprojected_multi_row = dr
-        .and_then(|v| v.get("has_unprojected_multi_row_read"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    if has_unprojected_multi_row {
-        out.push(
-            "Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped."
-                .to_string(),
-        );
-    }
-    if let Some(unused) = dry
-        .graph_summary
-        .get("unused_seeds")
-        .and_then(|v| v.as_array())
-    {
-        if !unused.is_empty() {
-            let labels: Vec<String> = unused
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect();
-            if !labels.is_empty() {
-                out.push(format!(
-                    "Remove unused seeds from plasm_context or reference them in the program: {}.",
-                    labels.join(", ")
-                ));
-            }
-        }
-    }
-    if has_unbounded || return_unbounded {
-        out.push(
-            "When row counts are unknown, combine filters/search or `.limit`/`.page_size` with projection—not raw full entities."
-                .to_string(),
-        );
-    }
-    if has_foreach_fanout {
-        out.push(
-            "Mutating for_each fans out per source row; keep sources bounded and projected."
-                .to_string(),
-        );
-    } else if has_full_compute {
-        out.push(
-            "Aggregates/group_by/sort see the full logical row set before `.limit`; narrow reads first when counts are uncertain."
-                .to_string(),
-        );
-    } else if plan.nodes.len() == 1 {
-        if let Some(ValidatedPlanNode::Surface(s)) = plan.nodes.first() {
-            if matches!(s.result_shape, crate::plasm_plan::ResultShape::List)
-                && s.effect_class == EffectClass::Read
-            {
-                out.push(
-                    "Prefer a short multi-binding program (source → project/filter → return roots) when the answer needs more than one step."
-                        .to_string(),
-                );
-            }
-        }
-    }
-    out
-}
-
-fn append_dry_plan_boilerplate_guidance(out: &mut Vec<String>, dry: &DryPlasmPlanEvaluation) {
-    let plan = dry.validated_plan();
-    let has_relation = plan
-        .nodes
-        .iter()
-        .any(|n| matches!(n, ValidatedPlanNode::RelationTraversal(_)));
-    if has_relation {
-        out.push(
-            "`label.<relation>` follows surface/relation rows or row-preserving projections; use constructors when row identity has been aggregated, rendered, or derived away."
-                .to_string(),
-        );
-    }
-    out.push("Execute only after topology and result shape match intent.".to_string());
+    es: Option<&ExecuteSession>,
+) -> plan_dry_display::PlanDryCompactView {
+    plan_dry_display::build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        es,
+    )
 }
 
 /// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
@@ -1360,18 +871,6 @@ pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
         "returns": render_return_lines(&plan.return_value),
         "summary": dry.graph_summary.clone(),
     })
-}
-
-fn json_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
-    value
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
@@ -1738,26 +1237,6 @@ fn render_kind(kind: PlanNodeKind) -> &'static str {
     }
 }
 
-fn render_effect_class(effect: EffectClass) -> &'static str {
-    match effect {
-        EffectClass::Read => "read",
-        EffectClass::Write => "write",
-        EffectClass::SideEffect => "side_effect",
-        EffectClass::ArtifactRead => "artifact_read",
-    }
-}
-
-fn render_result_shape(shape: crate::plasm_plan::ResultShape) -> &'static str {
-    match shape {
-        crate::plasm_plan::ResultShape::List => "list",
-        crate::plasm_plan::ResultShape::Single => "single",
-        crate::plasm_plan::ResultShape::MutationResult => "mutation_result",
-        crate::plasm_plan::ResultShape::SideEffectAck => "side_effect_ack",
-        crate::plasm_plan::ResultShape::Page => "page",
-        crate::plasm_plan::ResultShape::Artifact => "artifact",
-    }
-}
-
 fn render_aggregate_function(function: AggregateFunction) -> &'static str {
     match function {
         AggregateFunction::Count => "count",
@@ -1782,7 +1261,7 @@ fn render_predicate_op(op: crate::plasm_plan::PlanPredicateOp) -> &'static str {
     }
 }
 
-fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
+fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDryReview) {
     let mut read_nodes = Vec::new();
     let mut write_or_side_effect_nodes = Vec::new();
     let mut derive_nodes = Vec::new();
@@ -1919,23 +1398,34 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> serde_json::Value {
         );
     }
 
-    serde_json::json!({
-        "node_count": plan.nodes.len(),
-        "read_nodes": read_nodes,
-        "write_or_side_effect_nodes": write_or_side_effect_nodes,
-        "derive_nodes": derive_nodes,
-        "template_nodes": template_nodes,
-        "approval_gates": approval_gates,
-        "parallelizable_roots": parallelizable_roots,
-        "warnings": warnings,
-        "boundedness_facts": boundedness_facts,
-        "dry_review": {
-            "has_unbounded_read_root": has_unbounded_read_root,
-            "has_full_collection_compute": has_full_collection_compute,
-            "has_foreach_fanout_risk": has_foreach_fanout_risk,
-            "has_unprojected_multi_row_read": has_unprojected_multi_row_read,
-        }
-    })
+    let review = PlanDryReview {
+        has_unprojected_multi_row_read,
+        has_unbounded_read_root,
+        has_full_collection_compute,
+        has_foreach_fanout_risk,
+        unused_seeds: Vec::new(),
+    };
+
+    (
+        serde_json::json!({
+            "node_count": plan.nodes.len(),
+            "read_nodes": read_nodes,
+            "write_or_side_effect_nodes": write_or_side_effect_nodes,
+            "derive_nodes": derive_nodes,
+            "template_nodes": template_nodes,
+            "approval_gates": approval_gates,
+            "parallelizable_roots": parallelizable_roots,
+            "warnings": warnings,
+            "boundedness_facts": boundedness_facts,
+            "dry_review": {
+                "has_unbounded_read_root": has_unbounded_read_root,
+                "has_full_collection_compute": has_full_collection_compute,
+                "has_foreach_fanout_risk": has_foreach_fanout_risk,
+                "has_unprojected_multi_row_read": has_unprojected_multi_row_read,
+            }
+        }),
+        review,
+    )
 }
 
 fn inferred_node_approval(node: &ValidatedPlanNode) -> Option<serde_json::Value> {
@@ -3240,21 +2730,43 @@ fn instantiate_ir_hole(
     }
 }
 
+fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
+    for_each
+        .uses_result
+        .iter()
+        .filter(|u| u.r#as.as_str() != for_each.item_binding.as_str())
+        .cloned()
+        .collect()
+}
+
+fn for_each_plan_eval_env<'a>(
+    for_each: &'a ValidatedForEachNode,
+    row: &'a serde_json::Value,
+    input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
+) -> PlanEvalEnv<'a> {
+    let scope = EvalScope::Bound {
+        row,
+        binding: &for_each.item_binding,
+    };
+    let inputs = InputEnv { rows: input_rows };
+    PlanEvalEnv { scope, inputs }
+}
+
 #[cfg(test)]
 fn render_for_each_expressions(
     for_each: &ValidatedForEachNode,
     source_rows: &[serde_json::Value],
+    materialized: Option<&BTreeMap<PlanNodeId, MaterializedNode>>,
 ) -> Result<Vec<String>, String> {
-    let input_rows = BTreeMap::new();
+    let input_rows = if let Some(materialized) = materialized {
+        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?
+    } else {
+        BTreeMap::new()
+    };
     source_rows
         .iter()
         .map(|row| {
-            let scope = EvalScope::Bound {
-                row,
-                binding: &for_each.item_binding,
-            };
-            let inputs = InputEnv { rows: &input_rows };
-            let env = PlanEvalEnv { scope, inputs };
+            let env = for_each_plan_eval_env(for_each, row, &input_rows);
             render_expr_template(&for_each.effect_template.expr_template, &env)
         })
         .collect()
@@ -3272,16 +2784,11 @@ async fn materialize_for_each_node(
     sink: Option<&McpPlasmTraceSink>,
 ) -> Result<MaterializedNode, String> {
     let source_rows = materialized_rows(materialized, &for_each.source)?;
-    let input_rows = BTreeMap::new();
+    let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
     for row in &source_rows {
-        let scope = EvalScope::Bound {
-            row,
-            binding: &for_each.item_binding,
-        };
-        let inputs = InputEnv { rows: &input_rows };
-        let env = PlanEvalEnv { scope, inputs };
+        let env = for_each_plan_eval_env(for_each, row, &input_rows);
         let parsed = instantiate_raw_expr_template(&for_each.effect_template.ir_template, &env)?;
         expressions.push(crate::expr_display::expr_display(&parsed.expr));
         parsed_steps.push(parsed);
@@ -3594,21 +3101,37 @@ fn render_template_with(
     render_value: fn(&serde_json::Value) -> String,
 ) -> Result<String, String> {
     let mut out = String::new();
-    let mut rest = template;
-    while let Some(start) = rest.find("${") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        let Some(end) = after.find('}') else {
-            return Err("template contains an unterminated ${...} substitution".to_string());
-        };
-        let raw_path = &after[..end];
-        let rendered = resolve_template_path(raw_path, env)
-            .map(render_value)
-            .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
-        out.push_str(&rendered);
-        rest = &after[end + 1..];
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    let mut literal_start = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'$' {
+            if bytes[i + 1] == b'$' {
+                out.push_str(&template[literal_start..i]);
+                out.push('$');
+                i += 2;
+                literal_start = i;
+                continue;
+            }
+            if bytes[i + 1] == b'{' {
+                out.push_str(&template[literal_start..i]);
+                let start = i + 2;
+                let Some(end_rel) = template[start..].find('}') else {
+                    return Err("template contains an unterminated ${...} substitution".to_string());
+                };
+                let raw_path = template[start..start + end_rel].trim();
+                let rendered = resolve_template_path(raw_path, env)
+                    .map(render_value)
+                    .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
+                out.push_str(&rendered);
+                i = start + end_rel + 1;
+                literal_start = i;
+                continue;
+            }
+        }
+        i += 1;
     }
-    out.push_str(rest);
+    out.push_str(&template[literal_start..]);
     Ok(out)
 }
 
@@ -4598,36 +4121,12 @@ mod tests {
         insta::assert_snapshot!(
             text,
             @"
-        plasm-program dry-run
-        name: product-summary
-        handle: p7 (plasm://session/s0/p/7)
-        archive: plasm://execute/ph/s/plan/uuid
-        hash: abc123
-        verdict: review
-        shape: 3 nodes, ordered, 1 read, 0 write/se, 2 staged, return=parallel(2)
+        plan review · 3n 1r → parallel(2) · p7
+        warn: project list reads; unused seed acme:Category; unbounded read
 
-        projection: missing on multi-row read(s) — add [field,…] before plasm_run
-
-        risks:
-        - List/page reads without `[field,…]` projection materialize full rows; project at the read or add an explicit project step.
-        - Unbounded root read; add API filters/search text or .limit(n)/.page_size(n) when cost or latency is uncertain
-        - Aggregates/group_by/sort run over the full logical row set before `.limit`; narrow reads (filters + projected fields) when counts are uncertain.
-
-        dag:
-        01. products -> query acme.Product <= Query(Product all) [read; list]
-        02. summary <- products -> project products -> {name=name, sku=id} [artifact_read; list]
-        03. cards <- summary -> map summary as product => {title: template`${product.name}`} [artifact_read; artifact]
-            uses: summary as product
-
-        returns:
-        - parallel[0] -> summary
-        - parallel[1] -> cards
-
-        next:
-        - Add `[field,…]` on list/page reads or follow with an explicit project so rows stay small and correctly shaped.
-        - Remove unused seeds from plasm_context or reference them in the program: acme:Category.
-        - When row counts are unknown, combine filters/search or `.limit`/`.page_size` with projection—not raw full entities.
-        - Aggregates/group_by/sort see the full logical row set before `.limit`; narrow reads first when counts are uncertain.
+        01 products     query Query(Product all)
+        02 summary      project name, sku ← products
+        03 cards        map summary as product => {1} ← summary
         "
         );
         assert!(!text.contains("node_results"));
@@ -4917,6 +4416,7 @@ mod tests {
         let expressions = render_for_each_expressions(
             for_each,
             &[serde_json::json!({ "id": "p1", "name": "Bolt" })],
+            None,
         )
         .expect("render expressions");
 
@@ -4948,54 +4448,11 @@ mod tests {
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         let text = render_plasm_plan_dry_text(&dry, None);
-        assert!(text.contains("verdict: review"), "{text}");
-        assert!(text.contains("risks:"), "{text}");
-        assert!(text.contains("Unbounded root read"), "{text}");
-        assert!(text.contains("next:"), "{text}");
-        assert!(
-            text.contains("projection") || text.contains("`[field"),
-            "{text}"
-        );
-        let g = plasm_plan_review_guidance_lines(&dry);
-        assert!(
-            g.iter()
-                .any(|l| l.contains("[field") || l.contains("projection")),
-            "expected projection-first guidance, got {g:?}"
-        );
-    }
-
-    #[test]
-    fn dry_run_actionable_only_guidance_omits_execute_boilerplate() {
-        let s = test_session();
-        let plan = serde_json::json!({
-            "version": 1,
-            "kind": "program",
-            "name": "unbounded-products",
-            "nodes": [
-                {
-                    "id": "products",
-                    "kind": "query",
-                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr": "Product",
-                    "ir": { "expr": { "op": "query", "entity": "Product" } },
-                    "effect_class": "read",
-                    "result_shape": "list"
-                }
-            ],
-            "return": { "kind": "node", "node": "products" }
-        });
-        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-        let full = plasm_plan_review_guidance_lines_with_mode(&dry, DryPlanGuidanceMode::Full);
-        let short =
-            plasm_plan_review_guidance_lines_with_mode(&dry, DryPlanGuidanceMode::ActionableOnly);
-        assert!(
-            !short.iter().any(|l| l.contains("Execute only after")),
-            "{short:?}"
-        );
-        assert!(
-            full.len() >= short.len(),
-            "full guidance should be at least as long as actionable-only: full={full:?} short={short:?}"
-        );
+        assert!(text.contains("plan review"), "{text}");
+        assert!(text.contains("warn:"), "{text}");
+        assert!(text.contains("unbounded read"), "{text}");
+        assert!(text.contains("project list reads"), "{text}");
+        assert!(dry.review.has_unbounded_read_root, "{:?}", dry.review);
     }
 
     #[test]
@@ -5020,11 +4477,12 @@ mod tests {
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         let text = render_plasm_plan_dry_text(&dry, None);
-        assert!(text.contains("verdict: ok"), "{text}");
+        assert!(text.starts_with("plan review"), "{text}");
         assert!(
-            !text.contains("Unbounded root read"),
+            !text.contains("unbounded read"),
             "bounded get should not get unbounded risk: {text}"
         );
+        assert!(text.contains("unused seed acme:Category"), "{text}");
     }
 
     #[test]
@@ -5084,7 +4542,7 @@ mod tests {
         );
         assert!(!text.contains("=> {}"), "{text}");
         assert!(
-            text.contains("verdict: review"),
+            text.contains("plan review"),
             "root list read is unbounded in this fixture: {text}"
         );
     }
@@ -5265,5 +4723,138 @@ mod tests {
             "host.auto_approve"
         );
         assert_eq!(summary["approval_receipts"][0]["gate"], gate);
+    }
+
+    #[test]
+    fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
+        let row = serde_json::json!({"title": "Bolt"});
+        let mut input_rows = BTreeMap::new();
+        input_rows.insert(
+            InputAlias::new("report".to_string()).expect("alias"),
+            MaterializedInputRow {
+                node: PlanNodeId::new("report").expect("node"),
+                proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
+                row: serde_json::json!({"content": "STATS"}),
+                row_identity: None,
+            },
+        );
+        let binding = BindingName::new("_".to_string()).expect("binding");
+        let scope = EvalScope::Bound {
+            row: &row,
+            binding: &binding,
+        };
+        let inputs = InputEnv { rows: &input_rows };
+        let env = PlanEvalEnv { scope, inputs };
+        let out = instantiate_expr_template_value(
+            &serde_json::json!("${_.title} / ${report.content}"),
+            &env,
+        )
+        .expect("interpolate");
+        assert_eq!(out, serde_json::json!("Bolt / STATS"));
+    }
+
+    #[test]
+    fn for_each_cross_uses_materialization_wires_upstream_singleton() {
+        let plan = parse_plan_value(&serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "cross-binding-for-each",
+            "nodes": [
+                {
+                    "id": "find",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "list",
+                    "data": { "kind": "literal", "value": [{ "id": "p1", "title": "Bolt" }] }
+                },
+                {
+                    "id": "report",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "single",
+                    "data": { "kind": "literal", "value": { "content": "STATS" } }
+                },
+                {
+                    "id": "label",
+                    "kind": "for_each",
+                    "effect_class": "side_effect",
+                    "result_shape": "side_effect_ack",
+                    "source": "find",
+                    "item_binding": "_",
+                    "depends_on": ["find", "report"],
+                    "uses_result": [
+                        { "node": "find", "as": "_" },
+                        { "node": "report", "as": "report" }
+                    ],
+                    "effect_template": {
+                        "kind": "action",
+                        "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                        "expr_template": "Product.create(title=<<T\n${_.title} ${report.content}\nT\n)",
+                        "ir_template": {
+                            "expr": {
+                                "op": "create",
+                                "capability": "product_create",
+                                "entity": "Product",
+                                "input": { "title": "<<T\n${_.title} ${report.content}\nT\n" }
+                            },
+                            "input_bindings": []
+                        },
+                        "effect_class": "side_effect",
+                        "result_shape": "side_effect_ack"
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "label" }
+        }))
+        .expect("parse");
+        let validated = validate_plan_artifact(&plan).expect("validate");
+        let for_each = validated
+            .nodes()
+            .iter()
+            .find_map(|node| match node {
+                ValidatedPlanNode::ForEach(node) => Some(node),
+                _ => None,
+            })
+            .expect("for_each");
+        let mut materialized = BTreeMap::new();
+        materialized.insert(
+            PlanNodeId::new("report").expect("report"),
+            MaterializedNode {
+                entry_id: "acme".into(),
+                entity: "Report".into(),
+                result: ExecutionResult {
+                    entities: vec![],
+                    count: 1,
+                    has_more: false,
+                    pagination_resume: None,
+                    paging_handle: None,
+                    source: ExecutionSource::Cache,
+                    stats: ExecutionStats {
+                        duration_ms: 0,
+                        network_requests: 0,
+                        cache_hits: 0,
+                        cache_misses: 0,
+                    },
+                    request_fingerprints: vec![],
+                },
+                rows: vec![serde_json::json!({"content": "STATS"})],
+                row_identities: vec![None],
+                artifact: None,
+                display: String::new(),
+                projection: None,
+            },
+        );
+        let input_rows =
+            materialized_result_use_inputs(&materialized, &for_each_cross_uses(for_each))
+                .expect("input rows");
+        assert_eq!(input_rows.len(), 1);
+        let row = serde_json::json!({"id": "p1", "title": "Bolt"});
+        let env = for_each_plan_eval_env(for_each, &row, &input_rows);
+        let out = instantiate_expr_template_value(
+            &serde_json::json!("${_.title} ${report.content}"),
+            &env,
+        )
+        .expect("interpolate");
+        assert_eq!(out, serde_json::json!("Bolt STATS"));
     }
 }

@@ -115,6 +115,7 @@ pub mod string_unescape;
 pub mod summary_render;
 pub mod symbol_tuning;
 pub mod template_interpolate;
+pub mod template_ref;
 pub mod temporal;
 pub mod tests;
 pub mod type_checker;
@@ -228,14 +229,19 @@ pub use summary_render::{
 };
 pub use symbol_tuning::{
     entity_slices_for_render, expand_expr_for_domain_session, expand_expr_for_parse,
-    expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
-    symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_for_prompt,
-    DomainExposureSession, ExposedEntitySymbolRow, ExposureEntityKey, FocusSpec, SymbolMap,
-    SymbolMapCacheKey, SymbolMapCrossRequestCache,
+    expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities,
+    strip_prompt_expression_annotations, symbol_map_cache_key_federated,
+    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, DomainExposureSession,
+    ExposedEntitySymbolRow, ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey,
+    SymbolMapCrossRequestCache,
 };
 pub use template_interpolate::{
-    contains_dollar_interpolation, dollar_interpolation_roots, interpolate_string,
-    interpolate_string_map, interpolate_string_with_max, BindingScope, InterpolateError,
+    dollar_interpolation_roots, interpolate_string, interpolate_string_map,
+    interpolate_string_with_max, BindingScope, InterpolateError,
+};
+pub use template_ref::{
+    contains_dollar_interpolation, for_each_interpolation_path, interpolation_paths,
+    interpolation_roots, validate_interpolation_syntax, RefKind, TemplateRefContext,
 };
 pub use temporal::{normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value};
 pub use type_checker::{

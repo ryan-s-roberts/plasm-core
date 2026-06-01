@@ -1094,6 +1094,17 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 .as_ref()
                 .ok_or_else(|| format!("plan.nodes[{i}].effect_template is required"))?;
             validate_effect_template(template, i)?;
+            let mut input_aliases: Vec<(&str, &str)> = Vec::new();
+            for u in &n.uses_result {
+                if u.r#as.as_str() != binding {
+                    input_aliases.push((u.r#as.as_str(), u.node.as_str()));
+                }
+            }
+            let ctx = plasm_core::TemplateRefContext {
+                row_binding: Some(binding),
+                input_aliases: &input_aliases,
+            };
+            validate_effect_template_interpolation(template, i, &ctx)?;
             for b in &template.input_bindings {
                 if !b.from.starts_with(&format!("{binding}."))
                     && b.from.as_str() != binding
@@ -1448,6 +1459,58 @@ fn validated_effect_template(
     Ok(template.clone())
 }
 
+fn validate_effect_template_interpolation(
+    template: &EffectTemplate,
+    node_index: usize,
+    ctx: &plasm_core::TemplateRefContext<'_>,
+) -> Result<(), String> {
+    plasm_core::validate_interpolation_syntax(&template.expr_template, |detail| {
+        format!("plan.nodes[{node_index}].effect_template.expr_template {detail}")
+    })?;
+    ctx.validate_string_roots(&template.expr_template, |root| {
+        format!(
+            "plan.nodes[{node_index}].effect_template.expr_template references undeclared alias {root:?}"
+        )
+    })?;
+    validate_json_interpolation_refs(
+        &template.ir_template.expr,
+        node_index,
+        "effect_template.ir_template.expr",
+        ctx,
+    )
+}
+
+fn validate_json_interpolation_refs(
+    value: &serde_json::Value,
+    node_index: usize,
+    path: &str,
+    ctx: &plasm_core::TemplateRefContext<'_>,
+) -> Result<(), String> {
+    match value {
+        serde_json::Value::String(s) => {
+            plasm_core::validate_interpolation_syntax(s, |detail| {
+                format!("plan.nodes[{node_index}].{path} {detail}")
+            })?;
+            ctx.validate_string_roots(s, |root| {
+                format!("plan.nodes[{node_index}].{path} references undeclared alias {root:?}")
+            })
+        }
+        serde_json::Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                validate_json_interpolation_refs(item, node_index, &format!("{path}[{i}]"), ctx)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Object(fields) => {
+            for (k, field) in fields {
+                validate_json_interpolation_refs(field, node_index, &format!("{path}.{k}"), ctx)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 fn validate_effect_template(t: &EffectTemplate, node_index: usize) -> Result<(), String> {
     if !t.kind.is_template_allowed() {
         return Err(format!(
@@ -1605,7 +1668,7 @@ fn validate_plan_value_input_refs(
                 };
                 validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
             }
-            for raw_path in template_paths(template) {
+            for raw_path in plasm_core::interpolation_paths(template) {
                 let (alias, _) = raw_path
                     .split_once('.')
                     .map_or((raw_path.as_str(), ""), |(alias, rest)| (alias, rest));
@@ -1647,20 +1710,6 @@ fn validate_template_alias(
     Err(format!(
         "plan.nodes[{node_index}].derive_template.value template references undeclared alias {alias:?}"
     ))
-}
-
-fn template_paths(template: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = template;
-    while let Some(start) = rest.find("${") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find('}') else {
-            break;
-        };
-        out.push(after[..end].trim().to_string());
-        rest = &after[end + 1..];
-    }
-    out
 }
 
 fn analyze_static_cardinality(
@@ -2160,22 +2209,9 @@ fn looks_like_unnormalized_entity_ref_wrapper(fields: &BTreeMap<String, PlanValu
 
 fn validate_template_text(template: &str, node_index: usize, path: &str) -> Result<(), String> {
     validate_no_js_object_coercion(template, node_index, path)?;
-    let mut rest = template;
-    while let Some(start) = rest.find("${") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find('}') else {
-            return Err(format!(
-                "plan.nodes[{node_index}].{path} contains an unterminated template substitution"
-            ));
-        };
-        if after[..end].trim().is_empty() {
-            return Err(format!(
-                "plan.nodes[{node_index}].{path} contains an empty template substitution"
-            ));
-        }
-        rest = &after[end + 1..];
-    }
-    Ok(())
+    plasm_core::validate_interpolation_syntax(template, |detail| {
+        format!("plan.nodes[{node_index}].{path} {detail}")
+    })
 }
 
 fn validate_json_value_no_js_object_coercion(
@@ -2503,7 +2539,10 @@ mod tests {
             "return": { "kind": "node", "node": "mapped" }
         });
         let err = validate_plan_value(&v).expect_err("empty substitution rejected");
-        assert!(err.contains("empty template substitution"), "{err}");
+        assert!(
+            err.contains("empty") && err.contains("substitution"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -3006,5 +3045,53 @@ mod tests {
             analyze_static_cardinality(&plan, &by_id, "doc"),
             CardinalityAnalysis::StaticSingleton
         );
+    }
+
+    #[test]
+    fn for_each_effect_template_rejects_undeclared_interpolation_alias() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "bad-for-each",
+            "nodes": [
+                {
+                    "id": "find",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "list",
+                    "data": { "kind": "literal", "value": [{ "id": "p1" }] }
+                },
+                {
+                    "id": "label",
+                    "kind": "for_each",
+                    "effect_class": "side_effect",
+                    "result_shape": "side_effect_ack",
+                    "source": "find",
+                    "item_binding": "_",
+                    "depends_on": ["find"],
+                    "uses_result": [{ "node": "find", "as": "_" }],
+                    "effect_template": {
+                        "kind": "action",
+                        "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                        "expr_template": "Product.create(title=<<T\n${missing}\nT\n)",
+                        "ir_template": {
+                            "expr": {
+                                "op": "create",
+                                "capability": "product_create",
+                                "entity": "Product",
+                                "input": { "title": "<<T\n${missing}\nT\n" }
+                            },
+                            "input_bindings": []
+                        },
+                        "effect_class": "side_effect",
+                        "result_shape": "side_effect_ack"
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "label" }
+        });
+        let plan = parse_plan_value(&v).expect("parse");
+        let err = validate_plan_artifact(&plan).expect_err("undeclared alias rejected");
+        assert!(err.contains("undeclared alias"), "{err}");
     }
 }

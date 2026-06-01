@@ -164,8 +164,9 @@ impl<'a> CompileState<'a> {
 }
 
 fn collect_template_uses_from_expr(expr: &Expr) -> Vec<serde_json::Value> {
+    let ctx = plasm_core::TemplateRefContext::for_row_scope("_");
     let mut acc = Vec::new();
-    collect_expr_for_template_uses(&mut acc, expr);
+    collect_expr_for_template_uses(&mut acc, expr, &ctx);
     dedupe_uses(acc)
 }
 
@@ -176,79 +177,91 @@ fn collect_template_uses_from_expr(expr: &Expr) -> Vec<serde_json::Value> {
 /// recurse into objects/arrays). [`Expr::Get`] compound identity literals live on `reference`; program bindings
 /// in compound slots are lowered to `path_vars` and collected here. [`PlasmInputRef::RowBinding`] is skipped on
 /// purpose (`for_each` row scope).
-fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr) {
+fn collect_expr_for_template_uses(
+    acc: &mut Vec<serde_json::Value>,
+    expr: &Expr,
+    ctx: &plasm_core::TemplateRefContext<'_>,
+) {
     match expr {
         Expr::Query(q) => {
             if let Some(pred) = &q.predicate {
-                collect_predicate_for_template_uses(acc, pred);
+                collect_predicate_for_template_uses(acc, pred, ctx);
             }
         }
         Expr::Get(g) => {
             if let Some(pv) = &g.path_vars {
                 for v in pv.values() {
-                    collect_value_for_template_uses(acc, v);
+                    collect_value_for_template_uses(acc, v, ctx);
                 }
             }
         }
         Expr::Create(c) => {
             let v = c.input.to_value();
-            collect_value_for_template_uses(acc, &v);
+            collect_value_for_template_uses(acc, &v, ctx);
         }
         Expr::Delete(d) => {
             if let Some(pv) = &d.path_vars {
                 for v in pv.values() {
-                    collect_value_for_template_uses(acc, v);
+                    collect_value_for_template_uses(acc, v, ctx);
                 }
             }
         }
         Expr::Invoke(i) => {
             if let Some(input) = &i.input {
                 let v = input.to_value();
-                collect_value_for_template_uses(acc, &v);
+                collect_value_for_template_uses(acc, &v, ctx);
             }
             if let Some(pv) = &i.path_vars {
                 for v in pv.values() {
-                    collect_value_for_template_uses(acc, v);
+                    collect_value_for_template_uses(acc, v, ctx);
                 }
             }
         }
         Expr::Chain(ch) => {
-            collect_expr_for_template_uses(acc, &ch.source);
+            collect_expr_for_template_uses(acc, &ch.source, ctx);
             if let ChainStep::Explicit { expr } = &ch.step {
-                collect_expr_for_template_uses(acc, expr.as_ref());
+                collect_expr_for_template_uses(acc, expr.as_ref(), ctx);
             }
         }
         Expr::Page(_) => {}
         Expr::TeachingValue { value } => {
-            collect_value_for_template_uses(acc, value);
+            collect_value_for_template_uses(acc, value, ctx);
         }
     }
 }
 
-fn collect_predicate_for_template_uses(acc: &mut Vec<serde_json::Value>, pred: &Predicate) {
+fn collect_predicate_for_template_uses(
+    acc: &mut Vec<serde_json::Value>,
+    pred: &Predicate,
+    ctx: &plasm_core::TemplateRefContext<'_>,
+) {
     match pred {
         Predicate::Comparison { value, .. } => {
             let v = value.to_value();
-            collect_value_for_template_uses(acc, &v);
+            collect_value_for_template_uses(acc, &v, ctx);
         }
         Predicate::And { args } | Predicate::Or { args } => {
             for a in args {
-                collect_predicate_for_template_uses(acc, a);
+                collect_predicate_for_template_uses(acc, a, ctx);
             }
         }
         Predicate::Not { predicate } => {
-            collect_predicate_for_template_uses(acc, predicate.as_ref())
+            collect_predicate_for_template_uses(acc, predicate.as_ref(), ctx)
         }
         Predicate::ExistsRelation { predicate, .. } => {
             if let Some(inner) = predicate {
-                collect_predicate_for_template_uses(acc, inner.as_ref());
+                collect_predicate_for_template_uses(acc, inner.as_ref(), ctx);
             }
         }
         Predicate::True | Predicate::False => {}
     }
 }
 
-fn collect_value_for_template_uses(acc: &mut Vec<serde_json::Value>, v: &Value) {
+fn collect_value_for_template_uses(
+    acc: &mut Vec<serde_json::Value>,
+    v: &Value,
+    ctx: &plasm_core::TemplateRefContext<'_>,
+) {
     match v {
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, .. }) => {
             acc.push(json!({
@@ -259,19 +272,19 @@ fn collect_value_for_template_uses(acc: &mut Vec<serde_json::Value>, v: &Value) 
         Value::PlasmInputRef(PlasmInputRef::RowBinding { .. }) => {}
         Value::Object(m) => {
             for x in m.values() {
-                collect_value_for_template_uses(acc, x);
+                collect_value_for_template_uses(acc, x, ctx);
             }
         }
         Value::Array(a) => {
             for x in a {
-                collect_value_for_template_uses(acc, x);
+                collect_value_for_template_uses(acc, x, ctx);
             }
         }
         Value::String(s) => {
-            for root in plasm_core::dollar_interpolation_roots(s) {
-                acc.push(serde_json::json!({
-                    "node": root,
-                    "as": root,
+            for (node, alias) in ctx.plan_node_roots_from_string(s) {
+                acc.push(json!({
+                    "node": node,
+                    "as": alias,
                 }));
             }
         }
@@ -889,8 +902,7 @@ fn postfix_op_to_compute(
             ))
         }
         PlasmPostfixOp::Projection { fields } => {
-            let qe =
-                resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             let mut map = BTreeMap::new();
             for field in parse_field_list(session, state.cross_cache, qe.as_ref(), fields)? {
                 map.insert(
@@ -1149,20 +1161,12 @@ fn compile_render_from_tail(
             template,
         } => {
             let scratch = compile_state_with_nodes(state, &[]);
-            let qe = resolve_qualified_entity_for_dag_source(
-                &scratch,
-                &[],
-                source.trim().to_string(),
-            );
-            let columns = parse_field_list(
-                session,
-                state.cross_cache,
-                qe.as_ref(),
-                fields.trim(),
-            )?
-            .into_iter()
-            .map(OutputName::new)
-            .collect::<Result<Vec<_>, _>>()?;
+            let qe =
+                resolve_qualified_entity_for_dag_source(&scratch, &[], source.trim().to_string());
+            let columns = parse_field_list(session, state.cross_cache, qe.as_ref(), fields.trim())?
+                .into_iter()
+                .map(OutputName::new)
+                .collect::<Result<Vec<_>, _>>()?;
             compile_render_chain(
                 session,
                 state,
@@ -4213,5 +4217,73 @@ detail"#;
         );
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert_eq!(dry.node_results.len(), 3, "{dry:?}");
+    }
+
+    #[test]
+    fn for_each_heredoc_row_cursor_does_not_depend_on_underscore() {
+        let session = test_session();
+        let source = r#"items = LangItem.limit(2)
+created = items => LangItem.create(title=<<T
+row ${_.title}
+T
+)
+created"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "for-each-row-heredoc",
+            source,
+        )
+        .expect("compile");
+        let created = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "created")
+            .expect("for_each node");
+        assert_eq!(created["kind"], "for_each");
+        let depends = created["depends_on"].as_array().expect("depends_on");
+        assert!(
+            depends.iter().all(|d| d.as_str() != Some("_")),
+            "depends_on must not include row cursor: {depends:?}"
+        );
+        let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
+        crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
+    }
+
+    #[test]
+    fn for_each_heredoc_cross_binding_collects_upstream_node() {
+        let session = test_session();
+        let source = r#"report = <<RPT
+static body
+RPT
+items = LangItem.limit(2)
+created = items => LangItem.create(title=<<T
+${report.content}
+T
+)
+created"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "for-each-cross-binding",
+            source,
+        )
+        .expect("compile");
+        let created = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "created")
+            .expect("for_each node");
+        let uses = created["uses_result"].as_array().expect("uses_result");
+        assert!(
+            uses.iter().any(|u| u["node"] == "report"),
+            "cross-binding heredoc must record upstream node: {uses:?}"
+        );
+        let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
+        crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
     }
 }
