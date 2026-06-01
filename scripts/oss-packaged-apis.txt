@@ -1,9 +1,11 @@
 # APIs packed into OSS appliance release tarballs (`plasm-pack-plugins --package-list`).
-# One directory name per line under `apis/<name>/`. Keep in sync with monorepo `deploy/packaged-apis.txt`.
+# One directory name per line under `apis/<name>/`. Canonical for OSS releases — not the SaaS list.
+# SaaS hosted images use monorepo `deploy/saas-packaged-apis.txt` (no Google Workspace).
 
 clickup
 cloudflare
 discord
+fibery
 github
 gitlab
 gmail
@@ -11,15 +13,14 @@ google-calendar
 google-docs
 google-drive
 google-sheets
+grafana
 jira
 linear
 linkedin
-pokeapi
-proof
 notion
 outlook
+proof
+reddit
 slack
 tavily
 vultr
-hackernews
-reddit

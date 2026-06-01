@@ -74,4 +74,4 @@ Create flows use the usual `create` / `update` / `delete` subcommands; see `plas
 
 ## Packaging
 
-`vultr` is **not** in `deploy/packaged-apis.txt` by default; add it when you want this catalog in production `plasm-mcp` images.
+`vultr` is listed in [`deploy/saas-packaged-apis.txt`](../../../deploy/saas-packaged-apis.txt) and [`plasm-oss/scripts/oss-packaged-apis.txt`](../../scripts/oss-packaged-apis.txt) for production images and OSS appliance tarballs.

@@ -3,7 +3,8 @@
 //! Usage (from repo root):
 //!   cargo run -p plasm --bin plasm-pack-plugins -- --apis-root apis --output-dir target/plasm-plugins
 //! Plugin cdylibs default to `cargo build --release -p plasm-plugin-stub`; pass `--debug` for dev-profile stubs.
-//! Docker release builds add `--package-list deploy/packaged-apis.txt` to pack only whitelisted APIs.
+//! Hosted Docker builds use `--package-list deploy/saas-packaged-apis.txt`; OSS release tarballs use
+//! `plasm-oss/scripts/oss-packaged-apis.txt`.
 //!
 //! After pinning `CGS::entry_id` to the directory name, each graph is run through full `CGS::validate`
 //! (expression-teaching surface, auth, …) so regressions fail at pack time in CI, not only at runtime load.
@@ -53,7 +54,7 @@ struct Args {
     /// Only pack APIs listed in this file (one `apis/<name>/` directory name per line; `#` starts a
     /// comment; blank lines ignored). When omitted, every subdirectory of `--apis-root` with
     /// `domain.yaml` + `mappings.yaml` is packed (local dev default). Docker release builds pass
-    /// `deploy/packaged-apis.txt`.
+    /// `deploy/saas-packaged-apis.txt` (SaaS) or `plasm-oss/scripts/oss-packaged-apis.txt` (OSS).
     #[arg(long)]
     package_list: Option<PathBuf>,
 }

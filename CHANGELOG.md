@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.64] - 2026-06-01
+
+### Changed
+
+- **Release packaging:** split hosted SaaS (`deploy/saas-packaged-apis.txt`, 17 catalogs — no Google Workspace or zero-auth demos; adds `grafana`) from OSS appliance tarballs (`scripts/oss-packaged-apis.txt`, 22 catalogs — SaaS set plus Google five). `oss-release-pack-native.sh` no longer reads deprecated `deploy/packaged-apis.txt`.
+
 ## [0.1.63] - 2026-05-31
 
 ### Fixed

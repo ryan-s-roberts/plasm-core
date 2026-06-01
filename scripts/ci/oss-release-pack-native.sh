@@ -48,7 +48,6 @@ resolve_apis_root() {
 resolve_package_list() {
   local candidate
   for candidate in \
-    "${workspace_root}/deploy/packaged-apis.txt" \
     "${workspace_root}/plasm-oss/scripts/oss-packaged-apis.txt" \
     "${oss_root}/scripts/oss-packaged-apis.txt"; do
     if [[ -f "${candidate}" ]]; then
@@ -56,7 +55,7 @@ resolve_package_list() {
       return
     fi
   done
-  echo "oss-release-pack-native: no packaged-apis list found under ${workspace_root}" >&2
+  echo "oss-release-pack-native: no oss-packaged-apis list found under ${workspace_root}" >&2
   exit 2
 }
 
