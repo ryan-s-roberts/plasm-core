@@ -922,7 +922,8 @@ impl<'a> Parser<'a> {
             return Ok(Value::Object(obj));
         }
         if looks_kv && ent.key_vars.is_empty() {
-            if let Some(id_val) = self.try_parse_simple_id_field_constructor_sugar(entity_canon, &ent)?
+            if let Some(id_val) =
+                self.try_parse_simple_id_field_constructor_sugar(entity_canon, &ent)?
             {
                 return Ok(id_val);
             }
@@ -2079,7 +2080,9 @@ impl<'a> Parser<'a> {
                     Ok(Expr::Get(get))
                 } else {
                     if looks_kv && ent.key_vars.is_empty() {
-                        if let Some(get) = self.try_parse_simple_id_field_get_sugar(&entity, &ent)? {
+                        if let Some(get) =
+                            self.try_parse_simple_id_field_get_sugar(&entity, &ent)?
+                        {
                             return Ok(get);
                         }
                         return Err(self.err(ParseErrorKind::Other {
@@ -4519,17 +4522,17 @@ mod tests {
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
         cgs_linear.entry_id = Some("linear".into());
         let layers = [&cgs_github, &cgs_linear];
-        let mut exp =
-            DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
-        exp.expose_entities(
-            &layers,
-            Arc::new(cgs_linear.clone()),
-            "linear",
-            &["Issue"],
-        );
+        let mut exp = DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
+        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
         let map = exp.symbol_map_arc();
-        assert_eq!(map.entry_id_for_entity_symbol("e1").as_deref(), Some("github"));
-        assert_eq!(map.entry_id_for_entity_symbol("e2").as_deref(), Some("linear"));
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e1").as_deref(),
+            Some("github")
+        );
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e2").as_deref(),
+            Some("linear")
+        );
         let linear_e = "e2";
         let team_key = map.ident_sym_cap_param("Issue", "issue_search", "team_key");
         let expr = format!(r#"{linear_e}~"plasm"{{{team_key}="ENG"}}"#);

@@ -141,7 +141,9 @@ use crate::http_problem_util::problem_types;
 use crate::incoming_auth::{
     incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
 };
-use crate::mcp_plasm_meta::{plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta, StepPlasmMetaFields};
+use crate::mcp_plasm_meta::{
+    plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta, StepPlasmMetaFields,
+};
 use crate::mcp_run_markdown::{
     execute_expression_preview, mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
     mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
@@ -1359,8 +1361,7 @@ pub async fn federate_execute_session(
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     let n0 = exp.entities.len();
     if let Some(ref intent_s) = scope_intent {
-        let relation_keys =
-            relation_endpoint_keys_for_wave(&exp, new_entry_id.as_str(), &names);
+        let relation_keys = relation_endpoint_keys_for_wave(&exp, new_entry_id.as_str(), &names);
         let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
             ctx_arc.cgs.as_ref(),
             new_entry_id.as_str(),
@@ -1405,12 +1406,7 @@ pub async fn federate_execute_session(
     let delta = st
         .engine
         .prompt_pipeline()
-        .render_domain_exposure_delta_federated(
-            &by_entry,
-            &exp,
-            &added_qualified,
-            Some(sym_cross),
-        );
+        .render_domain_exposure_delta_federated(&by_entry, &exp, &added_qualified, Some(sym_cross));
     let mut names_sorted = names.clone();
     names_sorted.sort_unstable();
     let mut wave = String::new();
@@ -1569,10 +1565,7 @@ pub async fn expand_execute_domain_session(
         }
     }
     let added_qualified = exp.qualified_entities_since(n0);
-    let added: Vec<&str> = added_qualified
-        .iter()
-        .map(|k| k.entity.as_str())
-        .collect();
+    let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
 
     let n_total = exp.entities.len();
 
@@ -1782,15 +1775,12 @@ pub(crate) async fn apply_capability_seeds(
             &ranked_capabilities,
         )
         .await?;
-        if let Some(sess_arc) = st
-            .sessions
-            .get_by_strs(&prompt_hash, &session_id)
-            .await
-        {
+        if let Some(sess_arc) = st.sessions.get_by_strs(&prompt_hash, &session_id).await {
             if let Some(ref exp) = sess_arc.domain_exposure {
-                let catalogs_ready = plan.process_order.iter().all(|eid| {
-                    sess_arc.contexts_by_entry.contains_key(eid)
-                });
+                let catalogs_ready = plan
+                    .process_order
+                    .iter()
+                    .all(|eid| sess_arc.contexts_by_entry.contains_key(eid));
                 if catalogs_ready && seeds_fully_exposed(exp, &seeds) {
                     let n = exp.entities.len().max(1);
                     return Ok(ApplyCapabilitySeedsOutcome {
@@ -1998,7 +1988,6 @@ async fn trace_emit_plasm_line(
         .await;
 }
 
-
 fn run_line_error_string(e: RunLineError) -> String {
     match e {
         RunLineError::Parse(d) | RunLineError::Normalize(d) | RunLineError::Projection(d) => d,
@@ -2187,7 +2176,10 @@ pub fn publish_plasm_result_steps(
         let header = if total <= 1 {
             slim_result_section_header("## ", &label, step.result.count)
         } else if i == 0 {
-            format!("# Results\n\n{}", slim_result_section_header("### ", &label, step.result.count))
+            format!(
+                "# Results\n\n{}",
+                slim_result_section_header("### ", &label, step.result.count)
+            )
         } else {
             slim_result_section_header("### ", &label, step.result.count)
         };
@@ -2247,10 +2239,7 @@ pub fn publish_plasm_result_steps(
             let i = *step_no - 1;
             let step = &steps[i];
             StepPlasmMetaFields {
-                return_label: return_label_for_step(
-                    step.name.as_deref(),
-                    step.node_id.as_deref(),
-                ),
+                return_label: return_label_for_step(step.name.as_deref(), step.node_id.as_deref()),
                 display: step.display.clone(),
                 row_count: step.result.count,
             }
@@ -2292,12 +2281,8 @@ pub fn publish_plasm_result_steps(
                 .first()
                 .cloned()
                 .unwrap_or_else(|| ("result".to_string(), 0));
-            let mut md = mcp_compact_markdown_single(
-                &label,
-                rows,
-                &omitted_for_steps,
-                &lossy_preview_union,
-            );
+            let mut md =
+                mcp_compact_markdown_single(&label, rows, &omitted_for_steps, &lossy_preview_union);
             if let Some((_, h)) = truncated_refs.first() {
                 md.push_str(&mcp_inline_run_snapshot_line(h));
             }
@@ -2322,10 +2307,9 @@ pub fn publish_plasm_result_steps(
         &omitted_for_steps,
     );
     let paging_for_meta = (!paging.is_empty()).then_some(paging.as_slice());
-    let run_step_numbers_for_meta =
-        (!run_step_vec.is_empty()).then_some(run_step_vec.as_slice());
-    let step_meta_for_meta = (!step_meta_for_handles.is_empty())
-        .then_some(step_meta_for_handles.as_slice());
+    let run_step_numbers_for_meta = (!run_step_vec.is_empty()).then_some(run_step_vec.as_slice());
+    let step_meta_for_meta =
+        (!step_meta_for_handles.is_empty()).then_some(step_meta_for_handles.as_slice());
     let tool_meta = build_mcp_tool_meta(
         meta_index,
         &handles_meta,
@@ -2382,9 +2366,7 @@ fn parse_execute_program_body(content_type: Option<&str>, raw: &[u8]) -> Result<
                 return Ok(t.to_string());
             }
         }
-        return Err(
-            "JSON body must be a quoted program string or {\"program\": \"...\"}".into(),
-        );
+        return Err("JSON body must be a quoted program string or {\"program\": \"...\"}".into());
     }
 
     let s = std::str::from_utf8(raw).map_err(|e| format!("invalid UTF-8: {e}"))?;
@@ -2475,8 +2457,6 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
         RunLineError::ArtifactPersist(_) => ("artifact", "persist"),
     }
 }
-
-
 
 fn parse_plasm_line(
     line: &str,
@@ -4215,7 +4195,8 @@ async fn post_run_execute_session(
     };
 
     if plan_only {
-        let dry = match crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&sess, &validated) {
+        let dry = match crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&sess, &validated)
+        {
             Ok(d) => d,
             Err(e) => {
                 return problem_response(
@@ -4852,11 +4833,8 @@ mod tests {
 
     #[test]
     fn parse_execute_program_body_rejects_lines_array() {
-        let err = parse_execute_program_body(
-            Some("application/json"),
-            br#"{"lines":["a","b"]}"#,
-        )
-        .expect_err("lines");
+        let err = parse_execute_program_body(Some("application/json"), br#"{"lines":["a","b"]}"#)
+            .expect_err("lines");
         assert!(err.contains("lines"), "{err}");
     }
 

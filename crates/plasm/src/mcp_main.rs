@@ -106,10 +106,9 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let use_http = matches.get_flag("http");
     let use_mcp = matches.get_flag("mcp");
-    let endpoint = plasm_agent_core::listen_endpoint::TcpListenEndpoint::from_clap_matches(
-        &matches,
-    )
-    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    let endpoint =
+        plasm_agent_core::listen_endpoint::TcpListenEndpoint::from_clap_matches(&matches)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
     if !use_http && !use_mcp {
         eprintln!("plasm-mcp: pass --http and/or --mcp");

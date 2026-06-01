@@ -1318,12 +1318,10 @@ mod tests {
                 "url": "https://pokeapi.co/api/v2/evolution-chain/10/"
             }
         });
-        let chain_decoder = EntityDecoder::new(
-            "EvolutionChain",
-            PathExpr::from_slice(&["evolution_chain"]),
-        )
-        .with_id_field("url")
-        .with_id_path(PathExpr::from_slice(&["url"]));
+        let chain_decoder =
+            EntityDecoder::new("EvolutionChain", PathExpr::from_slice(&["evolution_chain"]))
+                .with_id_field("url")
+                .with_id_path(PathExpr::from_slice(&["url"]));
         let parent = EntityDecoder::new("PokemonSpecies", PathExpr::empty())
             .with_id_field("name")
             .with_fields(vec![FieldDecoder::new(

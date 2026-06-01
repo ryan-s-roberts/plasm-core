@@ -3546,9 +3546,8 @@ pub(crate) fn run_running_mode(
         }
         let _ = update(&mut model, UiMsg::Tick, &deps);
 
-        terminal.draw(|frame| {
-            render_running_frame(frame, &mut model, host_state.as_ref(), &listen)
-        })?;
+        terminal
+            .draw(|frame| render_running_frame(frame, &mut model, host_state.as_ref(), &listen))?;
 
         for ev in drain_crossterm_events(terminal, Duration::from_millis(120))? {
             match ev {
@@ -4168,7 +4167,8 @@ mod tests {
         model.resources.snapshot.config_surface = McpConfigSurfaceState::PolicyStoreUnavailable {
             reason: PolicyStoreUnavailableReason::NeverAttached,
         };
-        let lines = build_overview_lines(&model, &model.resources.snapshot, &host, &listen_on(3001));
+        let lines =
+            build_overview_lines(&model, &model.resources.snapshot, &host, &listen_on(3001));
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
         assert!(!rendered.contains("enabledts"));
         assert!(rendered.contains("Trace hub:"));

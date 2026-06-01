@@ -435,9 +435,7 @@ fn levenshtein_ascii(a: &str, b: &str) -> u32 {
         cur[0] = (i + 1) as u32;
         for (j, cb) in b.iter().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            cur[j + 1] = (prev[j + 1] + 1)
-                .min(cur[j] + 1)
-                .min(prev[j] + cost);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut cur);
     }

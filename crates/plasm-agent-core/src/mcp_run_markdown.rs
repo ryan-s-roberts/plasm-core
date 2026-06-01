@@ -263,12 +263,8 @@ mod tests {
     #[test]
     fn mcp_compact_markdown_single_preview_has_no_must_read_banner() {
         let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
-        let s = mcp_compact_markdown_single(
-            "sorted",
-            2,
-            &omitted,
-            &LossySummaryFieldNames::default(),
-        );
+        let s =
+            mcp_compact_markdown_single("sorted", 2, &omitted, &LossySummaryFieldNames::default());
         assert!(s.starts_with("## sorted (preview)"));
         assert!(!s.contains("MUST"), "preview: {s}");
         assert!(!s.contains("Optional full JSON"), "preview: {s}");
@@ -282,10 +278,7 @@ mod tests {
         let s = mcp_compact_markdown_multi_line(
             2,
             5,
-            &[
-                ("first".into(), 3),
-                ("second".into(), 2),
-            ],
+            &[("first".into(), 3), ("second".into(), 2)],
             &omitted,
             &LossySummaryFieldNames::default(),
             &[(1, &h)],

@@ -12,8 +12,9 @@ use crate::prompt_render::{
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    expand_expr_for_domain_session, expand_expr_for_parse, DomainExposureSession, ExposureEntityKey,
-    FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+    expand_expr_for_domain_session, expand_expr_for_parse, DomainExposureSession,
+    ExposureEntityKey, FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap,
+    SymbolMapCrossRequestCache,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -100,9 +101,7 @@ impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
         self.by_entity_unique
             .get(entity)
             .copied()
-            .unwrap_or_else(|| {
-                panic!("entity `{entity}` must appear uniquely in exposure session")
-            })
+            .unwrap_or_else(|| panic!("entity `{entity}` must appear uniquely in exposure session"))
     }
 }
 
@@ -330,10 +329,7 @@ impl PromptPipelineConfig {
             Some(new_entities),
         );
         let resolver = FederatedExposureResolver::new(by_entry, exposure);
-        let entity_names: Vec<&str> = new_entities
-            .iter()
-            .map(|k| k.entity.as_str())
-            .collect();
+        let entity_names: Vec<&str> = new_entities.iter().map(|k| k.entity.as_str()).collect();
         let ident_meta = self.build_ident_meta_for_entities(&entity_names, |entity| {
             let key = new_entities
                 .iter()

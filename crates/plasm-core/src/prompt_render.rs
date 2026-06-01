@@ -664,11 +664,12 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
     let fill_model = config.include_domain_execution_model;
     let surface_filter = Some(&exposure.surface);
 
-    let emit_set: Option<std::collections::BTreeSet<(String, String)>> = emit_entity_blocks.map(|keys| {
-        keys.iter()
-            .map(|k| (k.entry_id.clone(), k.entity.to_string()))
-            .collect()
-    });
+    let emit_set: Option<std::collections::BTreeSet<(String, String)>> =
+        emit_entity_blocks.map(|keys| {
+            keys.iter()
+                .map(|k| (k.entry_id.clone(), k.entity.to_string()))
+                .collect()
+        });
 
     let ident_meta = map_opt
         .as_ref()
@@ -702,19 +703,19 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         let ename = entity.as_str();
         let collect_meta = fill_model;
         let mut field_gloss_accum = Vec::new();
-        let mut gloss_emit: Option<GlossScratch<'_>> = match (map_opt.as_deref(), ident_meta.as_ref())
-        {
-            (Some(m), Some(meta)) => Some(GlossScratch {
-                field_gloss: &mut field_gloss_accum,
-                state: &mut gloss_emit_state,
-                map: m,
-                meta,
-                catalog_entry_id: entry_id.as_str(),
-                entity: ename,
-                cgs,
-            }),
-            _ => None,
-        };
+        let mut gloss_emit: Option<GlossScratch<'_>> =
+            match (map_opt.as_deref(), ident_meta.as_ref()) {
+                (Some(m), Some(meta)) => Some(GlossScratch {
+                    field_gloss: &mut field_gloss_accum,
+                    state: &mut gloss_emit_state,
+                    map: m,
+                    meta,
+                    catalog_entry_id: entry_id.as_str(),
+                    entity: ename,
+                    cgs,
+                }),
+                _ => None,
+            };
         let block = collect_entity_teaching_block(
             cgs,
             ename,

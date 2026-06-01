@@ -1103,8 +1103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let listener = match listen.bind_tcp_listener().await {
                     Ok(l) => l,
                     Err(e) => {
-                        let msg =
-                            format!("listen bind failed on {}: {e:#}", listen.display_addr());
+                        let msg = format!("listen bind failed on {}: {e:#}", listen.display_addr());
                         stderr_log::line(format!("plasm-server: {msg}"));
                         return Err(msg.into());
                     }

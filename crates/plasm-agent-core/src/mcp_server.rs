@@ -70,8 +70,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
-    apply_capability_seeds, normalize_capability_seeds,
-    ApplyCapabilitySeedsOutcome, CapabilitySeed, RankedCapabilitiesArg,
+    apply_capability_seeds, normalize_capability_seeds, ApplyCapabilitySeedsOutcome,
+    CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -81,9 +81,8 @@ use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::plasm_dag::compile_plasm_expression_to_plan;
 use crate::plasm_plan::parse_and_validate_plan_json;
 use crate::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json,
-    plasm_plan_review_guidance_lines_with_mode, render_plasm_plan_dry_text_with_guidance,
-    DryPlanGuidanceMode, PlasmPlanRunHooks, PlasmPlanRunResult,
+    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, render_plasm_plan_dry_text_for_session,
+    PlasmPlanRunHooks, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
@@ -439,8 +438,6 @@ struct McpLogicalSessionState {
     binding: Option<PlasmExecBinding>,
     stats: McpSessionPlasmStats,
     meta_index: PlasmMetaIndex,
-    /// Generic dry-run `next:` bullets already shown once for this logical session.
-    dry_plan_boilerplate_shown: bool,
 }
 
 #[derive(Default)]
@@ -1400,28 +1397,11 @@ impl PlasmMcpHandler {
                                 match evaluate_validated_plasm_plan_dry(&es, &validated) {
                                     Err(e) => Err(e),
                                     Ok(dry) => {
-                                        let guidance_mode = {
-                                            let g = state.lock().await;
-                                            if g.dry_plan_boilerplate_shown {
-                                                DryPlanGuidanceMode::ActionableOnly
-                                            } else {
-                                                DryPlanGuidanceMode::Full
-                                            }
-                                        };
-                                        let dry_text = render_plasm_plan_dry_text_with_guidance(
+                                        let dry_text = render_plasm_plan_dry_text_for_session(
                                             &dry,
                                             None,
                                             Some(&es),
-                                            guidance_mode,
                                         );
-                                        let guidance = plasm_plan_review_guidance_lines_with_mode(
-                                            &dry,
-                                            guidance_mode,
-                                        );
-                                        {
-                                            let mut g = state.lock().await;
-                                            g.dry_plan_boilerplate_shown = true;
-                                        }
                                         let markdown = format!("```text\n{dry_text}\n```");
                                         let plan_json = plasm_plan_dag_json(&dry);
                                         trace_archive_and_emit_code_plan_evaluate(
@@ -1465,15 +1445,6 @@ impl PlasmMcpHandler {
                                                 );
                                             }
                                         }
-                                        plasm_obj.insert(
-                                            "guidance".into(),
-                                            serde_json::Value::Array(
-                                                guidance
-                                                    .into_iter()
-                                                    .map(serde_json::Value::String)
-                                                    .collect(),
-                                            ),
-                                        );
                                         let mut meta = serde_json::Map::new();
                                         meta.insert(
                                             "plasm".into(),
@@ -1506,9 +1477,9 @@ impl PlasmMcpHandler {
         }
         match run_result {
             Ok(out) => {
-                let markdown = out.run_markdown.unwrap_or_else(|| {
-                    "# Plasm program plan\n\nNo execution output.".to_string()
-                });
+                let markdown = out
+                    .run_markdown
+                    .unwrap_or_else(|| "# Plasm program plan\n\nNo execution output.".to_string());
                 let response_chars = markdown.chars().count() as u64;
                 if response_chars > 0 {
                     let mut g = state.lock().await;
@@ -1707,16 +1678,14 @@ impl PlasmMcpHandler {
             .await;
 
         let mut text = String::new();
-        let total_domain_chars: u64 = out
-            .waves
-            .iter()
-            .map(|w| w.domain_prompt_chars_added)
-            .sum();
+        let total_domain_chars: u64 = out.waves.iter().map(|w| w.domain_prompt_chars_added).sum();
         let exposed_entities: usize = out
             .waves
             .iter()
             .flat_map(|w| {
-                w.entities.iter().map(|entity| format!("{}:{entity}", w.entry_id))
+                w.entities
+                    .iter()
+                    .map(|entity| format!("{}:{entity}", w.entry_id))
             })
             .collect::<std::collections::BTreeSet<_>>()
             .len();
@@ -2713,7 +2682,10 @@ mod tests {
             .find(|t| t.name == "discover_capabilities")
             .expect("discover_capabilities");
         let discover_desc = discover.description.as_deref().unwrap_or("");
-        assert!(discover_desc.len() < 400, "discover tool description too long");
+        assert!(
+            discover_desc.len() < 400,
+            "discover tool description too long"
+        );
         assert!(!discover_desc.contains("query"));
     }
 

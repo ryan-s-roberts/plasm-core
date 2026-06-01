@@ -118,7 +118,8 @@ pub async fn init_auth_framework_on_storage(
         .filter(|s| !s.trim().is_empty())
         .is_some();
     let jwt = resolve_jwt_signing_secret()?;
-    init_auth_framework_with_jwt_fallback(storage, auth_storage_mode_from_env(), jwt, from_env).await
+    init_auth_framework_with_jwt_fallback(storage, auth_storage_mode_from_env(), jwt, from_env)
+        .await
 }
 
 async fn init_auth_framework_with_jwt_fallback(
@@ -136,13 +137,7 @@ async fn init_auth_framework_with_jwt_fallback(
         Some("test") | Some("TEST")
     ) && !in_k8s;
 
-    match build_framework_on_storage(
-        storage.clone(),
-        storage_mode.clone(),
-        jwt_secret,
-    )
-    .await
-    {
+    match build_framework_on_storage(storage.clone(), storage_mode.clone(), jwt_secret).await {
         Ok(fw) => Ok(fw),
         Err(e) if from_env && jwt_secret_failed_validation(&e) && (allow_dev_secret || !in_k8s) => {
             tracing::warn!(
@@ -171,13 +166,8 @@ pub async fn init_standalone_auth_bundle() -> Result<
         .filter(|s| !s.trim().is_empty())
         .is_some();
     let jwt = resolve_jwt_signing_secret()?;
-    let framework = init_auth_framework_with_jwt_fallback(
-        storage.clone(),
-        storage_mode,
-        jwt,
-        from_env,
-    )
-    .await?;
+    let framework =
+        init_auth_framework_with_jwt_fallback(storage.clone(), storage_mode, jwt, from_env).await?;
     Ok((storage, framework, mcp_api_keys))
 }
 

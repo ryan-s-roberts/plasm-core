@@ -2326,6 +2326,15 @@ fn replace_sym_tokens(input: &str, map: &SymbolMap, phase: SymPhase) -> String {
     })
 }
 
+/// When [`expand_path_symbols_with_options`] keeps `e#` opaque, method expansion must still
+/// match `.m#` against the wire entity name stored in [`SymbolMap::sym_to_entity`].
+fn entity_surface_wire_name(left: &str, map: &SymbolMap) -> String {
+    map.sym_to_entity
+        .get(left)
+        .cloned()
+        .unwrap_or_else(|| left.to_string())
+}
+
 fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
     let mut syms: Vec<String> = map.sym_to_method.keys().cloned().collect();
     syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
@@ -2366,13 +2375,19 @@ fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
                 if boundary_ok {
                     if let Some((_, ent, kebab)) = map.sym_to_method.get(sym.as_str()) {
                         if let Some(left_ent) = find_entity_before_dot(input, i) {
-                            if left_ent == *ent {
+                            let left_wire = entity_surface_wire_name(&left_ent, map);
+                            if left_wire == *ent || left_ent == *ent {
                                 out.push('.');
                                 out.push_str(kebab);
                                 i += 1 + sym_len;
                                 advanced = true;
-                            } else if let Some(sk) =
-                                map.anchor_scoped_method_sym.get(&(left_ent, sym.clone()))
+                            } else if let Some(sk) = map
+                                .anchor_scoped_method_sym
+                                .get(&(left_wire.clone(), sym.clone()))
+                                .or_else(|| {
+                                    map.anchor_scoped_method_sym
+                                        .get(&(left_ent.clone(), sym.clone()))
+                                })
                             {
                                 out.push('.');
                                 out.push_str(sk);
@@ -3860,6 +3875,32 @@ mod tests {
     }
 
     #[test]
+    fn method_expand_resolves_opaque_entity_surface_when_entities_not_expanded() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let map = SymbolMap::build(&cgs, &full);
+        let pet = map.entity_sym("Pet");
+        let m = map.method_sym("Pet", "upload-image");
+        if m == "upload-image" {
+            return;
+        }
+        let expr = format!("{}(1).{}()", pet, m);
+        let back = expand_path_symbols_with_options(&expr, &map, false);
+        assert!(
+            back.contains("upload-image"),
+            "opaque entity surface must still expand method: got {back}"
+        );
+        assert!(
+            back.starts_with(&format!("{pet}(")),
+            "entity stays opaque: {back}"
+        );
+    }
+
+    #[test]
     fn method_expand_requires_entity_context() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
@@ -4423,7 +4464,8 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let legacy = DomainExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
-        let endpoints = relation_endpoint_keys("overshow", &["Profile".to_string(), "Meeting".to_string()]);
+        let endpoints =
+            relation_endpoint_keys("overshow", &["Profile".to_string(), "Meeting".to_string()]);
         let delta = crate::discovery::derive_intent_exposure_surface_batch(
             &cgs,
             "overshow",
@@ -4479,15 +4521,23 @@ mod tests {
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
         let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
-        exp.expose_entities(&layers, std::sync::Arc::new(cgs.clone()), "linear", &["LangItem"]);
-        assert_eq!(exp.entities, vec!["LangItem", "LangItem"]);
-        assert_eq!(
-            exp.entity_catalog_entry_ids,
-            vec!["github", "linear"]
+        exp.expose_entities(
+            &layers,
+            std::sync::Arc::new(cgs.clone()),
+            "linear",
+            &["LangItem"],
         );
+        assert_eq!(exp.entities, vec!["LangItem", "LangItem"]);
+        assert_eq!(exp.entity_catalog_entry_ids, vec!["github", "linear"]);
         let map = exp.symbol_map_arc();
-        assert_eq!(map.entry_id_for_entity_symbol("e1").as_deref(), Some("github"));
-        assert_eq!(map.entry_id_for_entity_symbol("e2").as_deref(), Some("linear"));
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e1").as_deref(),
+            Some("github")
+        );
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e2").as_deref(),
+            Some("linear")
+        );
         assert_eq!(map.entity_sym("LangItem"), "e1");
     }
 }

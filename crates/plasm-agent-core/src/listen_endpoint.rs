@@ -30,9 +30,7 @@ impl TcpListenEndpoint {
     /// Read `--listen-host` + `--port` from an MCP server [`clap::ArgMatches`].
     pub fn from_clap_matches(matches: &clap::ArgMatches) -> Result<Self, String> {
         let port = matches.get_one::<u16>("port").copied().unwrap_or(3000);
-        let host = matches
-            .get_one::<String>("listen_host")
-            .map(|s| s.as_str());
+        let host = matches.get_one::<String>("listen_host").map(|s| s.as_str());
         Self::from_cli(host, port)
     }
 
@@ -195,10 +193,7 @@ mod tests {
 
     #[test]
     fn client_origin_maps_wildcard_to_loopback() {
-        assert_eq!(
-            client_http_origin("0.0.0.0", 3000),
-            "http://127.0.0.1:3000"
-        );
+        assert_eq!(client_http_origin("0.0.0.0", 3000), "http://127.0.0.1:3000");
         assert_eq!(
             client_http_origin("192.168.1.5", 8080),
             "http://192.168.1.5:8080"

@@ -263,8 +263,7 @@ mod tests {
     #[test]
     fn tab_rail_brackets_active_tab() {
         let titles = ["Status", "Clients", "APIs", "OAuth"];
-        let listen =
-            plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 8080);
+        let listen = plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 8080);
         let line = tab_rail_line(2, &titles, &listen, 120);
         let s = line.to_string();
         assert!(s.contains("< "));
@@ -278,8 +277,7 @@ mod tests {
         let titles = [
             "Status", "Clients", "APIs", "OAuth", "Keys", "Runs", "Storage", "Logs",
         ];
-        let listen =
-            plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 8080);
+        let listen = plasm_agent_core::listen_endpoint::TcpListenEndpoint::new("127.0.0.1", 8080);
         let line = tab_rail_line(2, &titles, &listen, 40);
         assert!(line.to_string().width() <= 40);
     }

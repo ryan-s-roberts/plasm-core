@@ -385,8 +385,9 @@ pub async fn ensure_auth_framework_on_host(
             let framework =
                 crate::auth_framework_host::init_auth_framework_on_storage(existing.clone())
                     .await?;
-            let mcp_api_keys =
-                Arc::new(crate::mcp_api_key_registry::McpApiKeyRegistry::new(existing.clone()));
+            let mcp_api_keys = Arc::new(crate::mcp_api_key_registry::McpApiKeyRegistry::new(
+                existing.clone(),
+            ));
             (existing, framework, mcp_api_keys)
         }
         None => crate::auth_framework_host::init_standalone_auth_bundle().await?,
