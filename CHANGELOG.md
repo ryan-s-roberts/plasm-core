@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.66] - 2026-06-01
+
 ### Fixed
 
 - **Referential transparency:** unified session `e#` / wire entity constructor parsing across brace predicates, method args, and nested compound slots (`entity_ref_parse`); symbolic `p#` compound keys normalize without wire pre-expand.
