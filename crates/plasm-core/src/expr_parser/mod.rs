@@ -57,6 +57,7 @@
 //! parse("Order(5).petId", &cgs) → Ok(ParsedExpr { expr: Chain(..), .. })
 //! ```
 
+mod entity_ref_parse;
 pub(crate) mod heredoc_surface;
 pub(crate) mod predicate_surface;
 pub(crate) mod program_surface;
@@ -717,11 +718,12 @@ impl<'a> Parser<'a> {
             if self.peek_char() == Some(')') {
                 break;
             }
-            let (key, _, _) = self.parse_ident_with_span()?;
+            let (raw_key, _, _) = self.parse_ident_with_span()?;
+            let key = self.normalize_compound_ctor_key(display_entity, ent, &raw_key);
             if parts.contains_key(&key) {
                 return Err(self.err(ParseErrorKind::Other {
                     message: format!(
-                        "duplicate key `{key}` in compound constructor for `{display_entity}`"
+                        "duplicate key `{raw_key}` in compound constructor for `{display_entity}`"
                     ),
                 }));
             }
@@ -879,65 +881,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse `Entity(<body>)` after `(` was consumed: compound entities become [`Value::Object`] in `key_vars`
-    /// order; single-key entities unwrap to the inner [`Value`].
+    /// Wire-only legacy entry — prefer [`Self::try_parse_entity_ref_value`] for session `e#` heads.
     pub(super) fn parse_entity_constructor_value_after_open_paren(
         &mut self,
         entity_canon: &str,
     ) -> Result<Value, ParseError> {
-        let ent = self
-            .cgs_for_entity_required(entity_canon)
-            .get_entity(entity_canon)
-            .ok_or_else(|| ParseError {
-                kind: ParseErrorKind::UnknownEntity {
-                    name: entity_canon.to_string(),
-                    span_opt: None,
-                },
-                offset: self.pos,
-            })?
-            .clone();
-        self.skip_ws();
-        if self.peek_char() == Some(')') {
-            return Err(self.err(ParseErrorKind::EmptyGetParens {
-                entity: entity_canon.to_string(),
-            }));
-        }
-        let after_paren = self.pos;
-        let looks_kv = self.peek_compound_key_value_form();
-        if ent.key_vars.len() > 1 {
-            if !looks_kv {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "entity `{}` has compound key {:?}; use `{}(key=value, ...)` with those keys",
-                        entity_canon, ent.key_vars, entity_canon
-                    ),
-                }));
-            }
-            let parts = self.parse_strict_compound_key_value_map(entity_canon, &ent)?;
-            let mut obj = IndexMap::new();
-            for k in &ent.key_vars {
-                let v = parts.get(k.as_str()).expect("keys validated").clone();
-                obj.insert(k.to_string(), v);
-            }
-            return Ok(Value::Object(obj));
-        }
-        if looks_kv && ent.key_vars.is_empty() {
-            if let Some(id_val) =
-                self.try_parse_simple_id_field_constructor_sugar(entity_canon, &ent)?
-            {
-                return Ok(id_val);
-            }
-            return Err(self.err(ParseErrorKind::Other {
-                message: format!(
-                    "entity `{}` uses a simple id; use `{}(id)` not key=value form",
-                    entity_canon, entity_canon
-                ),
-            }));
-        }
-        self.pos = after_paren;
-        let id_val = self.parse_value()?;
-        self.expect_char(')')?;
-        Ok(id_val)
+        use entity_ref_parse::EntityRefRhsMode;
+        self.parse_entity_ref_value_after_open_paren(entity_canon, EntityRefRhsMode::Strict)
     }
 
     /// Parse method / nav segment after `.` — ASCII alnum + `_` + `-` (hyphens allowed for `get-me` style).
@@ -1974,7 +1924,7 @@ impl<'a> Parser<'a> {
             });
         }
         let mut entity: Option<String> = self.sym_map.resolve_session_entity_symbol(&raw);
-        let mut entity_from_sym = entity.is_some().then(|| raw.clone());
+        let entity_from_sym = entity.is_some().then(|| raw.clone());
         if entity.is_none() {
             for c in self.layers_slice() {
                 let e = c.canonical_entity_name(&raw).unwrap_or_else(|| raw.clone());
@@ -4542,5 +4492,155 @@ mod tests {
         };
         assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
         assert_eq!(q.entity, "Issue");
+    }
+
+    /// Session `e2` (Library) compound ctor inside brace predicate on `e1` (Book) — referential transparency.
+    #[test]
+    fn parse_predicate_compound_entity_ref_via_session_symbol() {
+        use std::sync::Arc;
+
+        let cgs = book_library_entity_ref_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+        let layers = [&cgs];
+        let lib_sym = sym_map.entity_sym("Library");
+        let book_sym = sym_map.entity_sym("Book");
+        if lib_sym == "Library" || book_sym == "Book" {
+            return;
+        }
+        let expr = format!("{book_sym}{{library={lib_sym}(region=us-west, code=shared-shelf)}}");
+        let r = parse_with_cgs_layers(&expr, &layers, sym_map).expect("symbolic nested ctor");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected query");
+        };
+        let Some(pred) = &q.predicate else {
+            panic!("expected predicate");
+        };
+        let Predicate::Comparison { field, value, .. } = pred else {
+            panic!("expected comparison");
+        };
+        assert_eq!(field, "library");
+        let wire = value.to_value();
+        let Value::Object(m) = wire else {
+            panic!("expected object, got {value:?}");
+        };
+        assert_eq!(m.get("region"), Some(&Value::String("us-west".into())));
+        assert_eq!(m.get("code"), Some(&Value::String("shared-shelf".into())));
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    /// GitHub scoped search: opaque `e3` Repository ctor inside `e1` Issue predicate (agent copy-paste path).
+    #[test]
+    fn parse_github_issue_predicate_session_repository_ctor_when_schema_loads() {
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let Ok(cgs) = load_schema_dir(dir) else {
+            return;
+        };
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+        let layers = [&cgs];
+        let issue_sym = sym_map.entity_sym("Issue");
+        let repo_sym = sym_map.entity_sym("Repository");
+        if issue_sym == "Issue" || repo_sym == "Repository" {
+            return;
+        }
+        let repo_region = sym_map.ident_sym_entity_field("Repository", "owner");
+        let repo_name = sym_map.ident_sym_entity_field("Repository", "repo");
+        let repo_field = sym_map.ident_sym_entity_field("Issue", "repository");
+        let state_field = sym_map.ident_sym_cap_param("Issue", "issue_query", "state");
+        let expr = format!(
+            r#"{issue_sym}{{{repo_field}={repo_sym}({repo_region}=octocat, {repo_name}=Hello-World), {state_field}=open}}"#
+        );
+        let r = parse_with_cgs_layers(&expr, &layers, sym_map).expect("github symbolic predicate");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected query");
+        };
+        assert!(q.predicate.is_some());
+        let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
+    }
+
+    /// GitHub comment-create shape: nested session entity ctor + binding field ref with symbolic `p#` path.
+    #[test]
+    fn program_parse_binding_field_ref_and_nested_entity_ctor_in_method_args() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let Ok(cgs) = load_schema_dir(dir) else {
+            return;
+        };
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+        let layers = [&cgs];
+        let repo_sym = sym_map.entity_sym("Repository");
+        let comment_ent = sym_map.entity_sym("IssueComment");
+        if repo_sym == "Repository" || comment_ent == "IssueComment" {
+            return;
+        }
+        let cap = cgs
+            .get_capability("issue_comment_create")
+            .expect("issue_comment_create");
+        let method = capability_method_label_kebab(cap);
+        let method_sym = sym_map.method_sym("IssueComment", &method);
+        let owner = sym_map.ident_sym_entity_field("Repository", "owner");
+        let repo = sym_map.ident_sym_entity_field("Repository", "repo");
+        let repo_param =
+            sym_map.ident_sym_cap_param("IssueComment", "issue_comment_create", "repository");
+        let issue_num_param =
+            sym_map.ident_sym_cap_param("IssueComment", "issue_comment_create", "issue_number");
+        let issue_id_field = sym_map.ident_sym_entity_field("Issue", "number");
+        let body_param =
+            sym_map.ident_sym_cap_param("IssueComment", "issue_comment_create", "body");
+        let mut refs = BTreeSet::new();
+        refs.insert("issue".into());
+        refs.insert("body".into());
+        let expr = format!(
+            r#"{comment_ent}.{method_sym}({repo_param}={repo_sym}({owner}="octocat", {repo}="Hello-World"), {issue_num_param}=issue.{issue_id_field}, {body_param}=body.content)"#
+        );
+        let r = parse_with_cgs_layers_program(&expr, &layers, sym_map, Some(&refs), false)
+            .expect("method args with nested e# ctor + issue.p# + body.content");
+        let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
+        fn find_input_refs(v: &Value) -> Vec<PlasmInputRef> {
+            match v {
+                Value::PlasmInputRef(r) => vec![r.clone()],
+                Value::Object(m) => m.values().flat_map(find_input_refs).collect(),
+                Value::Array(a) => a.iter().flat_map(find_input_refs).collect(),
+                _ => vec![],
+            }
+        }
+        let payload = match &r.expr {
+            Expr::Create(c) => c.input.to_value(),
+            Expr::Invoke(i) => i
+                .input
+                .as_ref()
+                .expect("invoke input")
+                .to_value(),
+            other => panic!("expected create/invoke, got {other:?}"),
+        };
+        let refs_found: Vec<_> = find_input_refs(&payload);
+        assert!(
+            refs_found.iter().any(|r| matches!(
+                r,
+                PlasmInputRef::NodeInput { node, path }
+                    if node == "issue" && path == &["number"]
+            )),
+            "expected issue.number PlasmInputRef, got {refs_found:?}"
+        );
+        assert!(
+            refs_found.iter().any(|r| matches!(
+                r,
+                PlasmInputRef::NodeInput { node, path }
+                    if node == "body" && path == &["content"]
+            )),
+            "expected body.content PlasmInputRef, got {refs_found:?}"
+        );
     }
 }

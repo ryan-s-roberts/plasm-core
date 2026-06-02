@@ -5,6 +5,6 @@ expression: "super::MCP_PLASM_TOOL_DESCRIPTION"
 **Plan Plasm** (dry-run only) with **`program`** and **`logical_session_ref`** from **`plasm_context`**. Returns a reviewable dry-run plan (topology + expected shapes). **No live HTTP** — use **`plasm_run`** after the plan matches intent. **Program contract** (newlines + heredoc): MCP initialize instructions. Grammar: **`plasm_context` teaching TSV**.
 Prefer **one `program` per call**: use **newlines** for bindings (`ident = …`), then **comma-separated roots** on the final line when returning multiple surfaces (e.g. `sorted, count`). Bracket-render yields **`binding.content`** for string slots. Postfix (`.limit`, `.sort`, `.aggregate`, `.group_by`, `[…]`, `[fields] <<TAG…TAG`) chains when legal.
 
-**Brace `{…}` predicates:** entity-ref slots expect teaching-table constructors, scalar ids, or **`anchor.<relation>`**.
+**Brace `{…}` predicates:** entity-ref slots accept the **same surfaces as gets** — inline `eN(p#=…, …)` compound ctor, wire `Entity(k=v, …)`, label ref from a prior binding (`repo`), or `anchor.<relation>`. Surfaces are equivalent spellings (referential transparency); `$` in DOMAIN rows is a teaching placeholder only — substitute literals or bindings before execute.
 
 **Continuation:** `label.<relation>` from surface/relation rows or row-preserving projections; aggregate/render/derive labels are not row anchors.

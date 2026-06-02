@@ -36,7 +36,6 @@
 
 use super::heredoc_surface::{tagged_heredoc_close_kind, HeredocCloseLineKind};
 use super::{ParseError, ParseErrorKind, Parser, Value};
-use crate::PlasmInputRef;
 use indexmap::IndexMap;
 
 fn is_v_numeric_union_ctor_label(name: &str) -> bool {
@@ -73,7 +72,7 @@ pub(super) fn peek_starts_v_numeric_union_ctor_arg(input: &str, pos: usize) -> b
 }
 
 #[derive(Clone, Copy, Debug)]
-enum PhraseClose {
+pub(super) enum PhraseClose {
     Predicate,
     DottedCallParen,
     /// Comma-separated values inside `[` … `]` (array literal element).
@@ -296,6 +295,12 @@ impl<'a> Parser<'a> {
                 // `Foo(bar)` unwraps to a single inner value (entity ref id, etc.). It is not a
                 // generic function call — no commas; use `field=now` or quoted text for dates.
                 if self.peek_char() == Some('(') {
+                    use super::entity_ref_parse::EntityRefRhsMode;
+                    if let Some(v) =
+                        self.try_parse_entity_ref_value(&token, EntityRefRhsMode::Strict)?
+                    {
+                        return Ok(v);
+                    }
                     self.pos += 1;
                     let canon = self.canonical_entity_name_in_layers(&token);
                     if self.cgs_for_entity(&canon).is_some() {
@@ -392,7 +397,7 @@ impl<'a> Parser<'a> {
         self.parse_predicate_or_dotted_call_arg_value_inner(close)
     }
 
-    fn parse_predicate_or_dotted_call_arg_value_inner(
+    pub(super) fn parse_predicate_or_dotted_call_arg_value_inner(
         &mut self,
         close: PhraseClose,
     ) -> Result<Value, ParseError> {
@@ -432,59 +437,18 @@ impl<'a> Parser<'a> {
                 });
             }
             if self.peek_char() == Some('(') {
+                use super::entity_ref_parse::EntityRefRhsMode;
+                if let Some(v) =
+                    self.try_parse_entity_ref_value(&name, EntityRefRhsMode::Lenient(close))?
+                {
+                    return Ok(v);
+                }
                 self.pos = id_start;
                 return self.parse_value();
             }
-            // `for_each` row holes: `_.field` …
-            if name == "_" && self.peek_char() == Some('.') && self.for_each_row_context {
-                self.pos += 1;
-                self.skip_ws();
-                let mut path = Vec::new();
-                while self.ident_starts_here() {
-                    let p0 = self.pos;
-                    self.consume_raw_ident();
-                    path.push(self.input[p0..self.pos].to_string());
-                    self.skip_ws();
-                    if self.peek_char() == Some('.') {
-                        self.pos += 1;
-                        self.skip_ws();
-                    } else {
-                        break;
-                    }
-                }
-                if !path.is_empty() && self.at_rhs_close_delimiter(close) {
-                    return Ok(Value::PlasmInputRef(PlasmInputRef::row_binding("_", path)));
-                }
-            } else if let Some(refs) = self.program_nodes {
-                if refs.contains(name.as_str()) {
-                    if self.peek_char() == Some('.') {
-                        self.pos += 1;
-                        self.skip_ws();
-                        let mut path = Vec::new();
-                        while self.ident_starts_here() {
-                            let p0 = self.pos;
-                            self.consume_raw_ident();
-                            path.push(self.input[p0..self.pos].to_string());
-                            self.skip_ws();
-                            if self.peek_char() == Some('.') {
-                                self.pos += 1;
-                                self.skip_ws();
-                            } else {
-                                break;
-                            }
-                        }
-                        if self.at_rhs_close_delimiter(close) {
-                            return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(
-                                name, path,
-                            )));
-                        }
-                    } else if self.at_rhs_close_delimiter(close) {
-                        return Ok(Value::PlasmInputRef(PlasmInputRef::node_output(
-                            name,
-                            Vec::new(),
-                        )));
-                    }
-                }
+            self.pos = id_start;
+            if let Some(v) = self.try_parse_plasm_binding_field_ref(close)? {
+                return Ok(v);
             }
             self.pos = id_start;
         }
@@ -492,7 +456,7 @@ impl<'a> Parser<'a> {
     }
 
     /// After consuming a program input ref, true if the next non-whitespace char ends this RHS.
-    fn at_rhs_close_delimiter(&self, close: PhraseClose) -> bool {
+    pub(super) fn at_rhs_close_delimiter(&self, close: PhraseClose) -> bool {
         let bytes = self.input.as_bytes();
         let mut p = self.pos;
         while p < bytes.len() && bytes[p].is_ascii_whitespace() {
@@ -656,12 +620,12 @@ impl<'a> Parser<'a> {
         self.parse_predicate_or_dotted_call_arg_value(PhraseClose::ArrayElement)
     }
 
-    fn ident_starts_here(&self) -> bool {
+    pub(super) fn ident_starts_here(&self) -> bool {
         let b = self.input.as_bytes();
         self.pos < b.len() && (b[self.pos].is_ascii_alphabetic() || b[self.pos] == b'_')
     }
 
-    fn consume_raw_ident(&mut self) {
+    pub(super) fn consume_raw_ident(&mut self) {
         let b = self.input.as_bytes();
         if self.pos >= b.len() {
             return;

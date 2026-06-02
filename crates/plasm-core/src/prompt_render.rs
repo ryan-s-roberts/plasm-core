@@ -2753,6 +2753,11 @@ fn try_push_teaching_example(
         let Some(parsed_expr) = domain_line_validate_full(cgs, &work) else {
             return false;
         };
+        if let Some(m) = map {
+            if !domain_line_validate_symbolic(cgs, m, expr) {
+                return false;
+            }
+        }
         teaching_rows.push(EntityTeachingExprRow {
             teaching_expr: teaching_line,
             meta: domain_line_execution_meta_from_validated(
@@ -2770,7 +2775,7 @@ fn try_push_teaching_example(
     let cache_key = domain_line_cache_key(cgs, &work);
     let ok = *line_valid_cache
         .entry(cache_key)
-        .or_insert_with(|| domain_line_valid_work(cgs, &work));
+        .or_insert_with(|| domain_line_valid_work_and_symbolic(cgs, map, expr, &work));
     if !ok {
         return false;
     }
@@ -2804,9 +2809,43 @@ fn domain_line_validate_full(cgs: &CGS, work: &str) -> Option<crate::expr_parser
     Some(r)
 }
 
+/// Agent execute path: expand `p#`/`m#` only (keep `e#` opaque), parse with session [`SymbolMap`].
+fn domain_line_validate_symbolic(cgs: &CGS, map: &SymbolMap, expr: &str) -> bool {
+    use std::sync::Arc;
+
+    let stripped = crate::symbol_tuning::strip_prompt_expression_annotations(expr);
+    let work = crate::symbol_tuning::expand_path_symbols_with_options(&stripped, map, false);
+    let sym_arc = Arc::new(map.clone());
+    let layers = [cgs];
+    let mut r = match crate::expr_parser::parse_with_cgs_layers(&work, &layers, sym_arc) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    if crate::normalize_expr_query_capabilities(&mut r.expr, cgs).is_err() {
+        return false;
+    }
+    crate::type_check_expr(&r.expr, cgs).is_ok()
+}
+
 #[inline]
 fn domain_line_valid_work(cgs: &CGS, work: &str) -> bool {
     domain_line_validate_full(cgs, work).is_some()
+}
+
+#[inline]
+fn domain_line_valid_work_and_symbolic(
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    expr: &str,
+    work: &str,
+) -> bool {
+    if !domain_line_valid_work(cgs, work) {
+        return false;
+    }
+    match map {
+        Some(m) => domain_line_validate_symbolic(cgs, m, expr),
+        None => true,
+    }
 }
 
 /// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
@@ -4628,7 +4667,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "Entity(<id>)[field,…]"
     };
     let scoped_form = if spec.symbolic {
-        "e#{p#=e#(<id>)}"
+        "e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)"
     } else {
         "Entity{scope_param=AnchorEntity(<id>)}"
     };
@@ -4757,6 +4796,14 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         scoped_form = scoped_form,
         array_form = array_form
     );
+    if spec.symbolic {
+        s.push_str(
+            "- Worked scoped-search program (copy shape, substitute values):\n\
+  repo = e3(p5=octocat, p13=Hello-World)\n\
+  e1{p14=repo, p71=open}\n\
+  OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}\n",
+        );
+    }
     if spec.include_rich_string_guidance {
         s.push_str(&render_rich_string_guidance_tsv());
     }

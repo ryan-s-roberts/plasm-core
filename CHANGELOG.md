@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Referential transparency:** unified session `e#` / wire entity constructor parsing across brace predicates, method args, and nested compound slots (`entity_ref_parse`); symbolic `p#` compound keys normalize without wire pre-expand.
+- **Program binding refs:** `issue.p27` / `body.content` lower to `PlasmInputRef` with opaque `p#` path segments resolved to wire field names in program context.
+- **Teaching QA:** DOMAIN rows validate on the opaque agent parse path (`domain_line_validate_symbolic`) in addition to wire-expanded validation.
+
+### Changed
+
+- **MCP prompts:** entity-ref RT guidance in tool tail, scoped-search contract examples, and github symbolic DOMAIN snapshot.
+
 ## [0.1.65] - 2026-06-01
 
 ### Fixed
